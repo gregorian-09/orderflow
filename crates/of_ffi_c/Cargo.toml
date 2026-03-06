@@ -1,0 +1,21 @@
+[package]
+name = "of_ffi_c"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+rithmic = ["of_adapters/rithmic"]
+cqg = ["of_adapters/cqg"]
+cqg_proto = ["of_adapters/cqg_proto"]
+binance = ["of_adapters/binance"]
+
+[dependencies]
+of_core = { path = "../of_core" }
+of_runtime = { path = "../of_runtime" }
+of_adapters = { path = "../of_adapters" }
+of_signals = { path = "../of_signals" }

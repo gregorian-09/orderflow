@@ -1,0 +1,11 @@
+[package]
+name = "of_runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+of_adapters = { path = "../of_adapters" }
+of_core = { path = "../of_core" }
+of_persist = { path = "../of_persist" }
+of_signals = { path = "../of_signals" }

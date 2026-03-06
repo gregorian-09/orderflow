@@ -1,0 +1,15 @@
+[package]
+name = "of_adapters"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+rithmic = []
+cqg = []
+cqg_proto = ["cqg"]
+binance = []
+
+[dependencies]
+of_core = { path = "../of_core" }

@@ -1,0 +1,23 @@
+[workspace]
+members = [
+  "crates/of_core",
+  "crates/of_adapters",
+  "crates/of_signals",
+  "crates/of_persist",
+  "crates/of_runtime",
+  "crates/of_ffi_c",
+  "examples/replay_cli", "examples/perf_harness",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Order Flow Team"]
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+panic = "abort"
