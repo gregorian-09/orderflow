@@ -14,6 +14,7 @@ Start with:
 
 - [docs/README.md](./docs/README.md)
 - [docs/handbook/README.md](./docs/handbook/README.md)
+- [docs/bindings/README.md](./docs/bindings/README.md)
 
 ## Quick Build
 
@@ -27,3 +28,16 @@ Build C ABI for bindings:
 ```bash
 cargo build -p of_ffi_c
 ```
+
+## Distribution and Publishing
+
+Release runbook:
+
+- [docs/ops/distribution_release.md](./docs/ops/distribution_release.md)
+
+Automated workflows:
+
+- `.github/workflows/release-native-artifacts.yml`
+- `.github/workflows/publish-rust.yml`
+- `.github/workflows/publish-java.yml`
+- `.github/workflows/publish-python.yml`

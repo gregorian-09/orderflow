@@ -3,3 +3,5 @@
 Runbooks, deployment settings, and observability dashboards will be documented here.
 
 - `performance.md`: benchmark and soak harness usage.
+- `provider_certification.md`: provider readiness checks.
+- `distribution_release.md`: publishing and package release runbook.

@@ -13,6 +13,7 @@ The layout follows production-oriented documentation principles:
 ## Start Here
 
 - [Handbook Home](./handbook/README.md)
+- [Binding Docs](./bindings/README.md)
 - [API Docs (legacy entry)](./api/README.md)
 - [Ops Docs](./ops/README.md)
 - [Security Docs](./security/README.md)
