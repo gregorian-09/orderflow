@@ -1,0 +1,1588 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Orderflow Footprint Workspace</title>
+  <style>
+    :root {
+      --bg-0: #050607;
+      --bg-1: #101216;
+      --panel: rgba(10, 12, 16, 0.94);
+      --panel-strong: rgba(15, 18, 23, 0.98);
+      --line: #2d3138;
+      --line-soft: #22262d;
+      --ink: #f2a21b;
+      --muted: #9aa6b2;
+      --buy: #21c77a;
+      --sell: #ff6b4a;
+      --accent: #39a9ff;
+      --gold: #f2a21b;
+      --value-area: rgba(242, 162, 27, 0.1);
+      --shadow: 0 0 0 rgba(0, 0, 0, 0);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: #d7dee6;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top right, rgba(57, 169, 255, 0.08), transparent 28%),
+        linear-gradient(180deg, var(--bg-0) 0%, #0a0c10 44%, var(--bg-1) 100%);
+    }
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: 46px 1fr;
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-bottom: 1px solid #2d3138;
+      background: rgba(7, 9, 12, 0.98);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .brand {
+      display: grid;
+      gap: 1px;
+      min-width: 170px;
+      margin-right: 4px;
+    }
+    .brand strong {
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    .brand span {
+      font-size: 10px;
+      color: #8c98a4;
+    }
+    .toolbar-spacer { flex: 1; }
+    button, select {
+      height: 30px;
+      border-radius: 3px;
+      border: 1px solid var(--line);
+      background: #11151b;
+      color: #d7dee6;
+      font: inherit;
+      font-size: 12px;
+      padding: 0 10px;
+      outline: none;
+    }
+    .control-hidden {
+      display: none !important;
+    }
+    button { cursor: pointer; }
+    button:hover, select:hover { background: #171c23; }
+    button.active {
+      background: rgba(242, 162, 27, 0.12);
+      border-color: rgba(242, 162, 27, 0.45);
+      color: #f2a21b;
+    }
+    .status {
+      min-width: 98px;
+      height: 30px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 10px;
+      border-radius: 3px;
+      border: 1px solid #27543f;
+      background: #0f1a14;
+      color: #21c77a;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .status.warn {
+      border-color: #5c4a22;
+      background: #1a150b;
+      color: #f2c15d;
+    }
+    .status.bad {
+      border-color: #5a2f26;
+      background: #1b100e;
+      color: #ff8a72;
+    }
+    .layout {
+      min-height: calc(100vh - 46px);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 314px;
+      grid-template-rows: minmax(440px, 1fr) 110px;
+      gap: 10px;
+      padding: 10px;
+    }
+    .layout.drawer-hidden {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .layout.strip-hidden {
+      grid-template-rows: minmax(440px, 1fr);
+    }
+    .stage,
+    .drawer,
+    .strip-shell {
+      background: var(--panel);
+      border: 1px solid #23272e;
+      border-radius: 4px;
+      box-shadow: var(--shadow);
+    }
+    .stage {
+      grid-column: 1;
+      grid-row: 1;
+      position: relative;
+      overflow: hidden;
+    }
+    .layout.strip-hidden .stage {
+      grid-row: 1;
+    }
+    .strip-shell {
+      grid-column: 1;
+      grid-row: 2;
+      padding: 8px 10px 10px;
+    }
+    .layout.strip-hidden .strip-shell {
+      display: none;
+    }
+    .strip-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 2px 6px;
+      font-size: 10px;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .drawer {
+      grid-column: 2;
+      grid-row: 1 / span 2;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .layout.drawer-hidden .drawer {
+      display: none;
+    }
+    .layout.drawer-hidden .stage,
+    .layout.drawer-hidden .strip-shell {
+      grid-column: 1;
+    }
+    .layout.drawer-hidden.strip-hidden .stage {
+      grid-column: 1;
+      grid-row: 1;
+    }
+    .drawer-head {
+      padding: 12px 14px 10px;
+      border-bottom: 1px solid var(--line-soft);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .drawer-head strong {
+      font-size: 12px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    .drawer-head span {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .drawer-scroll {
+      overflow: auto;
+      padding: 12px 14px 14px;
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+    .module {
+      background: linear-gradient(180deg, rgba(18, 22, 28, 0.98), rgba(13, 16, 21, 0.98));
+      border: 1px solid var(--line-soft);
+      border-radius: 4px;
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+    }
+    .module h3 {
+      margin: 0;
+      font-size: 11px;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+    .module p {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.45;
+      color: #aeb7c2;
+    }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px 10px;
+    }
+    .stat-grid div {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .stat-grid span:first-child { color: var(--muted); }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .chip {
+      padding: 4px 7px;
+      border-radius: 999px;
+      border: 1px solid var(--line-soft);
+      background: rgba(18, 24, 31, 0.9);
+      font-size: 10px;
+      color: #aab4c0;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    #strip {
+      height: calc(100% - 22px);
+    }
+    .overlay {
+      position: absolute;
+      left: 14px;
+      top: 12px;
+      display: grid;
+      gap: 3px;
+      padding: 8px 10px;
+      border-radius: 4px;
+      background: rgba(9, 11, 15, 0.86);
+      border: 1px solid rgba(45, 49, 56, 0.88);
+      font-size: 10px;
+      line-height: 1.3;
+      color: var(--muted);
+      pointer-events: none;
+    }
+    .overlay strong { color: var(--ink); }
+    .tooltip {
+      position: absolute;
+      display: none;
+      min-width: 230px;
+      padding: 10px 11px;
+      border-radius: 4px;
+      border: 1px solid var(--line);
+      background: rgba(12, 15, 19, 0.97);
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.28);
+      font-size: 11px;
+      line-height: 1.45;
+      pointer-events: none;
+    }
+    .tooltip .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .tooltip .hint {
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid var(--line-soft);
+      color: var(--muted);
+      font-size: 10px;
+    }
+    @media (max-width: 1100px) {
+      .layout {
+        grid-template-columns: 1fr;
+        grid-template-rows: minmax(380px, 1fr) 110px auto;
+      }
+      .drawer {
+        grid-column: 1;
+        grid-row: 3;
+      }
+      .strip-shell {
+        grid-column: 1;
+        grid-row: 2;
+      }
+    }
+    @media (max-width: 760px) {
+      .app { grid-template-rows: auto 1fr; }
+      .toolbar {
+        flex-wrap: wrap;
+        height: auto;
+      }
+      .brand {
+        width: 100%;
+        min-width: 0;
+      }
+      button, select, .status {
+        flex: 1 1 calc(50% - 8px);
+        min-width: 120px;
+      }
+      .toolbar-spacer { display: none; }
+      .layout {
+        padding: 8px;
+        gap: 8px;
+      }
+      .overlay {
+        left: 10px;
+        right: 10px;
+        top: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="toolbar">
+      <div class="brand">
+        <strong>Footprint Workspace</strong>
+        <span>Diagonal imbalances, POC, 70% value area, sparse-by-default rendering</span>
+      </div>
+      <select id="density_mode">
+        <option value="sparse">Sparse</option>
+        <option value="focused">Focused</option>
+        <option value="dense">Dense</option>
+        <option value="off">Off</option>
+      </select>
+      <select id="cluster_type">
+        <option value="buy_sell">Buy &amp; Sell</option>
+        <option value="delta">Delta</option>
+        <option value="total">Total</option>
+        <option value="ladder">Ladder</option>
+      </select>
+      <select id="imbalance_ratio">
+        <option value="3">Imbalance 300%</option>
+        <option value="1.5">Imbalance 150%</option>
+        <option value="4">Imbalance 400%</option>
+      </select>
+      <select id="render_style">
+        <option value="bloomberg">Bloomberg</option>
+        <option value="nt">NT Profile</option>
+        <option value="valtos">Valtos</option>
+      </select>
+      <select id="valtos_profile">
+        <option value="balanced">Valtos Balanced</option>
+        <option value="conservative">Valtos Conservative</option>
+        <option value="aggressive">Valtos Aggressive</option>
+      </select>
+      <button id="btn_imbalance" class="active">Diagonal Imbalance</button>
+      <button id="btn_value_area" class="active">Value Area</button>
+      <button id="btn_mode">Mode: live</button>
+      <button id="btn_play">Play</button>
+      <button id="btn_pause">Pause</button>
+      <button id="btn_step">Step</button>
+      <button id="btn_zoom_out">-</button>
+      <button id="btn_zoom_in">+</button>
+      <button id="btn_reset_view">Reset View</button>
+      <button id="btn_toggle_strip" class="active">Strip</button>
+      <button id="btn_toggle_drawer" class="active">Construction</button>
+      <div class="toolbar-spacer"></div>
+      <div class="status" id="status_badge">starting</div>
+      <button id="btn_fullscreen">Fullscreen</button>
+      <button id="btn_reset_session">Reset Session</button>
+    </div>
+    <div class="layout">
+      <div class="stage" id="stage">
+        <canvas id="chart"></canvas>
+        <div class="overlay" id="overlay"></div>
+        <div class="tooltip" id="tooltip"></div>
+      </div>
+      <div class="strip-shell">
+        <div class="strip-head">
+          <span>Lower Strip</span>
+          <span id="strip_summary">Delta | Buy | Sell | Imbalance count</span>
+        </div>
+        <canvas id="strip"></canvas>
+      </div>
+      <aside class="drawer">
+        <div class="drawer-head">
+          <strong>Construction</strong>
+          <span id="drawer_title">Bid x Ask</span>
+        </div>
+        <div class="drawer-scroll" id="drawer"></div>
+      </aside>
+    </div>
+  </div>
+  <script>
+    const state = {
+      snap: null,
+      bars: [],
+      density: localStorage.getItem("of_density_mode") || "sparse",
+      clusterType: localStorage.getItem("of_cluster_type") || "buy_sell",
+      showImbalance: localStorage.getItem("of_show_imbalance") !== "0",
+      showValueArea: localStorage.getItem("of_show_value_area") !== "0",
+      renderStyle: localStorage.getItem("of_render_style") || "bloomberg",
+      valtosProfile: localStorage.getItem("of_valtos_profile") || "balanced",
+      imbalanceRatio: Number(localStorage.getItem("of_imbalance_ratio") || "3"),
+      scaleX: 1,
+      offset: 0,
+      dragging: false,
+      dragStartX: 0,
+      dragStartOffset: 0,
+      pointer: null,
+      selectedIndex: null,
+      source: null,
+    };
+
+    const chart = document.getElementById("chart");
+    const chartCtx = chart.getContext("2d");
+    const strip = document.getElementById("strip");
+    const stripCtx = strip.getContext("2d");
+    const stage = document.getElementById("stage");
+    const overlay = document.getElementById("overlay");
+    const tooltip = document.getElementById("tooltip");
+    const drawer = document.getElementById("drawer");
+    const drawerTitle = document.getElementById("drawer_title");
+    const stripSummary = document.getElementById("strip_summary");
+    const controls = {
+      densityMode: document.getElementById("density_mode"),
+      clusterType: document.getElementById("cluster_type"),
+      imbalanceRatio: document.getElementById("imbalance_ratio"),
+      renderStyle: document.getElementById("render_style"),
+      valtosProfile: document.getElementById("valtos_profile"),
+      btnImbalance: document.getElementById("btn_imbalance"),
+      btnValueArea: document.getElementById("btn_value_area"),
+      btnMode: document.getElementById("btn_mode"),
+      btnPlay: document.getElementById("btn_play"),
+      btnPause: document.getElementById("btn_pause"),
+      btnStep: document.getElementById("btn_step"),
+      btnZoomOut: document.getElementById("btn_zoom_out"),
+      btnZoomIn: document.getElementById("btn_zoom_in"),
+      btnResetView: document.getElementById("btn_reset_view"),
+      btnToggleStrip: document.getElementById("btn_toggle_strip"),
+      btnToggleDrawer: document.getElementById("btn_toggle_drawer"),
+      btnFullscreen: document.getElementById("btn_fullscreen"),
+      btnResetSession: document.getElementById("btn_reset_session"),
+      status: document.getElementById("status_badge"),
+    };
+    state.showStrip = localStorage.getItem("of_show_strip") !== "0";
+    state.showDrawer = localStorage.getItem("of_show_drawer") !== "0";
+    controls.densityMode.value = state.density;
+    controls.clusterType.value = state.clusterType;
+    controls.imbalanceRatio.value = String(state.imbalanceRatio);
+    controls.renderStyle.value = state.renderStyle;
+    controls.valtosProfile.value = state.valtosProfile;
+    controls.btnImbalance.classList.toggle("active", state.showImbalance);
+    controls.btnValueArea.classList.toggle("active", state.showValueArea);
+    controls.btnToggleStrip.classList.toggle("active", state.showStrip);
+    controls.btnToggleDrawer.classList.toggle("active", state.showDrawer);
+
+    function fmt(v, digits = 0) {
+      if (v === null || v === undefined || v === "" || Number.isNaN(v)) return "-";
+      if (typeof v === "number") {
+        return digits > 0 ? v.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits }) : Math.round(v).toLocaleString();
+      }
+      return String(v);
+    }
+
+    function isNtStyle() {
+      return state.renderStyle === "nt";
+    }
+
+    function isValtosStyle() {
+      return state.renderStyle === "valtos";
+    }
+
+    function isEnhancedStyle() {
+      return isNtStyle() || isValtosStyle();
+    }
+
+    function valtosThresholds() {
+      if (state.valtosProfile === "conservative") {
+        return { stack: 4, wickBody: 1.9, wickRange: 0.34, minDeltaShare: 0.3 };
+      }
+      if (state.valtosProfile === "aggressive") {
+        return { stack: 2, wickBody: 1.1, wickRange: 0.2, minDeltaShare: 0.16 };
+      }
+      return { stack: 3, wickBody: 1.4, wickRange: 0.28, minDeltaShare: 0.22 };
+    }
+
+    function resize(canvas) {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const rect = canvas.getBoundingClientRect();
+      const w = Math.max(1, Math.round(rect.width * dpr));
+      const h = Math.max(1, Math.round(rect.height * dpr));
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      return { dpr, width: rect.width, height: rect.height };
+    }
+
+    function fallbackBars(history, analytics) {
+      const src = Array.isArray(history) ? history : [];
+      if (!src.length) return [];
+      const bucket = 8;
+      const out = [];
+      let price = Number((analytics && analytics.last_price) || 100000);
+      for (let i = src.length - bucket; i >= 0; i -= bucket) {
+        const chunk = src.slice(Math.max(0, i), i + bucket);
+        let delta = 0;
+        for (const point of chunk) delta += Number(point.delta || 0);
+        const unit = Math.max(1, Math.round(price * 0.000015));
+        const move = Math.max(-5, Math.min(5, Math.sign(delta || 0) * Math.max(1, Math.round(Math.abs(delta) / 100)))) * unit;
+        const close = price;
+        const open = close - move;
+        const high = Math.max(open, close) + unit;
+        const low = Math.min(open, close) - unit;
+        const rowPrice = close;
+        const buy = Math.max(0, Math.round(Math.max(0, delta) + Math.abs(delta) * 0.35 + 6));
+        const sell = Math.max(0, Math.round(Math.max(0, -delta) + Math.abs(delta) * 0.35 + 4));
+        out.unshift({
+          index: out.length,
+          open,
+          high,
+          low,
+          close,
+          delta,
+          volume: Math.abs(delta),
+          poc: rowPrice,
+          levels: [{ price: rowPrice, bid: sell, ask: buy }],
+          ts: chunk[chunk.length - 1].ts || 0,
+        });
+        price = open;
+      }
+      return out;
+    }
+
+    function normalizeBars() {
+      const snap = state.snap || {};
+      const bars = Array.isArray(snap.bars) ? snap.bars : [];
+      if (bars.length) {
+        return bars.map((bar, idx) => ({
+          index: idx,
+          open: Number(bar.open || 0),
+          high: Number(bar.high || 0),
+          low: Number(bar.low || 0),
+          close: Number(bar.close || 0),
+          delta: Number(bar.delta || 0),
+          volume: Number(bar.volume || 0),
+          poc: Number(bar.poc || 0),
+          buyVolume: Number(bar.buy_volume || 0),
+          sellVolume: Number(bar.sell_volume || 0),
+          imbalanceAsk: Number(bar.imbalance_ask || 0),
+          imbalanceBid: Number(bar.imbalance_bid || 0),
+          stackedAsk: Number(bar.stacked_ask || 0),
+          stackedBid: Number(bar.stacked_bid || 0),
+          levels: Array.isArray(bar.levels) ? bar.levels.map((row) => ({
+            price: Number(row.price || 0),
+            bid: Number(row.bid || 0),
+            ask: Number(row.ask || 0),
+          })) : [],
+          ts: Number(bar.ts || 0),
+        }));
+      }
+      return fallbackBars(snap.history || [], snap.analytics || {});
+    }
+
+    function visibleBars() {
+      const total = state.bars.length;
+      if (!total) return [];
+      const base = state.density === "dense"
+        ? Math.max(12, Math.floor(24 / state.scaleX))
+        : state.density === "focused"
+          ? Math.max(10, Math.floor(18 / state.scaleX))
+          : Math.max(12, Math.floor(22 / state.scaleX));
+      const count = Math.min(total, base);
+      const maxOffset = Math.max(0, total - count);
+      state.offset = Math.max(0, Math.min(maxOffset, Math.round(state.offset)));
+      return state.bars.slice(total - count - state.offset, total - state.offset);
+    }
+
+    function rangeFor(bars) {
+      if (!bars.length) return { min: 0, max: 1, span: 1 };
+      let min = Infinity;
+      let max = -Infinity;
+      for (const bar of bars) {
+        min = Math.min(min, bar.low);
+        max = Math.max(max, bar.high);
+      }
+      if (!(max > min)) {
+        max += 1;
+        min -= 1;
+      }
+      const pad = (max - min) * 0.1;
+      return { min: min - pad, max: max + pad, span: (max - min) + pad * 2 };
+    }
+
+    function yOf(v, range, top, h) {
+      return top + ((range.max - v) / range.span) * h;
+    }
+
+    function xOf(i, count, left, w) {
+      return count <= 1 ? left + w / 2 : left + (i / (count - 1)) * w;
+    }
+
+    function hoveredBar(x, bars, left, width) {
+      if (!bars.length) return null;
+      const step = bars.length <= 1 ? width : width / (bars.length - 1);
+      const idx = Math.max(0, Math.min(bars.length - 1, Math.round((x - left) / step)));
+      return { idx, x: xOf(idx, bars.length, left, width), bar: bars[idx] };
+    }
+
+    function totalAtRow(row) {
+      return Number(row.ask || 0) + Number(row.bid || 0);
+    }
+
+    function rowDelta(row) {
+      return Number(row.ask || 0) - Number(row.bid || 0);
+    }
+
+    function profileRows(bars) {
+      const map = new Map();
+      for (const bar of bars) {
+        for (const row of bar.levels || []) {
+          const cur = map.get(row.price) || { price: row.price, bid: 0, ask: 0 };
+          cur.bid += Number(row.bid || 0);
+          cur.ask += Number(row.ask || 0);
+          map.set(row.price, cur);
+        }
+      }
+      return Array.from(map.values()).sort((a, b) => b.price - a.price);
+    }
+
+    function valueAreaFromRows(rows) {
+      if (!rows.length) return { poc: 0, vah: 0, val: 0, total: 0 };
+      const totals = rows.map((row) => ({ ...row, total: totalAtRow(row) }));
+      const total = totals.reduce((sum, row) => sum + row.total, 0);
+      const pocIndex = totals.reduce((best, row, idx, arr) => (
+        row.total > arr[best].total || (row.total === arr[best].total && row.price > arr[best].price) ? idx : best
+      ), 0);
+      const target = total * 0.7;
+      let covered = totals[pocIndex].total;
+      let high = pocIndex;
+      let low = pocIndex;
+      while (covered < target && (low > 0 || high < totals.length - 1)) {
+        const nextHigh = high < totals.length - 1 ? totals[high + 1].total : -1;
+        const nextLow = low > 0 ? totals[low - 1].total : -1;
+        if (nextLow >= nextHigh) {
+          low -= 1;
+          covered += Math.max(0, totals[low].total);
+        } else {
+          high += 1;
+          covered += Math.max(0, totals[high].total);
+        }
+      }
+      return {
+        poc: totals[pocIndex].price,
+        vah: totals[low].price,
+        val: totals[high].price,
+        total,
+      };
+    }
+
+    function rowImbalance(rows, idx) {
+      const row = rows[idx];
+      const info = { ask: false, bid: false, askRatio: 0, bidRatio: 0 };
+      if (!row || !state.showImbalance) return info;
+      const ratio = Math.max(1, state.imbalanceRatio);
+      const below = rows[idx + 1];
+      const above = rows[idx - 1];
+      const ask = Number(row.ask || 0);
+      const bid = Number(row.bid || 0);
+      if (below) {
+        const diagonalBid = Number(below.bid || 0);
+        info.askRatio = diagonalBid > 0 ? ask / diagonalBid : (ask > 0 ? Infinity : 0);
+        info.ask = ask > 0 && info.askRatio >= ratio;
+      }
+      if (above) {
+        const diagonalAsk = Number(above.ask || 0);
+        info.bidRatio = diagonalAsk > 0 ? bid / diagonalAsk : (bid > 0 ? Infinity : 0);
+        info.bid = bid > 0 && info.bidRatio >= ratio;
+      }
+      return info;
+    }
+
+    function countImbalances(rows) {
+      let ask = 0;
+      let bid = 0;
+      for (let i = 0; i < rows.length; i += 1) {
+        const info = rowImbalance(rows, i);
+        if (info.ask) ask += 1;
+        if (info.bid) bid += 1;
+      }
+      return { ask, bid, total: ask + bid };
+    }
+
+    function barStats(bar) {
+      const levels = Array.isArray(bar.levels) ? bar.levels : [];
+      const hasServerVolume = Number.isFinite(Number(bar.buyVolume)) && Number.isFinite(Number(bar.sellVolume)) && (Number(bar.buyVolume || 0) > 0 || Number(bar.sellVolume || 0) > 0);
+      const hasServerImbalance = Number(bar.imbalanceAsk || 0) > 0 || Number(bar.imbalanceBid || 0) > 0;
+      const hasServerStacked = Number(bar.stackedAsk || 0) > 0 || Number(bar.stackedBid || 0) > 0;
+      let buy = Number(bar.buyVolume || 0);
+      let sell = Number(bar.sellVolume || 0);
+      if (!hasServerVolume && levels.length) {
+        buy = 0;
+        sell = 0;
+        for (const row of levels) {
+          buy += Number(row.ask || 0);
+          sell += Number(row.bid || 0);
+        }
+      }
+      const area = valueAreaFromRows(levels);
+      const imbalance = (
+        hasServerImbalance
+          ? {
+              ask: Number(bar.imbalanceAsk || 0),
+              bid: Number(bar.imbalanceBid || 0),
+              total: Number(bar.imbalanceAsk || 0) + Number(bar.imbalanceBid || 0),
+            }
+          : countImbalances(levels)
+      );
+      const stacked = (
+        hasServerStacked
+          ? {
+              ask: Number(bar.stackedAsk || 0),
+              bid: Number(bar.stackedBid || 0),
+              dominant: Number(bar.stackedAsk || 0) >= Number(bar.stackedBid || 0) ? "ask" : "bid",
+            }
+          : stackedImbalance(levels)
+      );
+      return {
+        buy,
+        sell,
+        delta: Number(bar.delta || (buy - sell)),
+        volume: Number(bar.volume || (buy + sell)),
+        area,
+        imbalance,
+        stacked,
+        sources: {
+          volume: hasServerVolume,
+          imbalance: hasServerImbalance,
+          stacked: hasServerStacked,
+        },
+      };
+    }
+
+    function significantBar(bar) {
+      const stats = barStats(bar);
+      return stats.imbalance.total >= 2 || Math.abs(stats.delta) >= Math.max(18, stats.volume * 0.3);
+    }
+
+    function barMaxMetric(bar) {
+      const levels = Array.isArray(bar.levels) ? bar.levels : [];
+      let maxTotal = 0;
+      let maxDelta = 0;
+      for (const row of levels) {
+        maxTotal = Math.max(maxTotal, totalAtRow(row));
+        maxDelta = Math.max(maxDelta, Math.abs(rowDelta(row)));
+      }
+      return state.clusterType === "delta" ? maxDelta : maxTotal;
+    }
+
+    function stackedImbalance(rows) {
+      let bestAsk = 0;
+      let bestBid = 0;
+      let askRun = 0;
+      let bidRun = 0;
+      for (let i = 0; i < rows.length; i += 1) {
+        const info = rowImbalance(rows, i);
+        askRun = info.ask ? askRun + 1 : 0;
+        bidRun = info.bid ? bidRun + 1 : 0;
+        bestAsk = Math.max(bestAsk, askRun);
+        bestBid = Math.max(bestBid, bidRun);
+      }
+      return { ask: bestAsk, bid: bestBid, dominant: bestAsk >= bestBid ? "ask" : "bid" };
+    }
+
+    function classifyValtosSignal(bar) {
+      const stats = barStats(bar);
+      const stack = stats.stacked;
+      const thresholds = valtosThresholds();
+      const bullish = bar.close >= bar.open;
+      const body = Math.abs(bar.close - bar.open);
+      const range = Math.max(1, Math.abs(bar.high - bar.low));
+      const upperWick = Math.max(0, bar.high - Math.max(bar.open, bar.close));
+      const lowerWick = Math.max(0, Math.min(bar.open, bar.close) - bar.low);
+      const minDirectionalDelta = Math.max(1, stats.volume * thresholds.minDeltaShare);
+      if (stack.ask >= thresholds.stack && stats.delta >= minDirectionalDelta && bullish) {
+        return { label: "STACK CONT", tone: "buy" };
+      }
+      if (stack.bid >= thresholds.stack && stats.delta <= -minDirectionalDelta && !bullish) {
+        return { label: "STACK CONT", tone: "sell" };
+      }
+      if (stack.ask >= thresholds.stack && stats.delta >= minDirectionalDelta && !bullish) {
+        return { label: "BUY TRAP", tone: "sell" };
+      }
+      if (stack.bid >= thresholds.stack && stats.delta <= -minDirectionalDelta && bullish) {
+        return { label: "SELL TRAP", tone: "buy" };
+      }
+      if (upperWick > Math.max(2, body * thresholds.wickBody) && upperWick > range * thresholds.wickRange && stats.delta >= minDirectionalDelta) {
+        return { label: "EXHAUSTION", tone: "sell" };
+      }
+      if (lowerWick > Math.max(2, body * thresholds.wickBody) && lowerWick > range * thresholds.wickRange && stats.delta <= -minDirectionalDelta) {
+        return { label: "EXHAUSTION", tone: "buy" };
+      }
+      return null;
+    }
+
+    function renderSetForBars(bars) {
+      const set = new Set();
+      if (state.density === "off") return set;
+      const lastIndex = bars.length - 1;
+      if (state.density === "dense") {
+        bars.forEach((_, idx) => set.add(idx));
+        return set;
+      }
+      if (lastIndex >= 0) set.add(lastIndex);
+      if (state.density === "focused") {
+        for (let idx = Math.max(0, lastIndex - 3); idx <= lastIndex; idx += 1) set.add(idx);
+      }
+      bars.forEach((bar, idx) => {
+        if (significantBar(bar)) set.add(idx);
+      });
+      if (state.selectedIndex !== null && state.selectedIndex < bars.length) set.add(state.selectedIndex);
+      if (state.pointer && state.pointer.inside) {
+        const width = chart.clientWidth;
+        const plotLeft = 92;
+        const plotRight = width - 74;
+        const hovered = hoveredBar(state.pointer.x, bars, plotLeft, Math.max(40, plotRight - plotLeft));
+        if (hovered) set.add(hovered.idx);
+      }
+      return set;
+    }
+
+    function drawPriceBars(bars, plotLeft, plotW, top, plotH, range) {
+      const candleW = Math.max(6, Math.min(20, (plotW / Math.max(1, bars.length)) * 0.56));
+      for (let i = 0; i < bars.length; i += 1) {
+        const bar = bars[i];
+        const x = xOf(i, bars.length, plotLeft, plotW);
+        const openY = yOf(bar.open, range, top, plotH);
+        const closeY = yOf(bar.close, range, top, plotH);
+        const highY = yOf(bar.high, range, top, plotH);
+        const lowY = yOf(bar.low, range, top, plotH);
+        const bullish = bar.close >= bar.open;
+        chartCtx.strokeStyle = bullish ? "rgba(29,140,98,0.82)" : "rgba(186,74,52,0.84)";
+        chartCtx.lineWidth = 1.2;
+        chartCtx.beginPath();
+        chartCtx.moveTo(x, highY);
+        chartCtx.lineTo(x, lowY);
+        chartCtx.stroke();
+        const bodyTop = Math.min(openY, closeY);
+        const bodyH = Math.max(3, Math.abs(closeY - openY));
+        chartCtx.fillStyle = bullish ? "rgba(29,140,98,0.18)" : "rgba(186,74,52,0.18)";
+        chartCtx.fillRect(x - candleW / 2, bodyTop, candleW, bodyH);
+        chartCtx.strokeRect(x - candleW / 2, bodyTop, candleW, bodyH);
+        if (isEnhancedStyle()) {
+          const coreW = Math.max(2, Math.round(candleW * 0.28));
+          chartCtx.fillStyle = isValtosStyle()
+            ? (bullish ? "rgba(33,199,122,0.78)" : "rgba(255,107,74,0.78)")
+            : (bullish ? "rgba(57,169,255,0.72)" : "rgba(242,162,27,0.72)");
+          chartCtx.fillRect(x - coreW / 2, bodyTop, coreW, bodyH);
+        }
+      }
+    }
+
+    function drawClusterCell(x, y, w, h, fill, stroke) {
+      chartCtx.fillStyle = fill;
+      chartCtx.strokeStyle = stroke;
+      chartCtx.beginPath();
+      if (typeof chartCtx.roundRect === "function") chartCtx.roundRect(x, y, w, h, 4);
+      else chartCtx.rect(x, y, w, h);
+      chartCtx.fill();
+      chartCtx.stroke();
+    }
+
+    function drawBuySellRow(cx, y, rowH, row, info, compact) {
+      const total = Math.max(1, totalAtRow(row));
+      const widthBias = Math.min(compact ? 14 : 20, Math.round(total / (compact ? 22 : 14)));
+      const cellW = (compact ? 68 : 84) + widthBias;
+      const left = cx - cellW / 2;
+      drawClusterCell(left, y, cellW, rowH, "rgba(16,20,26,0.96)", "rgba(72,79,89,0.72)");
+      chartCtx.strokeStyle = "rgba(52,58,66,0.95)";
+      chartCtx.beginPath();
+      chartCtx.moveTo(cx, y + 1);
+      chartCtx.lineTo(cx, y + rowH - 1);
+      chartCtx.stroke();
+      if (state.clusterType === "ladder") {
+        if (row.ask >= row.bid && row.ask > 0) {
+          drawClusterCell(
+            cx,
+            y,
+            cellW / 2,
+            rowH,
+            info.ask ? (isNtStyle() ? "rgba(57,169,255,0.18)" : isValtosStyle() ? "rgba(33,199,122,0.2)" : "rgba(29,140,98,0.2)") : "rgba(29,140,98,0.1)",
+            info.ask ? (isNtStyle() ? "rgba(57,169,255,0.84)" : isValtosStyle() ? "rgba(33,199,122,0.9)" : "rgba(29,140,98,0.58)") : "rgba(29,140,98,0.24)"
+          );
+        } else if (row.bid > 0) {
+          drawClusterCell(
+            left,
+            y,
+            cellW / 2,
+            rowH,
+            info.bid ? (isNtStyle() ? "rgba(242,66,160,0.18)" : isValtosStyle() ? "rgba(255,107,74,0.22)" : "rgba(186,74,52,0.2)") : "rgba(186,74,52,0.1)",
+            info.bid ? (isNtStyle() ? "rgba(242,66,160,0.84)" : isValtosStyle() ? "rgba(255,107,74,0.9)" : "rgba(186,74,52,0.58)") : "rgba(186,74,52,0.24)"
+          );
+        }
+      } else {
+        if (info.bid) drawClusterCell(left, y, cellW / 2, rowH, isNtStyle() ? "rgba(242,66,160,0.13)" : isValtosStyle() ? "rgba(255,107,74,0.16)" : "rgba(186,74,52,0.16)", isNtStyle() ? "rgba(242,66,160,0.88)" : isValtosStyle() ? "rgba(255,107,74,0.92)" : "rgba(186,74,52,0.54)");
+        if (info.ask) drawClusterCell(cx, y, cellW / 2, rowH, isNtStyle() ? "rgba(57,169,255,0.13)" : isValtosStyle() ? "rgba(33,199,122,0.16)" : "rgba(29,140,98,0.16)", isNtStyle() ? "rgba(57,169,255,0.88)" : isValtosStyle() ? "rgba(33,199,122,0.92)" : "rgba(29,140,98,0.54)");
+      }
+      chartCtx.font = compact ? "9px IBM Plex Sans" : "10px IBM Plex Sans";
+      chartCtx.textBaseline = "middle";
+      chartCtx.textAlign = "right";
+      chartCtx.fillStyle = row.bid > 0 ? (info.bid ? "#ff7b61" : "#9aa6b2") : "#606a74";
+      chartCtx.fillText(String(Math.round(row.bid)), cx - 5, y + rowH / 2 + 0.5);
+      chartCtx.textAlign = "left";
+      chartCtx.fillStyle = row.ask > 0 ? (info.ask ? "#3ae08e" : "#9aa6b2") : "#606a74";
+      chartCtx.fillText(String(Math.round(row.ask)), cx + 5, y + rowH / 2 + 0.5);
+      chartCtx.textAlign = "left";
+    }
+
+    function drawSingleMetricRow(cx, y, rowH, row, mode, compact) {
+      const total = totalAtRow(row);
+      const delta = rowDelta(row);
+      let value = total;
+      let fill = "rgba(166, 121, 43, 0.16)";
+      let stroke = "rgba(166, 121, 43, 0.48)";
+      if (mode === "delta") {
+        value = delta;
+        fill = delta >= 0 ? "rgba(29,140,98,0.16)" : "rgba(186,74,52,0.16)";
+        stroke = delta >= 0 ? "rgba(29,140,98,0.54)" : "rgba(186,74,52,0.54)";
+      }
+      const cellW = compact ? 56 : 66;
+      drawClusterCell(cx - cellW / 2, y, cellW, rowH, fill, stroke);
+      chartCtx.font = compact ? "9px IBM Plex Sans" : "10px IBM Plex Sans";
+      chartCtx.textAlign = "center";
+      chartCtx.textBaseline = "middle";
+      chartCtx.fillStyle = mode === "delta"
+        ? (value >= 0 ? "#0f6d49" : "#8f2719")
+        : "#f2a21b";
+      chartCtx.fillText(String(Math.round(value)), cx, y + rowH / 2 + 0.5);
+      chartCtx.textAlign = "left";
+    }
+
+    function drawFootprints(bars, plotLeft, plotW, top, plotH, range) {
+      const renderSet = renderSetForBars(bars);
+      const compact = state.density !== "dense";
+      const rowH = compact ? 15 : 17;
+      for (let i = 0; i < bars.length; i += 1) {
+        if (!renderSet.has(i)) continue;
+        const bar = bars[i];
+        const rows = (bar.levels || []).slice().sort((a, b) => b.price - a.price);
+        if (!rows.length) continue;
+        const x = xOf(i, bars.length, plotLeft, plotW);
+        const maxMetric = barMaxMetric(bar);
+        const stack = barStats(bar).stacked;
+        const maxRows = state.density === "dense" ? 22 : state.density === "focused" ? 16 : 10;
+        let shown = rows;
+        if (rows.length > maxRows) {
+          const scored = rows.map((row, idx) => {
+            const info = rowImbalance(rows, idx);
+            const score = (info.ask || info.bid ? 2500 : 0) + totalAtRow(row) + (row.price === bar.poc ? 1000 : 0);
+            return { row, idx, score };
+          });
+          scored.sort((a, b) => b.score - a.score || b.row.price - a.row.price);
+          shown = scored.slice(0, maxRows).map((item) => item.row).sort((a, b) => b.price - a.price);
+        }
+        for (let r = 0; r < shown.length; r += 1) {
+          const row = shown[r];
+          const sourceIndex = rows.findIndex((entry) => entry.price === row.price);
+          const info = rowImbalance(rows, sourceIndex);
+          const y = yOf(row.price, range, top, plotH) - rowH / 2;
+          if (y < top - rowH || y > top + plotH) continue;
+          const offset = state.density === "dense" ? 0 : ((r % 2 === 0 ? -1 : 1) * Math.min(5, 1 + r));
+          const cx = x + offset;
+          if (state.clusterType === "buy_sell" || state.clusterType === "ladder") {
+            drawBuySellRow(cx, y, rowH, row, info, compact);
+          } else {
+            drawSingleMetricRow(cx, y, rowH, row, state.clusterType, compact);
+          }
+          const rowMetric = state.clusterType === "delta" ? Math.abs(rowDelta(row)) : totalAtRow(row);
+          if (isNtStyle() && maxMetric > 0 && rowMetric === maxMetric) {
+            chartCtx.strokeStyle = "rgba(255,221,72,0.96)";
+            chartCtx.lineWidth = 1.4;
+            chartCtx.strokeRect(cx - 46, y - 1, 92, rowH + 2);
+          }
+          if (row.price === bar.poc) {
+            chartCtx.strokeStyle = "rgba(166,121,43,0.7)";
+            chartCtx.lineWidth = 1;
+            chartCtx.beginPath();
+            chartCtx.moveTo(cx - 42, y + rowH + 1.5);
+            chartCtx.lineTo(cx + 42, y + rowH + 1.5);
+            chartCtx.stroke();
+          }
+        }
+        if (isValtosStyle() && Math.max(stack.ask, stack.bid) >= 3) {
+          chartCtx.fillStyle = stack.dominant === "ask" ? "rgba(33,199,122,0.9)" : "rgba(255,107,74,0.9)";
+          chartCtx.fillRect(x + 48, top + 6, 4, Math.max(20, Math.min(plotH - 12, 12 + Math.max(stack.ask, stack.bid) * 8)));
+        }
+      }
+    }
+
+    function drawBarStatsPanel(bars, plotRight, top) {
+      if (!isEnhancedStyle() || !bars.length) return;
+      const idx = (state.selectedIndex !== null && state.selectedIndex < bars.length) ? state.selectedIndex : (bars.length - 1);
+      const bar = bars[idx];
+      if (!bar) return;
+      const stats = barStats(bar);
+      const stack = stats.stacked;
+      const panelW = 178;
+      const panelH = isValtosStyle() ? 106 : 92;
+      const x = Math.max(10, plotRight - panelW);
+      const y = Math.max(8, top - panelH + 10);
+      chartCtx.fillStyle = "rgba(9,11,15,0.95)";
+      chartCtx.strokeStyle = "rgba(45,49,56,0.95)";
+      chartCtx.lineWidth = 1;
+      chartCtx.fillRect(x, y, panelW, panelH);
+      chartCtx.strokeRect(x, y, panelW, panelH);
+      chartCtx.fillStyle = "#f2a21b";
+      chartCtx.font = "10px IBM Plex Sans";
+      chartCtx.fillText(isValtosStyle() ? "VALTOS READ" : "BAR STATISTICS", x + 8, y + 14);
+      const rows = [
+        ["Delta", fmt(stats.delta)],
+        ["Volume", fmt(stats.volume)],
+        ["POC", fmt(stats.area.poc || bar.poc)],
+        ["Imb", fmt(stats.imbalance.total)],
+      ];
+      if (isValtosStyle()) rows.push(["Stack", `${stack.ask}/${stack.bid}`]);
+      chartCtx.font = "10px IBM Plex Sans";
+      for (let i = 0; i < rows.length; i += 1) {
+        const yy = y + 30 + i * 14;
+        chartCtx.fillStyle = "#8f9ba8";
+        chartCtx.fillText(rows[i][0], x + 8, yy);
+        chartCtx.fillStyle = "#d7dee6";
+        chartCtx.textAlign = "right";
+        chartCtx.fillText(rows[i][1], x + panelW - 8, yy);
+        chartCtx.textAlign = "left";
+      }
+    }
+
+    function drawValtosCallouts(bars, plotLeft, plotW, top, plotH, range) {
+      if (!isValtosStyle()) return;
+      chartCtx.font = "10px IBM Plex Sans";
+      for (let i = 0; i < bars.length; i += 1) {
+        const bar = bars[i];
+        const signal = classifyValtosSignal(bar);
+        if (!signal) continue;
+        const x = xOf(i, bars.length, plotLeft, plotW);
+        const anchorPrice = signal.tone === "buy" ? bar.low : bar.high;
+        const y = yOf(anchorPrice, range, top, plotH) + (signal.tone === "buy" ? 14 : -10);
+        chartCtx.fillStyle = signal.tone === "buy" ? "rgba(33,199,122,0.95)" : "rgba(255,107,74,0.95)";
+        chartCtx.textAlign = "center";
+        chartCtx.fillText(signal.label, x, y);
+      }
+      chartCtx.textAlign = "left";
+    }
+
+    function drawChart() {
+      const { dpr, width, height } = resize(chart);
+      chartCtx.setTransform(1, 0, 0, 1, 0, 0);
+      chartCtx.clearRect(0, 0, chart.width, chart.height);
+      chartCtx.scale(dpr, dpr);
+      chartCtx.fillStyle = "rgba(8,10,14,0.98)";
+      chartCtx.fillRect(0, 0, width, height);
+
+      const bars = visibleBars();
+      if (!bars.length) {
+        chartCtx.fillStyle = "#9aa6b2";
+        chartCtx.font = "13px IBM Plex Sans";
+        chartCtx.fillText("Waiting for live or replay data", 18, 30);
+        return;
+      }
+
+      const leftProfileW = 80;
+      const rightScaleW = 64;
+      const top = 70;
+      const bottom = 16;
+      const plotLeft = leftProfileW + 12;
+      const plotRight = width - rightScaleW - 10;
+      const plotW = Math.max(40, plotRight - plotLeft);
+      const plotH = Math.max(40, height - top - bottom);
+      const range = rangeFor(bars);
+      const profile = profileRows(bars);
+      const area = valueAreaFromRows(profile);
+
+      chartCtx.fillStyle = "rgba(9,11,15,0.88)";
+      chartCtx.fillRect(0, 0, width, top - 14);
+
+      if (state.showValueArea && area.vah && area.val) {
+        const yTop = yOf(area.vah, range, top, plotH);
+        const yBottom = yOf(area.val, range, top, plotH);
+        chartCtx.fillStyle = "rgba(242,162,27,0.12)";
+        chartCtx.fillRect(plotLeft, yTop, plotW, Math.max(2, yBottom - yTop));
+      }
+
+      chartCtx.strokeStyle = "rgba(47,53,61,0.58)";
+      chartCtx.lineWidth = 1;
+      for (let i = 0; i <= 6; i += 1) {
+        const y = top + (plotH / 6) * i;
+        chartCtx.beginPath();
+        chartCtx.moveTo(0, y);
+        chartCtx.lineTo(width, y);
+        chartCtx.stroke();
+      }
+      for (let i = 0; i <= 8; i += 1) {
+        const x = plotLeft + (plotW / 8) * i;
+        chartCtx.beginPath();
+        chartCtx.moveTo(x, top);
+        chartCtx.lineTo(x, height - bottom);
+        chartCtx.stroke();
+      }
+
+      const maxProfile = Math.max(1, ...profile.map((row) => totalAtRow(row)));
+      for (const row of profile) {
+        const y = yOf(row.price, range, top, plotH);
+        if (y < top || y > height - bottom) continue;
+        const askW = ((row.ask || 0) / maxProfile) * (leftProfileW - 18);
+        const bidW = ((row.bid || 0) / maxProfile) * (leftProfileW - 18);
+        chartCtx.fillStyle = "rgba(255,107,74,0.8)";
+        chartCtx.fillRect(leftProfileW - askW - 6, y - 2.4, askW, 2.4);
+        chartCtx.fillStyle = "rgba(33,199,122,0.8)";
+        chartCtx.fillRect(leftProfileW - bidW - 6, y, bidW, 2.4);
+      }
+      chartCtx.strokeStyle = "#2f353d";
+      chartCtx.beginPath();
+      chartCtx.moveTo(leftProfileW + 0.5, top);
+      chartCtx.lineTo(leftProfileW + 0.5, height - bottom);
+      chartCtx.stroke();
+
+      if (area.poc) {
+        const pocY = yOf(area.poc, range, top, plotH);
+        chartCtx.strokeStyle = "rgba(242,162,27,0.9)";
+        chartCtx.setLineDash([6, 4]);
+        chartCtx.beginPath();
+        chartCtx.moveTo(plotLeft, pocY);
+        chartCtx.lineTo(plotRight, pocY);
+        chartCtx.stroke();
+        chartCtx.setLineDash([]);
+      }
+
+      drawPriceBars(bars, plotLeft, plotW, top, plotH, range);
+      drawFootprints(bars, plotLeft, plotW, top, plotH, range);
+      drawValtosCallouts(bars, plotLeft, plotW, top, plotH, range);
+      drawBarStatsPanel(bars, plotRight, top);
+
+      chartCtx.fillStyle = "#8f9ba8";
+      chartCtx.font = "11px IBM Plex Sans";
+      chartCtx.textAlign = "right";
+      for (let i = 0; i <= 6; i += 1) {
+        const value = range.max - (range.span / 6) * i;
+        const y = top + (plotH / 6) * i + 4;
+        chartCtx.fillText(Math.round(value).toString(), width - 8, y);
+      }
+      chartCtx.textAlign = "left";
+
+      if (state.pointer && state.pointer.inside) {
+        const hovered = hoveredBar(state.pointer.x, bars, plotLeft, plotW);
+        if (hovered) {
+          chartCtx.strokeStyle = "rgba(57,169,255,0.42)";
+          chartCtx.setLineDash([4, 4]);
+          chartCtx.beginPath();
+          chartCtx.moveTo(hovered.x, top);
+          chartCtx.lineTo(hovered.x, height - bottom);
+          chartCtx.stroke();
+          chartCtx.setLineDash([]);
+        }
+      }
+    }
+
+    function drawStrip() {
+      const { dpr, width, height } = resize(strip);
+      stripCtx.setTransform(1, 0, 0, 1, 0, 0);
+      stripCtx.clearRect(0, 0, strip.width, strip.height);
+      stripCtx.scale(dpr, dpr);
+      stripCtx.fillStyle = "rgba(8,10,14,0.94)";
+      stripCtx.fillRect(0, 0, width, height);
+      const bars = visibleBars();
+      const rows = [
+        { key: "delta", label: "Delta", color: "#ba4a34" },
+        { key: "buy", label: "Buy", color: "#1d8c62" },
+        { key: "sell", label: "Sell", color: "#295f9e" },
+        { key: "imb", label: "Imb", color: "#a6792b" },
+      ];
+      const rowH = height / rows.length;
+      const left = 48;
+      const plotW = Math.max(20, width - left - 10);
+      for (let r = 0; r < rows.length; r += 1) {
+        const row = rows[r];
+        const y = r * rowH;
+        stripCtx.strokeStyle = "rgba(47,53,61,0.9)";
+        stripCtx.beginPath();
+        stripCtx.moveTo(0, y + 0.5);
+        stripCtx.lineTo(width, y + 0.5);
+        stripCtx.stroke();
+        stripCtx.fillStyle = "#8f9ba8";
+        stripCtx.font = "10px IBM Plex Sans";
+        stripCtx.fillText(row.label, 8, y + rowH * 0.65);
+        if (!bars.length) continue;
+        let max = 1;
+        const values = bars.map((bar) => {
+          const stats = barStats(bar);
+          if (row.key === "delta") return Math.abs(stats.delta);
+          if (row.key === "buy") return stats.buy;
+          if (row.key === "sell") return stats.sell;
+          return stats.imbalance.total;
+        });
+        max = Math.max(1, ...values);
+        for (let i = 0; i < bars.length; i += 1) {
+          const x = xOf(i, bars.length, left, plotW);
+          const value = values[i];
+          const barW = Math.max(10, plotW / Math.max(1, bars.length) * 0.86);
+          const h = Math.max(4, (value / max) * (rowH - 8));
+          stripCtx.fillStyle = row.color;
+          stripCtx.globalAlpha = 0.38 + (value / max) * 0.5;
+          stripCtx.fillRect(x - barW / 2, y + rowH - h - 3, barW, h);
+          stripCtx.globalAlpha = 1;
+          stripCtx.fillStyle = value > 0 ? "#d7dee6" : "#6f7a86";
+          stripCtx.font = "9px IBM Plex Sans";
+          stripCtx.textAlign = "center";
+          stripCtx.textBaseline = "alphabetic";
+          stripCtx.fillText(String(Math.round(value)), x, y + rowH - 4);
+        }
+        stripCtx.textAlign = "left";
+        stripCtx.textBaseline = "alphabetic";
+      }
+    }
+
+    function renderOverlay() {
+      const snap = state.snap;
+      if (!snap) {
+        overlay.innerHTML = "<div><strong>Waiting for state...</strong></div>";
+        return;
+      }
+      const bars = visibleBars();
+      const area = valueAreaFromRows(profileRows(bars));
+      const last = bars[bars.length - 1];
+      const stats = last ? barStats(last) : null;
+      const provenance = stats && (stats.sources.volume || stats.sources.imbalance || stats.sources.stacked)
+        ? "server-derived"
+        : "client-derived";
+      overlay.innerHTML = [
+        `<div><strong>${(snap.mode || "live").toUpperCase()}</strong> · <strong>${state.clusterType.replace("_", " ").toUpperCase()}</strong> · ${state.density.toUpperCase()} footprint</div>`,
+        `<div>Diagonal imbalance <strong>${state.showImbalance ? "on" : "off"}</strong> at <strong>${fmt(state.imbalanceRatio * 100)}%</strong> · Value area <strong>${state.showValueArea ? "on" : "off"}</strong></div>`,
+        `<div>Visible POC <strong>${fmt(area.poc)}</strong> · VAH <strong>${fmt(area.vah)}</strong> · VAL <strong>${fmt(area.val)}</strong></div>`,
+        `<div>Last bar buy <strong>${fmt(stats ? stats.buy : null)}</strong> · sell <strong>${fmt(stats ? stats.sell : null)}</strong> · delta <strong>${fmt(stats ? stats.delta : null)}</strong></div>`,
+        `<div>Bar stats <strong>${provenance}</strong></div>`,
+      ].join("");
+    }
+
+    function renderTooltip() {
+      if (!state.pointer || !state.pointer.inside) {
+        tooltip.style.display = "none";
+        return;
+      }
+      const bars = visibleBars();
+      if (!bars.length) {
+        tooltip.style.display = "none";
+        return;
+      }
+      const width = chart.clientWidth;
+      const leftProfileW = 80;
+      const rightScaleW = 64;
+      const plotLeft = leftProfileW + 12;
+      const plotRight = width - rightScaleW - 10;
+      const plotW = Math.max(40, plotRight - plotLeft);
+      const hovered = hoveredBar(state.pointer.x, bars, plotLeft, plotW);
+      if (!hovered) {
+        tooltip.style.display = "none";
+        return;
+      }
+      state.selectedIndex = hovered.idx;
+      const bar = hovered.bar;
+      const stats = barStats(bar);
+      const stack = stats.stacked;
+      const callout = classifyValtosSignal(bar);
+      const volumeLabel = stats.sources.volume ? "Buy vol (server)" : "Buy volume";
+      const sellLabel = stats.sources.volume ? "Sell vol (server)" : "Sell volume";
+      const imbalanceLabel = stats.sources.imbalance ? "Diag imb (server)" : "Diag imbalances";
+      const stackedLabel = stats.sources.stacked ? "Stacked (server)" : "Stacked";
+      tooltip.style.display = "block";
+      tooltip.innerHTML = [
+        `<div class="row"><span>Open</span><span>${fmt(bar.open)}</span></div>`,
+        `<div class="row"><span>High</span><span>${fmt(bar.high)}</span></div>`,
+        `<div class="row"><span>Low</span><span>${fmt(bar.low)}</span></div>`,
+        `<div class="row"><span>Close</span><span>${fmt(bar.close)}</span></div>`,
+        `<div class="row"><span>${volumeLabel}</span><span>${fmt(stats.buy)}</span></div>`,
+        `<div class="row"><span>${sellLabel}</span><span>${fmt(stats.sell)}</span></div>`,
+        `<div class="row"><span>Delta</span><span>${fmt(stats.delta)}</span></div>`,
+        `<div class="row"><span>Bar POC</span><span>${fmt(stats.area.poc || bar.poc)}</span></div>`,
+        `<div class="row"><span>Bar VA</span><span>${fmt(stats.area.vah)} / ${fmt(stats.area.val)}</span></div>`,
+        `<div class="row"><span>${imbalanceLabel}</span><span>${fmt(stats.imbalance.ask)} ask · ${fmt(stats.imbalance.bid)} bid</span></div>`,
+        ...(isValtosStyle() ? [`<div class="row"><span>${stackedLabel}</span><span>${fmt(stack.ask)} ask · ${fmt(stack.bid)} bid</span></div>`] : []),
+        ...(isValtosStyle() ? [`<div class="row"><span>Callout</span><span>${fmt(callout ? callout.label : "none")}</span></div>`] : []),
+        `<div class="hint">Ask compares to the bid one level lower. Bid compares to the ask one level higher.</div>`,
+      ].join("");
+      const x = Math.min(stage.clientWidth - 244, Math.max(16, state.pointer.x + 14));
+      const y = Math.min(stage.clientHeight - 212, Math.max(16, state.pointer.y + 14));
+      tooltip.style.left = `${x}px`;
+      tooltip.style.top = `${y}px`;
+    }
+
+    function renderDrawer() {
+      const bars = visibleBars();
+      const last = bars[bars.length - 1];
+      const visibleProfile = profileRows(bars);
+      const visibleArea = valueAreaFromRows(visibleProfile);
+      const snap = state.snap || {};
+      const analytics = snap.analytics || {};
+      const health = snap.health || {};
+      const signal = snap.signal || {};
+      const lastStats = last ? barStats(last) : null;
+      const lastCallout = last ? classifyValtosSignal(last) : null;
+      const buyLabel = lastStats && lastStats.sources.volume ? "Buy (server)" : "Buy";
+      const sellLabel = lastStats && lastStats.sources.volume ? "Sell (server)" : "Sell";
+      const askImbLabel = lastStats && lastStats.sources.imbalance ? "Ask imb (server)" : "Ask imbalances";
+      const bidImbLabel = lastStats && lastStats.sources.imbalance ? "Bid imb (server)" : "Bid imbalances";
+      const stackLabel = lastStats && lastStats.sources.stacked ? "Stacked (server)" : "Stacked";
+      drawerTitle.textContent = {
+        buy_sell: "Bid x Ask",
+        delta: "Delta",
+        total: "Total",
+        ladder: "Ladder",
+      }[state.clusterType] || "Bid x Ask";
+      stripSummary.textContent = `Threshold ${fmt(state.imbalanceRatio * 100)}% | ${state.clusterType.replace("_", " ")} | ${state.density} | ${state.renderStyle}${isValtosStyle() ? ` | ${state.valtosProfile}` : ""}`;
+      drawer.innerHTML = [
+        `<section class="module">
+          <h3>Selected Bar</h3>
+          <div class="stat-grid">
+            <div><span>${buyLabel}</span><strong>${fmt(lastStats ? lastStats.buy : null)}</strong></div>
+            <div><span>${sellLabel}</span><strong>${fmt(lastStats ? lastStats.sell : null)}</strong></div>
+            <div><span>Delta</span><strong>${fmt(lastStats ? lastStats.delta : null)}</strong></div>
+            <div><span>Volume</span><strong>${fmt(lastStats ? lastStats.volume : null)}</strong></div>
+            <div><span>POC</span><strong>${fmt(lastStats ? (lastStats.area.poc || last.poc) : null)}</strong></div>
+            <div><span>VAH / VAL</span><strong>${lastStats ? `${fmt(lastStats.area.vah)} / ${fmt(lastStats.area.val)}` : "-"}</strong></div>
+            <div><span>${askImbLabel}</span><strong>${fmt(lastStats ? lastStats.imbalance.ask : null)}</strong></div>
+            <div><span>${bidImbLabel}</span><strong>${fmt(lastStats ? lastStats.imbalance.bid : null)}</strong></div>
+            ${isValtosStyle() ? `<div><span>${stackLabel}</span><strong>${lastStats ? `${fmt(lastStats.stacked.ask)} / ${fmt(lastStats.stacked.bid)}` : "-"}</strong></div><div><span>Callout</span><strong>${fmt(lastCallout ? lastCallout.label : "none")}</strong></div><div><span>Tone</span><strong>${fmt(lastCallout ? lastCallout.tone : "-")}</strong></div>` : ""}
+          </div>
+        </section>`,
+        `<section class="module">
+          <h3>Visible Range</h3>
+          <div class="stat-grid">
+            <div><span>POC</span><strong>${fmt(visibleArea.poc)}</strong></div>
+            <div><span>Volume</span><strong>${fmt(visibleArea.total)}</strong></div>
+            <div><span>VAH</span><strong>${fmt(visibleArea.vah)}</strong></div>
+            <div><span>VAL</span><strong>${fmt(visibleArea.val)}</strong></div>
+            <div><span>Last price</span><strong>${fmt(analytics.last_price)}</strong></div>
+            <div><span>Cum delta</span><strong>${fmt(analytics.cumulative_delta)}</strong></div>
+            <div><span>Threshold</span><strong>${fmt(state.imbalanceRatio * 100)}%</strong></div>
+            <div><span>Footprint</span><strong>${state.density}</strong></div>
+            ${isValtosStyle() ? `<div><span>Valtos</span><strong>${state.valtosProfile}</strong></div><div><span>Min stack</span><strong>${valtosThresholds().stack}</strong></div>` : ""}
+          </div>
+        </section>`,
+        `<section class="module">
+          <h3>Feed & Replay</h3>
+          <div class="stat-grid">
+            <div><span>Mode</span><strong>${fmt(snap.mode || "live")}</strong></div>
+            <div><span>Connected</span><strong>${health.connected ? "yes" : "no"}</strong></div>
+            <div><span>Protocol</span><strong>${fmt(health.protocol_info)}</strong></div>
+            <div><span>Replay file</span><strong>${snap.replay_loaded ? "loaded" : "none"}</strong></div>
+            <div><span>Signal</span><strong>${fmt(signal.state)}</strong></div>
+            <div><span>Reason</span><strong>${fmt(signal.reason)}</strong></div>
+          </div>
+        </section>`,
+      ].join("");
+    }
+
+    function renderStatus() {
+      const snap = state.snap || {};
+      const health = snap.health || {};
+      controls.btnMode.textContent = `Mode: ${snap.mode || "live"}`;
+      controls.status.className = "status";
+      if (health.connected && !health.degraded) {
+        controls.status.textContent = "connected";
+      } else if (health.degraded) {
+        controls.status.classList.add("warn");
+        controls.status.textContent = "degraded";
+      } else {
+        controls.status.classList.add("bad");
+        controls.status.textContent = "disconnected";
+      }
+      const replay = (snap.mode || "live") === "replay";
+      controls.btnPlay.style.display = replay ? "inline-flex" : "none";
+      controls.btnPause.style.display = replay ? "inline-flex" : "none";
+      controls.btnStep.style.display = replay ? "inline-flex" : "none";
+    }
+
+    function render() {
+      state.bars = normalizeBars();
+      document.querySelector(".layout").classList.toggle("strip-hidden", !state.showStrip);
+      document.querySelector(".layout").classList.toggle("drawer-hidden", !state.showDrawer);
+      controls.valtosProfile.classList.toggle("control-hidden", !isValtosStyle());
+      renderStatus();
+      renderOverlay();
+      drawChart();
+      if (state.showStrip) drawStrip();
+      renderTooltip();
+      if (state.showDrawer) renderDrawer();
+    }
+
+    function postJson(path, body) {
+      return fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {}),
+      }).catch(() => null);
+    }
+
+    async function refreshState() {
+      try {
+        const res = await fetch("/state", { cache: "no-store" });
+        if (!res.ok) return;
+        state.snap = await res.json();
+        render();
+      } catch (_) {}
+    }
+
+    function connectEvents() {
+      if (!window.EventSource) return;
+      try {
+        const source = new EventSource("/events");
+        source.addEventListener("state", (ev) => {
+          try {
+            state.snap = JSON.parse(ev.data);
+            render();
+          } catch (_) {}
+        });
+        source.onerror = () => {};
+        state.source = source;
+      } catch (_) {}
+    }
+
+    controls.densityMode.addEventListener("change", () => {
+      state.density = controls.densityMode.value;
+      localStorage.setItem("of_density_mode", state.density);
+      render();
+    });
+    controls.clusterType.addEventListener("change", () => {
+      state.clusterType = controls.clusterType.value;
+      localStorage.setItem("of_cluster_type", state.clusterType);
+      render();
+    });
+    controls.imbalanceRatio.addEventListener("change", () => {
+      state.imbalanceRatio = Math.max(1, Number(controls.imbalanceRatio.value || "3"));
+      localStorage.setItem("of_imbalance_ratio", String(state.imbalanceRatio));
+      render();
+    });
+    controls.renderStyle.addEventListener("change", () => {
+      state.renderStyle = controls.renderStyle.value;
+      localStorage.setItem("of_render_style", state.renderStyle);
+      render();
+    });
+    controls.valtosProfile.addEventListener("change", () => {
+      state.valtosProfile = controls.valtosProfile.value;
+      localStorage.setItem("of_valtos_profile", state.valtosProfile);
+      render();
+    });
+    controls.btnImbalance.addEventListener("click", () => {
+      state.showImbalance = !state.showImbalance;
+      localStorage.setItem("of_show_imbalance", state.showImbalance ? "1" : "0");
+      controls.btnImbalance.classList.toggle("active", state.showImbalance);
+      render();
+    });
+    controls.btnValueArea.addEventListener("click", () => {
+      state.showValueArea = !state.showValueArea;
+      localStorage.setItem("of_show_value_area", state.showValueArea ? "1" : "0");
+      controls.btnValueArea.classList.toggle("active", state.showValueArea);
+      render();
+    });
+    controls.btnMode.addEventListener("click", async () => {
+      const next = state.snap && state.snap.mode === "replay" ? "live" : "replay";
+      await postJson("/mode", { mode: next });
+      refreshState();
+    });
+    controls.btnPlay.addEventListener("click", () => postJson("/replay/control", { action: "play" }));
+    controls.btnPause.addEventListener("click", () => postJson("/replay/control", { action: "pause" }));
+    controls.btnStep.addEventListener("click", () => postJson("/replay/control", { action: "step" }));
+    controls.btnZoomIn.addEventListener("click", () => {
+      state.scaleX = Math.min(3.4, state.scaleX * 1.14);
+      render();
+    });
+    controls.btnZoomOut.addEventListener("click", () => {
+      state.scaleX = Math.max(0.65, state.scaleX / 1.14);
+      render();
+    });
+    controls.btnResetView.addEventListener("click", () => {
+      state.scaleX = 1;
+      state.offset = 0;
+      render();
+    });
+    controls.btnToggleStrip.addEventListener("click", () => {
+      state.showStrip = !state.showStrip;
+      localStorage.setItem("of_show_strip", state.showStrip ? "1" : "0");
+      controls.btnToggleStrip.classList.toggle("active", state.showStrip);
+      render();
+    });
+    controls.btnToggleDrawer.addEventListener("click", () => {
+      state.showDrawer = !state.showDrawer;
+      localStorage.setItem("of_show_drawer", state.showDrawer ? "1" : "0");
+      controls.btnToggleDrawer.classList.toggle("active", state.showDrawer);
+      render();
+    });
+    controls.btnResetSession.addEventListener("click", () => postJson("/reset", {}));
+    controls.btnFullscreen.addEventListener("click", async () => {
+      try {
+        if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+        else await document.exitFullscreen();
+      } catch (_) {}
+    });
+
+    chart.addEventListener("mousemove", (ev) => {
+      const rect = chart.getBoundingClientRect();
+      state.pointer = { x: ev.clientX - rect.left, y: ev.clientY - rect.top, inside: true };
+      if (!state.dragging) render();
+    });
+    chart.addEventListener("mouseleave", () => {
+      state.pointer = null;
+      state.selectedIndex = null;
+      tooltip.style.display = "none";
+      render();
+    });
+    chart.addEventListener("wheel", (ev) => {
+      ev.preventDefault();
+      state.scaleX = Math.max(0.65, Math.min(3.4, state.scaleX * (ev.deltaY < 0 ? 1.12 : 0.9)));
+      render();
+    }, { passive: false });
+    chart.addEventListener("mousedown", (ev) => {
+      state.dragging = true;
+      state.dragStartX = ev.clientX;
+      state.dragStartOffset = state.offset;
+    });
+    window.addEventListener("mouseup", () => {
+      state.dragging = false;
+    });
+    window.addEventListener("mousemove", (ev) => {
+      if (!state.dragging) return;
+      const dx = ev.clientX - state.dragStartX;
+      state.offset = Math.max(0, state.dragStartOffset + Math.round(-dx / 26));
+      render();
+    });
+    window.addEventListener("keydown", (ev) => {
+      const target = ev.target;
+      const tag = target && target.tagName ? String(target.tagName).toLowerCase() : "";
+      const typing = tag === "input" || tag === "textarea" || tag === "select" || (target && target.isContentEditable);
+      if (typing) return;
+      if (ev.key === "s" || ev.key === "S") {
+        ev.preventDefault();
+        controls.btnToggleStrip.click();
+      } else if (ev.key === "c" || ev.key === "C") {
+        ev.preventDefault();
+        controls.btnToggleDrawer.click();
+      } else if (ev.key === "n" || ev.key === "N") {
+        ev.preventDefault();
+        const order = ["bloomberg", "nt", "valtos"];
+        const idx = order.indexOf(state.renderStyle);
+        state.renderStyle = order[(idx + 1) % order.length];
+        controls.renderStyle.value = state.renderStyle;
+        localStorage.setItem("of_render_style", state.renderStyle);
+        render();
+      }
+    });
+    window.addEventListener("resize", () => render());
+
+    refreshState();
+    connectEvents();
+    setInterval(refreshState, 1000);
+  </script>
+</body>
+</html>
