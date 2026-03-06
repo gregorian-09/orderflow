@@ -3,6 +3,8 @@ name = "of_signals"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Signal modules and gating policy for the Orderflow engine"
+readme = "../../README.md"
 
 [dependencies]
-of_core = { path = "../of_core" }
+of_core = { path = "../of_core", version = "0.1.0" }
