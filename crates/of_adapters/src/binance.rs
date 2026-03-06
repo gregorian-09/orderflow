@@ -506,7 +506,7 @@ fn websocket_handshake_rw<W: Write, R: Read>(
         format!("{host}:{port}")
     };
     let request = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nUser-Agent: order-flow/0.1\r\nOrigin: https://{}\r\n\r\n",
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nUser-Agent: orderflow/0.1\r\nOrigin: https://{}\r\n\r\n",
         path, host_header, host
     );
     writer

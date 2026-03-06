@@ -8,7 +8,7 @@
   <version>0.1.0</version>
   <name>orderflow-java-binding</name>
   <description>Java JNA binding for the Orderflow C ABI</description>
-  <url>https://github.com/gregorian-rayne/order-flow</url>
+  <url>https://github.com/gregorian-09/orderflow</url>
 
   <licenses>
     <license>
@@ -25,9 +25,9 @@
   </developers>
 
   <scm>
-    <connection>scm:git:https://github.com/gregorian-rayne/order-flow.git</connection>
-    <developerConnection>scm:git:ssh://git@github.com/gregorian-rayne/order-flow.git</developerConnection>
-    <url>https://github.com/gregorian-rayne/order-flow</url>
+    <connection>scm:git:https://github.com/gregorian-09/orderflow.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/gregorian-09/orderflow.git</developerConnection>
+    <url>https://github.com/gregorian-09/orderflow</url>
     <tag>HEAD</tag>
   </scm>
 
