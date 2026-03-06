@@ -1,0 +1,12 @@
+instance_id = "provider-conformance-cqg-mock"
+provider = "cqg"
+endpoint = "mock://cqg"
+credentials_key_id_env = "CQG_TEST_KEY"
+credentials_secret_env = "CQG_TEST_SECRET"
+signal_threshold = 100
+enable_persistence = false
+audit_log_path = "audit/orderflow_audit.log"
+audit_max_bytes = 1048576
+audit_max_files = 3
+data_retention_max_bytes = 1048576
+data_retention_max_age_secs = 86400
