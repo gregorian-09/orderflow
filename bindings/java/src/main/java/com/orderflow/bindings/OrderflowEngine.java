@@ -324,6 +324,10 @@ public final class OrderflowEngine implements AutoCloseable {
     }
 
     private static String defaultLibraryPath() {
+        String env = System.getenv("ORDERFLOW_LIBRARY_PATH");
+        if (env != null && !env.isBlank()) {
+            return env;
+        }
         String mapped = System.mapLibraryName("of_ffi_c");
         return "target/debug/" + mapped;
     }

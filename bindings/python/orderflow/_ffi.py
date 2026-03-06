@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 from ctypes import c_char_p, c_int32, c_int64, c_uint16, c_uint32, c_uint64, c_uint8, c_void_p
 from pathlib import Path
 from typing import Optional
@@ -91,6 +92,10 @@ OfEventCallback = ctypes.CFUNCTYPE(None, ctypes.POINTER(OfEvent), c_void_p)
 
 def default_library_path() -> Path:
     """Return default shared library path relative to workspace root."""
+    env_path = os.environ.get("ORDERFLOW_LIBRARY_PATH", "").strip()
+    if env_path:
+        return Path(env_path)
+
     suffix = {
         "linux": "so",
         "darwin": "dylib",

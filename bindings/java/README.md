@@ -44,6 +44,12 @@ If needed, pass explicit library path:
 new OrderflowEngine("/absolute/path/to/libof_ffi_c.so", EngineConfig.defaults())
 ```
 
+Or set:
+
+```bash
+export ORDERFLOW_LIBRARY_PATH=/absolute/path/to/libof_ffi_c.so
+```
+
 ## API surface
 
 - `OrderflowEngine` (`AutoCloseable`): lifecycle, subscribe, poll, snapshots, metrics.
@@ -62,4 +68,5 @@ new OrderflowEngine("/absolute/path/to/libof_ffi_c.so", EngineConfig.defaults())
 - Polling + snapshots are supported; callback listeners are delivered during `pollOnce(...)`.
 - Callback listeners are also delivered when `ingestTrade(...)` / `ingestBook(...)` is called.
 - The default library path is `target/debug/<mapped lib name>`.
+- `ORDERFLOW_LIBRARY_PATH` is used when no explicit constructor path is provided.
 - `StreamKind.HEALTH` callbacks emit only on health transitions and include `health_seq`, connection/degraded state, reconnect state, quality flags, and protocol marker.
