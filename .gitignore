@@ -1,0 +1,17 @@
+/target
+/.m2/
+/.venv/
+/.idea/
+/.vscode/
+/internal/
+/data_capture/
+/audit/
+/runtime_cfg_*.toml
+/bindings/java/target/
+/bindings/python/**/*.egg-info/
+/dashboard/__pycache__/
+/tools/__pycache__/
+**/__pycache__/
+docs/ops/examples/.env
+**/*.log
+**/*.tmp
