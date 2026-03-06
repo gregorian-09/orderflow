@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - "rithmic"
+          - "binance"
+          - "cqg"
+          - "cqg cqg_proto"
+          - "rithmic cqg"
+          - "binance cqg"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Test adapters matrix
+        run: cargo test -q -p of_adapters --features "${{ matrix.features }}"
+      - name: Test workspace
+        run: cargo test -q
