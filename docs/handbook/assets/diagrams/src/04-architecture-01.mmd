@@ -1,0 +1,32 @@
+flowchart LR
+  subgraph Bindings
+    PY[Python ctypes binding]
+    JV[Java JNA binding]
+    CAPI[C ABI header/orderflow.h]
+  end
+
+  subgraph CoreRuntime
+    FFI[of_ffi_c]
+    RT[of_runtime]
+    CORE[of_core]
+    SIG[of_signals]
+    PST[of_persist]
+    ADP[of_adapters]
+  end
+
+  subgraph External
+    VENUE[Market venues/providers]
+    DASH[dashboard/server.py]
+  end
+
+  PY --> CAPI
+  JV --> CAPI
+  CAPI --> FFI
+  FFI --> RT
+  RT --> CORE
+  RT --> SIG
+  RT --> PST
+  RT --> ADP
+  ADP --> VENUE
+  PY --> DASH
+  DASH --> CAPI

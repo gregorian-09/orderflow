@@ -1,0 +1,49 @@
+classDiagram
+  class SymbolId {
+    +String venue
+    +String symbol
+  }
+
+  class TradePrint {
+    +SymbolId symbol
+    +i64 price
+    +i64 size
+    +Side aggressor_side
+    +u64 sequence
+    +u64 ts_exchange_ns
+    +u64 ts_recv_ns
+  }
+
+  class BookUpdate {
+    +SymbolId symbol
+    +Side side
+    +u16 level
+    +i64 price
+    +i64 size
+    +BookAction action
+    +u64 sequence
+    +u64 ts_exchange_ns
+    +u64 ts_recv_ns
+  }
+
+  class AnalyticsSnapshot {
+    +i64 delta
+    +i64 cumulative_delta
+    +i64 buy_volume
+    +i64 sell_volume
+    +i64 last_price
+    +i64 point_of_control
+    +i64 value_area_low
+    +i64 value_area_high
+  }
+
+  class SignalSnapshot {
+    +&'static str module_id
+    +SignalState state
+    +u16 confidence_bps
+    +u32 quality_flags
+    +String reason
+  }
+
+  TradePrint --> SymbolId
+  BookUpdate --> SymbolId

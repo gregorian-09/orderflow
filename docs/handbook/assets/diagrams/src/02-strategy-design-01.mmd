@@ -1,0 +1,7 @@
+flowchart TD
+  A[Signal candidate] --> B{Quality flags acceptable?}
+  B -- No --> C[Block signal and log reason]
+  B -- Yes --> D[Risk checks]
+  D --> E{Within limits?}
+  E -- No --> F[Reject trade]
+  E -- Yes --> G[Emit actionable signal]

@@ -1,0 +1,11 @@
+sequenceDiagram
+  participant Client
+  participant FFI as C ABI
+  participant Engine as of_runtime::Engine
+
+  Client->>FFI: of_ingest_trade/of_ingest_book
+  FFI->>Engine: ingest_trade/ingest_book
+  Engine->>Engine: sequence checks + stale/reconnect checks
+  Engine->>Engine: analytics + signal + health update
+  Engine-->>FFI: updated state
+  FFI-->>Client: callback dispatch (stream-dependent)

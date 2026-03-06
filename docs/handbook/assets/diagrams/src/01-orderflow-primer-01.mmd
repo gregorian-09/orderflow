@@ -1,0 +1,9 @@
+flowchart LR
+  A[Raw tick trades] --> B[Classify aggressor side]
+  B --> C[Bucket into bar window]
+  C --> D[Aggregate by price level]
+  D --> E[Compute bid/ask, delta, totals]
+  E --> F[POC and value area]
+  E --> G[Imbalance detection]
+  F --> H[Footprint/volumetric render]
+  G --> H

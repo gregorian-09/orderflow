@@ -1,0 +1,13 @@
+sequenceDiagram
+  participant Client
+  participant Engine as of_runtime::Engine
+  participant Adapter as MarketDataAdapter
+  participant Signals as SignalModule
+  participant Persist as RollingStore
+
+  Client->>Engine: poll_once(quality_flags)
+  Engine->>Adapter: poll()
+  Adapter-->>Engine: RawEvent::Trade / RawEvent::Book
+  Engine->>Persist: append_* (optional)
+  Engine->>Signals: on_analytics() / quality_gate()
+  Engine-->>Client: snapshots, callbacks, metrics/health updates

@@ -30,3 +30,11 @@ It is written for three audiences:
 - This software provides data processing, analytics, and signal infrastructure.
 - It does not provide financial advice.
 - Strategy examples are educational and must be validated with risk controls before live usage.
+
+## Static Diagram Exports
+
+For platforms that do not render Mermaid, static exports are available in:
+
+- `docs/handbook/assets/diagrams/svg/`
+- `docs/handbook/assets/diagrams/png/`
+- Mermaid sources used for export: `docs/handbook/assets/diagrams/src/`

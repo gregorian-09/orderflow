@@ -1,0 +1,18 @@
+sequenceDiagram
+  participant Trader
+  participant Dashboard
+  participant Engine
+  participant AdapterOrFeed as Adapter/External Feed
+  participant Broker
+
+  Trader->>Dashboard: Select symbol/session and enable strategy view
+  Dashboard->>Engine: Subscribe streams (analytics, signals, health)
+  Engine->>AdapterOrFeed: Poll or ingest events continuously
+  AdapterOrFeed-->>Engine: Trades + book updates
+  Engine-->>Dashboard: Analytics/signal/health callbacks
+  Trader->>Dashboard: Confirm setup and risk parameters
+  Dashboard->>Broker: Send order
+  Broker-->>Trader: Fill/partial fill updates
+  Engine-->>Dashboard: Ongoing flow and health state
+  Trader->>Dashboard: Manage, scale, or exit
+  Dashboard->>Trader: Session metrics and review data
