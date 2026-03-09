@@ -1,0 +1,93 @@
+name: Setup Rust Toolchain
+description: Install rustup/toolchain with retries to reduce transient network failures
+inputs:
+  toolchain:
+    description: Rust toolchain channel
+    required: false
+    default: stable
+runs:
+  using: composite
+  steps:
+    - name: Install rustup if needed
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        retry() {
+          local attempts="$1"
+          shift
+          local i=1
+          until "$@"; do
+            local exit_code="$?"
+            if [ "$i" -ge "$attempts" ]; then
+              echo "Command failed after $attempts attempts: $*" >&2
+              return "$exit_code"
+            fi
+            local delay=$((i * 5))
+            echo "Attempt $i/$attempts failed. Retrying in ${delay}s: $*" >&2
+            sleep "$delay"
+            i=$((i + 1))
+          done
+        }
+
+        if [ "${ACT:-}" = "true" ]; then
+          if ! command -v rustc >/dev/null 2>&1 || ! command -v cargo >/dev/null 2>&1; then
+            if command -v sudo >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y rustc cargo
+            else
+              apt-get update
+              apt-get install -y rustc cargo
+            fi
+          fi
+          rustc --version
+          cargo --version
+          exit 0
+        fi
+
+        if command -v rustup >/dev/null 2>&1; then
+          echo "rustup already installed"
+        else
+          installer="$(mktemp)"
+          retry 6 curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --retry-all-errors --location --silent --show-error --fail https://sh.rustup.rs -o "$installer"
+          chmod +x "$installer"
+          retry 3 sh "$installer" -y --default-toolchain none
+        fi
+
+        if [ -f "$HOME/.cargo/env" ]; then
+          # shellcheck disable=SC1090
+          . "$HOME/.cargo/env"
+        fi
+
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+    - name: Install toolchain
+      if: env.ACT != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        retry() {
+          local attempts="$1"
+          shift
+          local i=1
+          until "$@"; do
+            local exit_code="$?"
+            if [ "$i" -ge "$attempts" ]; then
+              echo "Command failed after $attempts attempts: $*" >&2
+              return "$exit_code"
+            fi
+            local delay=$((i * 5))
+            echo "Attempt $i/$attempts failed. Retrying in ${delay}s: $*" >&2
+            sleep "$delay"
+            i=$((i + 1))
+          done
+        }
+
+        export PATH="$HOME/.cargo/bin:$PATH"
+        toolchain="${{ inputs.toolchain }}"
+
+        retry 4 rustup toolchain install "$toolchain" --profile minimal --no-self-update
+        rustup default "$toolchain"
+        rustc --version
+        cargo --version

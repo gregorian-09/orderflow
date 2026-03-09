@@ -2,6 +2,9 @@ name: Publish Java
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - "main"
 
 jobs:
   publish:
@@ -12,25 +15,47 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Java + Maven Central settings
+        if: env.ACT != 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
           cache: maven
-          server-id: ossrh
-          server-username: OSSRH_USERNAME
-          server-password: OSSRH_PASSWORD
+          server-id: maven-central
+          server-username: MAVEN_CENTRAL_TOKEN_USERNAME
+          server-password: MAVEN_CENTRAL_TOKEN_PASSWORD
+
+      - name: Bootstrap Java toolchain (act)
+        if: env.ACT == 'true'
+        run: |
+          if ! command -v java >/dev/null 2>&1 || ! command -v mvn >/dev/null 2>&1; then
+            if command -v sudo >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y openjdk-17-jdk maven
+            else
+              apt-get update
+              apt-get install -y openjdk-17-jdk maven
+            fi
+          fi
+          java -version
+          mvn -version
+
+      - name: Verify Java package
+        run: |
+          mvn -B -f bindings/java/pom.xml -DskipTests package
 
       - name: Import GPG key
+        if: github.event_name == 'workflow_dispatch'
         uses: crazy-max/ghaction-import-gpg@v6
         with:
           gpg_private_key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
 
-      - name: Publish to Maven Central (OSSRH)
+      - name: Publish to Maven Central
+        if: github.event_name == 'workflow_dispatch'
         env:
-          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
-          OSSRH_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
+          MAVEN_CENTRAL_TOKEN_USERNAME: ${{ secrets.MAVEN_CENTRAL_TOKEN_USERNAME }}
+          MAVEN_CENTRAL_TOKEN_PASSWORD: ${{ secrets.MAVEN_CENTRAL_TOKEN_PASSWORD }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
         run: |
           mvn -B -f bindings/java/pom.xml -Prelease -DskipTests deploy

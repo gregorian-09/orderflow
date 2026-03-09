@@ -8,6 +8,7 @@ on:
 
 jobs:
   build-native:
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -17,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-rust
 
       - name: Build release library
         run: cargo build -p of_ffi_c --release --features "binance rithmic cqg"
