@@ -38,25 +38,21 @@ jobs:
         run: |
           set -euo pipefail
           for crate in of_core of_signals of_persist of_adapters of_runtime of_ffi_c; do
-            pkgid="$(cargo pkgid -p "$crate" 2>/dev/null || true)"
-            version="${pkgid##*#}"
-            if [ "$version" = "$pkgid" ]; then
-              version="${pkgid##*@}"
-            fi
-            if [ -z "$pkgid" ] || [ -z "$version" ] || [ "$version" = "$pkgid" ]; then
-              echo "Could not resolve version for crate ${crate} via cargo pkgid."
-              exit 1
-            fi
-            status_code="$(curl -sS -o /tmp/${crate}-${version}.json -w "%{http_code}" "https://crates.io/api/v1/crates/${crate}/${version}")"
-            if [ "$status_code" = "200" ]; then
-              echo "Skipping ${crate} v${version}; already published."
+            set +e
+            publish_output="$(cargo publish -p "$crate" 2>&1)"
+            publish_status=$?
+            set -e
+            echo "$publish_output"
+            if [ $publish_status -eq 0 ]; then
+              sleep 30
               continue
             fi
-            if [ "$status_code" != "404" ]; then
-              echo "Unexpected crates.io status while checking ${crate} v${version}: HTTP ${status_code}"
-              cat /tmp/${crate}-${version}.json || true
-              exit 1
+            if echo "$publish_output" | grep -Eqi "already (uploaded|exists|published)"; then
+              echo "Skipping ${crate}; this version is already published."
+              continue
             fi
-            cargo publish -p "$crate"
-            sleep 30
+            if echo "$publish_output" | grep -Eqi "Too Many Requests|published too many new crates"; then
+              echo "::error::Crates publish rate limit hit. Re-run this workflow after the retry time in the cargo error."
+            fi
+            exit $publish_status
           done
