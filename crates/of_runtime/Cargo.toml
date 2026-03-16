@@ -14,7 +14,7 @@ documentation = "https://docs.rs/of_runtime"
 all-features = true
 
 [dependencies]
-of_adapters = { path = "../of_adapters", version = "0.1.0" }
-of_core = { path = "../of_core", version = "0.1.0" }
-of_persist = { path = "../of_persist", version = "0.1.0" }
-of_signals = { path = "../of_signals", version = "0.1.0" }
+of_adapters = { path = "../of_adapters", version = "0.1.1" }
+of_core = { path = "../of_core", version = "0.1.1" }
+of_persist = { path = "../of_persist", version = "0.1.1" }
+of_signals = { path = "../of_signals", version = "0.1.1" }

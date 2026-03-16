@@ -14,4 +14,4 @@ documentation = "https://docs.rs/of_persist"
 all-features = true
 
 [dependencies]
-of_core = { path = "../of_core", version = "0.1.0" }
+of_core = { path = "../of_core", version = "0.1.1" }

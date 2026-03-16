@@ -26,17 +26,24 @@ jobs:
       - name: Package artifact
         shell: bash
         run: |
-          mkdir -p dist/include dist/lib
+          set -euo pipefail
+          mkdir -p dist/include dist/lib dist/pkgconfig packages
           cp crates/of_ffi_c/include/orderflow.h dist/include/
+
           case "$RUNNER_OS" in
             Linux)
               cp target/release/libof_ffi_c.so dist/lib/
+              [ -f target/release/libof_ffi_c.a ] && cp target/release/libof_ffi_c.a dist/lib/
               ;;
             macOS)
               cp target/release/libof_ffi_c.dylib dist/lib/
+              [ -f target/release/libof_ffi_c.a ] && cp target/release/libof_ffi_c.a dist/lib/
               ;;
             Windows)
               cp target/release/of_ffi_c.dll dist/lib/
+              [ -f target/release/of_ffi_c.lib ] && cp target/release/of_ffi_c.lib dist/lib/
+              [ -f target/release/of_ffi_c.dll.lib ] && cp target/release/of_ffi_c.dll.lib dist/lib/
+              [ -f target/release/libof_ffi_c.a ] && cp target/release/libof_ffi_c.a dist/lib/
               ;;
             *)
               echo "Unsupported OS: $RUNNER_OS" >&2
@@ -44,11 +51,59 @@ jobs:
               ;;
           esac
 
+          if [ -z "$(ls -A dist/lib)" ]; then
+            echo "No native libraries were collected for $RUNNER_OS" >&2
+            exit 1
+          fi
+
+          if [[ "${GITHUB_REF:-}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="snapshot-${GITHUB_SHA::7}"
+          fi
+          OS_LOWER="$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')"
+          ARCH="$(uname -m)"
+          PKG_BASENAME="orderflow-c-sdk-${OS_LOWER}-${ARCH}-${VERSION}"
+
+          cat > dist/pkgconfig/orderflow.pc <<EOF
+          prefix=\${pcfiledir}/..
+          exec_prefix=\${prefix}
+          libdir=\${prefix}/lib
+          includedir=\${prefix}/include
+
+          Name: orderflow
+          Description: Orderflow C ABI SDK
+          Version: ${VERSION}
+          Libs: -L\${libdir} -lof_ffi_c
+          Cflags: -I\${includedir}
+          EOF
+
+          cat > dist/README.md <<EOF
+          # Orderflow C SDK
+
+          Version: ${VERSION}
+          Platform: ${RUNNER_OS} (${ARCH})
+
+          Contents:
+          - include/orderflow.h
+          - lib/ (shared/static artifacts when available)
+          - pkgconfig/orderflow.pc
+
+          Quick compile (Linux/macOS):
+            cc -O2 app.c -o app \$(pkg-config --cflags --libs orderflow)
+
+          On Windows, link using the generated import/static library from lib/.
+          EOF
+
+          tar -czf "packages/${PKG_BASENAME}.tar.gz" -C dist .
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: of_ffi_c-${{ runner.os }}
-          path: dist/**
+          path: |
+            dist/**
+            packages/*.tar.gz
 
   attach-release-assets:
     if: startsWith(github.ref, 'refs/tags/')
@@ -67,5 +122,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            release-assets/**/packages/*.tar.gz
             release-assets/**/include/orderflow.h
             release-assets/**/lib/*

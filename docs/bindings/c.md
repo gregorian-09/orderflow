@@ -17,9 +17,32 @@ Output:
 
 ## Distribution
 
-- Native release artifacts are produced by:
+- C SDK release artifacts are produced by:
   - `.github/workflows/release-native-artifacts.yml`
-- Consumers should bundle the header and matching native binary.
+- Each release publishes platform bundles:
+  - `orderflow-c-sdk-<os>-<arch>-<version>.tar.gz`
+- Bundle layout:
+  - `include/orderflow.h`
+  - `lib/` (shared library + static/import library when available)
+  - `pkgconfig/orderflow.pc`
+  - `README.md`
+
+## Using the C SDK
+
+Extract a release bundle and point `PKG_CONFIG_PATH` to the included pkg-config
+metadata.
+
+```bash
+tar -xzf orderflow-c-sdk-linux-x86_64-<version>.tar.gz -C /opt/orderflow-c-sdk
+export PKG_CONFIG_PATH=/opt/orderflow-c-sdk/pkgconfig
+cc -O2 examples/c/basic.c -o basic $(pkg-config --cflags --libs orderflow)
+```
+
+Runtime loader hints for dynamic linking:
+
+- Linux: set `LD_LIBRARY_PATH` to include bundle `lib/`.
+- macOS: set `DYLD_LIBRARY_PATH` to include bundle `lib/`.
+- Windows: place `of_ffi_c.dll` next to the executable or add bundle `lib\` to `PATH`.
 
 ## Version management
 
@@ -36,3 +59,4 @@ python3 tools/release/sync_binding_versions.py --check
 
 - `docs/handbook/05-api-reference.md`
 - `docs/api/README.md`
+- `examples/c/basic.c`

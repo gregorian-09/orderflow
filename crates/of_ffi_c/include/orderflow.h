@@ -44,6 +44,20 @@ typedef struct {
   uint16_t depth_levels;
 } of_symbol_t;
 
+/** Stream kind identifiers used by subscribe/callback APIs. */
+typedef enum {
+  /** Order-book updates stream. */
+  OF_STREAM_BOOK = 1,
+  /** Trade prints stream. */
+  OF_STREAM_TRADES = 2,
+  /** Analytics snapshot stream. */
+  OF_STREAM_ANALYTICS = 3,
+  /** Signal snapshot stream. */
+  OF_STREAM_SIGNALS = 4,
+  /** Health transition stream. */
+  OF_STREAM_HEALTH = 5,
+} of_stream_kind_t;
+
 /** Side constants used by trade/book payloads. */
 typedef enum {
   /** Bid/buy side. */
@@ -59,6 +73,24 @@ typedef enum {
   /** Delete a book level. */
   OF_BOOK_ACTION_DELETE = 1,
 } of_book_action_t;
+
+/** Data-quality bit flags used by ingest, poll, and callbacks. */
+typedef enum {
+  /** No quality issues. */
+  OF_DQ_NONE = 0,
+  /** Feed is stale beyond configured threshold. */
+  OF_DQ_STALE_FEED = 1u << 0,
+  /** Sequence gap detected. */
+  OF_DQ_SEQUENCE_GAP = 1u << 1,
+  /** Clock skew detected. */
+  OF_DQ_CLOCK_SKEW = 1u << 2,
+  /** Depth updates were truncated. */
+  OF_DQ_DEPTH_TRUNCATED = 1u << 3,
+  /** Out-of-order sequence observed. */
+  OF_DQ_OUT_OF_ORDER = 1u << 4,
+  /** Adapter or external feed is degraded. */
+  OF_DQ_ADAPTER_DEGRADED = 1u << 5,
+} of_data_quality_flags_t;
 
 /** External trade payload for `of_ingest_trade`. */
 typedef struct {

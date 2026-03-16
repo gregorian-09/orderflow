@@ -41,7 +41,7 @@ jobs:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: |
-          python -m twine upload --repository-url https://test.pypi.org/legacy/ dist/*
+          python -m twine upload --skip-existing --repository-url https://test.pypi.org/legacy/ dist/*
 
       - name: Publish to PyPI
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.repository == 'pypi')
@@ -49,4 +49,4 @@ jobs:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: |
-          python -m twine upload dist/*
+          python -m twine upload --skip-existing dist/*

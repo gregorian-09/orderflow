@@ -4,18 +4,18 @@ version = 3
 
 [[package]]
 name = "of_adapters"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "of_core",
 ]
 
 [[package]]
 name = "of_core"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "of_ffi_c"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "of_adapters",
  "of_core",
@@ -25,14 +25,14 @@ dependencies = [
 
 [[package]]
 name = "of_persist"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "of_core",
 ]
 
 [[package]]
 name = "of_runtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "of_adapters",
  "of_core",
@@ -42,14 +42,14 @@ dependencies = [
 
 [[package]]
 name = "of_signals"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "of_core",
 ]
 
 [[package]]
 name = "perf_harness"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "of_adapters",
  "of_core",
@@ -59,7 +59,7 @@ dependencies = [
 
 [[package]]
 name = "replay_cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "of_adapters",
  "of_core",

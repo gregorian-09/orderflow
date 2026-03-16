@@ -17,6 +17,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `orderflow._ffi`, and package root `orderflow`.
 - JavaDoc overview page (`bindings/java/src/main/javadoc/overview.html`) to
   provide a richer published API landing page for Maven consumers.
+- C SDK distribution packaging in `.github/workflows/release-native-artifacts.yml`,
+  now publishing versioned platform archives with header, libraries, pkg-config
+  metadata, and SDK README.
+- C API header constants for stream kinds and data-quality flags
+  (`of_stream_kind_t`, `of_data_quality_flags_t`) for first-class C developer
+  ergonomics.
+- C usage example: `examples/c/basic.c`.
 
 ### Changed
 - Rust crate publishing metadata now includes `repository`, `homepage`, and
@@ -34,7 +41,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
   packaging-facing docs (badges, API map, operations notes, and direct doc links)
   to improve PyPI and Maven discoverability.
 - Binding versions were prepared for this release cycle: Python `0.1.3`,
-  Java `0.1.2`, Rust/C unchanged at `0.1.0`.
+  Java `0.1.2`, Rust/C updated to `0.1.1`.
 
 ## [0.1.1] - 2026-03-16
 ### Fixed
