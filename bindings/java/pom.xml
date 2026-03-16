@@ -9,6 +9,12 @@
   <name>orderflow-java-binding</name>
   <description>Java JNA binding for the Orderflow C ABI</description>
   <url>https://github.com/gregorian-09/orderflow</url>
+  <inceptionYear>2026</inceptionYear>
+
+  <organization>
+    <name>Orderflow</name>
+    <url>https://github.com/gregorian-09/orderflow</url>
+  </organization>
 
   <licenses>
     <license>
@@ -20,6 +26,7 @@
 
   <developers>
     <developer>
+      <id>gregorian-09</id>
       <name>Gregorian Rayne</name>
       <email>gregorianrayne09@gmail.com</email>
     </developer>
@@ -31,6 +38,11 @@
     <url>https://github.com/gregorian-09/orderflow</url>
     <tag>HEAD</tag>
   </scm>
+
+  <issueManagement>
+    <system>GitHub Issues</system>
+    <url>https://github.com/gregorian-09/orderflow/issues</url>
+  </issueManagement>
 
   <properties>
     <maven.compiler.source>17</maven.compiler.source>

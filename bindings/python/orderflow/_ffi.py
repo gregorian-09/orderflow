@@ -1,4 +1,13 @@
-"""ctypes bridge to the Orderflow C ABI."""
+"""Low-level ``ctypes`` bridge to the Orderflow C ABI.
+
+This module defines:
+- Python ``ctypes.Structure`` mirrors of exported C structs.
+- shared-library lookup behavior and loader.
+- function signatures for all supported ABI calls.
+
+Most users should import from :mod:`orderflow.api` instead of using this module
+directly.
+"""
 
 from __future__ import annotations
 

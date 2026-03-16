@@ -1,4 +1,23 @@
-"""High-level Python API for Orderflow C ABI."""
+"""High-level Python API for the Orderflow C ABI.
+
+This module is the main user-facing interface for Python applications. It
+provides a thin abstraction over the native runtime while preserving predictable
+behavior suitable for production and replay workflows.
+
+Core objects:
+- :class:`Engine`: lifecycle, subscriptions, polling, ingest, snapshots.
+- :class:`EngineConfig`: runtime configuration passed at engine creation.
+- :class:`Symbol`: normalized venue/symbol identifier.
+- :class:`ExternalFeedPolicy`: stale and sequence supervision rules.
+
+Typical flow:
+1. Create :class:`Engine` with :class:`EngineConfig`.
+2. Start the engine.
+3. Subscribe one or more symbols.
+4. Poll and/or ingest external events.
+5. Read analytics/signal/metrics snapshots.
+6. Stop/close the engine.
+"""
 
 from __future__ import annotations
 
@@ -118,10 +137,25 @@ class ExternalFeedPolicy:
 
 
 class Engine:
-    """High-level engine wrapper around the Orderflow C ABI."""
+    """High-level engine wrapper around the Orderflow C ABI.
+
+    The engine controls the runtime session and acts as the single access point
+    for subscriptions, event ingestion, and snapshots.
+
+    Notes:
+    - Use as a context manager for deterministic start/stop behavior.
+    - Callbacks are dispatched during ``poll_once`` and external ``ingest_*``.
+    - Snapshot methods return decoded ``dict`` objects from runtime JSON.
+    """
 
     def __init__(self, config: EngineConfig, library_path: Optional[str] = None) -> None:
-        """Creates an engine instance from config and optional shared library path."""
+        """Creates an engine instance.
+
+        Args:
+            config: Runtime configuration values.
+            library_path: Optional explicit path to ``libof_ffi_c`` shared library.
+                When omitted, default lookup rules from ``orderflow._ffi`` apply.
+        """
         self._ffi = OrderflowLib(library_path=library_path)
         self._engine = ctypes.c_void_p()
         self._subs: list[ctypes.c_void_p] = []

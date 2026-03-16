@@ -11,12 +11,19 @@ and this project follows [Semantic Versioning](https://semver.org/).
   purpose, architecture notes, and quick-start examples.
 - C ABI API documentation comments for exported `of_ffi_c` symbols and FFI
   structs to improve docs.rs discoverability for non-Rust integrators.
+- Java package-level JavaDoc (`package-info.java`) for
+  `com.orderflow.bindings` and `com.orderflow.examples`.
+- Richer Python module-level API documentation for `orderflow.api`,
+  `orderflow._ffi`, and package root `orderflow`.
 
 ### Changed
 - Rust crate publishing metadata now includes `repository`, `homepage`, and
   crate-level `documentation` links for better crates.io/docs.rs presentation.
 - Workspace and binding author metadata updated to:
   Gregorian Rayne `<gregorianrayne09@gmail.com>`.
+- Python PyPI metadata now includes project URLs, classifiers, and keywords.
+- Java Maven metadata now includes organization, issue tracker URL,
+  inception year, and developer id/email.
 
 ## [0.1.1] - 2026-03-16
 ### Fixed

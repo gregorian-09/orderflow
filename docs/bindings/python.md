@@ -14,6 +14,21 @@ At runtime, the wrapper resolves the native library in this order:
 2. `ORDERFLOW_LIBRARY_PATH` environment variable.
 3. Local default path (`target/debug/libof_ffi_c.*`).
 
+## API Surface
+
+- `Engine`: lifecycle, poll loop, subscriptions, ingest, snapshots.
+- `EngineConfig`: runtime creation parameters and persistence/audit knobs.
+- `Symbol`: normalized venue/instrument descriptor.
+- `ExternalFeedPolicy`: stale/sequence supervision policy.
+- constants: `StreamKind`, `Side`, `BookAction`, `DataQualityFlags`.
+
+## Runtime Behavior
+
+- `subscribe(..., callback=...)` callbacks fire on `poll_once(...)` and `ingest_*`.
+- `subscribe(..., callback=None)` is supported for polling-only flows.
+- Snapshot methods return decoded dictionaries from runtime JSON payloads.
+- `StreamKind.HEALTH` emits transition events (`connected/degraded/reconnect_state`).
+
 ## Install
 
 ### From PyPI
@@ -45,6 +60,14 @@ with Engine(EngineConfig(instance_id="py")) as eng:
     eng.poll_once()
     print(eng.analytics_snapshot(sym))
 ```
+
+## Metadata Quality
+
+PyPI metadata includes:
+
+- project URLs (Homepage/Docs/Repository/Issues)
+- classifiers for trading + library categories
+- package keywords for discoverability
 
 ## Release pipeline
 

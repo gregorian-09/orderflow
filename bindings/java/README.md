@@ -1,72 +1,77 @@
 # Java Binding (JNA)
 
-This module wraps the C ABI from `crates/of_ffi_c` using JNA.
+Java wrapper over the stable Orderflow C ABI (`of_ffi_c`) using JNA.
 
-## Build native library
+## What You Get
 
-From workspace root:
+- Runtime lifecycle control (`start`, `stop`, `close`)
+- Symbol subscription and callback streaming
+- Adapter polling + external ingest (`ingestTrade`, `ingestBook`)
+- JSON snapshots (`book`, `analytics`, `signal`, `metrics`)
+- Feed supervision helpers (stale/sequence/reconnect policy)
+
+## Prerequisites
+
+1. Build native runtime:
 
 ```bash
 cargo build -p of_ffi_c
 ```
 
-## Build Java binding
-
-From `bindings/java`:
+2. Build Java binding:
 
 ```bash
-mvn -q package
+mvn -q -f bindings/java/pom.xml package
 ```
 
-## Run example
+## Native Library Resolution
 
-From repo root:
+`OrderflowEngine` resolves native library in this order:
+
+1. explicit constructor path
+2. `ORDERFLOW_LIBRARY_PATH`
+3. default debug path (`target/debug/<platform-lib-name>`)
+
+Example:
+
+```java
+new OrderflowEngine("/absolute/path/to/libof_ffi_c.so", EngineConfig.defaults());
+```
+
+## Minimal Usage
+
+```java
+import com.orderflow.bindings.*;
+
+EngineConfig cfg = EngineConfig.defaults();
+try (OrderflowEngine eng = new OrderflowEngine(null, cfg)) {
+    eng.start();
+    Symbol sym = new Symbol("CME", "ESM6", 10);
+    eng.subscribe(sym, StreamKind.ANALYTICS);
+    eng.pollOnce(DataQualityFlags.NONE);
+    System.out.println(eng.analyticsSnapshot(sym));
+    System.out.println(eng.metricsJson());
+}
+```
+
+## Example Apps
 
 ```bash
 mvn -q -f bindings/java/pom.xml exec:java -Dexec.mainClass=com.orderflow.examples.BasicExample
-```
-
-Health-focused example:
-
-```bash
 mvn -q -f bindings/java/pom.xml exec:java -Dexec.mainClass=com.orderflow.examples.HealthExample
-```
-
-External ingest example:
-
-```bash
 mvn -q -f bindings/java/pom.xml exec:java -Dexec.mainClass=com.orderflow.examples.ExternalIngestExample
 ```
 
-If needed, pass explicit library path:
+## API Map
 
-```java
-new OrderflowEngine("/absolute/path/to/libof_ffi_c.so", EngineConfig.defaults())
-```
+- `OrderflowEngine`: lifecycle, subscribe/unsubscribe, poll, ingest, snapshots.
+- `EngineConfig`: runtime options + persistence/audit knobs.
+- `Symbol`: venue/instrument/depth descriptor.
+- `OrderflowEvent` + `EventListener`: callback event envelope.
+- `StreamKind`, `Side`, `BookAction`, `DataQualityFlags`: stable constants.
 
-Or set:
+## Operational Notes
 
-```bash
-export ORDERFLOW_LIBRARY_PATH=/absolute/path/to/libof_ffi_c.so
-```
-
-## API surface
-
-- `OrderflowEngine` (`AutoCloseable`): lifecycle, subscribe, poll, snapshots, metrics.
-- `OrderflowEngine.unsubscribe(Symbol)` for explicit symbol unsubscription at adapter/runtime level.
-- `OrderflowEngine.resetSymbolSession(Symbol)` to reset per-session analytics/profile state for a symbol.
-- `OrderflowEngine.ingestTrade(...)` and `OrderflowEngine.ingestBook(...)` for injecting external broker/feed events continuously.
-- `OrderflowEngine.configureExternalFeed(...)`, `setExternalReconnecting(...)`, and `externalHealthTick()` for shared sequence-gap/stale/reconnect supervision.
-- `OrderflowEngine.subscribe(..., EventListener)` for callback delivery during `pollOnce(...)`.
-- `EngineConfig`: instance/config path/log level/persistence.
-- `OrderflowEvent` and `EventListener` for stream callbacks.
-- `Symbol`: venue/symbol/depth levels.
-- `StreamKind`, `DataQualityFlags`, `Side`, and `BookAction` constants.
-
-## Notes
-
-- Polling + snapshots are supported; callback listeners are delivered during `pollOnce(...)`.
-- Callback listeners are also delivered when `ingestTrade(...)` / `ingestBook(...)` is called.
-- The default library path is `target/debug/<mapped lib name>`.
-- `ORDERFLOW_LIBRARY_PATH` is used when no explicit constructor path is provided.
-- `StreamKind.HEALTH` callbacks emit only on health transitions and include `health_seq`, connection/degraded state, reconnect state, quality flags, and protocol marker.
+- Callback listeners are delivered during `pollOnce(...)` and external ingest calls.
+- `StreamKind.HEALTH` emits transition events with health sequence and quality flags.
+- `resetSymbolSession(symbol)` clears per-session analytics/profile state for the symbol.

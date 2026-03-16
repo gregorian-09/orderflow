@@ -14,6 +14,15 @@ Runtime native library lookup:
 2. `ORDERFLOW_LIBRARY_PATH` environment variable.
 3. Default local path: `target/debug/<mapped-lib-name>`.
 
+## API Surface
+
+- `OrderflowEngine`: create/start/stop/close runtime, subscription lifecycle,
+  callback dispatch, ingest, and snapshot retrieval.
+- `EngineConfig`: immutable runtime options object.
+- `Symbol`: venue/symbol/depth descriptor.
+- `OrderflowEvent` + `EventListener`: callback envelope and listener interface.
+- constants: `StreamKind`, `Side`, `BookAction`, `DataQualityFlags`.
+
 ## Usage
 
 ```java
@@ -27,6 +36,15 @@ try (OrderflowEngine eng = new OrderflowEngine(null, cfg)) {
     eng.stop();
 }
 ```
+
+## JavaDoc Structure
+
+The binding ships package-level docs (`package-info.java`) for:
+
+- `com.orderflow.bindings` (library architecture + usage contract)
+- `com.orderflow.examples` (runnable example index)
+
+This improves generated JavaDoc discoverability and mirrors production SDK style.
 
 ## Release pipeline
 

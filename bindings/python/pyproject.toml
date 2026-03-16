@@ -9,7 +9,27 @@ description = "Python ctypes binding for the Orderflow C API"
 requires-python = ">=3.10"
 readme = "README.md"
 authors = [{ name = "Gregorian Rayne", email = "gregorianrayne09@gmail.com" }]
+keywords = ["orderflow", "market-microstructure", "trading", "ffi", "ctypes"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Financial and Insurance Industry",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Office/Business :: Financial :: Investment",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/gregorian-09/orderflow"
+Documentation = "https://github.com/gregorian-09/orderflow/tree/main/docs"
+Repository = "https://github.com/gregorian-09/orderflow"
+Issues = "https://github.com/gregorian-09/orderflow/issues"
 
 [tool.setuptools]
 package-dir = {"" = "."}
