@@ -14,7 +14,9 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-authors = ["Order Flow Team"]
+authors = ["Gregorian Rayne <gregorianrayne09@gmail.com>"]
+repository = "https://github.com/gregorian-09/orderflow"
+homepage = "https://github.com/gregorian-09/orderflow"
 
 [profile.release]
 opt-level = 3

@@ -1,3 +1,31 @@
+//! Signal modules and quality-gating policy for Orderflow.
+//!
+//! `of_signals` receives normalized analytics snapshots and emits stable
+//! directional states (`LongBias`, `ShortBias`, `Neutral`, `Blocked`).
+//!
+//! ## Why Separate Signals from Runtime?
+//! - Strategy logic can evolve independently from ingestion/runtime plumbing.
+//! - Signal crates remain testable with simple in-memory fixtures.
+//! - Bindings/FFI consume a consistent `SignalSnapshot` schema.
+//!
+//! ## Included Module
+//! - `DeltaMomentumSignal`: threshold-based delta momentum model.
+//!
+//! ## Quick Example
+//! ```no_run
+//! use of_core::AnalyticsSnapshot;
+//! use of_signals::{DeltaMomentumSignal, SignalModule};
+//!
+//! let mut sig = DeltaMomentumSignal::new(100);
+//! sig.on_analytics(&AnalyticsSnapshot {
+//!     delta: 150,
+//!     ..Default::default()
+//! });
+//!
+//! let snapshot = sig.snapshot();
+//! assert!(matches!(snapshot.state, of_core::SignalState::LongBias));
+//! ```
+
 use of_core::{AnalyticsSnapshot, DataQualityFlags, SignalSnapshot, SignalState};
 
 /// Result of running quality-gate checks.

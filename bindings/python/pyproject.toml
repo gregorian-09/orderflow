@@ -8,7 +8,7 @@ version = "0.1.1"
 description = "Python ctypes binding for the Orderflow C API"
 requires-python = ">=3.10"
 readme = "README.md"
-authors = [{ name = "Order Flow Team" }]
+authors = [{ name = "Gregorian Rayne", email = "gregorianrayne09@gmail.com" }]
 dependencies = []
 
 [tool.setuptools]

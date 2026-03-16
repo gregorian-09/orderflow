@@ -3,8 +3,12 @@ name = "of_adapters"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Provider adapters and market-data abstraction for the Orderflow engine"
 readme = "../../README.md"
+documentation = "https://docs.rs/of_adapters"
 
 [features]
 default = []
@@ -12,6 +16,9 @@ rithmic = []
 cqg = []
 cqg_proto = ["cqg"]
 binance = []
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
 of_core = { path = "../of_core", version = "0.1.0" }

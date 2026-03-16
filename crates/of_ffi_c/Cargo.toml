@@ -3,8 +3,12 @@ name = "of_ffi_c"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "C ABI facade for the Orderflow runtime"
 readme = "../../README.md"
+documentation = "https://docs.rs/of_ffi_c"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -15,6 +19,9 @@ rithmic = ["of_adapters/rithmic"]
 cqg = ["of_adapters/cqg"]
 cqg_proto = ["of_adapters/cqg_proto"]
 binance = ["of_adapters/binance"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
 of_core = { path = "../of_core", version = "0.1.0" }

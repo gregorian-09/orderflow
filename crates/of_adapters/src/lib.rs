@@ -1,3 +1,32 @@
+//! Market-data adapter interfaces and provider factory.
+//!
+//! This crate defines the adapter boundary between venue-specific feeds and the
+//! normalized runtime pipeline.
+//!
+//! ## Responsibilities
+//! - Standardize connection lifecycle (`connect`, `subscribe`, `poll`, `health`)
+//! - Normalize venue payloads into `RawEvent::{Book, Trade}`
+//! - Hide provider-specific auth/protocol details from downstream crates
+//!
+//! ## Providers
+//! Runtime-selectable:
+//! - `Mock` (always available)
+//! - `Rithmic` (feature-gated)
+//! - `Cqg` / `CqgProto` (feature-gated)
+//! - `Binance` (feature-gated)
+//!
+//! ## Quick Example
+//! ```no_run
+//! use of_adapters::{create_adapter, AdapterConfig, ProviderKind};
+//!
+//! let cfg = AdapterConfig {
+//!     provider: ProviderKind::Mock,
+//!     ..Default::default()
+//! };
+//! let mut adapter = create_adapter(&cfg).expect("adapter");
+//! adapter.connect().expect("connect");
+//! ```
+
 use std::error::Error;
 use std::fmt;
 

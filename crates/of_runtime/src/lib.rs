@@ -1,3 +1,45 @@
+//! Runtime orchestration for ingestion, analytics, signaling, and health policy.
+//!
+//! `of_runtime` is the operational core of the platform. It wires together:
+//! - an adapter implementing [`of_adapters::MarketDataAdapter`]
+//! - analytics accumulation from `of_core`
+//! - signal modules from `of_signals`
+//! - optional persistence via `of_persist`
+//!
+//! ## Processing Loop
+//! 1. Connect adapter and subscribe symbols.
+//! 2. Poll normalized events.
+//! 3. Update analytics and signal state.
+//! 4. Apply quality gating and emit snapshots.
+//! 5. Optionally persist normalized events.
+//!
+//! ## External Ingest Mode
+//! In addition to adapter polling, the runtime supports direct external ingest
+//! (`ingest_trade`, `ingest_book`) for broker APIs, replay, and bridge services.
+//!
+//! ## Quick Example
+//! ```no_run
+//! use of_adapters::MockAdapter;
+//! use of_core::{DataQualityFlags, SymbolId};
+//! use of_runtime::{Engine, EngineConfig};
+//! use of_signals::DeltaMomentumSignal;
+//!
+//! let adapter = MockAdapter::default();
+//! let signal = DeltaMomentumSignal::new(100);
+//! let mut engine = Engine::new(EngineConfig::default(), adapter, signal);
+//!
+//! engine.start().expect("start");
+//! engine.subscribe(SymbolId {
+//!     venue: "CME".to_string(),
+//!     symbol: "ESM6".to_string(),
+//! }, 10).expect("subscribe");
+//! engine.poll_once(DataQualityFlags::NONE).expect("poll");
+//! ```
+//!
+//! ## Configuration
+//! [`EngineConfig`] can be built in code or loaded from a TOML runtime config.
+//! See [`load_engine_config_from_path`] for file-based configuration loading.
+
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;

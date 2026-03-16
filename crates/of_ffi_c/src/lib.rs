@@ -1,4 +1,37 @@
 #![allow(non_camel_case_types)]
+//! Stable C ABI for embedding Orderflow runtime in non-Rust environments.
+//!
+//! This crate exports `extern "C"` symbols and `#[repr(C)]` types used by:
+//! - Python `ctypes` binding
+//! - Java JNA binding
+//! - any native C/C++/Go/.NET FFI client
+//!
+//! ## ABI Surface
+//! - Engine lifecycle: `of_engine_create/start/stop/destroy`
+//! - Subscriptions: `of_subscribe`, `of_unsubscribe`, `of_unsubscribe_symbol`
+//! - Polling and ingest: `of_engine_poll_once`, `of_ingest_trade`, `of_ingest_book`
+//! - Snapshots: `of_get_book_snapshot`, `of_get_analytics_snapshot`,
+//!   `of_get_signal_snapshot`, `of_get_metrics_json`
+//!
+//! ## Safety Contract
+//! Callers must:
+//! - pass valid non-null pointers for required arguments
+//! - keep UTF-8 C strings alive for the duration of the call
+//! - treat returned pointers as owned by this library unless documented otherwise
+//! - call `of_string_free` for heap strings returned by snapshot/metrics APIs
+//!
+//! ## Minimal C Example
+//! ```text
+//! of_engine_t* engine = NULL;
+//! of_engine_config_t cfg = {0};
+//! cfg.instance_id = "demo";
+//! int32_t rc = of_engine_create(&cfg, &engine);
+//! if (rc == OF_OK) {
+//!   of_engine_start(engine);
+//!   of_engine_stop(engine);
+//!   of_engine_destroy(engine);
+//! }
+//! ```
 
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::ptr;
@@ -17,6 +50,7 @@ use of_runtime::{
 const API_VERSION: u32 = 0x0001_0000;
 const BUILD_INFO: &[u8] = concat!("of_ffi_c/", env!("CARGO_PKG_VERSION"), "\0").as_bytes();
 
+/// Engine configuration passed to [`of_engine_create`].
 #[repr(C)]
 pub struct of_engine_config_t {
     pub instance_id: *const c_char,
@@ -30,6 +64,7 @@ pub struct of_engine_config_t {
     pub data_retention_max_age_secs: u64,
 }
 
+/// Symbol descriptor used by subscription and snapshot functions.
 #[repr(C)]
 pub struct of_symbol_t {
     pub venue: *const c_char,
@@ -37,6 +72,7 @@ pub struct of_symbol_t {
     pub depth_levels: u16,
 }
 
+/// External trade payload accepted by [`of_ingest_trade`].
 #[repr(C)]
 pub struct of_trade_t {
     pub symbol: of_symbol_t,
@@ -48,6 +84,7 @@ pub struct of_trade_t {
     pub ts_recv_ns: u64,
 }
 
+/// External order-book payload accepted by [`of_ingest_book`].
 #[repr(C)]
 pub struct of_book_t {
     pub symbol: of_symbol_t,
@@ -61,12 +98,14 @@ pub struct of_book_t {
     pub ts_recv_ns: u64,
 }
 
+/// External-feed quality policy configured via [`of_configure_external_feed`].
 #[repr(C)]
 pub struct of_external_feed_policy_t {
     pub stale_after_ms: u64,
     pub enforce_sequence: u8,
 }
 
+/// Error codes returned by C ABI functions.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum of_error_t {
@@ -80,15 +119,18 @@ pub enum of_error_t {
     OF_ERR_INTERNAL = 255,
 }
 
+/// Opaque engine handle.
 pub struct of_engine {
     inner: DefaultEngine,
     subs: Vec<SubscriptionRecord>,
 }
 
+/// Opaque subscription token.
 pub struct of_subscription {
     token: *mut SubscriptionToken,
 }
 
+/// Event envelope dispatched to subscription callbacks.
 #[repr(C)]
 pub struct of_event_t {
     pub ts_exchange_ns: u64,
@@ -100,6 +142,7 @@ pub struct of_event_t {
     pub quality_flags: u32,
 }
 
+/// C callback signature for subscription delivery.
 pub type of_event_cb = extern "C" fn(*const of_event_t, *mut c_void);
 
 struct SubscriptionRecord {
@@ -177,16 +220,19 @@ fn action_from_ffi(value: u32) -> Result<BookAction, of_error_t> {
     }
 }
 
+/// Returns ABI version (`major << 16 | minor` style encoding).
 #[no_mangle]
 pub extern "C" fn of_api_version() -> u32 {
     API_VERSION
 }
 
+/// Returns build/version info as a static NUL-terminated C string.
 #[no_mangle]
 pub extern "C" fn of_build_info() -> *const c_char {
     BUILD_INFO.as_ptr() as *const c_char
 }
 
+/// Creates a runtime engine and stores it in `out_engine`.
 #[no_mangle]
 pub extern "C" fn of_engine_create(
     cfg: *const of_engine_config_t,
@@ -261,6 +307,7 @@ pub extern "C" fn of_engine_create(
     of_error_t::OF_OK as i32
 }
 
+/// Starts adapter polling/session for a created engine.
 #[no_mangle]
 pub extern "C" fn of_engine_start(engine: *mut of_engine) -> i32 {
     if engine.is_null() {
@@ -274,6 +321,7 @@ pub extern "C" fn of_engine_start(engine: *mut of_engine) -> i32 {
     }
 }
 
+/// Stops adapter polling/session for an engine.
 #[no_mangle]
 pub extern "C" fn of_engine_stop(engine: *mut of_engine) -> i32 {
     if engine.is_null() {
@@ -284,6 +332,7 @@ pub extern "C" fn of_engine_stop(engine: *mut of_engine) -> i32 {
     of_error_t::OF_OK as i32
 }
 
+/// Destroys an engine created by [`of_engine_create`].
 #[no_mangle]
 pub extern "C" fn of_engine_destroy(engine: *mut of_engine) {
     if !engine.is_null() {
@@ -293,6 +342,7 @@ pub extern "C" fn of_engine_destroy(engine: *mut of_engine) {
     }
 }
 
+/// Subscribes to a symbol stream and returns a subscription token.
 #[no_mangle]
 pub extern "C" fn of_subscribe(
     engine: *mut of_engine,
@@ -338,6 +388,7 @@ pub extern "C" fn of_subscribe(
     of_error_t::OF_OK as i32
 }
 
+/// Unsubscribes and destroys a subscription token.
 #[no_mangle]
 pub extern "C" fn of_unsubscribe(sub: *mut of_subscription) -> i32 {
     if sub.is_null() {
@@ -353,6 +404,7 @@ pub extern "C" fn of_unsubscribe(sub: *mut of_subscription) -> i32 {
     of_error_t::OF_OK as i32
 }
 
+/// Unsubscribes all active streams for a symbol on this engine.
 #[no_mangle]
 pub extern "C" fn of_unsubscribe_symbol(
     engine: *mut of_engine,
@@ -381,6 +433,7 @@ pub extern "C" fn of_unsubscribe_symbol(
     of_error_t::OF_OK as i32
 }
 
+/// Resets per-symbol analytics session state.
 #[no_mangle]
 pub extern "C" fn of_reset_symbol_session(
     engine: *mut of_engine,
@@ -402,6 +455,7 @@ pub extern "C" fn of_reset_symbol_session(
     of_error_t::OF_OK as i32
 }
 
+/// Injects one external trade event into runtime processing.
 #[no_mangle]
 pub extern "C" fn of_ingest_trade(
     engine: *mut of_engine,
@@ -443,6 +497,7 @@ pub extern "C" fn of_ingest_trade(
     }
 }
 
+/// Injects one external book event into runtime processing.
 #[no_mangle]
 pub extern "C" fn of_ingest_book(
     engine: *mut of_engine,
@@ -490,6 +545,7 @@ pub extern "C" fn of_ingest_book(
     }
 }
 
+/// Configures stale/sequence policy for external ingest mode.
 #[no_mangle]
 pub extern "C" fn of_configure_external_feed(
     engine: *mut of_engine,
@@ -512,6 +568,7 @@ pub extern "C" fn of_configure_external_feed(
     }
 }
 
+/// Marks external feed reconnecting state.
 #[no_mangle]
 pub extern "C" fn of_external_set_reconnecting(engine: *mut of_engine, reconnecting: u8) -> i32 {
     if engine.is_null() {
@@ -527,6 +584,7 @@ pub extern "C" fn of_external_set_reconnecting(engine: *mut of_engine, reconnect
     }
 }
 
+/// Re-evaluates external feed health without ingesting new events.
 #[no_mangle]
 pub extern "C" fn of_external_health_tick(engine: *mut of_engine) -> i32 {
     if engine.is_null() {
@@ -566,6 +624,7 @@ fn write_json_to_c_buffer(
     Ok(())
 }
 
+/// Writes current book snapshot JSON into caller buffer.
 #[no_mangle]
 pub extern "C" fn of_get_book_snapshot(
     _engine: *mut of_engine,
@@ -580,6 +639,7 @@ pub extern "C" fn of_get_book_snapshot(
     }
 }
 
+/// Writes current analytics snapshot JSON into caller buffer.
 #[no_mangle]
 pub extern "C" fn of_get_analytics_snapshot(
     engine: *mut of_engine,
@@ -618,6 +678,7 @@ pub extern "C" fn of_get_analytics_snapshot(
     }
 }
 
+/// Writes current signal snapshot JSON into caller buffer.
 #[no_mangle]
 pub extern "C" fn of_get_signal_snapshot(
     engine: *mut of_engine,
@@ -657,6 +718,7 @@ pub extern "C" fn of_get_signal_snapshot(
     }
 }
 
+/// Allocates and returns metrics JSON (`*out`) plus byte length (`*out_len`).
 #[no_mangle]
 pub extern "C" fn of_get_metrics_json(
     engine: *mut of_engine,
@@ -683,6 +745,7 @@ pub extern "C" fn of_get_metrics_json(
     of_error_t::OF_OK as i32
 }
 
+/// Frees a C string returned by this library.
 #[no_mangle]
 pub extern "C" fn of_string_free(p: *const c_char) {
     if p.is_null() {
@@ -693,6 +756,7 @@ pub extern "C" fn of_string_free(p: *const c_char) {
     }
 }
 
+/// Polls adapter once and dispatches subscription callbacks.
 #[no_mangle]
 pub extern "C" fn of_engine_poll_once(engine: *mut of_engine, quality_flags: u32) -> i32 {
     if engine.is_null() {
