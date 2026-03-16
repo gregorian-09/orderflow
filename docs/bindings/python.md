@@ -72,3 +72,6 @@ PyPI metadata includes:
 ## Release pipeline
 
 Workflow: `.github/workflows/publish-python.yml`
+
+Version source of truth: `bindings/versions.toml`  
+Sync command: `python3 tools/release/sync_binding_versions.py`

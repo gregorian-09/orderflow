@@ -24,6 +24,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Python PyPI metadata now includes project URLs, classifiers, and keywords.
 - Java Maven metadata now includes organization, issue tracker URL,
   inception year, and developer id/email.
+- Binding release versions are now managed centrally in
+  `bindings/versions.toml` and synchronized via
+  `tools/release/sync_binding_versions.py`.
 
 ## [0.1.1] - 2026-03-16
 ### Fixed

@@ -50,6 +50,9 @@ This improves generated JavaDoc discoverability and mirrors production SDK style
 
 Workflow: `.github/workflows/publish-java.yml`
 
+Version source of truth: `bindings/versions.toml`  
+Sync command: `python3 tools/release/sync_binding_versions.py`
+
 ## Release prerequisites
 
 Required repository secrets:

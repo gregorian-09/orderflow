@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orderflow-gregorian09"
-version = "0.1.1"
+version = "0.1.2"
 description = "Python ctypes binding for the Orderflow C API"
 requires-python = ">=3.10"
 readme = "README.md"
