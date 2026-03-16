@@ -27,6 +27,15 @@ Output:
   - `pkgconfig/orderflow.pc`
   - `README.md`
 
+## Official vcpkg path
+
+Official port submission assets are maintained at:
+
+- `packaging/vcpkg/official/ports/orderflow-c`
+- `packaging/vcpkg/official/README.md`
+
+These files are structured for direct submission to `microsoft/vcpkg`.
+
 ## Using the C SDK
 
 Extract a release bundle and point `PKG_CONFIG_PATH` to the included pkg-config

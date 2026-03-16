@@ -24,6 +24,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   (`of_stream_kind_t`, `of_data_quality_flags_t`) for first-class C developer
   ergonomics.
 - C usage example: `examples/c/basic.c`.
+- Official vcpkg submission scaffold for C consumers:
+  `packaging/vcpkg/official/ports/orderflow-c` with portfile, manifest,
+  and usage docs.
 
 ### Changed
 - Rust crate publishing metadata now includes `repository`, `homepage`, and
@@ -42,6 +45,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
   to improve PyPI and Maven discoverability.
 - Binding versions were prepared for this release cycle: Python `0.1.3`,
   Java `0.1.2`, Rust/C updated to `0.1.1`.
+- Added root `LICENSE` file (MIT) to satisfy package distribution and
+  registry compliance requirements.
 
 ## [0.1.1] - 2026-03-16
 ### Fixed
