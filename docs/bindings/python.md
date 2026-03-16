@@ -1,6 +1,6 @@
 # Python Binding
 
-Package: `orderflow`  
+Package: `orderflow-gregorian09`  
 Source: `bindings/python`
 
 ## Distribution Model
@@ -19,7 +19,7 @@ At runtime, the wrapper resolves the native library in this order:
 ### From PyPI
 
 ```bash
-pip install orderflow
+pip install orderflow-gregorian09
 ```
 
 Then point to native library:
