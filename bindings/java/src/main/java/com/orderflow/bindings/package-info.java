@@ -29,6 +29,12 @@
  * <h2>Threading/Callbacks</h2>
  * <p>Event callbacks are delivered during {@code pollOnce(...)} and during external ingest calls.
  * Keep callback handlers fast and non-blocking.
+ *
+ * <h2>Project Docs</h2>
+ * <ul>
+ *   <li><a href="https://github.com/gregorian-09/orderflow/tree/main/docs/handbook">Handbook</a></li>
+ *   <li><a href="https://github.com/gregorian-09/orderflow/tree/main/docs/api">API Reference</a></li>
+ *   <li><a href="https://github.com/gregorian-09/orderflow/tree/main/docs/bindings/java.md">Java Binding Guide</a></li>
+ * </ul>
  */
 package com.orderflow.bindings;
-

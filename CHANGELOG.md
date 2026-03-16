@@ -15,6 +15,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `com.orderflow.bindings` and `com.orderflow.examples`.
 - Richer Python module-level API documentation for `orderflow.api`,
   `orderflow._ffi`, and package root `orderflow`.
+- JavaDoc overview page (`bindings/java/src/main/javadoc/overview.html`) to
+  provide a richer published API landing page for Maven consumers.
 
 ### Changed
 - Rust crate publishing metadata now includes `repository`, `homepage`, and
@@ -26,7 +28,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
   inception year, and developer id/email.
 - Binding release versions are now managed centrally in
   `bindings/versions.toml` and synchronized via
-  `tools/release/sync_binding_versions.py`.
+  `tools/release/sync_binding_versions.py` across Python, Java, and Rust/C
+  package version surfaces.
+- Python and Java binding package descriptions were upgraded with richer
+  packaging-facing docs (badges, API map, operations notes, and direct doc links)
+  to improve PyPI and Maven discoverability.
+- Binding versions were prepared for this release cycle: Python `0.1.3`,
+  Java `0.1.2`, Rust/C unchanged at `0.1.0`.
 
 ## [0.1.1] - 2026-03-16
 ### Fixed

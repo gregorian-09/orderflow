@@ -24,6 +24,16 @@ This order matches dependency topology.
 
 Workflow: `.github/workflows/publish-rust.yml`
 
+## Version management
+
+Version source of truth: `bindings/versions.toml` (`bindings.rust`)  
+Sync/check command: `python3 tools/release/sync_binding_versions.py --check`
+
+The sync tool updates:
+
+- Workspace package version in `Cargo.toml`.
+- Internal crate dependency pins (`of_*` path dependencies) in `crates/*/Cargo.toml`.
+
 ## Release prerequisites
 
 Required repository secret:

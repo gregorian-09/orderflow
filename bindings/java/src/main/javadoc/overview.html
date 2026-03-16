@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Orderflow Java Binding</title>
+  </head>
+  <body>
+    <h1>Orderflow Java Binding</h1>
+    <p>
+      <strong>Artifact:</strong>
+      <code>io.github.gregorian-09:orderflow-java-binding</code>
+    </p>
+    <p>
+      Java (JNA) wrapper for the stable Orderflow C ABI, focused on orderflow
+      analytics, feed-health supervision, and production runtime integration.
+    </p>
+
+    <h2>Primary APIs</h2>
+    <ul>
+      <li><code>OrderflowEngine</code>: lifecycle, subscription, ingest, snapshots.</li>
+      <li><code>EngineConfig</code>: immutable runtime configuration.</li>
+      <li><code>Symbol</code>: venue + instrument + depth descriptor.</li>
+      <li><code>OrderflowEvent</code>: callback event envelope.</li>
+    </ul>
+
+    <h2>Runtime Model</h2>
+    <ol>
+      <li>Create engine with configuration and optional native library path.</li>
+      <li>Subscribe streams and optionally attach callback listeners.</li>
+      <li>Drive runtime using polling and/or external ingest.</li>
+      <li>Read JSON snapshots (book, analytics, signal, metrics).</li>
+    </ol>
+
+    <h2>Native Library Lookup</h2>
+    <ol>
+      <li>Explicit constructor path.</li>
+      <li><code>ORDERFLOW_LIBRARY_PATH</code> environment variable.</li>
+      <li>Default debug target path under <code>target/debug</code>.</li>
+    </ol>
+
+    <h2>Project Documentation</h2>
+    <ul>
+      <li>
+        <a href="https://github.com/gregorian-09/orderflow/tree/main/docs/handbook">
+          Handbook
+        </a>
+      </li>
+      <li>
+        <a href="https://github.com/gregorian-09/orderflow/tree/main/docs/api">
+          API Reference
+        </a>
+      </li>
+      <li>
+        <a href="https://github.com/gregorian-09/orderflow/tree/main/docs/bindings/java.md">
+          Java Binding Guide
+        </a>
+      </li>
+    </ul>
+  </body>
+</html>

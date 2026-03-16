@@ -21,6 +21,17 @@ Output:
   - `.github/workflows/release-native-artifacts.yml`
 - Consumers should bundle the header and matching native binary.
 
+## Version management
+
+The C ABI library crate (`of_ffi_c`) uses the Rust workspace version and is
+therefore governed by `bindings/versions.toml` (`bindings.rust`).
+
+Sync/check command:
+
+```bash
+python3 tools/release/sync_binding_versions.py --check
+```
+
 ## API documentation source
 
 - `docs/handbook/05-api-reference.md`

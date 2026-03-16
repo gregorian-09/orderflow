@@ -14,6 +14,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 VERSIONS_PATH = ROOT / "bindings" / "versions.toml"
 PYPROJECT_PATH = ROOT / "bindings" / "python" / "pyproject.toml"
 JAVA_POM_PATH = ROOT / "bindings" / "java" / "pom.xml"
+CARGO_WORKSPACE_PATH = ROOT / "Cargo.toml"
+CRATES_DIR = ROOT / "crates"
 
 
 def read_versions() -> dict[str, str]:
@@ -22,10 +24,14 @@ def read_versions() -> dict[str, str]:
     bindings = data.get("bindings", {})
     if not isinstance(bindings, dict):
         raise ValueError("bindings/versions.toml must contain a [bindings] table")
-    for key in ("python", "java"):
+    for key in ("python", "java", "rust"):
         if key not in bindings or not isinstance(bindings[key], str):
             raise ValueError(f"missing bindings.{key} version in bindings/versions.toml")
-    return {"python": bindings["python"], "java": bindings["java"]}
+    return {
+        "python": bindings["python"],
+        "java": bindings["java"],
+        "rust": bindings["rust"],
+    }
 
 
 def sync_python(version: str, check: bool) -> bool:
@@ -62,6 +68,57 @@ def sync_java(version: str, check: bool) -> bool:
     return True
 
 
+def sync_rust_workspace(version: str, check: bool) -> bool:
+    text = CARGO_WORKSPACE_PATH.read_text(encoding="utf-8")
+    pattern = r'(?ms)(\[workspace\.package\][^\[]*?^version\s*=\s*")([^"]+)(")'
+    match = re.search(pattern, text)
+    if not match:
+        raise ValueError("could not find [workspace.package] version in Cargo.toml")
+    current = match.group(2)
+    if current == version:
+        return False
+    if check:
+        raise ValueError(
+            f"rust workspace version mismatch: Cargo.toml={current}, expected={version}"
+        )
+    updated = re.sub(pattern, rf"\g<1>{version}\3", text, count=1)
+    CARGO_WORKSPACE_PATH.write_text(updated, encoding="utf-8")
+    return True
+
+
+def sync_rust_internal_dependency_versions(version: str, check: bool) -> int:
+    crate_files = sorted(CRATES_DIR.glob("*/Cargo.toml"))
+    dep_pattern = re.compile(
+        r'(?m)^(\s*of_[a-z_]+\s*=\s*\{[^\n]*\bpath\s*=\s*"\.\./of_[^"\n]+"[^\n]*\bversion\s*=\s*")([^"\n]+)(")'
+    )
+    changed_files = 0
+    mismatches: list[str] = []
+
+    for cargo_toml in crate_files:
+        text = cargo_toml.read_text(encoding="utf-8")
+
+        def replace_dep(match: re.Match[str]) -> str:
+            current = match.group(2)
+            if current == version:
+                return match.group(0)
+            mismatches.append(f"{cargo_toml.relative_to(ROOT)}={current}")
+            return f"{match.group(1)}{version}{match.group(3)}"
+
+        updated, subs = dep_pattern.subn(replace_dep, text)
+        if subs > 0 and updated != text:
+            changed_files += 1
+            if not check:
+                cargo_toml.write_text(updated, encoding="utf-8")
+
+    if check and mismatches:
+        mismatch_preview = ", ".join(mismatches[:5])
+        raise ValueError(
+            "rust internal dependency version mismatch (expected "
+            f"{version}): {mismatch_preview}"
+        )
+    return changed_files
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="validate only; do not modify files")
@@ -70,6 +127,8 @@ def main() -> int:
     versions = read_versions()
     changed_python = sync_python(versions["python"], args.check)
     changed_java = sync_java(versions["java"], args.check)
+    changed_rust_workspace = sync_rust_workspace(versions["rust"], args.check)
+    changed_rust_deps = sync_rust_internal_dependency_versions(versions["rust"], args.check)
 
     if args.check:
         print("OK: binding versions match bindings/versions.toml")
@@ -78,6 +137,8 @@ def main() -> int:
             "Updated bindings versions:",
             f"python_changed={changed_python}",
             f"java_changed={changed_java}",
+            f"rust_workspace_changed={changed_rust_workspace}",
+            f"rust_crate_dependency_files_changed={changed_rust_deps}",
         )
     return 0
 

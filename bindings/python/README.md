@@ -1,36 +1,41 @@
-# Python Binding (ctypes)
+# Orderflow Python Binding (`orderflow-gregorian09`)
 
-Python wrapper over the stable Orderflow C ABI (`of_ffi_c`).
+[![PyPI version](https://img.shields.io/pypi/v/orderflow-gregorian09.svg)](https://pypi.org/project/orderflow-gregorian09/)
+[![Python versions](https://img.shields.io/pypi/pyversions/orderflow-gregorian09.svg)](https://pypi.org/project/orderflow-gregorian09/)
+[![CI](https://github.com/gregorian-09/orderflow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gregorian-09/orderflow/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/license/mit)
 
-## Capability Overview
+Production-oriented Python wrapper over the stable Orderflow C ABI (`of_ffi_c`)
+for orderflow analytics, signal generation, and health-aware ingestion pipelines.
 
-- Engine lifecycle control (`start`, `stop`, context manager support)
-- Subscription and callback streaming
-- Adapter polling and external event ingest
-- Snapshot access (`book`, `analytics`, `signal`, `metrics`)
-- Data-quality supervision for external feeds
+## System View
 
-## Prerequisites
+![Orderflow architecture](https://raw.githubusercontent.com/gregorian-09/orderflow/main/docs/handbook/assets/diagrams/png/04-architecture-01.png)
 
-Build native runtime from repository root:
+## What You Get
+
+- Runtime lifecycle control (`start`, `stop`, context-manager `with Engine(...)`)
+- Symbol stream subscriptions with optional callback listeners
+- Poll-based processing plus push-style external ingest (`ingest_trade`, `ingest_book`)
+- Snapshot retrieval (`book`, `analytics`, `signal`, `metrics`)
+- External feed supervision (`stale`, `sequence`, `reconnect`) via health APIs
+
+## Install
 
 ```bash
-cargo build -p of_ffi_c
+pip install orderflow-gregorian09
 ```
 
-Install Python package locally (editable):
-
-```bash
-python -m pip install -e bindings/python
-```
+The Python wheel wraps the C ABI; it expects a compatible `libof_ffi_c` shared
+library at runtime.
 
 ## Native Library Resolution
 
-Resolution order:
+Lookup order:
 
-1. `library_path=` argument passed to `Engine(...)`
+1. Explicit `library_path=` argument on `Engine(...)`
 2. `ORDERFLOW_LIBRARY_PATH` environment variable
-3. default debug target path (`target/debug/libof_ffi_c.*`)
+3. Local debug build default (`target/debug/libof_ffi_c.*`)
 
 ```bash
 export ORDERFLOW_LIBRARY_PATH=/absolute/path/to/libof_ffi_c.so
@@ -45,38 +50,58 @@ with Engine(EngineConfig(instance_id="py-client")) as eng:
     sym = Symbol("CME", "ESM6", depth_levels=10)
     eng.subscribe(sym, StreamKind.ANALYTICS)
     eng.poll_once(DataQualityFlags.NONE)
-    print(eng.analytics_snapshot(sym))
+    print("analytics", eng.analytics_snapshot(sym))
+    print("metrics", eng.metrics_json())
 ```
 
-## External Ingest Example
+## External Feed Ingest Workflow
 
 ```python
 from orderflow import (
-    BookAction, DataQualityFlags, Engine, EngineConfig, ExternalFeedPolicy,
-    Side, Symbol, StreamKind
+    BookAction,
+    DataQualityFlags,
+    Engine,
+    EngineConfig,
+    ExternalFeedPolicy,
+    Side,
+    Symbol,
+    StreamKind,
 )
 
 sym = Symbol("CME", "ESM6", depth_levels=10)
-with Engine(EngineConfig(instance_id="ingest")) as eng:
+
+with Engine(EngineConfig(instance_id="ext-feed")) as eng:
     eng.subscribe(sym, StreamKind.HEALTH, callback=lambda ev: print("health", ev))
-    eng.configure_external_feed(ExternalFeedPolicy(stale_after_ms=2_000, enforce_sequence=True))
-    eng.ingest_book(sym, side=Side.BID, level=0, price=504900, size=20, action=BookAction.UPSERT)
+    eng.configure_external_feed(
+        ExternalFeedPolicy(stale_after_ms=2_000, enforce_sequence=True)
+    )
+
+    eng.ingest_book(
+        sym, side=Side.BID, level=0, price=504900, size=20, action=BookAction.UPSERT
+    )
     eng.ingest_trade(sym, price=505000, size=7, aggressor_side=Side.ASK)
     eng.poll_once(DataQualityFlags.NONE)
-    print(eng.signal_snapshot(sym))
+    print("signal", eng.signal_snapshot(sym))
 ```
 
-## Runtime Notes
+## API Surface
 
-- `config_path` may point to runtime TOML consumed by Rust engine config loader.
-- Optional callback on `subscribe(...)` is supported; callbacks fire during polling and ingest.
-- `StreamKind.HEALTH` emits transition-only events with health sequence and quality flags.
-- `reset_symbol_session(symbol)` clears per-session analytics/profile context.
-- `configure_external_feed(...)`, `set_external_reconnecting(...)`, and
-  `external_health_tick()` provide sequence/stale/reconnect supervision.
+- `Engine`: lifecycle, subscribe/unsubscribe, poll, ingest, snapshots
+- `EngineConfig`: runtime, persistence, audit, and retention settings
+- `Symbol`: venue + symbol + depth descriptor
+- `ExternalFeedPolicy`: stale and sequence policy for external data
+- constants: `StreamKind`, `Side`, `BookAction`, `DataQualityFlags`
 
-## Included Examples
+## Operations Notes
 
-- `bindings/python/examples/basic.py`
-- `bindings/python/examples/health_example.py`
-- `bindings/python/examples/external_ingest.py`
+- `subscribe(..., callback=None)` is supported for polling-only flows.
+- `StreamKind.HEALTH` emits transition-oriented health payloads.
+- `reset_symbol_session(symbol)` clears per-session analytics/profile state.
+- `external_health_tick()` re-evaluates stale/degraded status without ingest.
+
+## Learn More
+
+- Handbook: https://github.com/gregorian-09/orderflow/tree/main/docs/handbook
+- API reference: https://github.com/gregorian-09/orderflow/tree/main/docs/api
+- Binding docs: https://github.com/gregorian-09/orderflow/tree/main/docs/bindings
+- Changelog: https://github.com/gregorian-09/orderflow/blob/main/CHANGELOG.md

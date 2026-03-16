@@ -21,7 +21,19 @@ public final class EngineConfig {
     /** Max persisted age in seconds. */
     public final long dataRetentionMaxAgeSecs;
 
-    /** Creates an immutable engine configuration. */
+    /**
+     * Creates an immutable engine configuration.
+     *
+     * @param instanceId runtime instance identifier
+     * @param configPath optional engine TOML config path
+     * @param logLevel reserved log level field
+     * @param enablePersistence enables local persistence when true
+     * @param auditMaxBytes max bytes per audit file before rotation
+     * @param auditMaxFiles max number of rotated audit files retained
+     * @param auditRedactTokensCsv comma-separated sensitive token list
+     * @param dataRetentionMaxBytes max persisted bytes retained
+     * @param dataRetentionMaxAgeSecs max retained data age in seconds
+     */
     public EngineConfig(
             String instanceId,
             String configPath,
@@ -43,7 +55,11 @@ public final class EngineConfig {
         this.dataRetentionMaxAgeSecs = dataRetentionMaxAgeSecs;
     }
 
-    /** Returns sane default configuration values. */
+    /**
+     * Returns sane default configuration values for local development.
+     *
+     * @return default immutable config
+     */
     public static EngineConfig defaults() {
         return new EngineConfig(
                 "java",

@@ -46,6 +46,9 @@ The binding ships package-level docs (`package-info.java`) for:
 
 This improves generated JavaDoc discoverability and mirrors production SDK style.
 
+The published JavaDoc is additionally enriched via
+`bindings/java/src/main/javadoc/overview.html` as a top-level API landing page.
+
 ## Release pipeline
 
 Workflow: `.github/workflows/publish-java.yml`

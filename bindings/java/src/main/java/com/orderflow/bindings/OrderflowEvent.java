@@ -15,7 +15,16 @@ public final class OrderflowEvent {
     /** UTF-8 JSON payload string. */
     public final String payloadJson;
 
-    /** Creates immutable callback event object. */
+    /**
+     * Creates immutable callback event object.
+     *
+     * @param tsExchangeNs exchange timestamp in nanoseconds
+     * @param tsRecvNs receive timestamp in nanoseconds
+     * @param kind stream kind id
+     * @param schemaId payload schema id
+     * @param qualityFlags quality flag bits
+     * @param payloadJson UTF-8 JSON payload
+     */
     public OrderflowEvent(long tsExchangeNs, long tsRecvNs, int kind, int schemaId, int qualityFlags, String payloadJson) {
         this.tsExchangeNs = tsExchangeNs;
         this.tsRecvNs = tsRecvNs;

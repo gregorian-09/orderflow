@@ -68,6 +68,8 @@ PyPI metadata includes:
 - project URLs (Homepage/Docs/Repository/Issues)
 - classifiers for trading + library categories
 - package keywords for discoverability
+- rich long-description rendering from `bindings/python/README.md`
+  (badges, architecture visual, API map, operational notes)
 
 ## Release pipeline
 

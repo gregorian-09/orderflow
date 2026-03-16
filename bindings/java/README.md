@@ -1,38 +1,37 @@
-# Java Binding (JNA)
+# Orderflow Java Binding (`orderflow-java-binding`)
 
-Java wrapper over the stable Orderflow C ABI (`of_ffi_c`) using JNA.
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.gregorian-09/orderflow-java-binding.svg)](https://search.maven.org/artifact/io.github.gregorian-09/orderflow-java-binding)
+[![JavaDoc](https://javadoc.io/badge2/io.github.gregorian-09/orderflow-java-binding/javadoc.svg)](https://javadoc.io/doc/io.github.gregorian-09/orderflow-java-binding)
+[![CI](https://github.com/gregorian-09/orderflow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gregorian-09/orderflow/actions/workflows/ci.yml)
 
-## What You Get
+Java (JNA) wrapper over the stable Orderflow C ABI (`of_ffi_c`) for
+event-driven orderflow analytics and external feed ingestion.
 
-- Runtime lifecycle control (`start`, `stop`, `close`)
-- Symbol subscription and callback streaming
-- Adapter polling + external ingest (`ingestTrade`, `ingestBook`)
+## Coordinates
+
+```xml
+<dependency>
+  <groupId>io.github.gregorian-09</groupId>
+  <artifactId>orderflow-java-binding</artifactId>
+  <version>0.1.2</version>
+</dependency>
+```
+
+## Features
+
+- Runtime lifecycle (`start`, `stop`, `close`)
+- Stream subscriptions and listener callbacks
+- Polling and external ingest (`ingestTrade`, `ingestBook`)
 - JSON snapshots (`book`, `analytics`, `signal`, `metrics`)
-- Feed supervision helpers (stale/sequence/reconnect policy)
-
-## Prerequisites
-
-1. Build native runtime:
-
-```bash
-cargo build -p of_ffi_c
-```
-
-2. Build Java binding:
-
-```bash
-mvn -q -f bindings/java/pom.xml package
-```
+- Feed-health controls (stale/sequence/reconnect)
 
 ## Native Library Resolution
 
-`OrderflowEngine` resolves native library in this order:
+`OrderflowEngine` resolves the native library in this order:
 
-1. explicit constructor path
-2. `ORDERFLOW_LIBRARY_PATH`
-3. default debug path (`target/debug/<platform-lib-name>`)
-
-Example:
+1. Explicit constructor path
+2. `ORDERFLOW_LIBRARY_PATH` environment variable
+3. Default debug path (`target/debug/<platform-lib-name>`)
 
 ```java
 new OrderflowEngine("/absolute/path/to/libof_ffi_c.so", EngineConfig.defaults());
@@ -49,12 +48,12 @@ try (OrderflowEngine eng = new OrderflowEngine(null, cfg)) {
     Symbol sym = new Symbol("CME", "ESM6", 10);
     eng.subscribe(sym, StreamKind.ANALYTICS);
     eng.pollOnce(DataQualityFlags.NONE);
-    System.out.println(eng.analyticsSnapshot(sym));
-    System.out.println(eng.metricsJson());
+    System.out.println("analytics=" + eng.analyticsSnapshot(sym));
+    System.out.println("metrics=" + eng.metricsJson());
 }
 ```
 
-## Example Apps
+## Examples
 
 ```bash
 mvn -q -f bindings/java/pom.xml exec:java -Dexec.mainClass=com.orderflow.examples.BasicExample
@@ -64,14 +63,15 @@ mvn -q -f bindings/java/pom.xml exec:java -Dexec.mainClass=com.orderflow.example
 
 ## API Map
 
-- `OrderflowEngine`: lifecycle, subscribe/unsubscribe, poll, ingest, snapshots.
-- `EngineConfig`: runtime options + persistence/audit knobs.
-- `Symbol`: venue/instrument/depth descriptor.
-- `OrderflowEvent` + `EventListener`: callback event envelope.
-- `StreamKind`, `Side`, `BookAction`, `DataQualityFlags`: stable constants.
+- `OrderflowEngine`: high-level runtime operations
+- `EngineConfig`: immutable runtime configuration
+- `Symbol`: venue/instrument/depth descriptor
+- `OrderflowEvent` + `EventListener`: callback envelope + handler
+- `StreamKind`, `Side`, `BookAction`, `DataQualityFlags`: stable constants
 
-## Operational Notes
+## Documentation
 
-- Callback listeners are delivered during `pollOnce(...)` and external ingest calls.
-- `StreamKind.HEALTH` emits transition events with health sequence and quality flags.
-- `resetSymbolSession(symbol)` clears per-session analytics/profile state for the symbol.
+- JavaDoc: https://javadoc.io/doc/io.github.gregorian-09/orderflow-java-binding
+- Handbook: https://github.com/gregorian-09/orderflow/tree/main/docs/handbook
+- API reference: https://github.com/gregorian-09/orderflow/tree/main/docs/api
+- Binding guide: https://github.com/gregorian-09/orderflow/tree/main/docs/bindings/java.md
