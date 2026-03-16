@@ -202,7 +202,9 @@ class Engine:
         self._require_handle()
         sub = ctypes.c_void_p()
         c_symbol = self._to_c_symbol(symbol)
-        cb_fn = None
+        # `of_subscribe` callback arg is typed as `OfEventCallback`; pass a typed
+        # null function pointer when callback delivery is not requested.
+        cb_fn: OfEventCallback = ctypes.cast(None, OfEventCallback)
         if callback is not None:
             cb_fn = self._make_callback(callback)
             self._callbacks.append(cb_fn)
