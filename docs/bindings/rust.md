@@ -24,6 +24,17 @@ This order matches dependency topology.
 
 Workflow: `.github/workflows/publish-rust.yml`
 
+## Release prerequisites
+
+Required repository secret:
+
+- `CARGO_REGISTRY_TOKEN`
+
+The crates.io account behind this token must have a verified email address.
+Without that, publish fails with:
+
+`A verified email address is required to publish crates to crates.io`
+
 ## Docs
 
 - Local docs:

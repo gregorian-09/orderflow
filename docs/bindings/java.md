@@ -31,3 +31,16 @@ try (OrderflowEngine eng = new OrderflowEngine(null, cfg)) {
 ## Release pipeline
 
 Workflow: `.github/workflows/publish-java.yml`
+
+## Release prerequisites
+
+Required repository secrets:
+
+- `MAVEN_CENTRAL_TOKEN_USERNAME`
+- `MAVEN_CENTRAL_TOKEN_PASSWORD`
+- `MAVEN_GPG_PRIVATE_KEY`
+- `MAVEN_GPG_PASSPHRASE`
+
+The workflow runs a preflight that verifies the imported secret key's fingerprint
+is discoverable on `keys.openpgp.org`. If this fails, publish/verify the public
+key first, then rerun the workflow.
