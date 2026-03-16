@@ -51,6 +51,21 @@ jobs:
           gpg_private_key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
 
+      - name: Verify GPG public key is discoverable
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          fingerprint="$(gpg --list-secret-keys --with-colons | awk -F: '$1=="fpr"{print $10; exit}')"
+          if [ -z "$fingerprint" ]; then
+            echo "::error::No GPG secret key found after import."
+            exit 1
+          fi
+          echo "Using GPG fingerprint: $fingerprint"
+          if ! curl --fail --silent --show-error "https://keys.openpgp.org/vks/v1/by-fingerprint/${fingerprint}" >/dev/null; then
+            echo "::error::Public key not found on keys.openpgp.org for fingerprint ${fingerprint}. Publish/verify the public key first."
+            exit 1
+          fi
+
       - name: Publish to Maven Central
         if: github.event_name == 'workflow_dispatch'
         env:
