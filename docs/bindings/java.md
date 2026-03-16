@@ -1,6 +1,6 @@
 # Java Binding
 
-Artifact: `com.orderflow:orderflow-java-binding`  
+Artifact: `io.github.gregorian-09:orderflow-java-binding`  
 Source: `bindings/java`
 
 ## Distribution Model
