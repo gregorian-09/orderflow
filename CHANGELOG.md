@@ -44,7 +44,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
   packaging-facing docs (badges, API map, operations notes, and direct doc links)
   to improve PyPI and Maven discoverability.
 - Binding versions were prepared for this release cycle: Python `0.1.3`,
-  Java `0.1.2`, Rust/C updated to `0.1.1`.
+  Java `0.1.2`, Rust/C updated to `0.1.2`.
 - Added root `LICENSE` file (MIT) to satisfy package distribution and
   registry compliance requirements.
 
