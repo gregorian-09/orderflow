@@ -8,6 +8,7 @@ use crate::{
     SubscribeReq,
 };
 
+/// Resolved runtime configuration for the feature-gated Rithmic adapter.
 #[derive(Debug, Clone)]
 pub struct RithmicConfig {
     endpoint: String,
@@ -17,6 +18,7 @@ pub struct RithmicConfig {
 }
 
 impl RithmicConfig {
+    /// Builds a validated Rithmic config from generic adapter config input.
     pub fn from_adapter_config(cfg: &AdapterConfig) -> AdapterResult<Self> {
         let endpoint = cfg
             .endpoint
@@ -62,6 +64,7 @@ fn read_env(name: &str) -> AdapterResult<String> {
     Ok(v)
 }
 
+/// Rithmic adapter scaffold implementing the common market-data adapter trait.
 #[derive(Debug)]
 pub struct RithmicAdapter {
     cfg: RithmicConfig,
@@ -75,6 +78,7 @@ pub struct RithmicAdapter {
 }
 
 impl RithmicAdapter {
+    /// Creates a Rithmic adapter instance from generic adapter configuration.
     pub fn from_config(cfg: &AdapterConfig) -> AdapterResult<Self> {
         let cfg = RithmicConfig::from_adapter_config(cfg)?;
         Ok(Self {

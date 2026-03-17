@@ -1,20 +1,32 @@
 use crate::{AdapterConfig, AdapterError, AdapterResult};
 
+/// Resolved CQG adapter runtime configuration.
 #[derive(Debug, Clone)]
 pub struct CqgConfig {
+    /// CQG websocket endpoint (`wss://`, `ws://`, or `mock://`).
     pub endpoint: String,
+    /// CQG private label/account namespace.
     pub private_label: String,
+    /// CQG client identifier (typically application id).
     pub client_id: String,
+    /// CQG username resolved from credential environment reference.
     pub username: String,
+    /// CQG password resolved from credential environment reference.
     pub password: String,
+    /// Ping interval used for keepalive checks.
     pub ping_interval_secs: u64,
+    /// Max heartbeat silence before degraded detection.
     pub heartbeat_timeout_secs: u64,
+    /// Minimum reconnect backoff in milliseconds.
     pub reconnect_min_ms: u64,
+    /// Maximum reconnect backoff in milliseconds.
     pub reconnect_max_ms: u64,
+    /// Maximum concurrently in-flight protocol requests.
     pub max_inflight_requests: u32,
 }
 
 impl CqgConfig {
+    /// Builds CQG config from generic adapter configuration plus environment vars.
     pub fn from_adapter_config(cfg: &AdapterConfig) -> AdapterResult<Self> {
         let endpoint = cfg
             .endpoint
@@ -54,6 +66,7 @@ impl CqgConfig {
         })
     }
 
+    /// Validates runtime invariants for reconnect and heartbeat policies.
     pub fn validate_runtime(&self) -> AdapterResult<()> {
         if self.reconnect_min_ms > self.reconnect_max_ms {
             return Err(AdapterError::NotConfigured(

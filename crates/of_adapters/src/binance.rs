@@ -16,12 +16,14 @@ use crate::{
 const PRICE_SCALE: i64 = 1_000_000;
 const SIZE_SCALE: i64 = 1_000;
 
+/// Resolved Binance adapter configuration.
 #[derive(Debug, Clone)]
 pub struct BinanceConfig {
     endpoint: String,
 }
 
 impl BinanceConfig {
+    /// Builds Binance config from generic adapter config with default mock endpoint.
     pub fn from_adapter_config(cfg: &AdapterConfig) -> AdapterResult<Self> {
         let endpoint = cfg
             .endpoint
@@ -164,6 +166,7 @@ impl WsTextTransport {
     }
 }
 
+/// Binance websocket adapter with mock/live transport support.
 #[derive(Debug)]
 pub struct BinanceAdapter {
     cfg: BinanceConfig,
@@ -178,6 +181,7 @@ pub struct BinanceAdapter {
 }
 
 impl BinanceAdapter {
+    /// Creates a Binance adapter from generic adapter configuration.
     pub fn from_config(cfg: &AdapterConfig) -> AdapterResult<Self> {
         let cfg = BinanceConfig::from_adapter_config(cfg)?;
         let transport = if cfg.endpoint.starts_with("mock://") {

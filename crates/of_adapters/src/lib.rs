@@ -101,6 +101,7 @@ impl MarketDataAdapter for Box<dyn MarketDataAdapter> {
     }
 }
 
+/// Provider selection used by adapter factory configuration.
 #[derive(Debug, Clone)]
 pub enum ProviderKind {
     /// In-memory deterministic test provider.
@@ -137,6 +138,7 @@ impl Default for AdapterConfig {
     }
 }
 
+/// Credential environment-variable references for adapter auth bootstrap.
 #[derive(Debug, Clone)]
 pub struct CredentialsRef {
     /// Environment variable name for key id/user id.
@@ -203,6 +205,7 @@ fn create_binance_adapter(cfg: &AdapterConfig) -> AdapterResult<Box<dyn MarketDa
     }
 }
 
+/// Deterministic in-memory adapter for tests, demos, and replay harnesses.
 #[derive(Debug, Default)]
 pub struct MockAdapter {
     /// Connection state flag.

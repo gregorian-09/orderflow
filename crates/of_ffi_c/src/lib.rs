@@ -21,55 +21,85 @@ const BUILD_INFO: &[u8] = concat!("of_ffi_c/", env!("CARGO_PKG_VERSION"), "\0").
 /// Engine configuration passed to [`of_engine_create`].
 #[repr(C)]
 pub struct of_engine_config_t {
+    /// Optional runtime instance identifier.
     pub instance_id: *const c_char,
+    /// Optional config file path loaded by the runtime.
     pub config_path: *const c_char,
+    /// Reserved log-level field for host integrations.
     pub log_level: u32,
+    /// Non-zero enables persistence.
     pub enable_persistence: u8,
+    /// Audit log rotation size threshold in bytes.
     pub audit_max_bytes: u64,
+    /// Number of rotated audit log files to retain.
     pub audit_max_files: u32,
+    /// Comma-separated redaction token list.
     pub audit_redact_tokens_csv: *const c_char,
+    /// Maximum retained persistence bytes (0 disables).
     pub data_retention_max_bytes: u64,
+    /// Maximum retained persistence age seconds (0 disables).
     pub data_retention_max_age_secs: u64,
 }
 
 /// Symbol descriptor used by subscription and snapshot functions.
 #[repr(C)]
 pub struct of_symbol_t {
+    /// Venue or exchange identifier.
     pub venue: *const c_char,
+    /// Venue-native symbol identifier.
     pub symbol: *const c_char,
+    /// Requested level-2 depth for subscriptions.
     pub depth_levels: u16,
 }
 
 /// External trade payload accepted by [`of_ingest_trade`].
 #[repr(C)]
 pub struct of_trade_t {
+    /// Trade symbol descriptor.
     pub symbol: of_symbol_t,
+    /// Trade price in integer units.
     pub price: i64,
+    /// Trade quantity.
     pub size: i64,
+    /// Aggressor side (`0=Bid`, `1=Ask`).
     pub aggressor_side: u32,
+    /// Venue sequence number.
     pub sequence: u64,
+    /// Exchange timestamp in nanoseconds.
     pub ts_exchange_ns: u64,
+    /// Local receive timestamp in nanoseconds.
     pub ts_recv_ns: u64,
 }
 
 /// External order-book payload accepted by [`of_ingest_book`].
 #[repr(C)]
 pub struct of_book_t {
+    /// Book update symbol descriptor.
     pub symbol: of_symbol_t,
+    /// Book side (`0=Bid`, `1=Ask`).
     pub side: u32,
+    /// Price level index from top of book.
     pub level: u16,
+    /// Level price in integer units.
     pub price: i64,
+    /// Level quantity.
     pub size: i64,
+    /// Mutation action (`0=Upsert`, `1=Delete`).
     pub action: u32,
+    /// Venue sequence number.
     pub sequence: u64,
+    /// Exchange timestamp in nanoseconds.
     pub ts_exchange_ns: u64,
+    /// Local receive timestamp in nanoseconds.
     pub ts_recv_ns: u64,
 }
 
 /// External-feed quality policy configured via [`of_configure_external_feed`].
 #[repr(C)]
 pub struct of_external_feed_policy_t {
+    /// Stale threshold in milliseconds.
     pub stale_after_ms: u64,
+    /// Non-zero enables sequence checks.
     pub enforce_sequence: u8,
 }
 
@@ -77,13 +107,21 @@ pub struct of_external_feed_policy_t {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum of_error_t {
+    /// Success.
     OF_OK = 0,
+    /// Invalid argument.
     OF_ERR_INVALID_ARG = 1,
+    /// Invalid runtime state.
     OF_ERR_STATE = 2,
+    /// I/O failure.
     OF_ERR_IO = 3,
+    /// Authentication failure.
     OF_ERR_AUTH = 4,
+    /// Backpressure condition.
     OF_ERR_BACKPRESSURE = 5,
+    /// Data-quality policy rejection.
     OF_ERR_DATA_QUALITY = 6,
+    /// Internal/unknown failure.
     OF_ERR_INTERNAL = 255,
 }
 
@@ -101,12 +139,19 @@ pub struct of_subscription {
 /// Event envelope dispatched to subscription callbacks.
 #[repr(C)]
 pub struct of_event_t {
+    /// Exchange timestamp in nanoseconds.
     pub ts_exchange_ns: u64,
+    /// Local receive timestamp in nanoseconds.
     pub ts_recv_ns: u64,
+    /// Stream/event kind value.
     pub kind: u32,
+    /// Pointer to UTF-8 payload bytes.
     pub payload: *const c_void,
+    /// Payload byte length.
     pub payload_len: u32,
+    /// Payload schema identifier.
     pub schema_id: u32,
+    /// Quality flags bitset associated with this event.
     pub quality_flags: u32,
 }
 

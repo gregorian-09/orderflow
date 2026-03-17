@@ -172,6 +172,7 @@ impl BitOr for DataQualityFlags {
     }
 }
 
+/// In-memory accumulator that updates analytics state from normalized trades.
 #[derive(Debug, Default)]
 pub struct AnalyticsAccumulator {
     snapshot: AnalyticsSnapshot,

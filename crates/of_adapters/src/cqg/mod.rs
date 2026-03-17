@@ -25,6 +25,7 @@ use crate::{
     SubscribeReq,
 };
 
+/// CQG adapter implementation with session/reconnect/heartbeat supervision.
 pub struct CqgAdapter {
     cfg: CqgConfig,
     session: CqgSession,
@@ -42,6 +43,7 @@ pub struct CqgAdapter {
 }
 
 impl CqgAdapter {
+    /// Creates a CQG adapter and validates runtime-safe configuration.
     pub fn from_config(cfg: &AdapterConfig) -> AdapterResult<Self> {
         let cfg = CqgConfig::from_adapter_config(cfg)?;
         cfg.validate_runtime()?;

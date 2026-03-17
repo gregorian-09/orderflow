@@ -25,3 +25,12 @@ jobs:
         run: cargo test -q -p of_adapters --features "${{ matrix.features }}"
       - name: Test workspace
         run: cargo test -q
+
+  docs-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: ./.github/actions/setup-rust
+      - name: Enforce documentation coverage
+        run: python3 tools/docs_coverage.py --enforce
