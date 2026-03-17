@@ -13,7 +13,7 @@ event-driven orderflow analytics and external feed ingestion.
 <dependency>
   <groupId>io.github.gregorian-09</groupId>
   <artifactId>orderflow-java-binding</artifactId>
-  <version>0.1.2</version>
+  <version>0.1.3</version>
 </dependency>
 ```
 
