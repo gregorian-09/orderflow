@@ -28,7 +28,7 @@ Use the supported first-party path instead:
 3. Validate locally:
    - `./vcpkg format-manifest ports/orderflow-c/vcpkg.json`
    - `./vcpkg x-add-version orderflow-c`
-   - `./vcpkg install orderflow-c`
+   - `VCPKG_BINARY_SOURCES=clear ./vcpkg install orderflow-c`
 4. Commit generated files:
    - `ports/orderflow-c/*`
    - `versions/o-/orderflow-c.json`

@@ -40,6 +40,7 @@ Fast local path:
 Example overlay install:
 
 ```bash
+VCPKG_BINARY_SOURCES=clear \
 vcpkg install orderflow-c --overlay-ports=/path/to/orderflow/packaging/vcpkg/official/ports
 ```
 
@@ -66,6 +67,11 @@ Curated registry status:
 - Upstream PR: `microsoft/vcpkg#50493`
 - Current maintainer feedback blocks merge until vcpkg has an accepted Rust
   integration approach beyond per-port cargo bootstrap.
+
+Note:
+
+- For local smoke tests/CI, set `VCPKG_BINARY_SOURCES=clear` to avoid
+  non-fatal binary-cache submission warnings.
 
 ## Using the C SDK
 

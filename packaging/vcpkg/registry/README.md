@@ -11,6 +11,7 @@ registry and overlay-port path.
 Install directly from this repository without registry wiring:
 
 ```bash
+VCPKG_BINARY_SOURCES=clear \
 vcpkg install orderflow-c --overlay-ports=/path/to/orderflow/packaging/vcpkg/official/ports
 ```
 
@@ -28,6 +29,15 @@ vcpkg install orderflow-c --overlay-ports=/path/to/orderflow/packaging/vcpkg/off
   "dependencies": ["orderflow-c"]
 }
 ```
+
+Then install in manifest mode (recommended for CI/smoke runs):
+
+```bash
+VCPKG_BINARY_SOURCES=clear vcpkg install
+```
+
+`VCPKG_BINARY_SOURCES=clear` disables binary-cache upload/download, which
+avoids non-fatal cache-submission warnings in ephemeral environments.
 
 ## Registry layout
 
