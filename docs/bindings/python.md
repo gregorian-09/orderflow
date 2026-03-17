@@ -3,77 +3,87 @@
 Package: `orderflow-gregorian09`  
 Source: `bindings/python`
 
-## Distribution Model
+This guide complements the PyPI page and serves as an engineering/operator view
+of the Python binding.
 
-- Published to PyPI as the Python wrapper package.
-- Native runtime (`libof_ffi_c`) is distributed separately as release artifacts.
+## Scope
 
-At runtime, the wrapper resolves the native library in this order:
+- Pythonic runtime control over the Orderflow C ABI.
+- Streaming and poll-driven processing workflows.
+- External feed ingestion and data-quality supervision.
+- Snapshot and metrics retrieval.
 
-1. `library_path=` argument passed to `Engine(...)`.
-2. `ORDERFLOW_LIBRARY_PATH` environment variable.
-3. Local default path (`target/debug/libof_ffi_c.*`).
+## Runtime Dependency Model
 
-## API Surface
+The Python wheel ships wrapper code only. Native runtime (`libof_ffi_c`) is
+distributed separately.
 
-- `Engine`: lifecycle, poll loop, subscriptions, ingest, snapshots.
-- `EngineConfig`: runtime creation parameters and persistence/audit knobs.
-- `Symbol`: normalized venue/instrument descriptor.
-- `ExternalFeedPolicy`: stale/sequence supervision policy.
-- constants: `StreamKind`, `Side`, `BookAction`, `DataQualityFlags`.
+Native lookup order:
 
-## Runtime Behavior
+1. `library_path=` passed to `Engine(...)`
+2. `ORDERFLOW_LIBRARY_PATH`
+3. local default path under `target/debug`
 
-- `subscribe(..., callback=...)` callbacks fire on `poll_once(...)` and `ingest_*`.
-- `subscribe(..., callback=None)` is supported for polling-only flows.
-- Snapshot methods return decoded dictionaries from runtime JSON payloads.
-- `StreamKind.HEALTH` emits transition events (`connected/degraded/reconnect_state`).
+## Public API Index
 
-## Install
+### Constants
 
-### From PyPI
+- `StreamKind`: `BOOK`, `TRADES`, `ANALYTICS`, `SIGNALS`, `HEALTH`
+- `Side`: `BID`, `ASK`
+- `BookAction`: `UPSERT`, `DELETE`
+- `DataQualityFlags`: `NONE`, `STALE_FEED`, `SEQUENCE_GAP`, `CLOCK_SKEW`,
+  `DEPTH_TRUNCATED`, `OUT_OF_ORDER`, `ADAPTER_DEGRADED`
 
-```bash
-pip install orderflow-gregorian09
-```
+### Types
 
-Then point to native library:
+- `Symbol(venue, symbol, depth_levels=10)`
+- `EngineConfig(...)`
+- `ExternalFeedPolicy(stale_after_ms=15000, enforce_sequence=True)`
 
-```bash
-export ORDERFLOW_LIBRARY_PATH=/opt/orderflow/lib/libof_ffi_c.so
-```
+### Engine
 
-### Local editable install
+- metadata: `api_version`, `build_info`
+- lifecycle: `start`, `stop`, `close`, context-manager support
+- subscription: `subscribe`, `unsubscribe`, `poll_once`, `reset_symbol_session`
+- external feed policy: `configure_external_feed`,
+  `set_external_reconnecting`, `external_health_tick`
+- ingest: `ingest_trade`, `ingest_book`
+- snapshots: `book_snapshot`, `analytics_snapshot`, `signal_snapshot`, `metrics`
 
-```bash
-pip install -e bindings/python
-```
+### Exceptions
 
-## Minimal usage
+- `OrderflowError`
+- `OrderflowStateError`
+- `OrderflowArgError`
 
-```python
-from orderflow import Engine, EngineConfig, Symbol, StreamKind
+## Integration Workflows
 
-with Engine(EngineConfig(instance_id="py")) as eng:
-    sym = Symbol("CME", "ESM6", 10)
-    eng.subscribe(sym, StreamKind.ANALYTICS)
-    eng.poll_once()
-    print(eng.analytics_snapshot(sym))
-```
+### Poll-driven
 
-## Metadata Quality
+- subscribe with `callback=None`
+- call `poll_once` on your scheduler
+- consume snapshots from `book_snapshot`, `analytics_snapshot`, `signal_snapshot`
 
-PyPI metadata includes:
+### Listener-driven
 
-- project URLs (Homepage/Docs/Repository/Issues)
-- classifiers for trading + library categories
-- package keywords for discoverability
-- rich long-description rendering from `bindings/python/README.md`
-  (badges, architecture visual, API map, operational notes)
+- pass callback to `subscribe(...)`
+- keep callbacks short and non-blocking
+- use `poll_once(...)` cadence for adapter-driven feeds
 
-## Release pipeline
+### External bridge-driven
 
-Workflow: `.github/workflows/publish-python.yml`
+- configure policy with `configure_external_feed(...)`
+- inject events with `ingest_trade` / `ingest_book`
+- use `set_external_reconnecting` and `external_health_tick` for feed-state signaling
 
-Version source of truth: `bindings/versions.toml`  
-Sync command: `python3 tools/release/sync_binding_versions.py`
+## Distribution and Quality Controls
+
+- version authority: `bindings/versions.toml`
+- sync/check tool: `python3 tools/release/sync_binding_versions.py --check`
+- docs coverage gate: `python3 tools/docs_coverage.py --enforce`
+- publish workflow: `.github/workflows/publish-python.yml`
+
+## Reference
+
+- PyPI package page and complete API README: `bindings/python/README.md`
+- package source: `bindings/python/orderflow`

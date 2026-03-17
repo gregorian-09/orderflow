@@ -3,68 +3,90 @@
 Artifact: `io.github.gregorian-09:orderflow-java-binding`  
 Source: `bindings/java`
 
-## Distribution Model
+This guide complements Maven Central + JavaDoc and captures binding behavior
+from an integration and release-engineering perspective.
 
-- Published as a Maven artifact (JNA wrapper).
-- Native runtime (`libof_ffi_c`) is distributed separately as release artifacts.
+## Scope
 
-Runtime native library lookup:
+- JNA wrapper over stable `of_ffi_c` symbols
+- lifecycle/session control through `OrderflowEngine`
+- subscription callbacks, polling, and external ingest
+- snapshot retrieval and metrics access
 
-1. Explicit constructor path: `new OrderflowEngine("/abs/path/libof_ffi_c.so", cfg)`.
-2. `ORDERFLOW_LIBRARY_PATH` environment variable.
-3. Default local path: `target/debug/<mapped-lib-name>`.
+## Runtime Dependency Model
 
-## API Surface
+The JAR provides Java wrappers; native runtime (`libof_ffi_c`) is loaded at
+runtime.
 
-- `OrderflowEngine`: create/start/stop/close runtime, subscription lifecycle,
-  callback dispatch, ingest, and snapshot retrieval.
-- `EngineConfig`: immutable runtime options object.
-- `Symbol`: venue/symbol/depth descriptor.
-- `OrderflowEvent` + `EventListener`: callback envelope and listener interface.
-- constants: `StreamKind`, `Side`, `BookAction`, `DataQualityFlags`.
+Native lookup order:
 
-## Usage
+1. explicit path in `new OrderflowEngine(path, cfg)`
+2. `ORDERFLOW_LIBRARY_PATH`
+3. default local debug path under `target/debug`
 
-```java
-EngineConfig cfg = EngineConfig.defaults();
-try (OrderflowEngine eng = new OrderflowEngine(null, cfg)) {
-    eng.start();
-    Symbol sym = new Symbol("CME", "ESM6", 10);
-    eng.subscribe(sym, StreamKind.ANALYTICS);
-    eng.pollOnce(DataQualityFlags.NONE);
-    System.out.println(eng.analyticsSnapshot(sym));
-    eng.stop();
-}
-```
+## Public API Index
 
-## JavaDoc Structure
+### Constants
 
-The binding ships package-level docs (`package-info.java`) for:
+- `StreamKind`: `BOOK`, `TRADES`, `ANALYTICS`, `SIGNALS`, `HEALTH`
+- `Side`: `BID`, `ASK`
+- `BookAction`: `UPSERT`, `DELETE`
+- `DataQualityFlags`: quality bit flags used for ingest/poll context
 
-- `com.orderflow.bindings` (library architecture + usage contract)
-- `com.orderflow.examples` (runnable example index)
+### Types
 
-This improves generated JavaDoc discoverability and mirrors production SDK style.
+- `EngineConfig` + `EngineConfig.defaults()`
+- `Symbol`
+- `OrderflowEvent`
+- `EventListener`
 
-The published JavaDoc is additionally enriched via
-`bindings/java/src/main/javadoc/overview.html` as a top-level API landing page.
+### Engine API
 
-## Release pipeline
+- constructor: `OrderflowEngine(String nativePath, EngineConfig config)`
+- metadata: `apiVersion()`, `buildInfo()`
+- lifecycle: `start()`, `stop()`, `close()`
+- subscriptions: `subscribe(...)`, `unsubscribe(...)`, `pollOnce(...)`,
+  `resetSymbolSession(...)`
+- external feed controls: `configureExternalFeed(...)`,
+  `setExternalReconnecting(...)`, `externalHealthTick()`
+- ingest: `ingestTrade(...)`, `ingestBook(...)` (convenience + full overloads)
+- snapshots: `bookSnapshot(...)`, `analyticsSnapshot(...)`,
+  `signalSnapshot(...)`, `metricsJson()`
 
-Workflow: `.github/workflows/publish-java.yml`
+### Exceptions
 
-Version source of truth: `bindings/versions.toml`  
-Sync command: `python3 tools/release/sync_binding_versions.py`
+- `OrderflowException`
+- `OrderflowStateException`
+- `OrderflowArgException`
 
-## Release prerequisites
+## Integration Patterns
 
-Required repository secrets:
+### Analytics polling loop
 
-- `MAVEN_CENTRAL_TOKEN_USERNAME`
-- `MAVEN_CENTRAL_TOKEN_PASSWORD`
-- `MAVEN_GPG_PRIVATE_KEY`
-- `MAVEN_GPG_PASSPHRASE`
+- subscribe analytics stream
+- execute `pollOnce(DataQualityFlags.NONE)` on app schedule
+- consume snapshot JSON with your JSON parser
 
-The workflow runs a preflight that verifies the imported secret key's fingerprint
-is discoverable on `keys.openpgp.org`. If this fails, publish/verify the public
-key first, then rerun the workflow.
+### Health stream monitoring
+
+- subscribe `StreamKind.HEALTH` with `EventListener`
+- record transition payloads for SRE/ops telemetry
+
+### External broker bridge
+
+- configure policy with `configureExternalFeed(staleAfterMs, enforceSequence)`
+- map broker payloads into `ingestTrade` / `ingestBook`
+- set reconnect state explicitly during broker reconnect windows
+
+## Distribution and Quality Controls
+
+- version authority: `bindings/versions.toml`
+- sync/check tool: `python3 tools/release/sync_binding_versions.py --check`
+- docs coverage gate: `python3 tools/docs_coverage.py --enforce`
+- publish workflow: `.github/workflows/publish-java.yml`
+- JavaDoc landing page: `bindings/java/src/main/javadoc/overview.html`
+
+## Reference
+
+- Maven README (full API reference): `bindings/java/README.md`
+- JavaDoc package docs: `bindings/java/src/main/java/com/orderflow/bindings/package-info.java`

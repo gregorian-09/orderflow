@@ -11,32 +11,65 @@
       <code>io.github.gregorian-09:orderflow-java-binding</code>
     </p>
     <p>
-      Java (JNA) wrapper for the stable Orderflow C ABI, focused on orderflow
-      analytics, feed-health supervision, and production runtime integration.
+      Production-oriented Java (JNA) wrapper for the stable Orderflow C ABI,
+      focused on analytics snapshots, signal streams, and external ingest.
     </p>
 
-    <h2>Primary APIs</h2>
+    <h2>Primary Packages</h2>
     <ul>
-      <li><code>OrderflowEngine</code>: lifecycle, subscription, ingest, snapshots.</li>
-      <li><code>EngineConfig</code>: immutable runtime configuration.</li>
-      <li><code>Symbol</code>: venue + instrument + depth descriptor.</li>
-      <li><code>OrderflowEvent</code>: callback event envelope.</li>
+      <li><code>com.orderflow.bindings</code>: SDK API surface.</li>
+      <li><code>com.orderflow.examples</code>: runnable examples.</li>
     </ul>
 
-    <h2>Runtime Model</h2>
+    <h2>Runtime Lifecycle</h2>
     <ol>
-      <li>Create engine with configuration and optional native library path.</li>
-      <li>Subscribe streams and optionally attach callback listeners.</li>
-      <li>Drive runtime using polling and/or external ingest.</li>
-      <li>Read JSON snapshots (book, analytics, signal, metrics).</li>
+      <li>Create <code>OrderflowEngine</code> with <code>EngineConfig</code>.</li>
+      <li>Call <code>start()</code>.</li>
+      <li>Subscribe streams (optional listeners).</li>
+      <li>Drive with <code>pollOnce(...)</code> and/or external ingest.</li>
+      <li>Read snapshots/metrics.</li>
+      <li>Call <code>stop()</code> and <code>close()</code> (or try-with-resources).</li>
     </ol>
 
-    <h2>Native Library Lookup</h2>
+    <h2>Main Public Types</h2>
+    <ul>
+      <li><code>OrderflowEngine</code>: lifecycle, subscriptions, polling, ingest, snapshots.</li>
+      <li><code>EngineConfig</code>: immutable runtime configuration.</li>
+      <li><code>Symbol</code>: venue + instrument + depth descriptor.</li>
+      <li><code>OrderflowEvent</code>: callback envelope.</li>
+      <li><code>EventListener</code>: callback interface.</li>
+      <li>constants: <code>StreamKind</code>, <code>Side</code>, <code>BookAction</code>, <code>DataQualityFlags</code>.</li>
+    </ul>
+
+    <h2>Snapshot Contracts</h2>
+    <p>
+      The following methods return JSON payload strings:
+      <code>bookSnapshot</code>, <code>analyticsSnapshot</code>,
+      <code>signalSnapshot</code>, and <code>metricsJson</code>.
+    </p>
+
+    <h2>External Ingest Contracts</h2>
+    <p>
+      External event flow is configured with
+      <code>configureExternalFeed(staleAfterMs, enforceSequence)</code> and fed
+      through <code>ingestTrade(...)</code> and <code>ingestBook(...)</code>.
+      Health state can be updated via <code>setExternalReconnecting(...)</code>
+      and <code>externalHealthTick()</code>.
+    </p>
+
+    <h2>Native Library Resolution</h2>
     <ol>
       <li>Explicit constructor path.</li>
       <li><code>ORDERFLOW_LIBRARY_PATH</code> environment variable.</li>
       <li>Default debug target path under <code>target/debug</code>.</li>
     </ol>
+
+    <h2>Operational Notes</h2>
+    <ul>
+      <li>Callbacks are dispatched during <code>pollOnce(...)</code> and ingest paths.</li>
+      <li>Callback handlers should remain non-blocking.</li>
+      <li>Validate side/action/stream constants before ingest/subscribe.</li>
+    </ul>
 
     <h2>Project Documentation</h2>
     <ul>
