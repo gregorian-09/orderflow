@@ -27,14 +27,45 @@ Output:
   - `pkgconfig/orderflow.pc`
   - `README.md`
 
-## Official vcpkg path
+## vcpkg install paths
 
-Official port submission assets are maintained at:
+Primary supported path:
 
-- `packaging/vcpkg/official/ports/orderflow-c`
-- `packaging/vcpkg/official/README.md`
+- Filesystem registry: `packaging/vcpkg/registry`
 
-These files are structured for direct submission to `microsoft/vcpkg`.
+Fast local path:
+
+- Overlay port: `packaging/vcpkg/official/ports/orderflow-c`
+
+Example overlay install:
+
+```bash
+vcpkg install orderflow-c --overlay-ports=/path/to/orderflow/packaging/vcpkg/official/ports
+```
+
+Example filesystem registry (`vcpkg-configuration.json`):
+
+```json
+{
+  "default-registry": {
+    "kind": "builtin",
+    "baseline": "<replace-with-vcpkg-commit>"
+  },
+  "registries": [
+    {
+      "kind": "filesystem",
+      "path": "/absolute/path/to/orderflow/packaging/vcpkg/registry",
+      "packages": ["orderflow-c"]
+    }
+  ]
+}
+```
+
+Curated registry status:
+
+- Upstream PR: `microsoft/vcpkg#50493`
+- Current maintainer feedback blocks merge until vcpkg has an accepted Rust
+  integration approach beyond per-port cargo bootstrap.
 
 ## Using the C SDK
 

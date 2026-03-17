@@ -1,0 +1,15 @@
+{
+  "default-registry": {
+    "kind": "builtin",
+    "baseline": "<replace-with-your-vcpkg-commit>"
+  },
+  "registries": [
+    {
+      "kind": "filesystem",
+      "path": "/absolute/path/to/orderflow/packaging/vcpkg/registry",
+      "packages": [
+        "orderflow-c"
+      ]
+    }
+  ]
+}

@@ -1,7 +1,16 @@
 # Official vcpkg Submission (orderflow-c)
 
-This folder contains an official-registry-ready `orderflow-c` port definition
-for `microsoft/vcpkg`.
+Status: upstream curated-registry submission is currently blocked by maintainer
+feedback on Rust/Cargo integration strategy:
+
+- PR: `microsoft/vcpkg#50493`
+- Reviewer note: per-port Rust bootstrap/cargo recipe is not considered a
+  long-term integration solution.
+
+Use the supported first-party path instead:
+
+- `packaging/vcpkg/registry` (filesystem registry)
+- or overlay install via `packaging/vcpkg/official/ports`
 
 ## Contents
 
@@ -9,7 +18,7 @@ for `microsoft/vcpkg`.
 - `ports/orderflow-c/vcpkg.json`
 - `ports/orderflow-c/usage`
 
-## Upstream submission steps
+## Upstream submission steps (archived)
 
 1. Clone upstream vcpkg and create a branch:
    - `git clone https://github.com/microsoft/vcpkg.git`
