@@ -7,7 +7,7 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "C ABI facade for the Orderflow runtime"
-readme = "../../README.md"
+readme = "README.md"
 documentation = "https://docs.rs/of_ffi_c"
 
 [lib]
@@ -24,7 +24,7 @@ binance = ["of_adapters/binance"]
 all-features = true
 
 [dependencies]
-of_core = { path = "../of_core", version = "0.1.1" }
-of_runtime = { path = "../of_runtime", version = "0.1.1" }
-of_adapters = { path = "../of_adapters", version = "0.1.1" }
-of_signals = { path = "../of_signals", version = "0.1.1" }
+of_core = { path = "../of_core", version = "0.1.2" }
+of_runtime = { path = "../of_runtime", version = "0.1.2" }
+of_adapters = { path = "../of_adapters", version = "0.1.2" }
+of_signals = { path = "../of_signals", version = "0.1.2" }

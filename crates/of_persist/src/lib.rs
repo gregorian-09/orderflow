@@ -1,41 +1,4 @@
-//! Persistence and retention utilities for normalized orderflow events.
-//!
-//! `of_persist` provides a JSONL rolling store that can be attached to runtime
-//! processing for:
-//! - audit/replay trails
-//! - post-trade research datasets
-//! - bounded disk retention policies
-//!
-//! ## Storage Layout
-//! Events are written under:
-//! `/<root>/<venue>/<symbol>/(book|trades).jsonl`
-//!
-//! ## Retention
-//! Optional pruning supports:
-//! - maximum aggregate bytes (`max_total_bytes`)
-//! - maximum file age (`max_age_secs`)
-//!
-//! ## Quick Example
-//! ```no_run
-//! use of_core::{Side, SymbolId, TradePrint};
-//! use of_persist::RollingStore;
-//!
-//! let store = RollingStore::new("data").expect("store");
-//! let symbol = SymbolId {
-//!     venue: "CME".to_string(),
-//!     symbol: "ESM6".to_string(),
-//! };
-//!
-//! store.append_trade(&TradePrint {
-//!     symbol,
-//!     price: 505000,
-//!     size: 2,
-//!     aggressor_side: Side::Ask,
-//!     sequence: 1,
-//!     ts_exchange_ns: 1,
-//!     ts_recv_ns: 2,
-//! }).expect("append");
-//! ```
+#![doc = include_str!("../README.md")]
 
 use std::fs::{self, create_dir_all, OpenOptions};
 use std::io::Write;

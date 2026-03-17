@@ -7,11 +7,11 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Persistence and retention utilities for Orderflow normalized data"
-readme = "../../README.md"
+readme = "README.md"
 documentation = "https://docs.rs/of_persist"
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
-of_core = { path = "../of_core", version = "0.1.1" }
+of_core = { path = "../of_core", version = "0.1.2" }

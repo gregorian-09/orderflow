@@ -1,43 +1,4 @@
-//! Core domain model and analytics primitives for Orderflow.
-//!
-//! This crate contains:
-//! - canonical market-event types (`TradePrint`, `BookUpdate`, `SymbolId`)
-//! - feed-quality flags (`DataQualityFlags`)
-//! - normalized runtime outputs (`AnalyticsSnapshot`, `SignalSnapshot`)
-//! - a lightweight in-memory analytics engine (`AnalyticsAccumulator`)
-//!
-//! ## Design Goals
-//! - Keep domain types provider-agnostic so upstream adapters can normalize once.
-//! - Keep math deterministic and integer-based for replay/backtest parity.
-//! - Keep dependencies minimal so all bindings can reuse these types safely.
-//!
-//! ## Quick Example
-//! ```no_run
-//! use of_core::{AnalyticsAccumulator, Side, SymbolId, TradePrint};
-//!
-//! let symbol = SymbolId {
-//!     venue: "CME".to_string(),
-//!     symbol: "ESM6".to_string(),
-//! };
-//!
-//! let mut acc = AnalyticsAccumulator::default();
-//! acc.on_trade(&TradePrint {
-//!     symbol,
-//!     price: 505000,
-//!     size: 10,
-//!     aggressor_side: Side::Ask,
-//!     sequence: 1,
-//!     ts_exchange_ns: 1,
-//!     ts_recv_ns: 2,
-//! });
-//!
-//! let snap = acc.snapshot();
-//! assert_eq!(snap.delta, 10);
-//! ```
-//!
-//! ## Integration
-//! `of_adapters` emits `RawEvent::{Trade, Book}` values that carry these types.
-//! `of_runtime` consumes them and writes snapshots back out through bindings/FFI.
+#![doc = include_str!("../README.md")]
 
 use std::fmt;
 use std::ops::BitOr;

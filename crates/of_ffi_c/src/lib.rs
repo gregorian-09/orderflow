@@ -1,37 +1,5 @@
 #![allow(non_camel_case_types)]
-//! Stable C ABI for embedding Orderflow runtime in non-Rust environments.
-//!
-//! This crate exports `extern "C"` symbols and `#[repr(C)]` types used by:
-//! - Python `ctypes` binding
-//! - Java JNA binding
-//! - any native C/C++/Go/.NET FFI client
-//!
-//! ## ABI Surface
-//! - Engine lifecycle: `of_engine_create/start/stop/destroy`
-//! - Subscriptions: `of_subscribe`, `of_unsubscribe`, `of_unsubscribe_symbol`
-//! - Polling and ingest: `of_engine_poll_once`, `of_ingest_trade`, `of_ingest_book`
-//! - Snapshots: `of_get_book_snapshot`, `of_get_analytics_snapshot`,
-//!   `of_get_signal_snapshot`, `of_get_metrics_json`
-//!
-//! ## Safety Contract
-//! Callers must:
-//! - pass valid non-null pointers for required arguments
-//! - keep UTF-8 C strings alive for the duration of the call
-//! - treat returned pointers as owned by this library unless documented otherwise
-//! - call `of_string_free` for heap strings returned by snapshot/metrics APIs
-//!
-//! ## Minimal C Example
-//! ```text
-//! of_engine_t* engine = NULL;
-//! of_engine_config_t cfg = {0};
-//! cfg.instance_id = "demo";
-//! int32_t rc = of_engine_create(&cfg, &engine);
-//! if (rc == OF_OK) {
-//!   of_engine_start(engine);
-//!   of_engine_stop(engine);
-//!   of_engine_destroy(engine);
-//! }
-//! ```
+#![doc = include_str!("../README.md")]
 
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::ptr;

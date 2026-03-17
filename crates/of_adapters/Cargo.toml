@@ -7,7 +7,7 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Provider adapters and market-data abstraction for the Orderflow engine"
-readme = "../../README.md"
+readme = "README.md"
 documentation = "https://docs.rs/of_adapters"
 
 [features]
@@ -21,4 +21,4 @@ binance = []
 all-features = true
 
 [dependencies]
-of_core = { path = "../of_core", version = "0.1.1" }
+of_core = { path = "../of_core", version = "0.1.2" }

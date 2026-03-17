@@ -7,14 +7,14 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Runtime orchestration and health supervision for the Orderflow engine"
-readme = "../../README.md"
+readme = "README.md"
 documentation = "https://docs.rs/of_runtime"
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
-of_adapters = { path = "../of_adapters", version = "0.1.1" }
-of_core = { path = "../of_core", version = "0.1.1" }
-of_persist = { path = "../of_persist", version = "0.1.1" }
-of_signals = { path = "../of_signals", version = "0.1.1" }
+of_adapters = { path = "../of_adapters", version = "0.1.2" }
+of_core = { path = "../of_core", version = "0.1.2" }
+of_persist = { path = "../of_persist", version = "0.1.2" }
+of_signals = { path = "../of_signals", version = "0.1.2" }

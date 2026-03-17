@@ -7,7 +7,7 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Core domain models and analytics primitives for the Orderflow engine"
-readme = "../../README.md"
+readme = "README.md"
 documentation = "https://docs.rs/of_core"
 
 [package.metadata.docs.rs]
