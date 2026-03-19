@@ -95,6 +95,9 @@ Note:
 
 - For local smoke tests/CI, set `VCPKG_BINARY_SOURCES=clear` to avoid
   non-fatal binary-cache submission warnings.
+- To sync the Git registry baseline SHA in this file and in
+  `vcpkg-configuration.git-example.json`, run:
+  `python3 tools/release/sync_vcpkg_registry_baseline.py`
 
 ## Using the C SDK
 

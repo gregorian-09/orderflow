@@ -49,6 +49,13 @@ Use this example as `vcpkg-configuration.json`:
 
 - `vcpkg-configuration.git-example.json`
 
+When the published registry receives a new commit, sync baseline references in
+this repository with:
+
+```bash
+python3 tools/release/sync_vcpkg_registry_baseline.py
+```
+
 ## Registry layout
 
 - `ports/orderflow-c/0.1.1/*` contains the port recipe files.

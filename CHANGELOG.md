@@ -27,6 +27,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Official vcpkg submission scaffold for C consumers:
   `packaging/vcpkg/official/ports/orderflow-c` with portfile, manifest,
   and usage docs.
+- Release helper script:
+  `tools/release/sync_vcpkg_registry_baseline.py` to auto-sync the published
+  `orderflow-vcpkg-registry` baseline SHA into tracked docs/config examples.
+- Ops release runbook:
+  `docs/ops/release_checklist.md` with binding/version sync, vcpkg baseline
+  sync, docs coverage checks, and pre-publish validation commands.
 
 ### Changed
 - Rust crate publishing metadata now includes `repository`, `homepage`, and
