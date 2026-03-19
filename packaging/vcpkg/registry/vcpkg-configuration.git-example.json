@@ -1,0 +1,16 @@
+{
+  "default-registry": {
+    "kind": "builtin",
+    "baseline": "<replace-with-your-vcpkg-commit>"
+  },
+  "registries": [
+    {
+      "kind": "git",
+      "repository": "https://github.com/gregorian-09/orderflow-vcpkg-registry.git",
+      "baseline": "82c338f9a665990e5bdbf38e86b33e7c6410db97",
+      "packages": [
+        "orderflow-c"
+      ]
+    }
+  ]
+}

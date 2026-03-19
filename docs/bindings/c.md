@@ -31,7 +31,11 @@ Output:
 
 Primary supported path:
 
-- Filesystem registry: `packaging/vcpkg/registry`
+- Git registry: `https://github.com/gregorian-09/orderflow-vcpkg-registry`
+
+In-repo local alternatives:
+
+- Filesystem registry snapshot: `packaging/vcpkg/registry`
 
 Fast local path:
 
@@ -56,6 +60,25 @@ Example filesystem registry (`vcpkg-configuration.json`):
     {
       "kind": "filesystem",
       "path": "/absolute/path/to/orderflow/packaging/vcpkg/registry",
+      "packages": ["orderflow-c"]
+    }
+  ]
+}
+```
+
+Example Git registry (`vcpkg-configuration.json`):
+
+```json
+{
+  "default-registry": {
+    "kind": "builtin",
+    "baseline": "<replace-with-vcpkg-commit>"
+  },
+  "registries": [
+    {
+      "kind": "git",
+      "repository": "https://github.com/gregorian-09/orderflow-vcpkg-registry.git",
+      "baseline": "82c338f9a665990e5bdbf38e86b33e7c6410db97",
       "packages": ["orderflow-c"]
     }
   ]

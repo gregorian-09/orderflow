@@ -1,10 +1,14 @@
-# Orderflow Filesystem Registry (vcpkg)
+# Orderflow Filesystem Registry Snapshot (vcpkg)
 
-This directory is the supported vcpkg distribution path for `orderflow-c`.
+This directory is a local filesystem-registry snapshot for `orderflow-c`.
 
 The curated-registry PR to `microsoft/vcpkg` is currently blocked on Rust/Cargo
 integration policy discussion, so this repo ships a first-party filesystem
-registry and overlay-port path.
+registry/overlay path and a published Git registry.
+
+Published Git registry (recommended for consumers):
+
+- `https://github.com/gregorian-09/orderflow-vcpkg-registry`
 
 ## Option A: Overlay port (fastest)
 
@@ -38,6 +42,12 @@ VCPKG_BINARY_SOURCES=clear vcpkg install
 
 `VCPKG_BINARY_SOURCES=clear` disables binary-cache upload/download, which
 avoids non-fatal cache-submission warnings in ephemeral environments.
+
+## Option C: Git registry (recommended)
+
+Use this example as `vcpkg-configuration.json`:
+
+- `vcpkg-configuration.git-example.json`
 
 ## Registry layout
 
