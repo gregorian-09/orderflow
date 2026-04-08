@@ -11,6 +11,10 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
   - [`DeltaMomentumSignal`]
   - [`VolumeImbalanceSignal`]
   - [`CumulativeDeltaSignal`]
+  - [`AbsorptionSignal`]
+  - [`ExhaustionSignal`]
+  - [`SweepDetectionSignal`]
+  - [`CompositeSignal`]
 
 Signal output uses `of_core::SignalSnapshot` and states such as `LongBias`, `ShortBias`, `Neutral`, and `Blocked`.
 
@@ -41,6 +45,38 @@ Signal output uses `of_core::SignalSnapshot` and states such as `LongBias`, `Sho
 - emits `ShortBias` when session delta remains strongly negative
 - remains `Neutral` while cumulative delta stays inside the configured band
 
+## Absorption Strategy
+
+[`AbsorptionSignal`] is a heuristic module that:
+
+- looks for strong directional delta that fails to move price away from POC
+- emits `LongBias` on sell absorption near POC
+- emits `ShortBias` on buy absorption near POC
+
+## Exhaustion Strategy
+
+[`ExhaustionSignal`] is a heuristic reversal module that:
+
+- looks for strong directional delta that stalls back near POC
+- emits `ShortBias` when buying appears exhausted
+- emits `LongBias` when selling appears exhausted
+
+## Sweep Detection Strategy
+
+[`SweepDetectionSignal`] is a breakout module that:
+
+- looks for strong delta alongside a break outside value area
+- emits `LongBias` on upside sweeps
+- emits `ShortBias` on downside sweeps
+
+## Composite Strategy
+
+[`CompositeSignal`] combines multiple child modules and:
+
+- updates each child on the same analytics snapshot
+- emits the majority directional view when one side has more votes
+- remains `Neutral` when there is no directional majority
+
 ## Quick Example
 
 ```rust
@@ -67,6 +103,32 @@ let mut signal = VolumeImbalanceSignal::new(100);
 signal.on_analytics(&AnalyticsSnapshot {
     buy_volume: 350,
     sell_volume: 200,
+    ..Default::default()
+});
+
+let snapshot = signal.snapshot();
+assert!(matches!(snapshot.state, SignalState::LongBias));
+```
+
+## Composite Example
+
+```rust
+use of_core::{AnalyticsSnapshot, SignalState};
+use of_signals::{
+    CompositeSignal, CumulativeDeltaSignal, DeltaMomentumSignal, SignalModule,
+    VolumeImbalanceSignal,
+};
+
+let mut signal = CompositeSignal::new(vec![
+    Box::new(DeltaMomentumSignal::new(100)),
+    Box::new(VolumeImbalanceSignal::new(100)),
+    Box::new(CumulativeDeltaSignal::new(150)),
+]);
+signal.on_analytics(&AnalyticsSnapshot {
+    delta: 200,
+    cumulative_delta: 250,
+    buy_volume: 400,
+    sell_volume: 100,
     ..Default::default()
 });
 

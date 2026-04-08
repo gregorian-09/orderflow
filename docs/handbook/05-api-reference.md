@@ -87,12 +87,20 @@ Public types:
 - `DeltaMomentumSignal`
 - `VolumeImbalanceSignal`
 - `CumulativeDeltaSignal`
+- `AbsorptionSignal`
+- `ExhaustionSignal`
+- `SweepDetectionSignal`
+- `CompositeSignal`
 
 Public methods:
 
 - `DeltaMomentumSignal::new(threshold: i64) -> Self`
 - `VolumeImbalanceSignal::new(threshold: i64) -> Self`
 - `CumulativeDeltaSignal::new(threshold: i64) -> Self`
+- `AbsorptionSignal::new(threshold: i64, price_band: i64) -> Self`
+- `ExhaustionSignal::new(threshold: i64) -> Self`
+- `SweepDetectionSignal::new(threshold: i64, breakout_ticks: i64) -> Self`
+- `CompositeSignal::new(modules: Vec<Box<dyn SignalModule>>) -> Self`
 
 `SignalModule` trait methods:
 

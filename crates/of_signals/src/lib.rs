@@ -175,6 +175,270 @@ impl SignalModule for CumulativeDeltaSignal {
     }
 }
 
+/// Absorption signal that looks for strong directional flow failing to dislodge price from POC.
+#[derive(Debug)]
+pub struct AbsorptionSignal {
+    latest: AnalyticsSnapshot,
+    threshold: i64,
+    price_band: i64,
+}
+
+impl AbsorptionSignal {
+    /// Creates a new absorption signal using a delta threshold and price band around POC.
+    pub fn new(threshold: i64, price_band: i64) -> Self {
+        Self {
+            latest: AnalyticsSnapshot::default(),
+            threshold,
+            price_band,
+        }
+    }
+}
+
+impl Default for AbsorptionSignal {
+    fn default() -> Self {
+        Self::new(150, 2)
+    }
+}
+
+impl SignalModule for AbsorptionSignal {
+    fn on_analytics(&mut self, ev: &AnalyticsSnapshot) {
+        self.latest = ev.clone();
+    }
+
+    fn snapshot(&self) -> SignalSnapshot {
+        let poc_distance = (self.latest.last_price - self.latest.point_of_control).abs();
+        let (state, reason) = if poc_distance <= self.price_band && self.latest.delta <= -self.threshold {
+            (SignalState::LongBias, "sell_absorption_detected")
+        } else if poc_distance <= self.price_band && self.latest.delta >= self.threshold {
+            (SignalState::ShortBias, "buy_absorption_detected")
+        } else {
+            (SignalState::Neutral, "absorption_not_detected")
+        };
+
+        SignalSnapshot {
+            module_id: "absorption_v1",
+            state,
+            confidence_bps: 575,
+            quality_flags: 0,
+            reason: reason.to_string(),
+        }
+    }
+
+    fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
+        default_quality_gate(q)
+    }
+}
+
+/// Exhaustion signal that looks for strong directional flow stalling back near POC.
+#[derive(Debug)]
+pub struct ExhaustionSignal {
+    latest: AnalyticsSnapshot,
+    threshold: i64,
+}
+
+impl ExhaustionSignal {
+    /// Creates a new exhaustion signal using a delta threshold.
+    pub fn new(threshold: i64) -> Self {
+        Self {
+            latest: AnalyticsSnapshot::default(),
+            threshold,
+        }
+    }
+}
+
+impl Default for ExhaustionSignal {
+    fn default() -> Self {
+        Self::new(150)
+    }
+}
+
+impl SignalModule for ExhaustionSignal {
+    fn on_analytics(&mut self, ev: &AnalyticsSnapshot) {
+        self.latest = ev.clone();
+    }
+
+    fn snapshot(&self) -> SignalSnapshot {
+        let (state, reason) = if self.latest.delta >= self.threshold
+            && self.latest.last_price <= self.latest.point_of_control
+        {
+            (SignalState::ShortBias, "buy_exhaustion_detected")
+        } else if self.latest.delta <= -self.threshold
+            && self.latest.last_price >= self.latest.point_of_control
+        {
+            (SignalState::LongBias, "sell_exhaustion_detected")
+        } else {
+            (SignalState::Neutral, "exhaustion_not_detected")
+        };
+
+        SignalSnapshot {
+            module_id: "exhaustion_v1",
+            state,
+            confidence_bps: 565,
+            quality_flags: 0,
+            reason: reason.to_string(),
+        }
+    }
+
+    fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
+        default_quality_gate(q)
+    }
+}
+
+/// Sweep detection signal that looks for value-area breaks accompanied by directional flow.
+#[derive(Debug)]
+pub struct SweepDetectionSignal {
+    latest: AnalyticsSnapshot,
+    threshold: i64,
+    breakout_ticks: i64,
+}
+
+impl SweepDetectionSignal {
+    /// Creates a new sweep signal with delta threshold and breakout distance.
+    pub fn new(threshold: i64, breakout_ticks: i64) -> Self {
+        Self {
+            latest: AnalyticsSnapshot::default(),
+            threshold,
+            breakout_ticks,
+        }
+    }
+}
+
+impl Default for SweepDetectionSignal {
+    fn default() -> Self {
+        Self::new(150, 1)
+    }
+}
+
+impl SignalModule for SweepDetectionSignal {
+    fn on_analytics(&mut self, ev: &AnalyticsSnapshot) {
+        self.latest = ev.clone();
+    }
+
+    fn snapshot(&self) -> SignalSnapshot {
+        let (state, reason) = if self.latest.delta >= self.threshold
+            && self.latest.last_price >= self.latest.value_area_high + self.breakout_ticks
+        {
+            (SignalState::LongBias, "upside_sweep_detected")
+        } else if self.latest.delta <= -self.threshold
+            && self.latest.last_price <= self.latest.value_area_low - self.breakout_ticks
+        {
+            (SignalState::ShortBias, "downside_sweep_detected")
+        } else {
+            (SignalState::Neutral, "sweep_not_detected")
+        };
+
+        SignalSnapshot {
+            module_id: "sweep_detection_v1",
+            state,
+            confidence_bps: 625,
+            quality_flags: 0,
+            reason: reason.to_string(),
+        }
+    }
+
+    fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
+        default_quality_gate(q)
+    }
+}
+
+/// Composite signal that aggregates child modules into one stable directional output.
+pub struct CompositeSignal {
+    modules: Vec<Box<dyn SignalModule>>,
+}
+
+impl CompositeSignal {
+    /// Creates a composite signal from child modules.
+    pub fn new(modules: Vec<Box<dyn SignalModule>>) -> Self {
+        Self { modules }
+    }
+}
+
+impl Default for CompositeSignal {
+    fn default() -> Self {
+        Self::new(vec![
+            Box::new(DeltaMomentumSignal::default()),
+            Box::new(VolumeImbalanceSignal::default()),
+            Box::new(CumulativeDeltaSignal::default()),
+        ])
+    }
+}
+
+impl SignalModule for CompositeSignal {
+    fn on_analytics(&mut self, ev: &AnalyticsSnapshot) {
+        for module in &mut self.modules {
+            module.on_analytics(ev);
+        }
+    }
+
+    fn snapshot(&self) -> SignalSnapshot {
+        if self.modules.is_empty() {
+            return SignalSnapshot {
+                module_id: "composite_v1",
+                state: SignalState::Neutral,
+                confidence_bps: 0,
+                quality_flags: 0,
+                reason: "no_child_modules".to_string(),
+            };
+        }
+
+        let mut long_votes = 0_u16;
+        let mut short_votes = 0_u16;
+        let mut confidence_sum = 0_u32;
+        let mut long_modules = Vec::new();
+        let mut short_modules = Vec::new();
+
+        for module in &self.modules {
+            let snapshot = module.snapshot();
+            confidence_sum += snapshot.confidence_bps as u32;
+            match snapshot.state {
+                SignalState::LongBias => {
+                    long_votes += 1;
+                    long_modules.push(snapshot.module_id);
+                }
+                SignalState::ShortBias => {
+                    short_votes += 1;
+                    short_modules.push(snapshot.module_id);
+                }
+                SignalState::Neutral | SignalState::Blocked => {}
+            }
+        }
+
+        let (state, reason) = if long_votes > short_votes && long_votes > 0 {
+            (
+                SignalState::LongBias,
+                format!("composite_long:{}", long_modules.join(",")),
+            )
+        } else if short_votes > long_votes && short_votes > 0 {
+            (
+                SignalState::ShortBias,
+                format!("composite_short:{}", short_modules.join(",")),
+            )
+        } else {
+            (SignalState::Neutral, "composite_no_majority".to_string())
+        };
+
+        SignalSnapshot {
+            module_id: "composite_v1",
+            state,
+            confidence_bps: (confidence_sum / self.modules.len() as u32) as u16,
+            quality_flags: 0,
+            reason,
+        }
+    }
+
+    fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
+        if self
+            .modules
+            .iter()
+            .any(|module| module.quality_gate(q) == SignalGateDecision::Block)
+        {
+            SignalGateDecision::Block
+        } else {
+            SignalGateDecision::Pass
+        }
+    }
+}
+
 fn default_quality_gate(q: DataQualityFlags) -> SignalGateDecision {
     if q.intersects(
         DataQualityFlags::STALE_FEED
@@ -222,5 +486,66 @@ mod tests {
         let snapshot = s.snapshot();
         assert_eq!(snapshot.module_id, "cumulative_delta_v1");
         assert_eq!(snapshot.state, SignalState::ShortBias);
+    }
+
+    #[test]
+    fn absorption_signal_detects_failed_sell_push() {
+        let mut s = AbsorptionSignal::new(20, 1);
+        s.on_analytics(&AnalyticsSnapshot {
+            delta: -25,
+            last_price: 100,
+            point_of_control: 100,
+            ..Default::default()
+        });
+        let snapshot = s.snapshot();
+        assert_eq!(snapshot.module_id, "absorption_v1");
+        assert_eq!(snapshot.state, SignalState::LongBias);
+    }
+
+    #[test]
+    fn exhaustion_signal_detects_failed_buy_follow_through() {
+        let mut s = ExhaustionSignal::new(20);
+        s.on_analytics(&AnalyticsSnapshot {
+            delta: 25,
+            last_price: 100,
+            point_of_control: 101,
+            ..Default::default()
+        });
+        let snapshot = s.snapshot();
+        assert_eq!(snapshot.module_id, "exhaustion_v1");
+        assert_eq!(snapshot.state, SignalState::ShortBias);
+    }
+
+    #[test]
+    fn sweep_signal_detects_value_area_break() {
+        let mut s = SweepDetectionSignal::new(20, 1);
+        s.on_analytics(&AnalyticsSnapshot {
+            delta: 30,
+            last_price: 106,
+            value_area_high: 104,
+            ..Default::default()
+        });
+        let snapshot = s.snapshot();
+        assert_eq!(snapshot.module_id, "sweep_detection_v1");
+        assert_eq!(snapshot.state, SignalState::LongBias);
+    }
+
+    #[test]
+    fn composite_signal_aggregates_child_votes() {
+        let mut s = CompositeSignal::new(vec![
+            Box::new(DeltaMomentumSignal::new(10)),
+            Box::new(VolumeImbalanceSignal::new(10)),
+            Box::new(CumulativeDeltaSignal::new(10)),
+        ]);
+        s.on_analytics(&AnalyticsSnapshot {
+            delta: 15,
+            cumulative_delta: 20,
+            buy_volume: 30,
+            sell_volume: 10,
+            ..Default::default()
+        });
+        let snapshot = s.snapshot();
+        assert_eq!(snapshot.module_id, "composite_v1");
+        assert_eq!(snapshot.state, SignalState::LongBias);
     }
 }
