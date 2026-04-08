@@ -118,10 +118,7 @@ dependencies = [
 name = "replay_cli"
 version = "0.1.2"
 dependencies = [
- "of_adapters",
- "of_core",
- "of_runtime",
- "of_signals",
+ "of_persist",
 ]
 
 [[package]]
