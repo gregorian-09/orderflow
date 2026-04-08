@@ -24,6 +24,7 @@ Public types:
 - `TradePrint`
 - `AnalyticsSnapshot`
 - `DerivedAnalyticsSnapshot`
+- `IntervalCandleSnapshot`
 - `SignalState` (`Neutral`, `LongBias`, `ShortBias`, `Blocked`)
 - `SignalSnapshot`
 - `DataQualityFlags`
@@ -49,6 +50,8 @@ Public methods:
 - `AnalyticsAccumulator::reset_session()`
 - `AnalyticsAccumulator::snapshot() -> AnalyticsSnapshot`
 - `AnalyticsAccumulator::derived_snapshot() -> DerivedAnalyticsSnapshot`
+- `AnalyticsAccumulator::session_candle_snapshot() -> SessionCandleSnapshot`
+- `AnalyticsAccumulator::interval_candle_snapshot(window_ns: u64) -> IntervalCandleSnapshot`
 
 ### `of_adapters`
 
@@ -178,6 +181,7 @@ Public runtime methods:
 - `analytics_snapshot(&SymbolId)`
 - `derived_analytics_snapshot(&SymbolId)`
 - `session_candle_snapshot(&SymbolId)`
+- `interval_candle_snapshot(&SymbolId, window_ns: u64)`
 - `signal_snapshot(&SymbolId)`
 - `metrics_json() -> String`
 - `health_seq() -> u64`
@@ -242,6 +246,7 @@ Snapshots and metrics:
 - `of_get_analytics_snapshot(...)`
 - `of_get_derived_analytics_snapshot(...)`
 - `of_get_session_candle_snapshot(...)`
+- `of_get_interval_candle_snapshot(...)`
 - `of_get_signal_snapshot(...)`
 - `of_get_metrics_json(...)`
 - `of_string_free(...)`
@@ -271,7 +276,7 @@ Used in `of_subscribe(..., kind, ...)` and callback payloads:
   - `last_sequence`
   - `ts_exchange_ns`
   - `ts_recv_ns`
-- `of_get_analytics_snapshot(...)`, `of_get_derived_analytics_snapshot(...)`, `of_get_session_candle_snapshot(...)`, and `of_get_signal_snapshot(...)` return populated JSON when data exists.
+- `of_get_analytics_snapshot(...)`, `of_get_derived_analytics_snapshot(...)`, `of_get_session_candle_snapshot(...)`, `of_get_interval_candle_snapshot(...)`, and `of_get_signal_snapshot(...)` return populated JSON when data exists.
 - `of_get_metrics_json(...)` allocates output string; caller must free via `of_string_free(...)`.
 - Snapshot functions report the required byte size via `inout_len`; callers should retry with a larger buffer when they receive `OF_ERR_INVALID_ARG`.
 
@@ -311,6 +316,7 @@ Used in `of_subscribe(..., kind, ...)` and callback payloads:
 - `analytics_snapshot(symbol) -> dict`
 - `derived_analytics_snapshot(symbol) -> dict`
 - `session_candle_snapshot(symbol) -> dict`
+- `interval_candle_snapshot(symbol, window_ns) -> dict`
 - `signal_snapshot(symbol) -> dict`
 - `metrics() -> dict`
 
@@ -358,6 +364,8 @@ Context manager support:
 - `bookSnapshot(Symbol)`
 - `analyticsSnapshot(Symbol)`
 - `derivedAnalyticsSnapshot(Symbol)`
+- `sessionCandleSnapshot(Symbol)`
+- `intervalCandleSnapshot(Symbol, long windowNs)`
 - `signalSnapshot(Symbol)`
 - `metricsJson()`
 - `close()`
@@ -436,6 +444,25 @@ Context manager support:
   "trade_count": 2,
   "first_ts_exchange_ns": 10,
   "last_ts_exchange_ns": 20
+}
+```
+
+### Interval candle snapshot (`of_get_interval_candle_snapshot`)
+
+Rolling interval candle snapshot for a caller-supplied `window_ns`.
+
+```json
+{
+  "window_ns": 70000000000,
+  "open": 504900,
+  "high": 505100,
+  "low": 504900,
+  "close": 505100,
+  "trade_count": 2,
+  "total_volume": 12,
+  "vwap": 505033,
+  "first_ts_exchange_ns": 40,
+  "last_ts_exchange_ns": 100
 }
 ```
 

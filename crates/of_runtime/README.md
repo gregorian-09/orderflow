@@ -25,6 +25,7 @@ It wires adapter events into book state and analytics, applies quality-aware sig
   - [`Engine::analytics_snapshot`]
   - [`Engine::derived_analytics_snapshot`]
   - [`Engine::session_candle_snapshot`]
+  - [`Engine::interval_candle_snapshot`]
   - [`Engine::signal_snapshot`]
 
 ## End-to-End Example (Adapter Polling)
@@ -93,6 +94,8 @@ assert!(health.contains("\"started\":true"));
 - [`Engine::derived_analytics_snapshot`] exposes additive session metrics without changing the original analytics snapshot contract.
 - [`Engine::session_candle_snapshot`] exposes additive candle-style session state with `open`, `high`, `low`,
   `close`, `trade_count`, and first/last exchange timestamps.
+- [`Engine::interval_candle_snapshot`] exposes a rolling-window candle view for a caller-supplied `window_ns`
+  with `open`, `high`, `low`, `close`, `trade_count`, `total_volume`, `vwap`, and first/last exchange timestamps.
 
 ## Health and Metrics Contracts
 

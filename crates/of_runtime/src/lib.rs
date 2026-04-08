@@ -16,8 +16,8 @@ use of_adapters::{
 };
 use of_core::{
     AnalyticsAccumulator, AnalyticsSnapshot, BookLevel, BookSnapshot, BookUpdate,
-    DataQualityFlags, DerivedAnalyticsSnapshot, SessionCandleSnapshot, SignalSnapshot, SignalState,
-    SymbolId, TradePrint,
+    DataQualityFlags, DerivedAnalyticsSnapshot, IntervalCandleSnapshot, SessionCandleSnapshot,
+    SignalSnapshot, SignalState, SymbolId, TradePrint,
 };
 use of_persist::{RetentionPolicy, RollingStore};
 use of_signals::{SignalGateDecision, SignalModule};
@@ -560,6 +560,17 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         self.analytics
             .get(symbol)
             .map(AnalyticsAccumulator::session_candle_snapshot)
+    }
+
+    /// Returns rolling interval candle snapshot for symbol if available.
+    pub fn interval_candle_snapshot(
+        &self,
+        symbol: &SymbolId,
+        window_ns: u64,
+    ) -> Option<IntervalCandleSnapshot> {
+        self.analytics
+            .get(symbol)
+            .map(|acc| acc.interval_candle_snapshot(window_ns))
     }
 
     /// Returns the current materialized book snapshot for symbol if available.
@@ -1701,6 +1712,56 @@ mod tests {
         assert_eq!(candle.trade_count, 2);
         assert_eq!(candle.first_ts_exchange_ns, 10);
         assert_eq!(candle.last_ts_exchange_ns, 20);
+    }
+
+    #[test]
+    fn engine_exposes_interval_candle_snapshot() {
+        let symbol = SymbolId {
+            venue: "CME".to_string(),
+            symbol: "ESM6".to_string(),
+        };
+        let mut engine = Engine::new(
+            EngineConfig::default(),
+            MockAdapter::default(),
+            DeltaMomentumSignal::new(5),
+        );
+
+        engine.start().expect("start failed");
+        engine.subscribe(symbol.clone(), 10).expect("sub failed");
+        for (price, size, side, seq, ts) in [
+            (505000, 10, Side::Ask, 1u64, 10u64),
+            (504900, 5, Side::Bid, 2u64, 40u64),
+            (505100, 8, Side::Ask, 3u64, 100u64),
+        ] {
+            engine
+                .ingest_trade(
+                    TradePrint {
+                        symbol: symbol.clone(),
+                        price,
+                        size,
+                        aggressor_side: side,
+                        sequence: seq,
+                        ts_exchange_ns: ts,
+                        ts_recv_ns: ts + 1,
+                    },
+                    DataQualityFlags::NONE,
+                )
+                .expect("trade ingest");
+        }
+
+        let candle = engine
+            .interval_candle_snapshot(&symbol, 70)
+            .expect("interval candle missing");
+        assert_eq!(candle.window_ns, 70);
+        assert_eq!(candle.open, 504900);
+        assert_eq!(candle.high, 505100);
+        assert_eq!(candle.low, 504900);
+        assert_eq!(candle.close, 505100);
+        assert_eq!(candle.trade_count, 2);
+        assert_eq!(candle.total_volume, 13);
+        assert_eq!(candle.vwap, 505023);
+        assert_eq!(candle.first_ts_exchange_ns, 40);
+        assert_eq!(candle.last_ts_exchange_ns, 100);
     }
 
     #[test]

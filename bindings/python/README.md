@@ -187,6 +187,7 @@ with Engine(EngineConfig(instance_id="py-client")) as eng:
 | `analytics_snapshot(symbol)` | Current analytics snapshot | `dict[str, Any]` |
 | `derived_analytics_snapshot(symbol)` | Current derived analytics snapshot | `dict[str, Any]` |
 | `session_candle_snapshot(symbol)` | Current session candle snapshot | `dict[str, Any]` |
+| `interval_candle_snapshot(symbol, window_ns)` | Current rolling interval candle snapshot | `dict[str, Any]` |
 | `signal_snapshot(symbol)` | Current signal snapshot | `dict[str, Any]` |
 | `metrics()` | Runtime metrics | `dict[str, Any]` |
 
@@ -209,6 +210,19 @@ The Python wrapper retries automatically if the native snapshot payload is large
 - `low`
 - `close`
 - `trade_count`
+- `first_ts_exchange_ns`
+- `last_ts_exchange_ns`
+
+`interval_candle_snapshot(symbol, window_ns)` returns a dictionary with:
+
+- `window_ns`
+- `open`
+- `high`
+- `low`
+- `close`
+- `trade_count`
+- `total_volume`
+- `vwap`
 - `first_ts_exchange_ns`
 - `last_ts_exchange_ns`
 

@@ -48,7 +48,7 @@ Native lookup order:
 - external feed policy: `configure_external_feed`,
   `set_external_reconnecting`, `external_health_tick`
 - ingest: `ingest_trade`, `ingest_book`
-- snapshots: `book_snapshot`, `analytics_snapshot`, `derived_analytics_snapshot`, `session_candle_snapshot`, `signal_snapshot`, `metrics`
+- snapshots: `book_snapshot`, `analytics_snapshot`, `derived_analytics_snapshot`, `session_candle_snapshot`, `interval_candle_snapshot`, `signal_snapshot`, `metrics`
 
 `book_snapshot(symbol)` returns a dictionary with:
 
@@ -68,6 +68,10 @@ The Python binding automatically retries with a larger native buffer when a snap
 `session_candle_snapshot(symbol)` returns additive candle-style session state such as
 `open`, `high`, `low`, `close`, `trade_count`, `first_ts_exchange_ns`, and `last_ts_exchange_ns`.
 
+`interval_candle_snapshot(symbol, window_ns)` returns additive rolling-window candle state such as
+`window_ns`, `open`, `high`, `low`, `close`, `trade_count`, `total_volume`, `vwap`,
+`first_ts_exchange_ns`, and `last_ts_exchange_ns`.
+
 ### Exceptions
 
 - `OrderflowError`
@@ -80,7 +84,7 @@ The Python binding automatically retries with a larger native buffer when a snap
 
 - subscribe with `callback=None`
 - call `poll_once` on your scheduler
-- consume snapshots from `book_snapshot`, `analytics_snapshot`, `session_candle_snapshot`, `signal_snapshot`
+- consume snapshots from `book_snapshot`, `analytics_snapshot`, `session_candle_snapshot`, `interval_candle_snapshot`, `signal_snapshot`
 
 ### Listener-driven
 

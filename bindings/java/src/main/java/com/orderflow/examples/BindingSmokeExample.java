@@ -26,11 +26,14 @@ public final class BindingSmokeExample {
             engine.ingestTrade(sym, 505000L, 2L, Side.ASK, 1L, 10L, 11L, 0);
 
             String analytics = engine.analyticsSnapshot(sym);
+            String interval = engine.intervalCandleSnapshot(sym, 60L);
             String signal = engine.signalSnapshot(sym);
             String metrics = engine.metricsJson();
 
             require(analytics.contains("\"delta\""), "analytics snapshot missing delta");
             require(analytics.contains("\"delta\":2"), "analytics snapshot delta mismatch");
+            require(interval.contains("\"window_ns\":60"), "interval candle snapshot window mismatch");
+            require(interval.contains("\"trade_count\":1"), "interval candle snapshot trade count mismatch");
             require(signal.contains("\"state\""), "signal snapshot missing state");
             require(metrics.contains("\"started\":true"), "metrics missing started=true");
             require(callbackCount.get() > 0, "no callbacks observed in smoke run");

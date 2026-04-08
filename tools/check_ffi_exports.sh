@@ -41,6 +41,7 @@ expected_symbols=(
   of_get_analytics_snapshot
   of_get_derived_analytics_snapshot
   of_get_session_candle_snapshot
+  of_get_interval_candle_snapshot
   of_get_signal_snapshot
   of_get_metrics_json
   of_string_free

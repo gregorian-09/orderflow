@@ -377,6 +377,14 @@ class Engine:
         """Returns current session candle snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_session_candle_snapshot, symbol)
 
+    def interval_candle_snapshot(self, symbol: Symbol, window_ns: int) -> Dict[str, Any]:
+        """Returns rolling interval candle snapshot JSON decoded as dict."""
+        return self._snapshot_call(
+            self._ffi.lib.of_get_interval_candle_snapshot,
+            symbol,
+            ctypes.c_uint64(window_ns),
+        )
+
     def signal_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
         """Returns current signal snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_signal_snapshot, symbol)
@@ -394,13 +402,13 @@ class Engine:
         finally:
             self._ffi.lib.of_string_free(out)
 
-    def _snapshot_call(self, fn, symbol: Symbol) -> Dict[str, Any]:
+    def _snapshot_call(self, fn, symbol: Symbol, *extra_args) -> Dict[str, Any]:
         self._require_handle()
         c_symbol = self._to_c_symbol(symbol)
         cap = ctypes.c_uint32(4096)
         for _ in range(3):
             buf = ctypes.create_string_buffer(cap.value)
-            rc = fn(self._engine, ctypes.byref(c_symbol), buf, ctypes.byref(cap))
+            rc = fn(self._engine, ctypes.byref(c_symbol), *extra_args, buf, ctypes.byref(cap))
             if rc == 0:
                 raw = bytes(buf[: cap.value]).decode("utf-8")
                 return self._decode_json(raw)

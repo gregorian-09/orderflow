@@ -252,6 +252,8 @@ int32_t of_get_analytics_snapshot(of_engine_t* engine, const of_symbol_t* symbol
 int32_t of_get_derived_analytics_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
 /** Returns current session candle snapshot JSON for `symbol`. */
 int32_t of_get_session_candle_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns rolling interval candle snapshot JSON for `symbol` over `window_ns`. */
+int32_t of_get_interval_candle_snapshot(of_engine_t* engine, const of_symbol_t* symbol, uint64_t window_ns, void* out_buf, uint32_t* inout_len);
 /** Returns current signal snapshot JSON for `symbol`. */
 int32_t of_get_signal_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
 

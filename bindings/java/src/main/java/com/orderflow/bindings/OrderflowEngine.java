@@ -363,6 +363,17 @@ public final class OrderflowEngine implements AutoCloseable {
     }
 
     /**
+     * Returns rolling interval candle snapshot as JSON string.
+     *
+     * @param symbol target symbol
+     * @param windowNs rolling interval width in nanoseconds
+     * @return JSON payload with interval open/high/low/close, trade_count, total_volume, vwap, and timestamps
+     */
+    public String intervalCandleSnapshot(Symbol symbol, long windowNs) {
+        return snapshot(symbol, SnapshotKind.INTERVAL_CANDLE, windowNs);
+    }
+
+    /**
      * Returns current signal snapshot as JSON string.
      *
      * @param symbol target symbol
@@ -417,6 +428,10 @@ public final class OrderflowEngine implements AutoCloseable {
     }
 
     private String snapshot(Symbol symbol, SnapshotKind kind) {
+        return snapshot(symbol, kind, 0L);
+    }
+
+    private String snapshot(Symbol symbol, SnapshotKind kind, long windowNs) {
         requireEngine();
         OfSymbol sym = toNativeSymbol(symbol);
         sym.write();
@@ -432,6 +447,7 @@ public final class OrderflowEngine implements AutoCloseable {
                 case ANALYTICS -> rc = nativeLib.of_get_analytics_snapshot(engine, sym, buffer, length);
                 case DERIVED_ANALYTICS -> rc = nativeLib.of_get_derived_analytics_snapshot(engine, sym, buffer, length);
                 case SESSION_CANDLE -> rc = nativeLib.of_get_session_candle_snapshot(engine, sym, buffer, length);
+                case INTERVAL_CANDLE -> rc = nativeLib.of_get_interval_candle_snapshot(engine, sym, windowNs, buffer, length);
                 case SIGNAL -> rc = nativeLib.of_get_signal_snapshot(engine, sym, buffer, length);
                 default -> throw new OrderflowException("unknown snapshot kind");
             }
@@ -495,6 +511,7 @@ public final class OrderflowEngine implements AutoCloseable {
         ANALYTICS,
         DERIVED_ANALYTICS,
         SESSION_CANDLE,
+        INTERVAL_CANDLE,
         SIGNAL,
     }
 }

@@ -1,8 +1,8 @@
 #![doc = include_str!("../README.md")]
 
+use std::collections::HashMap;
 use std::fmt;
 use std::ops::BitOr;
-use std::collections::HashMap;
 
 /// Canonical market symbol identifier used across venues.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -156,6 +156,31 @@ pub struct SessionCandleSnapshot {
     pub last_ts_exchange_ns: u64,
 }
 
+/// Rolling interval candle-style summary derived from recent session trades.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IntervalCandleSnapshot {
+    /// Width of the rolling interval represented by this snapshot.
+    pub window_ns: u64,
+    /// First trade price included in the interval.
+    pub open: i64,
+    /// Highest trade price included in the interval.
+    pub high: i64,
+    /// Lowest trade price included in the interval.
+    pub low: i64,
+    /// Latest trade price included in the interval.
+    pub close: i64,
+    /// Number of trades included in the interval.
+    pub trade_count: u64,
+    /// Total traded volume in the interval.
+    pub total_volume: i64,
+    /// Interval volume-weighted average price in integer price units.
+    pub vwap: i64,
+    /// Exchange timestamp of the first trade in the interval.
+    pub first_ts_exchange_ns: u64,
+    /// Exchange timestamp of the latest trade in the interval.
+    pub last_ts_exchange_ns: u64,
+}
+
 /// Output state emitted by signal modules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignalState {
@@ -242,6 +267,14 @@ pub struct AnalyticsAccumulator {
     session_trade_count: u64,
     session_turnover: i128,
     session_candle: SessionCandleSnapshot,
+    session_trades: Vec<RecentTradeSample>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RecentTradeSample {
+    price: i64,
+    size: i64,
+    ts_exchange_ns: u64,
 }
 
 impl AnalyticsAccumulator {
@@ -262,6 +295,11 @@ impl AnalyticsAccumulator {
         self.session_candle.last_ts_exchange_ns = trade.ts_exchange_ns;
         self.session_trade_count = self.session_trade_count.saturating_add(1);
         self.session_turnover += (trade.price as i128) * (trade.size as i128);
+        self.session_trades.push(RecentTradeSample {
+            price: trade.price,
+            size: trade.size,
+            ts_exchange_ns: trade.ts_exchange_ns,
+        });
         *self.volume_profile.entry(trade.price).or_insert(0) += trade.size;
         match trade.aggressor_side {
             Side::Bid => {
@@ -286,6 +324,7 @@ impl AnalyticsAccumulator {
         self.session_trade_count = 0;
         self.session_turnover = 0;
         self.session_candle = SessionCandleSnapshot::default();
+        self.session_trades.clear();
     }
 
     /// Resets all session analytics and volume-profile state.
@@ -294,6 +333,8 @@ impl AnalyticsAccumulator {
         self.volume_profile.clear();
         self.session_trade_count = 0;
         self.session_turnover = 0;
+        self.session_candle = SessionCandleSnapshot::default();
+        self.session_trades.clear();
     }
 
     /// Returns a copy of current analytics state.
@@ -331,6 +372,58 @@ impl AnalyticsAccumulator {
     /// Returns candle-style session summary for the current analytics session.
     pub fn session_candle_snapshot(&self) -> SessionCandleSnapshot {
         self.session_candle.clone()
+    }
+
+    /// Returns candle-style summary for trades observed inside a rolling interval.
+    pub fn interval_candle_snapshot(&self, window_ns: u64) -> IntervalCandleSnapshot {
+        let Some(last_trade) = self.session_trades.last() else {
+            return IntervalCandleSnapshot {
+                window_ns,
+                ..IntervalCandleSnapshot::default()
+            };
+        };
+        let cutoff = last_trade.ts_exchange_ns.saturating_sub(window_ns);
+        let mut trades = self
+            .session_trades
+            .iter()
+            .filter(|trade| trade.ts_exchange_ns >= cutoff);
+
+        let Some(first) = trades.next() else {
+            return IntervalCandleSnapshot {
+                window_ns,
+                ..IntervalCandleSnapshot::default()
+            };
+        };
+
+        let mut snap = IntervalCandleSnapshot {
+            window_ns,
+            open: first.price,
+            high: first.price,
+            low: first.price,
+            close: first.price,
+            trade_count: 1,
+            total_volume: first.size,
+            vwap: 0,
+            first_ts_exchange_ns: first.ts_exchange_ns,
+            last_ts_exchange_ns: first.ts_exchange_ns,
+        };
+        let mut turnover = (first.price as i128) * (first.size as i128);
+
+        for trade in trades {
+            snap.high = snap.high.max(trade.price);
+            snap.low = snap.low.min(trade.price);
+            snap.close = trade.price;
+            snap.trade_count = snap.trade_count.saturating_add(1);
+            snap.total_volume += trade.size;
+            snap.last_ts_exchange_ns = trade.ts_exchange_ns;
+            turnover += (trade.price as i128) * (trade.size as i128);
+        }
+
+        if snap.total_volume > 0 {
+            snap.vwap = (turnover / snap.total_volume as i128) as i64;
+        }
+
+        snap
     }
 
     fn recompute_profile_levels(&mut self) {
@@ -551,6 +644,60 @@ mod tests {
         acc.reset_session_delta();
         let reset = acc.session_candle_snapshot();
         assert_eq!(reset, SessionCandleSnapshot::default());
+    }
+
+    #[test]
+    fn computes_interval_candle_snapshot() {
+        let mut acc = AnalyticsAccumulator::default();
+        acc.on_trade(&TradePrint {
+            symbol: symbol(),
+            price: 100,
+            size: 5,
+            aggressor_side: Side::Ask,
+            sequence: 1,
+            ts_exchange_ns: 10,
+            ts_recv_ns: 11,
+        });
+        acc.on_trade(&TradePrint {
+            symbol: symbol(),
+            price: 98,
+            size: 3,
+            aggressor_side: Side::Bid,
+            sequence: 2,
+            ts_exchange_ns: 40,
+            ts_recv_ns: 41,
+        });
+        acc.on_trade(&TradePrint {
+            symbol: symbol(),
+            price: 101,
+            size: 2,
+            aggressor_side: Side::Ask,
+            sequence: 3,
+            ts_exchange_ns: 100,
+            ts_recv_ns: 101,
+        });
+
+        let recent = acc.interval_candle_snapshot(70);
+        assert_eq!(recent.window_ns, 70);
+        assert_eq!(recent.open, 98);
+        assert_eq!(recent.high, 101);
+        assert_eq!(recent.low, 98);
+        assert_eq!(recent.close, 101);
+        assert_eq!(recent.trade_count, 2);
+        assert_eq!(recent.total_volume, 5);
+        assert_eq!(recent.vwap, 99);
+        assert_eq!(recent.first_ts_exchange_ns, 40);
+        assert_eq!(recent.last_ts_exchange_ns, 100);
+
+        acc.reset_session_delta();
+        let reset = acc.interval_candle_snapshot(70);
+        assert_eq!(
+            reset,
+            IntervalCandleSnapshot {
+                window_ns: 70,
+                ..IntervalCandleSnapshot::default()
+            }
+        );
     }
 
     #[test]

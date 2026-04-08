@@ -51,7 +51,7 @@ Native lookup order:
   `setExternalReconnecting(...)`, `externalHealthTick()`
 - ingest: `ingestTrade(...)`, `ingestBook(...)` (convenience + full overloads)
 - snapshots: `bookSnapshot(...)`, `analyticsSnapshot(...)`, `derivedAnalyticsSnapshot(...)`,
-  `sessionCandleSnapshot(...)`,
+  `sessionCandleSnapshot(...)`, `intervalCandleSnapshot(...)`,
   `signalSnapshot(...)`, `metricsJson()`
 
 `bookSnapshot(...)` returns JSON with:
@@ -71,6 +71,10 @@ The Java binding retries with a larger native buffer automatically when snapshot
 
 `sessionCandleSnapshot(...)` returns additive candle-style session state such as
 `open`, `high`, `low`, `close`, `trade_count`, `first_ts_exchange_ns`, and `last_ts_exchange_ns`.
+
+`intervalCandleSnapshot(..., windowNs)` returns additive rolling-window candle state such as
+`window_ns`, `open`, `high`, `low`, `close`, `trade_count`, `total_volume`, `vwap`,
+`first_ts_exchange_ns`, and `last_ts_exchange_ns`.
 
 ### Exceptions
 

@@ -51,11 +51,14 @@ def main() -> int:
         )
 
         analytics = engine.analytics_snapshot(symbol)
+        interval = engine.interval_candle_snapshot(symbol, 60)
         signal = engine.signal_snapshot(symbol)
         metrics = engine.metrics()
 
         require("delta" in analytics, "analytics snapshot missing delta")
         require(analytics.get("delta") == 2, "analytics snapshot delta mismatch")
+        require(interval.get("window_ns") == 60, "interval candle snapshot window mismatch")
+        require(interval.get("trade_count") == 1, "interval candle snapshot trade count mismatch")
         require("state" in signal, "signal snapshot missing state")
         require("started" in metrics and metrics["started"] is True, "metrics missing started=true")
         require(len(callbacks) > 0, "no callbacks observed in smoke run")
