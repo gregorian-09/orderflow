@@ -106,6 +106,8 @@ Public types:
 - `PersistResult<T>`
 - `RetentionPolicy { max_total_bytes, max_age_secs }`
 - `RollingStore`
+- `StoredBookEvent`
+- `StoredTradeEvent`
 
 Public methods:
 
@@ -113,6 +115,8 @@ Public methods:
 - `RollingStore::with_retention(Option<RetentionPolicy>) -> RollingStore`
 - `RollingStore::append_book(&BookUpdate) -> PersistResult<()>`
 - `RollingStore::append_trade(&TradePrint) -> PersistResult<()>`
+- `RollingStore::read_books(venue, symbol) -> PersistResult<Vec<StoredBookEvent>>`
+- `RollingStore::read_trades(venue, symbol) -> PersistResult<Vec<StoredTradeEvent>>`
 
 ### `of_runtime`
 

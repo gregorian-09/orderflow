@@ -1,11 +1,12 @@
 #![doc = include_str!("../README.md")]
 
-use std::fs::{self, create_dir_all, OpenOptions};
-use std::io::Write;
+use std::fs::{self, create_dir_all, File, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use of_core::{BookUpdate, TradePrint};
+use of_core::{BookAction, BookUpdate, Side, TradePrint};
+use serde::Deserialize;
 
 /// Persistence-layer errors.
 #[derive(Debug)]
@@ -37,6 +38,36 @@ pub struct RetentionPolicy {
 pub struct RollingStore {
     root: PathBuf,
     retention: Option<RetentionPolicy>,
+}
+
+/// Parsed book event read back from persisted JSONL storage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredBookEvent {
+    /// Event sequence number.
+    pub sequence: u64,
+    /// Book side for the level update.
+    pub side: Side,
+    /// Price level index carried by the persisted update.
+    pub level: u16,
+    /// Price for the persisted update.
+    pub price: i64,
+    /// Size for the persisted update.
+    pub size: i64,
+    /// Book action recorded for the update.
+    pub action: BookAction,
+}
+
+/// Parsed trade event read back from persisted JSONL storage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredTradeEvent {
+    /// Event sequence number.
+    pub sequence: u64,
+    /// Trade price.
+    pub price: i64,
+    /// Trade size.
+    pub size: i64,
+    /// Aggressor side stored for the trade.
+    pub aggressor_side: Side,
 }
 
 impl RollingStore {
@@ -81,6 +112,22 @@ impl RollingStore {
         )
     }
 
+    /// Reads persisted book events for the given venue and symbol.
+    ///
+    /// Missing streams return an empty vector.
+    pub fn read_books(&self, venue: &str, symbol: &str) -> PersistResult<Vec<StoredBookEvent>> {
+        let path = self.stream_path(venue, symbol, "book");
+        read_jsonl_stream(&path, parse_book_line)
+    }
+
+    /// Reads persisted trade events for the given venue and symbol.
+    ///
+    /// Missing streams return an empty vector.
+    pub fn read_trades(&self, venue: &str, symbol: &str) -> PersistResult<Vec<StoredTradeEvent>> {
+        let path = self.stream_path(venue, symbol, "trades");
+        read_jsonl_stream(&path, parse_trade_line)
+    }
+
     fn append_line(
         &self,
         venue: &str,
@@ -102,6 +149,14 @@ impl RollingStore {
 
         self.prune_if_needed()?;
         Ok(())
+    }
+
+    fn stream_path(&self, venue: &str, symbol: &str, stream: &str) -> PathBuf {
+        let mut path = self.root.clone();
+        path.push(venue);
+        path.push(symbol);
+        path.push(format!("{stream}.jsonl"));
+        path
     }
 
     fn prune_if_needed(&self) -> PersistResult<()> {
@@ -173,6 +228,100 @@ fn collect_files(root: &Path, out: &mut Vec<FileMeta>) -> PersistResult<()> {
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct StoredBookEventWire {
+    seq: u64,
+    side: String,
+    level: u16,
+    price: i64,
+    size: i64,
+    action: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct StoredTradeEventWire {
+    seq: u64,
+    price: i64,
+    size: i64,
+    aggressor: String,
+}
+
+fn read_jsonl_stream<T>(
+    path: &Path,
+    parse_line: fn(&Path, usize, &str) -> PersistResult<T>,
+) -> PersistResult<Vec<T>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let mut out = Vec::new();
+    for (line_no, line) in reader.lines().enumerate() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        out.push(parse_line(path, line_no + 1, &line)?);
+    }
+    Ok(out)
+}
+
+fn parse_book_line(path: &Path, line_no: usize, line: &str) -> PersistResult<StoredBookEvent> {
+    let raw: StoredBookEventWire = serde_json::from_str(line)
+        .map_err(|err| invalid_data(path, line_no, format!("invalid book json: {err}")))?;
+    Ok(StoredBookEvent {
+        sequence: raw.seq,
+        side: parse_side(path, line_no, "side", &raw.side)?,
+        level: raw.level,
+        price: raw.price,
+        size: raw.size,
+        action: parse_book_action(path, line_no, &raw.action)?,
+    })
+}
+
+fn parse_trade_line(path: &Path, line_no: usize, line: &str) -> PersistResult<StoredTradeEvent> {
+    let raw: StoredTradeEventWire = serde_json::from_str(line)
+        .map_err(|err| invalid_data(path, line_no, format!("invalid trade json: {err}")))?;
+    Ok(StoredTradeEvent {
+        sequence: raw.seq,
+        price: raw.price,
+        size: raw.size,
+        aggressor_side: parse_side(path, line_no, "aggressor", &raw.aggressor)?,
+    })
+}
+
+fn parse_side(path: &Path, line_no: usize, field: &str, raw: &str) -> PersistResult<Side> {
+    match raw {
+        "Bid" => Ok(Side::Bid),
+        "Ask" => Ok(Side::Ask),
+        _ => Err(invalid_data(
+            path,
+            line_no,
+            format!("invalid {field} value: {raw}"),
+        )),
+    }
+}
+
+fn parse_book_action(path: &Path, line_no: usize, raw: &str) -> PersistResult<BookAction> {
+    match raw {
+        "Upsert" => Ok(BookAction::Upsert),
+        "Delete" => Ok(BookAction::Delete),
+        _ => Err(invalid_data(
+            path,
+            line_no,
+            format!("invalid action value: {raw}"),
+        )),
+    }
+}
+
+fn invalid_data(path: &Path, line_no: usize, message: String) -> PersistError {
+    PersistError::Io(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!("{}:{line_no}: {message}", path.display()),
+    ))
 }
 
 #[cfg(test)]
@@ -254,6 +403,98 @@ mod tests {
             .expect("append");
 
         assert!(!old_path.exists());
+    }
+
+    #[test]
+    fn reads_back_appended_book_and_trade_streams() {
+        let root = temp_dir("persist_readback");
+        let store = RollingStore::new(&root).expect("store");
+        let symbol = SymbolId {
+            venue: "CME".to_string(),
+            symbol: "ESM6".to_string(),
+        };
+
+        store
+            .append_book(&BookUpdate {
+                symbol: symbol.clone(),
+                side: Side::Bid,
+                level: 1,
+                price: 505_000,
+                size: 7,
+                action: BookAction::Upsert,
+                sequence: 10,
+                ts_exchange_ns: 0,
+                ts_recv_ns: 0,
+            })
+            .expect("append book");
+        store
+            .append_trade(&TradePrint {
+                symbol: symbol.clone(),
+                price: 505_025,
+                size: 3,
+                aggressor_side: Side::Ask,
+                sequence: 11,
+                ts_exchange_ns: 0,
+                ts_recv_ns: 0,
+            })
+            .expect("append trade");
+
+        let books = store.read_books(&symbol.venue, &symbol.symbol).expect("read books");
+        let trades = store
+            .read_trades(&symbol.venue, &symbol.symbol)
+            .expect("read trades");
+
+        assert_eq!(
+            books,
+            vec![StoredBookEvent {
+                sequence: 10,
+                side: Side::Bid,
+                level: 1,
+                price: 505_000,
+                size: 7,
+                action: BookAction::Upsert,
+            }]
+        );
+        assert_eq!(
+            trades,
+            vec![StoredTradeEvent {
+                sequence: 11,
+                price: 505_025,
+                size: 3,
+                aggressor_side: Side::Ask,
+            }]
+        );
+    }
+
+    #[test]
+    fn missing_stream_reads_back_as_empty() {
+        let root = temp_dir("persist_missing_stream");
+        let store = RollingStore::new(&root).expect("store");
+
+        let books = store.read_books("CME", "ESM6").expect("read books");
+        let trades = store.read_trades("CME", "ESM6").expect("read trades");
+
+        assert!(books.is_empty());
+        assert!(trades.is_empty());
+    }
+
+    #[test]
+    fn invalid_stream_data_returns_invalid_data_error() {
+        let root = temp_dir("persist_invalid_stream");
+        let stream_dir = root.join("CME").join("ESM6");
+        fs::create_dir_all(&stream_dir).expect("create dir");
+        fs::write(
+            stream_dir.join("book.jsonl"),
+            b"{\"seq\":1,\"side\":\"Middle\",\"level\":0,\"price\":1,\"size\":1,\"action\":\"Upsert\"}\n",
+        )
+        .expect("write");
+
+        let store = RollingStore::new(&root).expect("store");
+        let err = store.read_books("CME", "ESM6").expect_err("invalid data");
+
+        match err {
+            PersistError::Io(inner) => assert_eq!(inner.kind(), std::io::ErrorKind::InvalidData),
+        }
     }
 
     fn temp_dir(name: &str) -> PathBuf {

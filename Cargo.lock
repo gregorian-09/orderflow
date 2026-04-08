@@ -62,6 +62,8 @@ name = "of_persist"
 version = "0.1.2"
 dependencies = [
  "of_core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

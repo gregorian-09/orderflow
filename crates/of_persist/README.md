@@ -6,6 +6,7 @@ It is designed for replay, auditability, and post-trade research workflows.
 ## Main Types
 
 - [`RollingStore`] - append-only store for `book` and `trades` streams.
+- [`StoredBookEvent`] / [`StoredTradeEvent`] - typed readback records parsed from existing JSONL files.
 - [`RetentionPolicy`] - bounded retention by total bytes and/or max file age.
 - [`PersistError`] / [`PersistResult<T>`] - persistence error contract.
 
@@ -16,6 +17,15 @@ Events are written to:
 `<root>/<venue>/<symbol>/(book|trades).jsonl`
 
 This makes stream files easy to map into replay and analytics pipelines.
+
+## Readback API
+
+`RollingStore` now supports additive typed readback over the same files it already writes:
+
+- `read_books(venue, symbol)` reads `book.jsonl` into [`StoredBookEvent`] values
+- `read_trades(venue, symbol)` reads `trades.jsonl` into [`StoredTradeEvent`] values
+- missing streams return an empty vector
+- malformed lines return `PersistError::Io` with `InvalidData`
 
 ## Quick Example
 
@@ -37,6 +47,19 @@ store.append_trade(&TradePrint {
     ts_exchange_ns: 1,
     ts_recv_ns: 2,
 }).expect("append");
+```
+
+## Readback Example
+
+```rust
+use of_persist::RollingStore;
+
+let store = RollingStore::new("data").expect("store");
+let trades = store.read_trades("CME", "ESM6").expect("read trades");
+
+for trade in trades {
+    println!("seq={} price={} size={}", trade.sequence, trade.price, trade.size);
+}
 ```
 
 ## Retention Example

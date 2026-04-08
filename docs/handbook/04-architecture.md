@@ -44,7 +44,7 @@ flowchart LR
 - `of_core`: canonical data structures + analytics accumulator.
 - `of_signals`: signal trait + built-in delta momentum, volume imbalance, and cumulative delta implementations.
 - `of_adapters`: provider abstraction and concrete adapters (feature-gated).
-- `of_persist`: rolling JSONL persistence + retention pruning.
+- `of_persist`: rolling JSONL persistence, typed readback, and retention pruning.
 - `of_runtime`: lifecycle, polling/ingest processing, quality supervision, health state.
 - `of_ffi_c`: stable C ABI and callback dispatch.
 - `bindings/python`: ctypes wrapper over C ABI.
