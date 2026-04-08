@@ -12,6 +12,7 @@ Orderflow is a multi-language market data and analytics engine with:
 
 Start with:
 
+- [Release 0.2.0 notes](./docs/ops/release-0.2.0.md)
 - [docs/README.md](./docs/README.md)
 - [docs/handbook/README.md](./docs/handbook/README.md)
 - [docs/bindings/README.md](./docs/bindings/README.md)
