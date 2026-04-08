@@ -21,6 +21,15 @@ It is the native interface used by Python (`ctypes`), Java (JNA), and any C-comp
 - `ts_exchange_ns`
 - `ts_recv_ns`
 
+Subscription stream ids:
+
+- `1`: `BOOK` raw book updates
+- `2`: `TRADES` raw trade prints
+- `3`: `ANALYTICS` snapshot callbacks
+- `4`: `SIGNALS` snapshot callbacks
+- `5`: `HEALTH` transition callbacks
+- `6`: `BOOK_SNAPSHOT` materialized book snapshot callbacks after book changes
+
 ## Safety Contract
 
 Callers must:
@@ -70,3 +79,4 @@ Most functions return `int32_t` values mapped from [`of_error_t`]:
 - Keep ABI structs initialized (zero-init is recommended before setting fields).
 - Prefer explicit timestamps and sequence numbers for external ingest to maximize quality checks.
 - Snapshot functions write the required byte length back through `inout_len`; if the caller buffer is too small, retry with the returned size.
+- `BOOK_SNAPSHOT` callbacks emit the same JSON shape as `of_get_book_snapshot(...)`, but only when book state changes for the subscribed symbol.

@@ -28,7 +28,7 @@ Native lookup order:
 
 ### Constants
 
-- `StreamKind`: `BOOK`, `TRADES`, `ANALYTICS`, `SIGNALS`, `HEALTH`
+- `StreamKind`: `BOOK`, `TRADES`, `ANALYTICS`, `SIGNALS`, `HEALTH`, `BOOK_SNAPSHOT`
 - `Side`: `BID`, `ASK`
 - `BookAction`: `UPSERT`, `DELETE`
 - `DataQualityFlags`: `NONE`, `STALE_FEED`, `SEQUENCE_GAP`, `CLOCK_SKEW`,

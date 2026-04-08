@@ -845,6 +845,42 @@ fn dispatch_callbacks(engine: &mut of_engine, quality_flags: u32) {
             continue;
         }
 
+        if sub.kind == 6 {
+            let mut latest_ts_exchange_ns = 0;
+            let mut latest_ts_recv_ns = 0;
+            let mut saw_book_update = false;
+            for event in engine.inner.last_events() {
+                let RawEvent::Book(book) = event else {
+                    continue;
+                };
+                if book.symbol != sub.symbol {
+                    continue;
+                }
+                saw_book_update = true;
+                latest_ts_exchange_ns = book.ts_exchange_ns;
+                latest_ts_recv_ns = book.ts_recv_ns;
+            }
+            if !saw_book_update {
+                continue;
+            }
+
+            let payload = match engine.inner.book_snapshot(&sub.symbol) {
+                Some(snapshot) => format_book_snapshot(&snapshot),
+                None => "{}".to_string(),
+            };
+            let event = of_event_t {
+                ts_exchange_ns: latest_ts_exchange_ns,
+                ts_recv_ns: latest_ts_recv_ns,
+                kind: sub.kind,
+                payload: payload.as_ptr() as *const c_void,
+                payload_len: payload.len() as u32,
+                schema_id: 1,
+                quality_flags,
+            };
+            (sub.cb)(&event as *const of_event_t, sub.user_data);
+            continue;
+        }
+
         if sub.kind == 5 {
             let seq = engine.inner.health_seq();
             if seq == sub.last_health_seq {
@@ -1660,6 +1696,100 @@ mod tests {
 
         let last_flag = *sink.quality_flags.last().expect("quality flag");
         assert!(last_flag & DataQualityFlags::SEQUENCE_GAP.bits() != 0);
+
+        assert_eq!(of_unsubscribe(sub), of_error_t::OF_OK as i32);
+        assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
+        of_engine_destroy(engine);
+    }
+
+    #[test]
+    fn book_snapshot_stream_emits_materialized_snapshot_payload() {
+        let _guard = test_lock().lock().expect("lock");
+
+        let instance_id = CString::new("ffi-book-snapshot-stream").expect("cstring");
+        let cfg = of_engine_config_t {
+            instance_id: instance_id.as_ptr(),
+            config_path: ptr::null(),
+            log_level: 0,
+            enable_persistence: 0,
+            audit_max_bytes: 0,
+            audit_max_files: 0,
+            audit_redact_tokens_csv: ptr::null(),
+            data_retention_max_bytes: 0,
+            data_retention_max_age_secs: 0,
+        };
+
+        let mut engine: *mut of_engine = ptr::null_mut();
+        assert_eq!(
+            of_engine_create(&cfg as *const of_engine_config_t, &mut engine),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!engine.is_null());
+        assert_eq!(of_engine_start(engine), of_error_t::OF_OK as i32);
+
+        let venue = CString::new("CME").expect("cstring");
+        let symbol = CString::new("ESM6").expect("cstring");
+        let ffi_symbol = of_symbol_t {
+            venue: venue.as_ptr(),
+            symbol: symbol.as_ptr(),
+            depth_levels: 10,
+        };
+        let mut sub: *mut of_subscription = ptr::null_mut();
+        let payloads = Arc::new(Mutex::new(Vec::<String>::new()));
+        let payloads_ptr = Arc::as_ptr(&payloads) as *mut c_void;
+
+        extern "C" fn on_book_snapshot(ev: *const of_event_t, user: *mut c_void) {
+            if ev.is_null() || user.is_null() {
+                return;
+            }
+            unsafe {
+                let ev = &*ev;
+                let payload =
+                    std::slice::from_raw_parts(ev.payload as *const u8, ev.payload_len as usize);
+                let payload = String::from_utf8_lossy(payload).to_string();
+                let sink = &*(user as *const Mutex<Vec<String>>);
+                sink.lock().expect("lock").push(payload);
+            }
+        }
+
+        assert_eq!(
+            of_subscribe(
+                engine,
+                &ffi_symbol as *const of_symbol_t,
+                6,
+                Some(on_book_snapshot),
+                payloads_ptr,
+                &mut sub,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(
+            of_ingest_book(
+                engine,
+                &of_book_t {
+                    symbol: of_symbol_t {
+                        venue: venue.as_ptr(),
+                        symbol: symbol.as_ptr(),
+                        depth_levels: 10,
+                    },
+                    side: 0,
+                    level: 0,
+                    price: 505000,
+                    size: 8,
+                    action: 0,
+                    sequence: 77,
+                    ts_exchange_ns: 1001,
+                    ts_recv_ns: 1002,
+                },
+                0,
+            ),
+            of_error_t::OF_OK as i32
+        );
+
+        let payloads = payloads.lock().expect("lock");
+        assert_eq!(payloads.len(), 1);
+        assert!(payloads[0].contains("\"bids\":[{\"level\":0,\"price\":505000,\"size\":8}]"));
+        assert!(payloads[0].contains("\"last_sequence\":77"));
 
         assert_eq!(of_unsubscribe(sub), of_error_t::OF_OK as i32);
         assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);

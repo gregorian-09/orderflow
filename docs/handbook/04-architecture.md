@@ -149,6 +149,7 @@ The C ABI subscription kind values are:
 - `3` = `ANALYTICS`
 - `4` = `SIGNALS`
 - `5` = `HEALTH` (emits on health transitions, not every poll)
+- `6` = `BOOK_SNAPSHOT` (emits materialized book state after book changes)
 
 Health uses a monotonic `health_seq` and only emits when the runtime fingerprint changes.
 

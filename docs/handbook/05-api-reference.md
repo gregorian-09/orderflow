@@ -227,10 +227,12 @@ Used in `of_subscribe(..., kind, ...)` and callback payloads:
 - `3`: ANALYTICS
 - `4`: SIGNALS
 - `5`: HEALTH
+- `6`: BOOK_SNAPSHOT
 
 ### C API Notes
 
 - `of_get_book_snapshot(...)` returns populated JSON when book updates exist for the symbol.
+- `BOOK_SNAPSHOT` callback payloads use the same JSON contract as `of_get_book_snapshot(...)`.
 - Book snapshot JSON includes:
   - `venue`
   - `symbol`
@@ -249,7 +251,7 @@ Used in `of_subscribe(..., kind, ...)` and callback payloads:
 
 ### Public classes/constants
 
-- `StreamKind` (`BOOK`, `TRADES`, `ANALYTICS`, `SIGNALS`, `HEALTH`)
+- `StreamKind` (`BOOK`, `TRADES`, `ANALYTICS`, `SIGNALS`, `HEALTH`, `BOOK_SNAPSHOT`)
 - `Side` (`BID`, `ASK`)
 - `BookAction` (`UPSERT`, `DELETE`)
 - `DataQualityFlags` constants
@@ -402,6 +404,20 @@ Context manager support:
   "quality_flags": 0,
   "last_error": null,
   "protocol_info": "mock_adapter"
+}
+```
+
+### BOOK_SNAPSHOT payload (`StreamKind=6`)
+
+```json
+{
+  "venue": "CME",
+  "symbol": "ESM6",
+  "bids": [{"level": 0, "price": 504900, "size": 20}],
+  "asks": [{"level": 0, "price": 505000, "size": 18}],
+  "last_sequence": 8,
+  "ts_exchange_ns": 1400,
+  "ts_recv_ns": 1500
 }
 ```
 

@@ -14,4 +14,6 @@ public final class StreamKind {
     public static final int SIGNALS = 4;
     /** Health transitions. */
     public static final int HEALTH = 5;
+    /** Materialized order-book snapshots emitted after book changes. */
+    public static final int BOOK_SNAPSHOT = 6;
 }

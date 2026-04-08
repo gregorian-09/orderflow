@@ -71,6 +71,7 @@ Last updated: 2026-04-08
 ## Snapshot compatibility guarantees
 
 - `of_get_book_snapshot(...)` returns materialized JSON once book updates exist for the symbol.
+- `OF_STREAM_BOOK_SNAPSHOT` emits the same materialized JSON contract after book changes for the subscribed symbol.
 - If a caller buffer is too small for a snapshot payload:
   - the function returns `OF_ERR_INVALID_ARG`
   - `inout_len` is updated with the required byte size
