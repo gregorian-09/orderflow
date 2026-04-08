@@ -38,18 +38,18 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "of_adapters"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "of_core",
 ]
 
 [[package]]
 name = "of_core"
-version = "0.1.2"
+version = "0.2.0"
 
 [[package]]
 name = "of_ffi_c"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "of_adapters",
  "of_core",
@@ -59,7 +59,7 @@ dependencies = [
 
 [[package]]
 name = "of_persist"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "of_core",
  "serde",
@@ -68,7 +68,7 @@ dependencies = [
 
 [[package]]
 name = "of_runtime"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "of_adapters",
  "of_core",
@@ -81,14 +81,14 @@ dependencies = [
 
 [[package]]
 name = "of_signals"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "of_core",
 ]
 
 [[package]]
 name = "perf_harness"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "of_adapters",
  "of_core",
@@ -116,7 +116,7 @@ dependencies = [
 
 [[package]]
 name = "replay_cli"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "of_persist",
 ]

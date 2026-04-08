@@ -1,4 +1,4 @@
 [bindings]
-python = "0.1.5"
-java = "0.1.4"
-rust = "0.1.2"
+python = "0.2.0"
+java = "0.2.0"
+rust = "0.2.0"

@@ -5,7 +5,7 @@
 
   <groupId>io.github.gregorian-09</groupId>
   <artifactId>orderflow-java-binding</artifactId>
-  <version>0.1.4</version>
+  <version>0.2.0</version>
   <name>Orderflow Java Binding</name>
   <description>Production-oriented Java JNA binding for the Orderflow C ABI with subscription, ingest, and snapshot APIs.</description>
   <url>https://github.com/gregorian-09/orderflow</url>

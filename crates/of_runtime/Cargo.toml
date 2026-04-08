@@ -14,10 +14,10 @@ documentation = "https://docs.rs/of_runtime"
 all-features = true
 
 [dependencies]
-of_adapters = { path = "../of_adapters", version = "0.1.2" }
-of_core = { path = "../of_core", version = "0.1.2" }
-of_persist = { path = "../of_persist", version = "0.1.2" }
-of_signals = { path = "../of_signals", version = "0.1.2" }
+of_adapters = { path = "../of_adapters", version = "0.2.0" }
+of_core = { path = "../of_core", version = "0.2.0" }
+of_persist = { path = "../of_persist", version = "0.2.0" }
+of_signals = { path = "../of_signals", version = "0.2.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
