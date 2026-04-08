@@ -197,6 +197,30 @@ impl RollingStore {
         Ok(symbols.into_iter().collect())
     }
 
+    /// Lists stream files currently present for a given venue and symbol.
+    ///
+    /// Returned names omit the `.jsonl` suffix and are sorted for deterministic replay tooling.
+    /// Missing symbols return an empty vector.
+    pub fn list_streams(&self, venue: &str, symbol: &str) -> PersistResult<Vec<String>> {
+        let mut path = self.root.clone();
+        path.push(venue);
+        path.push(symbol);
+
+        let mut streams = BTreeSet::new();
+        for entry in read_dir_if_exists(&path)? {
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            if let Some(stem) = name.strip_suffix(".jsonl") {
+                streams.insert(stem.to_string());
+            }
+        }
+        Ok(streams.into_iter().collect())
+    }
+
     fn append_line(
         &self,
         venue: &str,
@@ -654,6 +678,23 @@ mod tests {
 
         assert_eq!(venues, vec!["BINANCE".to_string(), "CME".to_string()]);
         assert_eq!(symbols, vec!["ESM6".to_string(), "NQM6".to_string()]);
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn lists_symbol_streams_without_suffixes() {
+        let root = temp_dir("persist_stream_discovery");
+        let stream_dir = root.join("CME").join("ESM6");
+        fs::create_dir_all(&stream_dir).expect("stream dir");
+        fs::write(stream_dir.join("book.jsonl"), b"{}\n").expect("write book");
+        fs::write(stream_dir.join("trades.jsonl"), b"{}\n").expect("write trades");
+        fs::write(stream_dir.join("notes.txt"), b"ignore").expect("write notes");
+
+        let store = RollingStore::new(&root).expect("store");
+        let streams = store.list_streams("CME", "ESM6").expect("streams");
+        let missing = store.list_streams("CME", "NQM6").expect("missing");
+
+        assert_eq!(streams, vec!["book".to_string(), "trades".to_string()]);
         assert!(missing.is_empty());
     }
 

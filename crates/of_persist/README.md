@@ -25,6 +25,7 @@ This makes stream files easy to map into replay and analytics pipelines.
 
 - `list_venues()` enumerates discovered venue directories
 - `list_symbols(venue)` enumerates discovered symbols for one venue
+- `list_streams(venue, symbol)` enumerates discovered JSONL streams for one symbol
 - `read_books(venue, symbol)` reads `book.jsonl` into [`StoredBookEvent`] values
 - `read_trades(venue, symbol)` reads `trades.jsonl` into [`StoredTradeEvent`] values
 - `read_events(venue, symbol)` merges both streams into [`StoredEvent`] values ordered by sequence
@@ -61,9 +62,10 @@ use of_persist::RollingStore;
 let store = RollingStore::new("data").expect("store");
 let venues = store.list_venues().expect("list venues");
 let symbols = store.list_symbols("CME").expect("list symbols");
+let streams = store.list_streams("CME", "ESM6").expect("list streams");
 let trades = store.read_trades("CME", "ESM6").expect("read trades");
 
-println!("venues={venues:?} symbols={symbols:?}");
+println!("venues={venues:?} symbols={symbols:?} streams={streams:?}");
 for trade in trades {
     println!("seq={} price={} size={}", trade.sequence, trade.price, trade.size);
 }
