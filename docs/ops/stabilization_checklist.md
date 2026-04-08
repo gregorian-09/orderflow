@@ -51,14 +51,19 @@ Last updated: 2026-04-08
 - Mock/live endpoint modes supported at config boundary (`mock://`, `ws://`, `wss://`).
 - Mock mode emits deterministic book + trade flows for end-to-end tests.
 - Live mode validates websocket reachability before reporting connected.
+- Live mode tracks heartbeat/message activity and marks the path degraded on heartbeat timeout.
+- Reconnect backoff + subscription replay are implemented for live disconnect recovery.
+- Normalized live `book` / `trade` / `heartbeat` bridge payloads are parsed into raw events.
 - Health reporting integrated into runtime metrics/health stream.
-- `protocol_info` includes mode, endpoint, app name, and uptime metadata.
+- `protocol_info` includes mode, endpoint, app name, uptime, reconnect attempt, subscription count, and activity ages.
 
 ## Binance guarantees
 
 - Crypto market adapter path implemented.
 - Subscribe/unsubscribe lifecycle implemented.
 - Mock/live endpoint modes supported (`mock://`, `ws://`, `wss://`).
+- Live mode schedules reconnect backoff and replays active subscriptions after reconnect.
+- Live mode marks the path degraded when market data goes silent beyond supervision timeout.
 - Health reporting integrated into runtime metrics/health stream.
 
 ## CI baseline

@@ -25,11 +25,16 @@ Current provider notes:
 - `Rithmic`:
   - mock mode emits deterministic book and trade events for end-to-end testing
   - live `ws://` / `wss://` mode now performs websocket reachability validation before reporting connected
-  - health metadata includes mode, endpoint, app name, and uptime
+  - live mode tracks heartbeat/message activity, schedules reconnect with backoff, and replays subscriptions after reconnect
+  - live mode accepts normalized JSON `book` / `trade` / `heartbeat` payloads from bridge processes
+  - health metadata includes mode, endpoint, app name, uptime, reconnect attempt, subscription count, and activity ages
 - `CQG`:
   - reconnect/resubscribe and sequencing logic are implemented
 - `Binance`:
   - live websocket transport parses trade and depth events
+  - live mode schedules reconnect with backoff on disconnect or market-data timeout
+  - reconnect replays active subscriptions automatically
+  - health metadata includes reconnect attempt, subscription count, and message/data ages
 
 ## Create an Adapter
 

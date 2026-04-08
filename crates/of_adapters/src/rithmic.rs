@@ -4,7 +4,7 @@ use std::net::TcpStream;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use of_core::{BookAction, BookUpdate, Side, SymbolId, TradePrint};
 
@@ -87,6 +87,7 @@ struct WsProbeTransport {
     connected: bool,
     outbound_tx: Option<Sender<Outbound>>,
     inbound_rx: Option<Receiver<String>>,
+    inbound_tx: Option<Sender<String>>,
 }
 
 impl WsProbeTransport {
@@ -96,11 +97,23 @@ impl WsProbeTransport {
             connected: false,
             outbound_tx: None,
             inbound_rx: None,
+            inbound_tx: None,
         }
     }
 
     fn connect(&mut self) -> AdapterResult<()> {
         let parsed = ParsedEndpoint::parse(&self.endpoint)?;
+        #[cfg(test)]
+        if parsed.host == "test.live" {
+            let (out_tx, out_rx) = mpsc::channel::<Outbound>();
+            let (in_tx, in_rx) = mpsc::channel::<String>();
+            let _ = thread::spawn(move || while out_rx.recv().is_ok() {});
+            self.connected = true;
+            self.outbound_tx = Some(out_tx);
+            self.inbound_rx = Some(in_rx);
+            self.inbound_tx = Some(in_tx);
+            return Ok(());
+        }
         let (out_tx, out_rx) = mpsc::channel::<Outbound>();
         let (in_tx, in_rx) = mpsc::channel::<String>();
 
@@ -113,7 +126,7 @@ impl WsProbeTransport {
                 let writer = stream
                     .try_clone()
                     .map_err(|e| AdapterError::Other(format!("rithmic ws clone failed: {e}")))?;
-                spawn_text_ws_workers(writer, stream, out_rx, in_tx, out_tx.clone());
+                spawn_text_ws_workers(writer, stream, out_rx, in_tx.clone(), out_tx.clone());
             }
             "wss" => {
                 let mut child = Command::new("openssl")
@@ -147,7 +160,7 @@ impl WsProbeTransport {
                     parsed.port,
                     &parsed.path,
                 )?;
-                spawn_text_ws_workers(stdin, stdout, out_rx, in_tx, out_tx.clone());
+                spawn_text_ws_workers(stdin, stdout, out_rx, in_tx.clone(), out_tx.clone());
                 let _ = thread::spawn(move || {
                     let _ = child.wait();
                 });
@@ -162,6 +175,7 @@ impl WsProbeTransport {
         self.connected = true;
         self.outbound_tx = Some(out_tx);
         self.inbound_rx = Some(in_rx);
+        self.inbound_tx = Some(in_tx);
         Ok(())
     }
 
@@ -192,6 +206,18 @@ impl WsProbeTransport {
     fn is_connected(&self) -> bool {
         self.connected
     }
+
+    #[cfg(test)]
+    fn inject_text(&mut self, text: &str) {
+        if let Some(tx) = &self.inbound_tx {
+            let _ = tx.send(text.to_string());
+        }
+    }
+
+    #[cfg(test)]
+    fn force_disconnect(&mut self) {
+        self.connected = false;
+    }
 }
 
 /// Rithmic adapter implementing the common market-data adapter trait.
@@ -207,6 +233,11 @@ pub struct RithmicAdapter {
     sequence: u64,
     connected_at: Option<Instant>,
     last_poll_at: Option<Instant>,
+    reconnect_attempt: u32,
+    next_reconnect_at: Option<Instant>,
+    last_message_at: Option<Instant>,
+    last_heartbeat_at: Option<Instant>,
+    healthy_since: Option<Instant>,
 }
 
 impl RithmicAdapter {
@@ -229,6 +260,11 @@ impl RithmicAdapter {
             sequence: 0,
             connected_at: None,
             last_poll_at: None,
+            reconnect_attempt: 0,
+            next_reconnect_at: None,
+            last_message_at: None,
+            last_heartbeat_at: None,
+            healthy_since: None,
         })
     }
 
@@ -310,6 +346,226 @@ impl RithmicAdapter {
             RithmicTransport::Mock => Ok(()),
         }
     }
+
+    fn send_subscribe_wire(&mut self, symbol: &SymbolId, depth_levels: u16) -> AdapterResult<()> {
+        let payload = format!(
+            "{{\"type\":\"subscribe\",\"venue\":\"{}\",\"symbol\":\"{}\",\"depth_levels\":{}}}",
+            escape_json(&symbol.venue),
+            escape_json(&symbol.symbol),
+            depth_levels
+        );
+        match &mut self.transport {
+            RithmicTransport::Live(ws) => ws.send_text(payload),
+            RithmicTransport::Mock => Ok(()),
+        }
+    }
+
+    fn send_unsubscribe_wire(&mut self, symbol: &SymbolId) -> AdapterResult<()> {
+        let payload = format!(
+            "{{\"type\":\"unsubscribe\",\"venue\":\"{}\",\"symbol\":\"{}\"}}",
+            escape_json(&symbol.venue),
+            escape_json(&symbol.symbol)
+        );
+        match &mut self.transport {
+            RithmicTransport::Live(ws) => ws.send_text(payload),
+            RithmicTransport::Mock => Ok(()),
+        }
+    }
+
+    fn replay_subscriptions(&mut self) -> AdapterResult<()> {
+        let requested: Vec<(SymbolId, u16)> = self
+            .requested_depth
+            .iter()
+            .map(|(symbol, depth)| (symbol.clone(), *depth))
+            .collect();
+        for (symbol, depth) in requested {
+            self.send_subscribe_wire(&symbol, depth)?;
+        }
+        Ok(())
+    }
+
+    fn schedule_reconnect(&mut self) {
+        self.reconnect_attempt = self.reconnect_attempt.saturating_add(1);
+        let base_ms = 250u64;
+        let max_ms = 5_000u64;
+        let delay_ms = (base_ms.saturating_mul(1u64 << self.reconnect_attempt.min(5))).min(max_ms);
+        self.next_reconnect_at = Some(Instant::now() + Duration::from_millis(delay_ms));
+    }
+
+    fn reconnect_if_due(&mut self) -> AdapterResult<()> {
+        if self.is_mock_mode() {
+            return Ok(());
+        }
+        let due = self
+            .next_reconnect_at
+            .map(|t| Instant::now() >= t)
+            .unwrap_or(false);
+        if !due {
+            return Ok(());
+        }
+
+        match &mut self.transport {
+            RithmicTransport::Live(ws) => ws.connect()?,
+            RithmicTransport::Mock => return Ok(()),
+        }
+        self.connected = true;
+        self.bootstrap_live_session()?;
+        self.replay_subscriptions()?;
+        self.next_reconnect_at = None;
+        self.last_message_at = Some(Instant::now());
+        self.last_heartbeat_at = Some(Instant::now());
+        self.healthy_since = None;
+        self.degraded = true;
+        self.last_error = Some("rithmic reconnect warming".to_string());
+        Ok(())
+    }
+
+    fn maybe_send_heartbeat_probe(&mut self) {
+        if self.is_mock_mode() || !self.connected {
+            return;
+        }
+        let now = Instant::now();
+        let should_ping = self
+            .last_message_at
+            .map(|t| now.duration_since(t) >= Duration::from_secs(5))
+            .unwrap_or(true);
+        if should_ping {
+            let payload = "{\"type\":\"heartbeat_probe\"}".to_string();
+            if let RithmicTransport::Live(ws) = &mut self.transport {
+                let _ = ws.send_text(payload);
+            }
+        }
+    }
+
+    fn check_heartbeat_timeout(&mut self) {
+        if self.is_mock_mode() || !self.connected {
+            return;
+        }
+        let now = Instant::now();
+        let heartbeat = self
+            .last_heartbeat_at
+            .or(self.last_message_at)
+            .unwrap_or(now);
+        if now.duration_since(heartbeat) > Duration::from_secs(15) {
+            self.connected = false;
+            self.degraded = true;
+            self.healthy_since = None;
+            self.last_error = Some("rithmic heartbeat timeout".to_string());
+            if self.next_reconnect_at.is_none() {
+                self.schedule_reconnect();
+            }
+        }
+    }
+
+    fn maybe_clear_degraded(&mut self) {
+        if !self.degraded || !self.connected {
+            return;
+        }
+        let now = Instant::now();
+        let since = self.healthy_since.get_or_insert(now);
+        if now.duration_since(*since) >= Duration::from_secs(2) {
+            self.degraded = false;
+            self.last_error = None;
+        }
+    }
+
+    fn parse_live_message(&mut self, msg: &str) {
+        self.last_message_at = Some(Instant::now());
+
+        match extract_string_field(msg, "type") {
+            Some("heartbeat") | Some("heartbeat_ack") | Some("subscribed") => {
+                self.last_heartbeat_at = Some(Instant::now());
+                self.healthy_since.get_or_insert_with(Instant::now);
+            }
+            Some("error") => {
+                self.degraded = true;
+                self.healthy_since = None;
+                self.last_error = Some(
+                    extract_string_field(msg, "message")
+                        .unwrap_or("rithmic live error")
+                        .to_string(),
+                );
+                if extract_bool_field(msg, "reconnect").unwrap_or(false) {
+                    self.connected = false;
+                    if self.next_reconnect_at.is_none() {
+                        self.schedule_reconnect();
+                    }
+                }
+            }
+            Some("book") => {
+                let sequence = extract_u64_field(msg, "sequence").unwrap_or_else(|| self.next_sequence());
+                let ts_exchange_ns =
+                    extract_u64_field(msg, "ts_exchange_ns").unwrap_or_else(Self::now_ns);
+                let ts_recv_ns =
+                    extract_u64_field(msg, "ts_recv_ns").unwrap_or_else(Self::now_ns);
+                let symbol = SymbolId {
+                    venue: extract_string_field(msg, "venue").unwrap_or("RITHMIC").to_string(),
+                    symbol: match extract_string_field(msg, "symbol") {
+                        Some(v) => v.to_string(),
+                        None => return,
+                    },
+                };
+                let side = match extract_string_field(msg, "side").unwrap_or("bid") {
+                    "ask" | "ASK" => Side::Ask,
+                    _ => Side::Bid,
+                };
+                let action = match extract_string_field(msg, "action").unwrap_or("upsert") {
+                    "delete" | "DELETE" => BookAction::Delete,
+                    _ => BookAction::Upsert,
+                };
+                self.queue.push_back(RawEvent::Book(BookUpdate {
+                    symbol,
+                    side,
+                    level: extract_u16_field(msg, "level").unwrap_or(0),
+                    price: match extract_i64_field(msg, "price") {
+                        Some(v) => v,
+                        None => return,
+                    },
+                    size: extract_i64_field(msg, "size").unwrap_or(0),
+                    action,
+                    sequence,
+                    ts_exchange_ns,
+                    ts_recv_ns,
+                }));
+                self.last_heartbeat_at = Some(Instant::now());
+                self.healthy_since.get_or_insert_with(Instant::now);
+            }
+            Some("trade") => {
+                let sequence = extract_u64_field(msg, "sequence").unwrap_or_else(|| self.next_sequence());
+                let ts_exchange_ns =
+                    extract_u64_field(msg, "ts_exchange_ns").unwrap_or_else(Self::now_ns);
+                let ts_recv_ns =
+                    extract_u64_field(msg, "ts_recv_ns").unwrap_or_else(Self::now_ns);
+                let symbol = SymbolId {
+                    venue: extract_string_field(msg, "venue").unwrap_or("RITHMIC").to_string(),
+                    symbol: match extract_string_field(msg, "symbol") {
+                        Some(v) => v.to_string(),
+                        None => return,
+                    },
+                };
+                let aggressor_side = match extract_string_field(msg, "aggressor_side").unwrap_or("bid")
+                {
+                    "ask" | "ASK" => Side::Ask,
+                    _ => Side::Bid,
+                };
+                self.queue.push_back(RawEvent::Trade(TradePrint {
+                    symbol,
+                    price: match extract_i64_field(msg, "price") {
+                        Some(v) => v,
+                        None => return,
+                    },
+                    size: extract_i64_field(msg, "size").unwrap_or(0),
+                    aggressor_side,
+                    sequence,
+                    ts_exchange_ns,
+                    ts_recv_ns,
+                }));
+                self.last_heartbeat_at = Some(Instant::now());
+                self.healthy_since.get_or_insert_with(Instant::now);
+            }
+            _ => {}
+        }
+    }
 }
 
 impl MarketDataAdapter for RithmicAdapter {
@@ -317,6 +573,8 @@ impl MarketDataAdapter for RithmicAdapter {
         let _ = &self.cfg.pass;
         self.degraded = false;
         self.last_error = None;
+        self.next_reconnect_at = None;
+        self.reconnect_attempt = 0;
         let mut needs_bootstrap = false;
         match &mut self.transport {
             RithmicTransport::Mock => {
@@ -342,6 +600,9 @@ impl MarketDataAdapter for RithmicAdapter {
             }
         }
         self.connected_at = Some(Instant::now());
+        self.last_message_at = Some(Instant::now());
+        self.last_heartbeat_at = Some(Instant::now());
+        self.healthy_since = None;
         Ok(())
     }
 
@@ -358,6 +619,8 @@ impl MarketDataAdapter for RithmicAdapter {
             .insert(req.symbol.clone(), req.depth_levels);
         if self.is_mock_mode() {
             self.synth_book_and_trade(&req.symbol, req.depth_levels);
+        } else {
+            self.send_subscribe_wire(&req.symbol, req.depth_levels)?;
         }
         Ok(())
     }
@@ -367,12 +630,18 @@ impl MarketDataAdapter for RithmicAdapter {
             return Err(AdapterError::Disconnected);
         }
         self.requested_depth.remove(&symbol);
+        if !self.is_mock_mode() {
+            self.send_unsubscribe_wire(&symbol)?;
+        }
         Ok(())
     }
 
     fn poll(&mut self, out: &mut Vec<RawEvent>) -> AdapterResult<usize> {
         if !self.connected {
-            return Err(AdapterError::Disconnected);
+            self.reconnect_if_due()?;
+            if !self.connected {
+                return Err(AdapterError::Disconnected);
+            }
         }
         self.last_poll_at = Some(Instant::now());
 
@@ -385,19 +654,38 @@ impl MarketDataAdapter for RithmicAdapter {
             for (symbol, depth) in symbols {
                 self.synth_book_and_trade(&symbol, depth);
             }
-        } else if let RithmicTransport::Live(ws) = &mut self.transport {
-            loop {
-                match ws.recv_text() {
-                    Ok(Some(_msg)) => {}
-                    Ok(None) => break,
-                    Err(err) => {
-                        self.connected = false;
-                        self.degraded = true;
-                        self.last_error = Some(err.to_string());
-                        return Err(err);
+        } else {
+            self.maybe_send_heartbeat_probe();
+            self.check_heartbeat_timeout();
+            if !self.connected {
+                self.reconnect_if_due()?;
+                if !self.connected {
+                    return Err(AdapterError::Disconnected);
+                }
+            }
+            let mut inbound = Vec::new();
+            if let RithmicTransport::Live(ws) = &mut self.transport {
+                loop {
+                    match ws.recv_text() {
+                        Ok(Some(msg)) => inbound.push(msg),
+                        Ok(None) => break,
+                        Err(err) => {
+                            self.connected = false;
+                            self.degraded = true;
+                            self.healthy_since = None;
+                            self.last_error = Some(err.to_string());
+                            if self.next_reconnect_at.is_none() {
+                                self.schedule_reconnect();
+                            }
+                            return Err(err);
+                        }
                     }
                 }
             }
+            for msg in inbound {
+                self.parse_live_message(&msg);
+            }
+            self.maybe_clear_degraded();
         }
 
         let n = self.queue.len();
@@ -416,14 +704,24 @@ impl MarketDataAdapter for RithmicAdapter {
             .connected_at
             .map(|t| t.elapsed().as_millis() as u64)
             .unwrap_or(0);
+        let last_message_age_ms = self
+            .last_message_at
+            .map(|t| t.elapsed().as_millis() as u64)
+            .unwrap_or(0);
+        let last_heartbeat_age_ms = self
+            .last_heartbeat_at
+            .map(|t| t.elapsed().as_millis() as u64)
+            .unwrap_or(0);
         AdapterHealth {
             connected,
             degraded: self.degraded,
             last_error: self.last_error.clone(),
             protocol_info: Some(format!(
-                "provider=rithmic;wire=ws_probe_v1;mode={mode};endpoint={};app_name={};uptime_ms={uptime_ms}",
+                "provider=rithmic;wire=ws_probe_v1;mode={mode};endpoint={};app_name={};uptime_ms={uptime_ms};reconnect_attempt={};subscribed={};last_message_age_ms={last_message_age_ms};last_heartbeat_age_ms={last_heartbeat_age_ms}",
                 self.cfg.endpoint,
-                self.cfg.app_name
+                self.cfg.app_name,
+                self.reconnect_attempt,
+                self.requested_depth.len()
             )),
         }
     }
@@ -640,6 +938,47 @@ fn escape_json(input: &str) -> String {
         .replace('\t', "\\t")
 }
 
+fn extract_field_value<'a>(raw: &'a str, key: &str) -> Option<&'a str> {
+    let pat = format!("\"{key}\"");
+    let key_pos = raw.find(&pat)?;
+    let after_key = &raw[key_pos + pat.len()..];
+    let colon = after_key.find(':')?;
+    let mut v = after_key[colon + 1..].trim_start();
+    if let Some(stripped) = v.strip_prefix('"') {
+        let end = stripped.find('"')?;
+        return Some(&stripped[..end]);
+    }
+    let end = v
+        .find(|c: char| c == ',' || c == '}' || c.is_whitespace())
+        .unwrap_or(v.len());
+    v = &v[..end];
+    Some(v.trim())
+}
+
+fn extract_string_field<'a>(raw: &'a str, key: &str) -> Option<&'a str> {
+    extract_field_value(raw, key)
+}
+
+fn extract_u64_field(raw: &str, key: &str) -> Option<u64> {
+    extract_field_value(raw, key)?.parse::<u64>().ok()
+}
+
+fn extract_i64_field(raw: &str, key: &str) -> Option<i64> {
+    extract_field_value(raw, key)?.parse::<i64>().ok()
+}
+
+fn extract_u16_field(raw: &str, key: &str) -> Option<u16> {
+    extract_field_value(raw, key)?.parse::<u16>().ok()
+}
+
+fn extract_bool_field(raw: &str, key: &str) -> Option<bool> {
+    match extract_field_value(raw, key)? {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -742,5 +1081,85 @@ mod tests {
         assert!(!health.connected);
         assert!(health.degraded);
         assert!(health.last_error.is_some());
+    }
+
+    #[test]
+    fn live_mode_parses_normalized_trade_and_book_messages() {
+        let mut adapter = RithmicAdapter::from_config(&cfg("ws://test.live/rithmic")).expect("cfg");
+        adapter.connect().expect("connect");
+        let symbol = SymbolId {
+            venue: "CME".to_string(),
+            symbol: "ESM6".to_string(),
+        };
+        adapter
+            .subscribe(SubscribeReq {
+                symbol: symbol.clone(),
+                depth_levels: 5,
+            })
+            .expect("sub");
+
+        if let RithmicTransport::Live(ws) = &mut adapter.transport {
+            ws.inject_text(r#"{"type":"heartbeat"}"#);
+            ws.inject_text(r#"{"type":"book","venue":"CME","symbol":"ESM6","side":"bid","level":0,"price":505000,"size":8,"action":"upsert","sequence":77,"ts_exchange_ns":10,"ts_recv_ns":11}"#);
+            ws.inject_text(r#"{"type":"trade","venue":"CME","symbol":"ESM6","price":505025,"size":3,"aggressor_side":"ask","sequence":78,"ts_exchange_ns":12,"ts_recv_ns":13}"#);
+        }
+
+        let mut out = Vec::new();
+        let n = adapter.poll(&mut out).expect("poll");
+        assert_eq!(n, 2);
+        assert!(out.iter().any(|ev| matches!(ev, RawEvent::Book(_))));
+        assert!(out.iter().any(|ev| matches!(ev, RawEvent::Trade(_))));
+        assert!(adapter.health().protocol_info.unwrap_or_default().contains("subscribed=1"));
+    }
+
+    #[test]
+    fn heartbeat_timeout_marks_live_path_degraded() {
+        let mut adapter = RithmicAdapter::from_config(&cfg("ws://test.live/rithmic")).expect("cfg");
+        adapter.connect().expect("connect");
+        adapter.last_heartbeat_at = Some(Instant::now() - Duration::from_secs(20));
+        adapter.last_message_at = adapter.last_heartbeat_at;
+
+        let mut out = Vec::new();
+        let err = adapter.poll(&mut out).expect_err("timeout should disconnect");
+        assert!(matches!(err, AdapterError::Disconnected));
+        assert!(adapter.health().degraded);
+        assert!(adapter.next_reconnect_at.is_some());
+    }
+
+    #[test]
+    fn live_disconnect_schedules_and_recovers_with_reconnect() {
+        let mut adapter = RithmicAdapter::from_config(&cfg("ws://test.live/rithmic")).expect("cfg");
+        adapter.connect().expect("connect");
+        let symbol = SymbolId {
+            venue: "CME".to_string(),
+            symbol: "NQM6".to_string(),
+        };
+        adapter
+            .subscribe(SubscribeReq {
+                symbol: symbol.clone(),
+                depth_levels: 5,
+            })
+            .expect("sub");
+
+        if let RithmicTransport::Live(ws) = &mut adapter.transport {
+            ws.force_disconnect();
+        }
+        let mut out = Vec::new();
+        let err = adapter.poll(&mut out).expect_err("disconnect should surface");
+        assert!(matches!(err, AdapterError::Disconnected));
+        assert!(adapter.next_reconnect_at.is_some());
+
+        adapter.next_reconnect_at = Some(Instant::now());
+        adapter.poll(&mut out).expect("reconnect poll");
+        assert!(adapter.health().connected);
+        assert!(adapter.health().degraded);
+
+        if let RithmicTransport::Live(ws) = &mut adapter.transport {
+            ws.inject_text(r#"{"type":"heartbeat"}"#);
+            ws.inject_text(r#"{"type":"trade","venue":"CME","symbol":"NQM6","price":1780025,"size":2,"aggressor_side":"bid","sequence":91,"ts_exchange_ns":20,"ts_recv_ns":21}"#);
+        }
+        let mut recovered = Vec::new();
+        let _ = adapter.poll(&mut recovered).expect("post reconnect poll");
+        assert!(recovered.iter().any(|ev| matches!(ev, RawEvent::Trade(_))));
     }
 }

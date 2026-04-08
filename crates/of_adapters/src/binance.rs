@@ -4,7 +4,7 @@ use std::net::TcpStream;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use of_core::{BookAction, BookUpdate, Side, SymbolId, TradePrint};
 
@@ -59,6 +59,7 @@ struct WsTextTransport {
     connected: bool,
     outbound_tx: Option<Sender<Outbound>>,
     inbound_rx: Option<Receiver<String>>,
+    inbound_tx: Option<Sender<String>>,
 }
 
 impl WsTextTransport {
@@ -68,11 +69,23 @@ impl WsTextTransport {
             connected: false,
             outbound_tx: None,
             inbound_rx: None,
+            inbound_tx: None,
         }
     }
 
     fn connect(&mut self) -> AdapterResult<()> {
         let parsed = ParsedEndpoint::parse(&self.endpoint)?;
+        #[cfg(test)]
+        if parsed.host == "test.live" {
+            let (out_tx, out_rx) = mpsc::channel::<Outbound>();
+            let (in_tx, in_rx) = mpsc::channel::<String>();
+            let _ = thread::spawn(move || while out_rx.recv().is_ok() {});
+            self.connected = true;
+            self.outbound_tx = Some(out_tx);
+            self.inbound_rx = Some(in_rx);
+            self.inbound_tx = Some(in_tx);
+            return Ok(());
+        }
         let (out_tx, out_rx) = mpsc::channel::<Outbound>();
         let (in_tx, in_rx) = mpsc::channel::<String>();
 
@@ -85,7 +98,7 @@ impl WsTextTransport {
                 let writer = stream
                     .try_clone()
                     .map_err(|e| AdapterError::Other(format!("binance ws clone failed: {e}")))?;
-                spawn_text_ws_workers(writer, stream, out_rx, in_tx, out_tx.clone());
+                spawn_text_ws_workers(writer, stream, out_rx, in_tx.clone(), out_tx.clone());
             }
             "wss" => {
                 let mut child = Command::new("openssl")
@@ -119,7 +132,7 @@ impl WsTextTransport {
                     parsed.port,
                     &parsed.path,
                 )?;
-                spawn_text_ws_workers(stdin, stdout, out_rx, in_tx, out_tx.clone());
+                spawn_text_ws_workers(stdin, stdout, out_rx, in_tx.clone(), out_tx.clone());
                 let _ = thread::spawn(move || {
                     let _ = child.wait();
                 });
@@ -134,6 +147,7 @@ impl WsTextTransport {
         self.connected = true;
         self.outbound_tx = Some(out_tx);
         self.inbound_rx = Some(in_rx);
+        self.inbound_tx = Some(in_tx);
         Ok(())
     }
 
@@ -164,6 +178,18 @@ impl WsTextTransport {
     fn is_connected(&self) -> bool {
         self.connected
     }
+
+    #[cfg(test)]
+    fn inject_text(&mut self, text: &str) {
+        if let Some(tx) = &self.inbound_tx {
+            let _ = tx.send(text.to_string());
+        }
+    }
+
+    #[cfg(test)]
+    fn force_disconnect(&mut self) {
+        self.connected = false;
+    }
 }
 
 /// Binance websocket adapter with mock/live transport support.
@@ -178,6 +204,11 @@ pub struct BinanceAdapter {
     queue: VecDeque<RawEvent>,
     seq: u64,
     request_id: u64,
+    reconnect_attempt: u32,
+    next_reconnect_at: Option<Instant>,
+    last_message_at: Option<Instant>,
+    last_market_data_at: Option<Instant>,
+    healthy_since: Option<Instant>,
 }
 
 impl BinanceAdapter {
@@ -199,6 +230,11 @@ impl BinanceAdapter {
             queue: VecDeque::new(),
             seq: 0,
             request_id: 0,
+            reconnect_attempt: 0,
+            next_reconnect_at: None,
+            last_message_at: None,
+            last_market_data_at: None,
+            healthy_since: None,
         })
     }
 
@@ -265,10 +301,26 @@ impl BinanceAdapter {
     }
 
     fn parse_live_message(&mut self, msg: &str) {
+        self.last_message_at = Some(Instant::now());
         let payload = extract_data_object(msg).unwrap_or(msg);
+        if payload.contains("\"result\":null") || payload.contains("\"type\":\"subscribed\"") {
+            self.healthy_since.get_or_insert_with(Instant::now);
+            return;
+        }
+        if payload.contains("\"error\"") || payload.contains("\"code\"") {
+            self.degraded = true;
+            self.healthy_since = None;
+            self.last_error = extract_string_field(payload, "msg")
+                .or_else(|| extract_string_field(payload, "error"))
+                .map(str::to_string)
+                .or_else(|| Some("binance live error".to_string()));
+            return;
+        }
         if payload.contains("\"e\":\"aggTrade\"") {
             if let Some(trade) = parse_agg_trade(payload, &mut self.seq) {
                 self.queue.push_back(RawEvent::Trade(trade));
+                self.last_market_data_at = Some(Instant::now());
+                self.healthy_since.get_or_insert_with(Instant::now);
             }
             return;
         }
@@ -334,6 +386,78 @@ impl BinanceAdapter {
                     ts_recv_ns,
                 }));
             }
+            self.last_market_data_at = Some(Instant::now());
+            self.healthy_since.get_or_insert_with(Instant::now);
+        }
+    }
+
+    fn schedule_reconnect(&mut self) {
+        self.reconnect_attempt = self.reconnect_attempt.saturating_add(1);
+        let base_ms = 250u64;
+        let max_ms = 5_000u64;
+        let delay_ms = (base_ms.saturating_mul(1u64 << self.reconnect_attempt.min(5))).min(max_ms);
+        self.next_reconnect_at = Some(Instant::now() + Duration::from_millis(delay_ms));
+    }
+
+    fn reconnect_if_due(&mut self) -> AdapterResult<()> {
+        if self.is_mock_mode() {
+            return Ok(());
+        }
+        let due = self
+            .next_reconnect_at
+            .map(|t| Instant::now() >= t)
+            .unwrap_or(false);
+        if !due {
+            return Ok(());
+        }
+
+        match &mut self.transport {
+            BinanceTransport::Live(ws) => ws.connect()?,
+            BinanceTransport::Mock => return Ok(()),
+        }
+        self.connected = true;
+        let existing: Vec<SymbolId> = self.subscribed.keys().cloned().collect();
+        for sym in existing {
+            self.send_binance_subscribe(&sym)?;
+        }
+        self.next_reconnect_at = None;
+        self.last_message_at = Some(Instant::now());
+        self.last_market_data_at = None;
+        self.healthy_since = None;
+        self.degraded = true;
+        self.last_error = Some("binance reconnect warming".to_string());
+        Ok(())
+    }
+
+    fn check_market_data_timeout(&mut self) {
+        if self.is_mock_mode() || !self.connected || self.subscribed.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        let last = self
+            .last_market_data_at
+            .or(self.last_message_at)
+            .unwrap_or(now);
+        if now.duration_since(last) > Duration::from_secs(15) {
+            self.connected = false;
+            self.degraded = true;
+            self.healthy_since = None;
+            self.last_error = Some("binance market data timeout".to_string());
+            if self.next_reconnect_at.is_none() {
+                self.schedule_reconnect();
+            }
+        }
+    }
+
+    fn maybe_clear_degraded(&mut self) {
+        if !self.degraded || !self.connected {
+            return;
+        }
+        let now = Instant::now();
+        let since = self.healthy_since.get_or_insert(now);
+        if now.duration_since(*since) >= Duration::from_secs(2) {
+            self.degraded = false;
+            self.last_error = None;
         }
     }
 }
@@ -342,6 +466,8 @@ impl MarketDataAdapter for BinanceAdapter {
     fn connect(&mut self) -> AdapterResult<()> {
         self.degraded = false;
         self.last_error = None;
+        self.next_reconnect_at = None;
+        self.reconnect_attempt = 0;
         match &mut self.transport {
             BinanceTransport::Mock => {
                 self.connected = true;
@@ -360,6 +486,9 @@ impl MarketDataAdapter for BinanceAdapter {
                 }
             }
         }
+        self.last_message_at = Some(Instant::now());
+        self.last_market_data_at = None;
+        self.healthy_since = None;
         Ok(())
     }
 
@@ -392,7 +521,10 @@ impl MarketDataAdapter for BinanceAdapter {
 
     fn poll(&mut self, out: &mut Vec<RawEvent>) -> AdapterResult<usize> {
         if !self.connected {
-            return Err(AdapterError::Disconnected);
+            self.reconnect_if_due()?;
+            if !self.connected {
+                return Err(AdapterError::Disconnected);
+            }
         }
 
         if self.is_mock_mode() {
@@ -400,23 +532,38 @@ impl MarketDataAdapter for BinanceAdapter {
             for s in symbols {
                 self.synth_trade(&s);
             }
-        } else if let BinanceTransport::Live(ws) = &mut self.transport {
+            self.last_market_data_at = Some(Instant::now());
+        } else {
+            self.check_market_data_timeout();
+            if !self.connected {
+                self.reconnect_if_due()?;
+                if !self.connected {
+                    return Err(AdapterError::Disconnected);
+                }
+            }
             let mut inbound = Vec::new();
-            loop {
-                match ws.recv_text() {
-                    Ok(Some(msg)) => inbound.push(msg),
-                    Ok(None) => break,
-                    Err(e) => {
-                        self.connected = false;
-                        self.degraded = true;
-                        self.last_error = Some(e.to_string());
-                        return Err(e);
+            if let BinanceTransport::Live(ws) = &mut self.transport {
+                loop {
+                    match ws.recv_text() {
+                        Ok(Some(msg)) => inbound.push(msg),
+                        Ok(None) => break,
+                        Err(e) => {
+                            self.connected = false;
+                            self.degraded = true;
+                            self.healthy_since = None;
+                            self.last_error = Some(e.to_string());
+                            if self.next_reconnect_at.is_none() {
+                                self.schedule_reconnect();
+                            }
+                            return Err(e);
+                        }
                     }
                 }
             }
             for msg in inbound {
                 self.parse_live_message(&msg);
             }
+            self.maybe_clear_degraded();
         }
 
         let n = self.queue.len();
@@ -426,6 +573,14 @@ impl MarketDataAdapter for BinanceAdapter {
 
     fn health(&self) -> AdapterHealth {
         let mode = if self.is_mock_mode() { "mock" } else { "live_ws" };
+        let last_message_age_ms = self
+            .last_message_at
+            .map(|t| t.elapsed().as_millis() as u64)
+            .unwrap_or(0);
+        let last_market_data_age_ms = self
+            .last_market_data_at
+            .map(|t| t.elapsed().as_millis() as u64)
+            .unwrap_or(0);
         AdapterHealth {
             connected: self.connected
                 && match &self.transport {
@@ -435,8 +590,10 @@ impl MarketDataAdapter for BinanceAdapter {
             degraded: self.degraded,
             last_error: self.last_error.clone(),
             protocol_info: Some(format!(
-                "provider=binance;market=crypto;mode={mode};endpoint={}",
-                self.cfg.endpoint
+                "provider=binance;market=crypto;mode={mode};endpoint={};reconnect_attempt={};subscribed={};last_message_age_ms={last_message_age_ms};last_market_data_age_ms={last_market_data_age_ms}",
+                self.cfg.endpoint,
+                self.reconnect_attempt,
+                self.subscribed.len()
             )),
         }
     }
@@ -864,5 +1021,93 @@ mod tests {
         let wrapped = r#"{"stream":"btcusdt@aggTrade","data":{"e":"aggTrade","s":"BTCUSDT","p":"1.00","q":"2.00","T":1,"m":false}}"#;
         let data = extract_data_object(wrapped).expect("data");
         assert!(data.contains("\"e\":\"aggTrade\""));
+    }
+
+    #[test]
+    fn live_mode_parses_trade_depth_and_ack_messages() {
+        let mut adapter = BinanceAdapter::from_config(&cfg("ws://test.live/ws")).expect("cfg");
+        adapter.connect().expect("connect");
+        let symbol = SymbolId {
+            venue: "BINANCE".to_string(),
+            symbol: "BTCUSDT".to_string(),
+        };
+        adapter
+            .subscribe(SubscribeReq {
+                symbol: symbol.clone(),
+                depth_levels: 5,
+            })
+            .expect("sub");
+
+        adapter.degraded = true;
+        adapter.last_error = Some("warming".to_string());
+        if let BinanceTransport::Live(ws) = &mut adapter.transport {
+            ws.inject_text(r#"{"result":null,"id":1}"#);
+            ws.inject_text(r#"{"e":"aggTrade","E":1710000000123,"s":"BTCUSDT","a":1,"p":"66107.98000000","q":"0.01200000","f":1,"l":1,"T":1710000000001,"m":true,"M":true}"#);
+            ws.inject_text(r#"{"e":"depthUpdate","E":1710000000123,"s":"BTCUSDT","U":157,"u":160,"b":[["66107.97","1.99161"]],"a":[["66107.98","1.83166"]]}"#);
+        }
+
+        let mut out = Vec::new();
+        let n = adapter.poll(&mut out).expect("poll");
+        assert!(n >= 3);
+        assert!(out.iter().any(|ev| matches!(ev, RawEvent::Trade(_))));
+        assert!(out.iter().any(|ev| matches!(ev, RawEvent::Book(_))));
+        assert!(adapter.health().protocol_info.unwrap_or_default().contains("subscribed=1"));
+    }
+
+    #[test]
+    fn market_data_timeout_marks_live_path_degraded() {
+        let mut adapter = BinanceAdapter::from_config(&cfg("ws://test.live/ws")).expect("cfg");
+        adapter.connect().expect("connect");
+        adapter.subscribed.insert(
+            SymbolId {
+                venue: "BINANCE".to_string(),
+                symbol: "BTCUSDT".to_string(),
+            },
+            5,
+        );
+        adapter.last_market_data_at = Some(Instant::now() - Duration::from_secs(20));
+        adapter.last_message_at = adapter.last_market_data_at;
+
+        let mut out = Vec::new();
+        let err = adapter.poll(&mut out).expect_err("timeout should disconnect");
+        assert!(matches!(err, AdapterError::Disconnected));
+        assert!(adapter.health().degraded);
+        assert!(adapter.next_reconnect_at.is_some());
+    }
+
+    #[test]
+    fn live_disconnect_schedules_and_recovers_with_reconnect() {
+        let mut adapter = BinanceAdapter::from_config(&cfg("ws://test.live/ws")).expect("cfg");
+        adapter.connect().expect("connect");
+        let symbol = SymbolId {
+            venue: "BINANCE".to_string(),
+            symbol: "BTCUSDT".to_string(),
+        };
+        adapter
+            .subscribe(SubscribeReq {
+                symbol: symbol.clone(),
+                depth_levels: 5,
+            })
+            .expect("sub");
+
+        if let BinanceTransport::Live(ws) = &mut adapter.transport {
+            ws.force_disconnect();
+        }
+        let mut out = Vec::new();
+        let err = adapter.poll(&mut out).expect_err("disconnect should surface");
+        assert!(matches!(err, AdapterError::Disconnected));
+        assert!(adapter.next_reconnect_at.is_some());
+
+        adapter.next_reconnect_at = Some(Instant::now());
+        adapter.poll(&mut out).expect("reconnect poll");
+        assert!(adapter.health().connected);
+
+        if let BinanceTransport::Live(ws) = &mut adapter.transport {
+            ws.inject_text(r#"{"e":"aggTrade","E":1710000000123,"s":"BTCUSDT","a":1,"p":"66107.98000000","q":"0.01200000","f":1,"l":1,"T":1710000000001,"m":true,"M":true}"#);
+        }
+        let mut recovered = Vec::new();
+        let n = adapter.poll(&mut recovered).expect("post reconnect poll");
+        assert!(n > 0);
+        assert!(recovered.iter().any(|ev| matches!(ev, RawEvent::Trade(_))));
     }
 }
