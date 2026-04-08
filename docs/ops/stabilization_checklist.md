@@ -59,6 +59,13 @@ Last updated: 2026-04-08
 
 ## CI baseline
 
+- Rust API compatibility is checked in CI for all published crates using `cargo-semver-checks` with patch-level compatibility rules:
+  - `of_core`
+  - `of_adapters`
+  - `of_signals`
+  - `of_persist`
+  - `of_runtime`
+  - `of_ffi_c`
 - GitHub Actions matrix added in `.github/workflows/ci.yml` for CQG feature lanes:
   - `cqg`
   - `cqg cqg_proto`
@@ -67,6 +74,33 @@ Last updated: 2026-04-08
 - Java binding compile validation runs in CI:
   - `mvn -q -f bindings/java/pom.xml -DskipTests compile`
 - Documentation coverage is enforced in CI.
+
+## C ABI export guarantees
+
+- CI verifies that the shared library still exports the documented baseline symbols:
+  - `of_api_version`
+  - `of_build_info`
+  - `of_engine_create`
+  - `of_engine_start`
+  - `of_engine_stop`
+  - `of_engine_destroy`
+  - `of_subscribe`
+  - `of_unsubscribe`
+  - `of_unsubscribe_symbol`
+  - `of_reset_symbol_session`
+  - `of_ingest_trade`
+  - `of_ingest_book`
+  - `of_configure_external_feed`
+  - `of_external_set_reconnecting`
+  - `of_external_health_tick`
+  - `of_get_book_snapshot`
+  - `of_get_analytics_snapshot`
+  - `of_get_derived_analytics_snapshot`
+  - `of_get_signal_snapshot`
+  - `of_get_metrics_json`
+  - `of_string_free`
+  - `of_engine_poll_once`
+- Export validation runs through `tools/check_ffi_exports.sh` against the built shared library artifact.
 
 ## Snapshot compatibility guarantees
 
@@ -85,6 +119,8 @@ cargo test -q -p of_adapters --features rithmic
 cargo test -q -p of_adapters --features binance
 cargo test -q -p of_adapters --features cqg
 cargo test -q -p of_adapters --features "cqg cqg_proto"
+cargo build -q -p of_ffi_c
+./tools/check_ffi_exports.sh target/debug/libof_ffi_c.so
 python3 -m py_compile bindings/python/orderflow/_ffi.py bindings/python/orderflow/api.py
 mvn -q -f bindings/java/pom.xml -Dmaven.repo.local=.m2 -DskipTests compile
 ```

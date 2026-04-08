@@ -5,6 +5,28 @@ on:
   pull_request:
 
 jobs:
+  semver:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - of_core
+          - of_adapters
+          - of_signals
+          - of_persist
+          - of_runtime
+          - of_ffi_c
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: ./.github/actions/setup-rust
+      - name: Check semver compatibility
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          package: ${{ matrix.package }}
+          release-type: patch
+
   rust:
     runs-on: ubuntu-latest
     strategy:
@@ -25,6 +47,17 @@ jobs:
         run: cargo test -q -p of_adapters --features "${{ matrix.features }}"
       - name: Test workspace
         run: cargo test -q
+
+  ffi-exports:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: ./.github/actions/setup-rust
+      - name: Build C ABI library
+        run: cargo build -q -p of_ffi_c
+      - name: Verify exported C ABI symbols
+        run: ./tools/check_ffi_exports.sh target/debug/libof_ffi_c.so
 
   docs-coverage:
     runs-on: ubuntu-latest
