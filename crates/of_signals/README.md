@@ -7,7 +7,10 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
 
 - Trait: [`SignalModule`]
 - Gate result: [`SignalGateDecision`]
-- Built-in module: [`DeltaMomentumSignal`]
+- Built-in modules:
+  - [`DeltaMomentumSignal`]
+  - [`VolumeImbalanceSignal`]
+  - [`CumulativeDeltaSignal`]
 
 Signal output uses `of_core::SignalSnapshot` and states such as `LongBias`, `ShortBias`, `Neutral`, and `Blocked`.
 
@@ -20,6 +23,24 @@ Signal output uses `of_core::SignalSnapshot` and states such as `LongBias`, `Sho
 - emits `Neutral` otherwise
 - emits `Blocked` in runtime when quality gate fails
 
+## Volume Imbalance Strategy
+
+[`VolumeImbalanceSignal`] is a reference implementation that:
+
+- compares session `buy_volume - sell_volume` against an absolute threshold
+- emits `LongBias` when buy pressure dominates
+- emits `ShortBias` when sell pressure dominates
+- remains `Neutral` while the session imbalance stays inside the configured band
+
+## Cumulative Delta Strategy
+
+[`CumulativeDeltaSignal`] is a session-bias module that:
+
+- compares `cumulative_delta` against an absolute threshold
+- emits `LongBias` when session delta remains strongly positive
+- emits `ShortBias` when session delta remains strongly negative
+- remains `Neutral` while cumulative delta stays inside the configured band
+
 ## Quick Example
 
 ```rust
@@ -29,6 +50,23 @@ use of_signals::{DeltaMomentumSignal, SignalModule};
 let mut signal = DeltaMomentumSignal::new(100);
 signal.on_analytics(&AnalyticsSnapshot {
     delta: 150,
+    ..Default::default()
+});
+
+let snapshot = signal.snapshot();
+assert!(matches!(snapshot.state, SignalState::LongBias));
+```
+
+## Alternative Module Example
+
+```rust
+use of_core::{AnalyticsSnapshot, SignalState};
+use of_signals::{SignalModule, VolumeImbalanceSignal};
+
+let mut signal = VolumeImbalanceSignal::new(100);
+signal.on_analytics(&AnalyticsSnapshot {
+    buy_volume: 350,
+    sell_volume: 200,
     ..Default::default()
 });
 

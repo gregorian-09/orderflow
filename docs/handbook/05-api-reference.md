@@ -83,10 +83,14 @@ Public types:
 - `SignalGateDecision` (`Pass`, `Block`)
 - `SignalModule` trait
 - `DeltaMomentumSignal`
+- `VolumeImbalanceSignal`
+- `CumulativeDeltaSignal`
 
 Public methods:
 
 - `DeltaMomentumSignal::new(threshold: i64) -> Self`
+- `VolumeImbalanceSignal::new(threshold: i64) -> Self`
+- `CumulativeDeltaSignal::new(threshold: i64) -> Self`
 
 `SignalModule` trait methods:
 

@@ -42,7 +42,7 @@ flowchart LR
 ## Responsibility Boundaries
 
 - `of_core`: canonical data structures + analytics accumulator.
-- `of_signals`: signal trait + default delta momentum implementation.
+- `of_signals`: signal trait + built-in delta momentum, volume imbalance, and cumulative delta implementations.
 - `of_adapters`: provider abstraction and concrete adapters (feature-gated).
 - `of_persist`: rolling JSONL persistence + retention pruning.
 - `of_runtime`: lifecycle, polling/ingest processing, quality supervision, health state.
