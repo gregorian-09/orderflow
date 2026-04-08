@@ -142,6 +142,8 @@ Public types:
 
 - `EngineConfig`
 - `RuntimeError`
+- `ConfigCompatibilityMode`
+- `ConfigLoadReport`
 - `ExternalFeedPolicy`
 - `Engine<A, S>`
 - `DefaultEngine` type alias
@@ -153,6 +155,10 @@ Public constructor/build/config functions:
 - `load_engine_config_from_path(path: &str) -> Result<EngineConfig, RuntimeError>`
   - preferred input shape: typed TOML/JSON with nested `adapter` / `adapter.credentials`
   - compatibility fallback: legacy flat config files remain accepted
+- `load_engine_config_report_from_path(path: &str) -> Result<ConfigLoadReport, RuntimeError>`
+  - reports `format`
+  - reports `compatibility_mode`
+  - surfaces a warning when legacy fallback was required
 - `validate_startup_config(cfg: &EngineConfig) -> Result<(), RuntimeError>`
 
 Public runtime methods:

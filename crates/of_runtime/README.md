@@ -104,12 +104,14 @@ assert!(health.contains("\"started\":true"));
 
 ## Config Loading
 
-Use [`load_engine_config_from_path`] to load TOML config files and [`validate_startup_config`] to fail fast
-on missing credentials or invalid startup settings before going live.
+Use [`load_engine_config_from_path`] to load TOML config files, [`load_engine_config_report_from_path`]
+when you also want compatibility diagnostics, and [`validate_startup_config`] to fail fast on
+missing credentials or invalid startup settings before going live.
 
 Preferred config files use typed TOML/JSON shapes with nested `adapter` and `adapter.credentials`
 sections. Legacy flat config shapes are still accepted through a compatibility fallback so older
-deployments continue to load without source changes.
+deployments continue to load without source changes. `ConfigLoadReport` tells you whether strict
+parsing succeeded or the legacy fallback path was required.
 
 ## Operational Guidance
 

@@ -43,6 +43,8 @@ This document defines the runtime adapter selection contract used by `of_runtime
 ## Config loading
 
 Use `of_runtime::load_engine_config_from_path(path)` with `.toml` or `.json` extensions.
+Use `of_runtime::load_engine_config_report_from_path(path)` when you also want to know whether
+strict parsing succeeded or the legacy compatibility fallback was required.
 
 Preferred shape:
 
@@ -54,6 +56,9 @@ Legacy compatibility:
 
 - older flat keys and section-qualified keys are still accepted
 - this compatibility path exists to avoid breaking existing users
+- `ConfigLoadReport.compatibility_mode` tells callers whether `Strict` parsing succeeded or
+  `LegacyFallback` was needed
+- `ConfigLoadReport.warning` contains a compatibility message when fallback was used
 
 Supported keys (modern or legacy):
 

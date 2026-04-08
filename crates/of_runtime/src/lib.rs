@@ -888,8 +888,42 @@ pub fn build_default_engine(cfg: EngineConfig) -> Result<DefaultEngine, RuntimeE
     )
 }
 
+/// Indicates how a runtime config file was accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigCompatibilityMode {
+    /// Parsed by the typed TOML/JSON loader without compatibility fallback.
+    Strict,
+    /// Parsed through the legacy flat-key compatibility fallback.
+    LegacyFallback,
+}
+
+/// Detailed result for config-file loading.
+#[derive(Debug, Clone)]
+pub struct ConfigLoadReport {
+    /// Loaded runtime configuration.
+    pub config: EngineConfig,
+    /// Source file format (`json` or `toml`).
+    pub format: &'static str,
+    /// Indicates whether strict parsing or legacy fallback was used.
+    pub compatibility_mode: ConfigCompatibilityMode,
+    /// Optional compatibility warning for callers who want to surface migration guidance.
+    pub warning: Option<String>,
+}
+
+impl ConfigLoadReport {
+    /// Returns `true` when the legacy flat-key compatibility parser was required.
+    pub fn used_legacy_fallback(&self) -> bool {
+        self.compatibility_mode == ConfigCompatibilityMode::LegacyFallback
+    }
+}
+
 /// Loads engine config from `.toml` or `.json`-like config file.
 pub fn load_engine_config_from_path(path: &str) -> Result<EngineConfig, RuntimeError> {
+    load_engine_config_report_from_path(path).map(|report| report.config)
+}
+
+/// Loads engine config and reports whether legacy compatibility fallback was required.
+pub fn load_engine_config_report_from_path(path: &str) -> Result<ConfigLoadReport, RuntimeError> {
     let raw = fs::read_to_string(path).map_err(|e| RuntimeError::Io(e.to_string()))?;
     if path.ends_with(".json") {
         parse_config_json(&raw)
@@ -1059,31 +1093,57 @@ impl StringListOrCsv {
     }
 }
 
-fn parse_config_json(raw: &str) -> Result<EngineConfig, RuntimeError> {
+fn parse_config_json(raw: &str) -> Result<ConfigLoadReport, RuntimeError> {
     match serde_json::from_str::<RuntimeConfigFile>(raw) {
-        Ok(parsed) => config_from_typed(parsed),
+        Ok(parsed) => Ok(ConfigLoadReport {
+            config: config_from_typed(parsed)?,
+            format: "json",
+            compatibility_mode: ConfigCompatibilityMode::Strict,
+            warning: None,
+        }),
         Err(strict_err) => {
             let mut kv = HashMap::new();
             parse_json_like(raw, &mut kv)?;
-            config_from_map(&kv).map_err(|fallback_err| {
+            let config = config_from_map(&kv).map_err(|fallback_err| {
                 RuntimeError::Config(format!(
                     "strict json parse failed: {strict_err}; legacy fallback failed: {fallback_err}"
                 ))
+            })?;
+            Ok(ConfigLoadReport {
+                config,
+                format: "json",
+                compatibility_mode: ConfigCompatibilityMode::LegacyFallback,
+                warning: Some(format!(
+                    "loaded config via legacy json fallback after strict parse failed: {strict_err}; prefer typed top-level runtime keys with nested adapter and adapter.credentials sections"
+                )),
             })
         }
     }
 }
 
-fn parse_config_toml(raw: &str) -> Result<EngineConfig, RuntimeError> {
+fn parse_config_toml(raw: &str) -> Result<ConfigLoadReport, RuntimeError> {
     match toml::from_str::<RuntimeConfigFile>(raw) {
-        Ok(parsed) => config_from_typed(parsed),
+        Ok(parsed) => Ok(ConfigLoadReport {
+            config: config_from_typed(parsed)?,
+            format: "toml",
+            compatibility_mode: ConfigCompatibilityMode::Strict,
+            warning: None,
+        }),
         Err(strict_err) => {
             let mut kv = HashMap::new();
             parse_toml_like(raw, &mut kv)?;
-            config_from_map(&kv).map_err(|fallback_err| {
+            let config = config_from_map(&kv).map_err(|fallback_err| {
                 RuntimeError::Config(format!(
                     "strict toml parse failed: {strict_err}; legacy fallback failed: {fallback_err}"
                 ))
+            })?;
+            Ok(ConfigLoadReport {
+                config,
+                format: "toml",
+                compatibility_mode: ConfigCompatibilityMode::LegacyFallback,
+                warning: Some(format!(
+                    "loaded config via legacy toml fallback after strict parse failed: {strict_err}; prefer typed top-level runtime keys with nested adapter and adapter.credentials sections"
+                )),
             })
         }
     }
@@ -1877,6 +1937,13 @@ secret_env = "OF_STRICT_SECRET"
         let creds = cfg.adapter.credentials.expect("credentials");
         assert_eq!(creds.key_id_env, "OF_STRICT_KEY");
         assert_eq!(creds.secret_env, "OF_STRICT_SECRET");
+
+        let report = load_engine_config_report_from_path(path.to_str().expect("valid path"))
+            .expect("strict report should work");
+        assert_eq!(report.format, "toml");
+        assert_eq!(report.compatibility_mode, ConfigCompatibilityMode::Strict);
+        assert!(!report.used_legacy_fallback());
+        assert!(report.warning.is_none());
     }
 
     #[test]
@@ -1906,20 +1973,35 @@ secret_env = "OF_STRICT_SECRET"
             Some("wss://stream.binance.com:9443/ws")
         );
         assert_eq!(cfg.adapter.app_name.as_deref(), Some("strict-json-runtime"));
+
+        let report = load_engine_config_report_from_path(path.to_str().expect("valid path"))
+            .expect("strict report should work");
+        assert_eq!(report.format, "json");
+        assert_eq!(report.compatibility_mode, ConfigCompatibilityMode::Strict);
+        assert!(!report.used_legacy_fallback());
+        assert!(report.warning.is_none());
     }
 
     #[test]
     fn legacy_fallback_still_accepts_flat_json_like_shape() {
         let path = write_temp_file(
             "runtime_cfg_legacy.json",
-            "{\n\"instance_id\": \"legacy_json\",\n\"provider\": \"mock\",\n\"audit_redact_tokens\": \"secret,token\"\n}\n",
+            "{\n\"instance_id\": \"legacy_json\",\n\"provider\": \"mock\",\n\"signal_threshold\": \"250\",\n\"audit_redact_tokens\": \"secret,token\"\n}\n",
         );
 
         let cfg = load_engine_config_from_path(path.to_str().expect("valid path"))
             .expect("legacy fallback should still work");
         assert_eq!(cfg.instance_id, "legacy_json");
         assert!(matches!(cfg.adapter.provider, ProviderKind::Mock));
+        assert_eq!(cfg.signal_threshold, 250);
         assert_eq!(cfg.audit_redact_tokens, vec!["secret", "token"]);
+
+        let report = load_engine_config_report_from_path(path.to_str().expect("valid path"))
+            .expect("legacy report should still work");
+        assert_eq!(report.format, "json");
+        assert_eq!(report.compatibility_mode, ConfigCompatibilityMode::LegacyFallback);
+        assert!(report.used_legacy_fallback());
+        assert!(report.warning.as_deref().unwrap_or("").contains("legacy json fallback"));
     }
 
     #[test]
