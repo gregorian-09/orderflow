@@ -23,6 +23,7 @@ Public types:
 - `BookUpdate`
 - `TradePrint`
 - `AnalyticsSnapshot`
+- `DerivedAnalyticsSnapshot`
 - `SignalState` (`Neutral`, `LongBias`, `ShortBias`, `Blocked`)
 - `SignalSnapshot`
 - `DataQualityFlags`
@@ -47,6 +48,7 @@ Public methods:
 - `AnalyticsAccumulator::reset_session_delta()`
 - `AnalyticsAccumulator::reset_session()`
 - `AnalyticsAccumulator::snapshot() -> AnalyticsSnapshot`
+- `AnalyticsAccumulator::derived_snapshot() -> DerivedAnalyticsSnapshot`
 
 ### `of_adapters`
 
@@ -154,6 +156,7 @@ Public runtime methods:
 - `ingest_book(BookUpdate, DataQualityFlags)`
 - `poll_once(DataQualityFlags)`
 - `analytics_snapshot(&SymbolId)`
+- `derived_analytics_snapshot(&SymbolId)`
 - `signal_snapshot(&SymbolId)`
 - `metrics_json() -> String`
 - `health_seq() -> u64`
@@ -216,6 +219,7 @@ Snapshots and metrics:
 
 - `of_get_book_snapshot(...)`
 - `of_get_analytics_snapshot(...)`
+- `of_get_derived_analytics_snapshot(...)`
 - `of_get_signal_snapshot(...)`
 - `of_get_metrics_json(...)`
 - `of_string_free(...)`
@@ -243,7 +247,7 @@ Used in `of_subscribe(..., kind, ...)` and callback payloads:
   - `last_sequence`
   - `ts_exchange_ns`
   - `ts_recv_ns`
-- `of_get_analytics_snapshot(...)` and `of_get_signal_snapshot(...)` return populated JSON when data exists.
+- `of_get_analytics_snapshot(...)`, `of_get_derived_analytics_snapshot(...)`, and `of_get_signal_snapshot(...)` return populated JSON when data exists.
 - `of_get_metrics_json(...)` allocates output string; caller must free via `of_string_free(...)`.
 - Snapshot functions report the required byte size via `inout_len`; callers should retry with a larger buffer when they receive `OF_ERR_INVALID_ARG`.
 
@@ -281,6 +285,7 @@ Used in `of_subscribe(..., kind, ...)` and callback payloads:
 - `ingest_book(symbol, side, level, price, size, action=..., sequence=0, ts_exchange_ns=0, ts_recv_ns=0, quality_flags=...)`
 - `book_snapshot(symbol) -> dict`
 - `analytics_snapshot(symbol) -> dict`
+- `derived_analytics_snapshot(symbol) -> dict`
 - `signal_snapshot(symbol) -> dict`
 - `metrics() -> dict`
 
@@ -327,6 +332,7 @@ Context manager support:
 - `ingestBook(Symbol, int side, int level, long price, long size, int action, long sequence, long tsExchangeNs, long tsRecvNs, int qualityFlags)`
 - `bookSnapshot(Symbol)`
 - `analyticsSnapshot(Symbol)`
+- `derivedAnalyticsSnapshot(Symbol)`
 - `signalSnapshot(Symbol)`
 - `metricsJson()`
 - `close()`
@@ -379,6 +385,18 @@ Context manager support:
   "point_of_control": 504900,
   "value_area_low": 504700,
   "value_area_high": 505100
+}
+```
+
+### Derived analytics snapshot (`of_get_derived_analytics_snapshot`)
+
+```json
+{
+  "total_volume": 15,
+  "trade_count": 2,
+  "vwap": 504966,
+  "average_trade_size": 7,
+  "imbalance_bps": 3333
 }
 ```
 

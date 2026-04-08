@@ -343,6 +343,16 @@ public final class OrderflowEngine implements AutoCloseable {
     }
 
     /**
+     * Returns current derived analytics snapshot as JSON string.
+     *
+     * @param symbol target symbol
+     * @return JSON payload with session volume, trade count, vwap, average trade size, and imbalance_bps
+     */
+    public String derivedAnalyticsSnapshot(Symbol symbol) {
+        return snapshot(symbol, SnapshotKind.DERIVED_ANALYTICS);
+    }
+
+    /**
      * Returns current signal snapshot as JSON string.
      *
      * @param symbol target symbol
@@ -410,6 +420,7 @@ public final class OrderflowEngine implements AutoCloseable {
             switch (kind) {
                 case BOOK -> rc = nativeLib.of_get_book_snapshot(engine, sym, buffer, length);
                 case ANALYTICS -> rc = nativeLib.of_get_analytics_snapshot(engine, sym, buffer, length);
+                case DERIVED_ANALYTICS -> rc = nativeLib.of_get_derived_analytics_snapshot(engine, sym, buffer, length);
                 case SIGNAL -> rc = nativeLib.of_get_signal_snapshot(engine, sym, buffer, length);
                 default -> throw new OrderflowException("unknown snapshot kind");
             }
@@ -471,6 +482,7 @@ public final class OrderflowEngine implements AutoCloseable {
     private enum SnapshotKind {
         BOOK,
         ANALYTICS,
+        DERIVED_ANALYTICS,
         SIGNAL,
     }
 }

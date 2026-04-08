@@ -55,6 +55,7 @@ with Engine(EngineConfig(instance_id="py-client")) as eng:
     print("api_version", eng.api_version)
     print("build_info", eng.build_info)
     print("analytics", eng.analytics_snapshot(sym))
+    print("derived", eng.derived_analytics_snapshot(sym))
     print("signal", eng.signal_snapshot(sym))
     print("metrics", eng.metrics())
 ```
@@ -183,6 +184,7 @@ with Engine(EngineConfig(instance_id="py-client")) as eng:
 |---|---|---|
 | `book_snapshot(symbol)` | Current book snapshot | `dict[str, Any]` |
 | `analytics_snapshot(symbol)` | Current analytics snapshot | `dict[str, Any]` |
+| `derived_analytics_snapshot(symbol)` | Current derived analytics snapshot | `dict[str, Any]` |
 | `signal_snapshot(symbol)` | Current signal snapshot | `dict[str, Any]` |
 | `metrics()` | Runtime metrics | `dict[str, Any]` |
 

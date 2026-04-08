@@ -8,7 +8,7 @@ It is the native interface used by Python (`ctypes`), Java (JNA), and any C-comp
 - Engine lifecycle: `of_engine_create`, `of_engine_start`, `of_engine_stop`, `of_engine_destroy`
 - Subscription: `of_subscribe`, `of_unsubscribe`, `of_unsubscribe_symbol`
 - Ingestion and polling: `of_ingest_trade`, `of_ingest_book`, `of_engine_poll_once`
-- Snapshots: `of_get_book_snapshot`, `of_get_analytics_snapshot`, `of_get_signal_snapshot`
+- Snapshots: `of_get_book_snapshot`, `of_get_analytics_snapshot`, `of_get_derived_analytics_snapshot`, `of_get_signal_snapshot`
 - Health/metrics: `of_get_metrics_json`, `of_get_health_json`, `of_get_health_seq`
 
 `of_get_book_snapshot` returns a materialized JSON snapshot with:
@@ -20,6 +20,14 @@ It is the native interface used by Python (`ctypes`), Java (JNA), and any C-comp
 - `last_sequence`
 - `ts_exchange_ns`
 - `ts_recv_ns`
+
+`of_get_derived_analytics_snapshot` returns additive session metrics with:
+
+- `total_volume`
+- `trade_count`
+- `vwap`
+- `average_trade_size`
+- `imbalance_bps`
 
 Subscription stream ids:
 

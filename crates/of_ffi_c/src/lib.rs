@@ -10,8 +10,8 @@ use std::sync::{
 
 use of_adapters::{AdapterConfig, ProviderKind, RawEvent};
 use of_core::{
-    BookAction, BookSnapshot, BookUpdate, DataQualityFlags, Side, SignalState, SymbolId,
-    TradePrint,
+    BookAction, BookSnapshot, BookUpdate, DataQualityFlags, DerivedAnalyticsSnapshot, Side,
+    SignalState, SymbolId, TradePrint,
 };
 use of_runtime::{
     build_default_engine, load_engine_config_from_path, DefaultEngine, EngineConfig,
@@ -687,17 +687,36 @@ pub extern "C" fn of_get_analytics_snapshot(
 
     let engine = unsafe { &mut *engine };
     let payload = match engine.inner.analytics_snapshot(&symbol) {
-        Some(snap) => format!(
-            "{{\"delta\":{},\"cumulative_delta\":{},\"buy_volume\":{},\"sell_volume\":{},\"last_price\":{},\"point_of_control\":{},\"value_area_low\":{},\"value_area_high\":{}}}",
-            snap.delta,
-            snap.cumulative_delta,
-            snap.buy_volume,
-            snap.sell_volume,
-            snap.last_price,
-            snap.point_of_control,
-            snap.value_area_low,
-            snap.value_area_high
-        ),
+        Some(snap) => format_analytics_snapshot(&snap),
+        None => "{}".to_string(),
+    };
+
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes current derived analytics snapshot JSON into caller buffer.
+#[no_mangle]
+pub extern "C" fn of_get_derived_analytics_snapshot(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+
+    let engine = unsafe { &mut *engine };
+    let payload = match engine.inner.derived_analytics_snapshot(&symbol) {
+        Some(snap) => format_derived_analytics_snapshot(&snap),
         None => "{}".to_string(),
     };
 
@@ -893,17 +912,7 @@ fn dispatch_callbacks(engine: &mut of_engine, quality_flags: u32) {
             3 => {
                 // analytics
                 match engine.inner.analytics_snapshot(&sub.symbol) {
-                    Some(s) => format!(
-                        "{{\"delta\":{},\"cumulative_delta\":{},\"buy_volume\":{},\"sell_volume\":{},\"last_price\":{},\"point_of_control\":{},\"value_area_low\":{},\"value_area_high\":{}}}",
-                        s.delta,
-                        s.cumulative_delta,
-                        s.buy_volume,
-                        s.sell_volume,
-                        s.last_price,
-                        s.point_of_control,
-                        s.value_area_low,
-                        s.value_area_high
-                    ),
+                    Some(s) => format_analytics_snapshot(&s),
                     None => "{}".to_string(),
                 }
             }
@@ -1024,6 +1033,31 @@ fn format_book_snapshot(snapshot: &BookSnapshot) -> String {
         snapshot.last_sequence,
         snapshot.ts_exchange_ns,
         snapshot.ts_recv_ns
+    )
+}
+
+fn format_analytics_snapshot(snap: &of_core::AnalyticsSnapshot) -> String {
+    format!(
+        "{{\"delta\":{},\"cumulative_delta\":{},\"buy_volume\":{},\"sell_volume\":{},\"last_price\":{},\"point_of_control\":{},\"value_area_low\":{},\"value_area_high\":{}}}",
+        snap.delta,
+        snap.cumulative_delta,
+        snap.buy_volume,
+        snap.sell_volume,
+        snap.last_price,
+        snap.point_of_control,
+        snap.value_area_low,
+        snap.value_area_high
+    )
+}
+
+fn format_derived_analytics_snapshot(snap: &DerivedAnalyticsSnapshot) -> String {
+    format!(
+        "{{\"total_volume\":{},\"trade_count\":{},\"vwap\":{},\"average_trade_size\":{},\"imbalance_bps\":{}}}",
+        snap.total_volume,
+        snap.trade_count,
+        snap.vwap,
+        snap.average_trade_size,
+        snap.imbalance_bps
     )
 }
 
@@ -1545,6 +1579,96 @@ mod tests {
             of_error_t::OF_ERR_INVALID_ARG as i32
         );
         assert!(len > buf.len() as u32);
+
+        assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
+        of_engine_destroy(engine);
+    }
+
+    #[test]
+    fn derived_analytics_snapshot_returns_session_stats() {
+        let _guard = test_lock().lock().expect("lock");
+
+        let instance_id = CString::new("ffi-derived-analytics-test").expect("cstring");
+        let cfg = of_engine_config_t {
+            instance_id: instance_id.as_ptr(),
+            config_path: ptr::null(),
+            log_level: 0,
+            enable_persistence: 0,
+            audit_max_bytes: 0,
+            audit_max_files: 0,
+            audit_redact_tokens_csv: ptr::null(),
+            data_retention_max_bytes: 0,
+            data_retention_max_age_secs: 0,
+        };
+
+        let mut engine: *mut of_engine = ptr::null_mut();
+        assert_eq!(
+            of_engine_create(&cfg, &mut engine as *mut *mut of_engine),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!engine.is_null());
+        assert_eq!(of_engine_start(engine), of_error_t::OF_OK as i32);
+
+        let venue = CString::new("CME").expect("cstring");
+        let symbol = CString::new("ESM6").expect("cstring");
+        let ffi_symbol = of_symbol_t {
+            venue: venue.as_ptr(),
+            symbol: symbol.as_ptr(),
+            depth_levels: 10,
+        };
+
+        let trade_1 = of_trade_t {
+            symbol: of_symbol_t {
+                venue: venue.as_ptr(),
+                symbol: symbol.as_ptr(),
+                depth_levels: 10,
+            },
+            price: 505000,
+            size: 10,
+            aggressor_side: 1,
+            sequence: 1,
+            ts_exchange_ns: 1,
+            ts_recv_ns: 2,
+        };
+        let trade_2 = of_trade_t {
+            symbol: of_symbol_t {
+                venue: venue.as_ptr(),
+                symbol: symbol.as_ptr(),
+                depth_levels: 10,
+            },
+            price: 504900,
+            size: 5,
+            aggressor_side: 0,
+            sequence: 2,
+            ts_exchange_ns: 3,
+            ts_recv_ns: 4,
+        };
+        assert_eq!(
+            of_ingest_trade(engine, &trade_1 as *const of_trade_t, 0),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(
+            of_ingest_trade(engine, &trade_2 as *const of_trade_t, 0),
+            of_error_t::OF_OK as i32
+        );
+
+        let mut buf = vec![0u8; 1024];
+        let mut len = buf.len() as u32;
+        assert_eq!(
+            of_get_derived_analytics_snapshot(
+                engine,
+                &ffi_symbol as *const of_symbol_t,
+                buf.as_mut_ptr().cast::<c_void>(),
+                &mut len as *mut u32,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        let json = String::from_utf8_lossy(&buf[..len as usize]).to_string();
+        assert!(json.contains("\"total_volume\":15"));
+        assert!(json.contains("\"trade_count\":2"));
+        assert!(json.contains("\"vwap\":504966"));
+        assert!(json.contains("\"average_trade_size\":7"));
+        assert!(json.contains("\"imbalance_bps\":3333"));
 
         assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
         of_engine_destroy(engine);

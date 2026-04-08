@@ -54,6 +54,7 @@ try (OrderflowEngine eng = new OrderflowEngine(null, cfg)) {
     System.out.println("apiVersion=" + eng.apiVersion());
     System.out.println("buildInfo=" + eng.buildInfo());
     System.out.println("analytics=" + eng.analyticsSnapshot(sym));
+    System.out.println("derived=" + eng.derivedAnalyticsSnapshot(sym));
     System.out.println("signal=" + eng.signalSnapshot(sym));
     System.out.println("metrics=" + eng.metricsJson());
     eng.stop();
@@ -198,6 +199,7 @@ Callback event envelope fields:
 |---|---|
 | `String bookSnapshot(Symbol symbol)` | Book snapshot JSON |
 | `String analyticsSnapshot(Symbol symbol)` | Analytics snapshot JSON |
+| `String derivedAnalyticsSnapshot(Symbol symbol)` | Derived analytics snapshot JSON |
 | `String signalSnapshot(Symbol symbol)` | Signal snapshot JSON |
 | `String metricsJson()` | Runtime metrics JSON |
 

@@ -23,6 +23,7 @@ It wires adapter events into book state and analytics, applies quality-aware sig
 - Snapshot accessors:
   - [`Engine::book_snapshot`]
   - [`Engine::analytics_snapshot`]
+  - [`Engine::derived_analytics_snapshot`]
   - [`Engine::signal_snapshot`]
 
 ## End-to-End Example (Adapter Polling)
@@ -88,6 +89,7 @@ assert!(health.contains("\"started\":true"));
 - [`Engine::book_snapshot`] returns the materialized book state for a symbol when book updates have been observed.
 - Book snapshots contain `bids` and `asks` arrays, each ordered by `level`.
 - [`Engine::analytics_snapshot`] and [`Engine::signal_snapshot`] retain their current payload semantics.
+- [`Engine::derived_analytics_snapshot`] exposes additive session metrics without changing the original analytics snapshot contract.
 
 ## Health and Metrics Contracts
 

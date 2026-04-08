@@ -16,7 +16,7 @@ use of_adapters::{
 };
 use of_core::{
     AnalyticsAccumulator, AnalyticsSnapshot, BookLevel, BookSnapshot, BookUpdate,
-    DataQualityFlags, SignalSnapshot, SignalState, SymbolId, TradePrint,
+    DataQualityFlags, DerivedAnalyticsSnapshot, SignalSnapshot, SignalState, SymbolId, TradePrint,
 };
 use of_persist::{RetentionPolicy, RollingStore};
 use of_signals::{SignalGateDecision, SignalModule};
@@ -542,6 +542,16 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
     /// Returns analytics snapshot for symbol if available.
     pub fn analytics_snapshot(&self, symbol: &SymbolId) -> Option<AnalyticsSnapshot> {
         self.analytics.get(symbol).map(AnalyticsAccumulator::snapshot)
+    }
+
+    /// Returns additive derived analytics snapshot for symbol if available.
+    pub fn derived_analytics_snapshot(
+        &self,
+        symbol: &SymbolId,
+    ) -> Option<DerivedAnalyticsSnapshot> {
+        self.analytics
+            .get(symbol)
+            .map(AnalyticsAccumulator::derived_snapshot)
     }
 
     /// Returns the current materialized book snapshot for symbol if available.
@@ -1451,6 +1461,59 @@ mod tests {
         assert_eq!(snapshot.ts_exchange_ns, 14);
         assert_eq!(snapshot.ts_recv_ns, 15);
         assert!(engine.metrics_json().contains("\"symbols\":1"));
+    }
+
+    #[test]
+    fn engine_exposes_derived_analytics_snapshot() {
+        let symbol = SymbolId {
+            venue: "CME".to_string(),
+            symbol: "ESM6".to_string(),
+        };
+        let mut engine = Engine::new(
+            EngineConfig::default(),
+            MockAdapter::default(),
+            DeltaMomentumSignal::new(5),
+        );
+
+        engine.start().expect("start failed");
+        engine.subscribe(symbol.clone(), 10).expect("sub failed");
+        engine
+            .ingest_trade(
+                TradePrint {
+                    symbol: symbol.clone(),
+                    price: 505000,
+                    size: 10,
+                    aggressor_side: Side::Ask,
+                    sequence: 1,
+                    ts_exchange_ns: 1,
+                    ts_recv_ns: 2,
+                },
+                DataQualityFlags::NONE,
+            )
+            .expect("trade 1");
+        engine
+            .ingest_trade(
+                TradePrint {
+                    symbol: symbol.clone(),
+                    price: 504900,
+                    size: 5,
+                    aggressor_side: Side::Bid,
+                    sequence: 2,
+                    ts_exchange_ns: 3,
+                    ts_recv_ns: 4,
+                },
+                DataQualityFlags::NONE,
+            )
+            .expect("trade 2");
+
+        let derived = engine
+            .derived_analytics_snapshot(&symbol)
+            .expect("derived analytics missing");
+        assert_eq!(derived.total_volume, 15);
+        assert_eq!(derived.trade_count, 2);
+        assert_eq!(derived.average_trade_size, 7);
+        assert_eq!(derived.vwap, 504966);
+        assert_eq!(derived.imbalance_bps, 3333);
     }
 
     #[test]

@@ -48,7 +48,7 @@ Native lookup order:
 - external feed policy: `configure_external_feed`,
   `set_external_reconnecting`, `external_health_tick`
 - ingest: `ingest_trade`, `ingest_book`
-- snapshots: `book_snapshot`, `analytics_snapshot`, `signal_snapshot`, `metrics`
+- snapshots: `book_snapshot`, `analytics_snapshot`, `derived_analytics_snapshot`, `signal_snapshot`, `metrics`
 
 `book_snapshot(symbol)` returns a dictionary with:
 
@@ -61,6 +61,9 @@ Native lookup order:
 - `ts_recv_ns`
 
 The Python binding automatically retries with a larger native buffer when a snapshot exceeds the default initial allocation.
+
+`derived_analytics_snapshot(symbol)` returns additive session metrics such as
+`total_volume`, `trade_count`, `vwap`, `average_trade_size`, and `imbalance_bps`.
 
 ### Exceptions
 

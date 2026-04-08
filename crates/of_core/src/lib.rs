@@ -122,6 +122,21 @@ pub struct AnalyticsSnapshot {
     pub value_area_high: i64,
 }
 
+/// Additive derived analytics computed from the current session accumulator state.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DerivedAnalyticsSnapshot {
+    /// Session total volume (`buy_volume + sell_volume`).
+    pub total_volume: i64,
+    /// Number of trades observed in the current analytics session.
+    pub trade_count: u64,
+    /// Session volume-weighted average price in integer price units.
+    pub vwap: i64,
+    /// Mean trade size for the current analytics session.
+    pub average_trade_size: i64,
+    /// Directional imbalance expressed in basis points of total volume.
+    pub imbalance_bps: i64,
+}
+
 /// Output state emitted by signal modules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignalState {
@@ -205,12 +220,16 @@ impl BitOr for DataQualityFlags {
 pub struct AnalyticsAccumulator {
     snapshot: AnalyticsSnapshot,
     volume_profile: HashMap<i64, i64>,
+    session_trade_count: u64,
+    session_turnover: i128,
 }
 
 impl AnalyticsAccumulator {
     /// Applies a trade print to analytics and recomputes profile levels.
     pub fn on_trade(&mut self, trade: &TradePrint) {
         self.snapshot.last_price = trade.price;
+        self.session_trade_count = self.session_trade_count.saturating_add(1);
+        self.session_turnover += (trade.price as i128) * (trade.size as i128);
         *self.volume_profile.entry(trade.price).or_insert(0) += trade.size;
         match trade.aggressor_side {
             Side::Bid => {
@@ -232,17 +251,48 @@ impl AnalyticsAccumulator {
         self.snapshot.delta = 0;
         self.snapshot.buy_volume = 0;
         self.snapshot.sell_volume = 0;
+        self.session_trade_count = 0;
+        self.session_turnover = 0;
     }
 
     /// Resets all session analytics and volume-profile state.
     pub fn reset_session(&mut self) {
         self.snapshot = AnalyticsSnapshot::default();
         self.volume_profile.clear();
+        self.session_trade_count = 0;
+        self.session_turnover = 0;
     }
 
     /// Returns a copy of current analytics state.
     pub fn snapshot(&self) -> AnalyticsSnapshot {
         self.snapshot.clone()
+    }
+
+    /// Returns additive derived analytics for the current session accumulator state.
+    pub fn derived_snapshot(&self) -> DerivedAnalyticsSnapshot {
+        let total_volume = self.snapshot.buy_volume + self.snapshot.sell_volume;
+        let vwap = if total_volume > 0 {
+            (self.session_turnover / total_volume as i128) as i64
+        } else {
+            0
+        };
+        let average_trade_size = if self.session_trade_count > 0 {
+            total_volume / self.session_trade_count as i64
+        } else {
+            0
+        };
+        let imbalance_bps = if total_volume > 0 {
+            (self.snapshot.delta * 10_000) / total_volume
+        } else {
+            0
+        };
+        DerivedAnalyticsSnapshot {
+            total_volume,
+            trade_count: self.session_trade_count,
+            vwap,
+            average_trade_size,
+            imbalance_bps,
+        }
     }
 
     fn recompute_profile_levels(&mut self) {
@@ -382,6 +432,42 @@ mod tests {
         assert_eq!(snap.point_of_control, 101);
         assert!(snap.value_area_low <= snap.point_of_control);
         assert!(snap.value_area_high >= snap.point_of_control);
+    }
+
+    #[test]
+    fn computes_derived_session_metrics() {
+        let mut acc = AnalyticsAccumulator::default();
+        acc.on_trade(&TradePrint {
+            symbol: symbol(),
+            price: 100,
+            size: 5,
+            aggressor_side: Side::Ask,
+            sequence: 1,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+        });
+        acc.on_trade(&TradePrint {
+            symbol: symbol(),
+            price: 98,
+            size: 3,
+            aggressor_side: Side::Bid,
+            sequence: 2,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+        });
+
+        let derived = acc.derived_snapshot();
+        assert_eq!(derived.total_volume, 8);
+        assert_eq!(derived.trade_count, 2);
+        assert_eq!(derived.vwap, 99);
+        assert_eq!(derived.average_trade_size, 4);
+        assert_eq!(derived.imbalance_bps, 2500);
+
+        acc.reset_session_delta();
+        let reset = acc.derived_snapshot();
+        assert_eq!(reset.total_volume, 0);
+        assert_eq!(reset.trade_count, 0);
+        assert_eq!(reset.vwap, 0);
     }
 
     #[test]

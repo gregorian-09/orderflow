@@ -50,7 +50,7 @@ Native lookup order:
 - external feed controls: `configureExternalFeed(...)`,
   `setExternalReconnecting(...)`, `externalHealthTick()`
 - ingest: `ingestTrade(...)`, `ingestBook(...)` (convenience + full overloads)
-- snapshots: `bookSnapshot(...)`, `analyticsSnapshot(...)`,
+- snapshots: `bookSnapshot(...)`, `analyticsSnapshot(...)`, `derivedAnalyticsSnapshot(...)`,
   `signalSnapshot(...)`, `metricsJson()`
 
 `bookSnapshot(...)` returns JSON with:
@@ -64,6 +64,9 @@ Native lookup order:
 - `ts_recv_ns`
 
 The Java binding retries with a larger native buffer automatically when snapshot payloads exceed the initial allocation.
+
+`derivedAnalyticsSnapshot(...)` returns additive session metrics such as
+`total_volume`, `trade_count`, `vwap`, `average_trade_size`, and `imbalance_bps`.
 
 ### Exceptions
 
