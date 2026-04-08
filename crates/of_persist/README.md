@@ -11,6 +11,35 @@ It is designed for replay, auditability, and post-trade research workflows.
 - [`RetentionPolicy`] - bounded retention by total bytes and/or max file age.
 - [`PersistError`] / [`PersistResult<T>`] - persistence error contract.
 
+## Public API Inventory
+
+Public types:
+
+- [`PersistError`]
+- [`PersistResult<T>`]
+- [`RetentionPolicy`]
+- [`RollingStore`]
+- [`StoredBookEvent`]
+- [`StoredTradeEvent`]
+- [`StoredEvent`]
+
+Public methods:
+
+- [`StoredEvent::sequence`]
+- [`RollingStore::new`]
+- [`RollingStore::with_retention`]
+- [`RollingStore::append_book`]
+- [`RollingStore::append_trade`]
+- [`RollingStore::read_books`]
+- [`RollingStore::read_books_in_range`]
+- [`RollingStore::read_trades`]
+- [`RollingStore::read_trades_in_range`]
+- [`RollingStore::read_events`]
+- [`RollingStore::read_events_in_range`]
+- [`RollingStore::list_venues`]
+- [`RollingStore::list_symbols`]
+- [`RollingStore::list_streams`]
+
 ## Storage Layout
 
 Events are written to:

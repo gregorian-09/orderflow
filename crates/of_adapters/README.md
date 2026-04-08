@@ -11,6 +11,33 @@ It standardizes lifecycle, subscription, polling, and health reporting while kee
 - Config: [`AdapterConfig`], [`ProviderKind`], [`CredentialsRef`]
 - Health: [`AdapterHealth`]
 
+## Public API Inventory
+
+Public types:
+
+- [`SubscribeReq`]
+- [`AdapterHealth`]
+- [`RawEvent`]
+- [`AdapterError`]
+- [`AdapterResult<T>`]
+- [`ProviderKind`]
+- [`AdapterConfig`]
+- [`CredentialsRef`]
+- [`MockAdapter`]
+
+Public functions and methods:
+
+- [`create_adapter`]
+- [`MockAdapter::push_event`]
+
+[`MarketDataAdapter`] trait methods:
+
+- `connect()`
+- `subscribe(SubscribeReq)`
+- `unsubscribe(SymbolId)`
+- `poll(&mut Vec<RawEvent>)`
+- `health() -> AdapterHealth`
+
 ## Provider Strategy
 
 The crate is built around a feature-gated provider model:

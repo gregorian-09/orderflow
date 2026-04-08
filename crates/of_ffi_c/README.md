@@ -6,10 +6,52 @@ It is the native interface used by Python (`ctypes`), Java (JNA), and any C-comp
 ## ABI Surface
 
 - Engine lifecycle: `of_engine_create`, `of_engine_start`, `of_engine_stop`, `of_engine_destroy`
-- Subscription: `of_subscribe`, `of_unsubscribe`, `of_unsubscribe_symbol`
-- Ingestion and polling: `of_ingest_trade`, `of_ingest_book`, `of_engine_poll_once`
-- Snapshots: `of_get_book_snapshot`, `of_get_analytics_snapshot`, `of_get_derived_analytics_snapshot`, `of_get_session_candle_snapshot`, `of_get_interval_candle_snapshot`, `of_get_signal_snapshot`
-- Health/metrics: `of_get_metrics_json`, `of_get_health_json`, `of_get_health_seq`
+- Subscription: `of_subscribe`, `of_unsubscribe`, `of_unsubscribe_symbol`, `of_reset_symbol_session`
+- External ingest and supervision: `of_ingest_trade`, `of_ingest_book`, `of_configure_external_feed`, `of_external_set_reconnecting`, `of_external_health_tick`
+- Polling and snapshots: `of_engine_poll_once`, `of_get_book_snapshot`, `of_get_analytics_snapshot`, `of_get_derived_analytics_snapshot`, `of_get_session_candle_snapshot`, `of_get_interval_candle_snapshot`, `of_get_signal_snapshot`
+- Metrics and memory management: `of_get_metrics_json`, `of_string_free`
+
+## Public ABI Inventory
+
+Public C structs/types:
+
+- `of_engine_config_t`
+- `of_symbol_t`
+- `of_trade_t`
+- `of_book_t`
+- `of_external_feed_policy_t`
+- `of_error_t`
+- `of_engine`
+- `of_subscription`
+- `of_event_t`
+- `of_event_cb`
+
+Exported C functions:
+
+- `of_api_version`
+- `of_build_info`
+- `of_engine_create`
+- `of_engine_start`
+- `of_engine_stop`
+- `of_engine_destroy`
+- `of_subscribe`
+- `of_unsubscribe`
+- `of_unsubscribe_symbol`
+- `of_reset_symbol_session`
+- `of_ingest_trade`
+- `of_ingest_book`
+- `of_configure_external_feed`
+- `of_external_set_reconnecting`
+- `of_external_health_tick`
+- `of_get_book_snapshot`
+- `of_get_analytics_snapshot`
+- `of_get_derived_analytics_snapshot`
+- `of_get_session_candle_snapshot`
+- `of_get_interval_candle_snapshot`
+- `of_get_signal_snapshot`
+- `of_get_metrics_json`
+- `of_string_free`
+- `of_engine_poll_once`
 
 `of_get_book_snapshot` returns a materialized JSON snapshot with:
 

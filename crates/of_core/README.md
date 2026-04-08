@@ -12,6 +12,49 @@ the same normalized semantics.
 - Runtime outputs: [`AnalyticsSnapshot`], [`DerivedAnalyticsSnapshot`], [`SessionCandleSnapshot`], [`IntervalCandleSnapshot`], [`SignalSnapshot`], [`SignalState`]
 - Deterministic analytics engine: [`AnalyticsAccumulator`]
 
+## Public API Inventory
+
+Public types:
+
+- [`SymbolId`]
+- [`Side`]
+- [`BookAction`]
+- [`BookUpdate`]
+- [`BookLevel`]
+- [`BookSnapshot`]
+- [`TradePrint`]
+- [`AnalyticsSnapshot`]
+- [`DerivedAnalyticsSnapshot`]
+- [`SessionCandleSnapshot`]
+- [`IntervalCandleSnapshot`]
+- [`SignalState`]
+- [`SignalSnapshot`]
+- [`DataQualityFlags`]
+- [`AnalyticsAccumulator`]
+
+Public `DataQualityFlags` methods:
+
+- `NONE`
+- `STALE_FEED`
+- `SEQUENCE_GAP`
+- `CLOCK_SKEW`
+- `DEPTH_TRUNCATED`
+- `OUT_OF_ORDER`
+- `ADAPTER_DEGRADED`
+- [`DataQualityFlags::bits`]
+- [`DataQualityFlags::from_bits_truncate`]
+- [`DataQualityFlags::intersects`]
+
+Public `AnalyticsAccumulator` methods:
+
+- [`AnalyticsAccumulator::on_trade`]
+- [`AnalyticsAccumulator::reset_session_delta`]
+- [`AnalyticsAccumulator::reset_session`]
+- [`AnalyticsAccumulator::snapshot`]
+- [`AnalyticsAccumulator::derived_snapshot`]
+- [`AnalyticsAccumulator::session_candle_snapshot`]
+- [`AnalyticsAccumulator::interval_candle_snapshot`]
+
 ## Design Principles
 
 - Deterministic arithmetic: prices and sizes are integer values, avoiding float drift in replay/backtests.

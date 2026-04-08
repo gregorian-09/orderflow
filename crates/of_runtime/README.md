@@ -28,6 +28,56 @@ It wires adapter events into book state and analytics, applies quality-aware sig
   - [`Engine::interval_candle_snapshot`]
   - [`Engine::signal_snapshot`]
 
+## Public API Inventory
+
+Public types:
+
+- [`EngineConfig`]
+- [`RuntimeError`]
+- [`ExternalFeedPolicy`]
+- [`Engine<A, S>`]
+- [`DefaultEngine`]
+- [`ConfigCompatibilityMode`]
+- [`ConfigLoadReport`]
+
+Public top-level functions:
+
+- [`build_default_engine`]
+- [`load_engine_config_from_path`]
+- [`load_engine_config_report_from_path`]
+- [`validate_startup_config`]
+
+Public `ConfigLoadReport` method:
+
+- [`ConfigLoadReport::used_legacy_fallback`]
+
+Public `Engine<A, S>` methods:
+
+- [`Engine::new`]
+- [`Engine::with_persistence`]
+- [`Engine::start`]
+- [`Engine::stop`]
+- [`Engine::subscribe`]
+- [`Engine::unsubscribe`]
+- [`Engine::reset_symbol_session`]
+- [`Engine::configure_external_feed`]
+- [`Engine::set_external_reconnecting`]
+- [`Engine::external_health_tick`]
+- [`Engine::ingest_trade`]
+- [`Engine::ingest_book`]
+- [`Engine::poll_once`]
+- [`Engine::analytics_snapshot`]
+- [`Engine::derived_analytics_snapshot`]
+- [`Engine::session_candle_snapshot`]
+- [`Engine::interval_candle_snapshot`]
+- [`Engine::book_snapshot`]
+- [`Engine::signal_snapshot`]
+- [`Engine::metrics_json`]
+- [`Engine::health_seq`]
+- [`Engine::health_json`]
+- [`Engine::last_events`]
+- [`Engine::current_quality_flags_bits`]
+
 ## End-to-End Example (Adapter Polling)
 
 ```rust,no_run

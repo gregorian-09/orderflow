@@ -16,6 +16,36 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
   - [`SweepDetectionSignal`]
   - [`CompositeSignal`]
 
+## Public API Inventory
+
+Public types:
+
+- [`SignalGateDecision`]
+- [`SignalModule`]
+- [`DeltaMomentumSignal`]
+- [`VolumeImbalanceSignal`]
+- [`CumulativeDeltaSignal`]
+- [`AbsorptionSignal`]
+- [`ExhaustionSignal`]
+- [`SweepDetectionSignal`]
+- [`CompositeSignal`]
+
+Public constructors:
+
+- [`DeltaMomentumSignal::new`]
+- [`VolumeImbalanceSignal::new`]
+- [`CumulativeDeltaSignal::new`]
+- [`AbsorptionSignal::new`]
+- [`ExhaustionSignal::new`]
+- [`SweepDetectionSignal::new`]
+- [`CompositeSignal::new`]
+
+[`SignalModule`] trait methods:
+
+- `on_analytics(&AnalyticsSnapshot)`
+- `snapshot() -> SignalSnapshot`
+- `quality_gate(DataQualityFlags) -> SignalGateDecision`
+
 Signal output uses `of_core::SignalSnapshot` and states such as `LongBias`, `ShortBias`, `Neutral`, and `Blocked`.
 
 ## Delta Momentum Strategy
