@@ -3,6 +3,7 @@
  *
  * <ul>
  *   <li>{@code BasicExample}: subscribe/poll/snapshot baseline flow.</li>
+ *   <li>{@code BindingSmokeExample}: compact CI smoke check for native startup and snapshots.</li>
  *   <li>{@code HealthExample}: health stream transitions and quality flags.</li>
  *   <li>{@code ExternalIngestExample}: inject external trade/book updates directly.</li>
  * </ul>
@@ -13,4 +14,3 @@
  * }</pre>
  */
 package com.orderflow.examples;
-

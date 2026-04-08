@@ -72,13 +72,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: ./.github/actions/setup-rust
+      - name: Build C ABI library
+        run: cargo build -q -p of_ffi_c
       - name: Validate Python binding syntax
         run: python3 -m py_compile bindings/python/orderflow/_ffi.py bindings/python/orderflow/api.py
+      - name: Smoke Python binding
+        run: python3 tools/smoke_python_binding.py
 
   java-binding:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: ./.github/actions/setup-rust
+      - name: Build C ABI library
+        run: cargo build -q -p of_ffi_c
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -86,3 +96,7 @@ jobs:
           java-version: '17'
       - name: Compile Java binding
         run: mvn -q -f bindings/java/pom.xml -DskipTests compile
+      - name: Copy Java runtime dependencies
+        run: mvn -q -f bindings/java/pom.xml -DskipTests dependency:copy-dependencies -DincludeScope=runtime
+      - name: Smoke Java binding
+        run: java -cp bindings/java/target/classes:bindings/java/target/dependency/* com.orderflow.examples.BindingSmokeExample

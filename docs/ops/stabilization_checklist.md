@@ -80,8 +80,13 @@ Last updated: 2026-04-08
   - `cqg cqg_proto`
 - Python binding syntax validation runs in CI:
   - `python3 -m py_compile bindings/python/orderflow/_ffi.py bindings/python/orderflow/api.py`
+- Python binding smoke validation runs in CI:
+  - `python3 tools/smoke_python_binding.py`
 - Java binding compile validation runs in CI:
   - `mvn -q -f bindings/java/pom.xml -DskipTests compile`
+- Java binding smoke validation runs in CI:
+  - `mvn -q -f bindings/java/pom.xml -DskipTests dependency:copy-dependencies -DincludeScope=runtime`
+  - `java -cp bindings/java/target/classes:bindings/java/target/dependency/* com.orderflow.examples.BindingSmokeExample`
 - Documentation coverage is enforced in CI.
 
 ## C ABI export guarantees
