@@ -9,6 +9,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Placeholder for the next release cycle.
 
 ## [0.2.0] - 2026-04-08
+This is the first hardening-focused feature release after the initial `0.1.x`
+line. For the complete user-facing release guide, see
+[`docs/ops/release-0.2.0.md`](/home/gregorian-rayne/RustroverProjects/orderflow/docs/ops/release-0.2.0.md).
+
 ### Added
 - Rust crate front-page documentation (`//!`) for `of_core`, `of_signals`,
   `of_persist`, `of_adapters`, `of_runtime`, and `of_ffi_c`, including
@@ -95,8 +99,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - This release is additive and non-breaking for existing `0.1.x` integrations.
 - Existing Rust, C, Python, and Java APIs continue to work; no required
   rename/removal migration is needed.
+- Package versions are aligned at `0.2.0` for Rust, C, Python, and Java.
 - If you use direct C or native bindings, update the native library and header
   together so the new snapshot symbols and stream constants stay in sync.
+- If you use Python or Java, upgrade the binding package and the native
+  `libof_ffi_c` library together.
 - If you use config files, your existing flat config files still load, but new
   deployments should prefer the typed nested `adapter` and
   `adapter.credentials` shape.
