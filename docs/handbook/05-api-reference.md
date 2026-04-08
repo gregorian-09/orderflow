@@ -122,8 +122,11 @@ Public methods:
 - `RollingStore::list_symbols(venue) -> PersistResult<Vec<String>>`
 - `RollingStore::list_streams(venue, symbol) -> PersistResult<Vec<String>>`
 - `RollingStore::read_books(venue, symbol) -> PersistResult<Vec<StoredBookEvent>>`
+- `RollingStore::read_books_in_range(venue, symbol, from_sequence, to_sequence) -> PersistResult<Vec<StoredBookEvent>>`
 - `RollingStore::read_trades(venue, symbol) -> PersistResult<Vec<StoredTradeEvent>>`
+- `RollingStore::read_trades_in_range(venue, symbol, from_sequence, to_sequence) -> PersistResult<Vec<StoredTradeEvent>>`
 - `RollingStore::read_events(venue, symbol) -> PersistResult<Vec<StoredEvent>>`
+- `RollingStore::read_events_in_range(venue, symbol, from_sequence, to_sequence) -> PersistResult<Vec<StoredEvent>>`
 
 ### `of_runtime`
 

@@ -27,8 +27,11 @@ This makes stream files easy to map into replay and analytics pipelines.
 - `list_symbols(venue)` enumerates discovered symbols for one venue
 - `list_streams(venue, symbol)` enumerates discovered JSONL streams for one symbol
 - `read_books(venue, symbol)` reads `book.jsonl` into [`StoredBookEvent`] values
+- `read_books_in_range(venue, symbol, from_sequence, to_sequence)` applies inclusive sequence filtering to book reads
 - `read_trades(venue, symbol)` reads `trades.jsonl` into [`StoredTradeEvent`] values
+- `read_trades_in_range(venue, symbol, from_sequence, to_sequence)` applies inclusive sequence filtering to trade reads
 - `read_events(venue, symbol)` merges both streams into [`StoredEvent`] values ordered by sequence
+- `read_events_in_range(venue, symbol, from_sequence, to_sequence)` applies inclusive sequence filtering to merged reads
 - missing streams return an empty vector
 - malformed lines return `PersistError::Io` with `InvalidData`
 
@@ -63,7 +66,9 @@ let store = RollingStore::new("data").expect("store");
 let venues = store.list_venues().expect("list venues");
 let symbols = store.list_symbols("CME").expect("list symbols");
 let streams = store.list_streams("CME", "ESM6").expect("list streams");
-let trades = store.read_trades("CME", "ESM6").expect("read trades");
+let trades = store
+    .read_trades_in_range("CME", "ESM6", Some(10), Some(100))
+    .expect("read trades");
 
 println!("venues={venues:?} symbols={symbols:?} streams={streams:?}");
 for trade in trades {

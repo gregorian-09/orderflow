@@ -140,12 +140,40 @@ impl RollingStore {
         read_jsonl_stream(&path, parse_book_line)
     }
 
+    /// Reads persisted book events filtered by an inclusive sequence range.
+    ///
+    /// `from_sequence` and `to_sequence` are optional inclusive bounds.
+    pub fn read_books_in_range(
+        &self,
+        venue: &str,
+        symbol: &str,
+        from_sequence: Option<u64>,
+        to_sequence: Option<u64>,
+    ) -> PersistResult<Vec<StoredBookEvent>> {
+        let events = self.read_books(venue, symbol)?;
+        Ok(filter_by_sequence_range(events, from_sequence, to_sequence))
+    }
+
     /// Reads persisted trade events for the given venue and symbol.
     ///
     /// Missing streams return an empty vector.
     pub fn read_trades(&self, venue: &str, symbol: &str) -> PersistResult<Vec<StoredTradeEvent>> {
         let path = self.stream_path(venue, symbol, "trades");
         read_jsonl_stream(&path, parse_trade_line)
+    }
+
+    /// Reads persisted trade events filtered by an inclusive sequence range.
+    ///
+    /// `from_sequence` and `to_sequence` are optional inclusive bounds.
+    pub fn read_trades_in_range(
+        &self,
+        venue: &str,
+        symbol: &str,
+        from_sequence: Option<u64>,
+        to_sequence: Option<u64>,
+    ) -> PersistResult<Vec<StoredTradeEvent>> {
+        let events = self.read_trades(venue, symbol)?;
+        Ok(filter_by_sequence_range(events, from_sequence, to_sequence))
     }
 
     /// Reads and merges persisted book and trade events for the given venue and symbol.
@@ -166,6 +194,20 @@ impl RollingStore {
                 .then_with(|| stored_event_kind_rank(left).cmp(&stored_event_kind_rank(right)))
         });
         Ok(events)
+    }
+
+    /// Reads merged persisted events filtered by an inclusive sequence range.
+    ///
+    /// `from_sequence` and `to_sequence` are optional inclusive bounds.
+    pub fn read_events_in_range(
+        &self,
+        venue: &str,
+        symbol: &str,
+        from_sequence: Option<u64>,
+        to_sequence: Option<u64>,
+    ) -> PersistResult<Vec<StoredEvent>> {
+        let events = self.read_events(venue, symbol)?;
+        Ok(filter_by_sequence_range(events, from_sequence, to_sequence))
     }
 
     /// Lists venue directories currently present under the store root.
@@ -434,6 +476,46 @@ fn stored_event_kind_rank(event: &StoredEvent) -> u8 {
     }
 }
 
+trait SequenceNumber {
+    fn sequence(&self) -> u64;
+}
+
+impl SequenceNumber for StoredBookEvent {
+    fn sequence(&self) -> u64 {
+        self.sequence
+    }
+}
+
+impl SequenceNumber for StoredTradeEvent {
+    fn sequence(&self) -> u64 {
+        self.sequence
+    }
+}
+
+impl SequenceNumber for StoredEvent {
+    fn sequence(&self) -> u64 {
+        StoredEvent::sequence(self)
+    }
+}
+
+fn filter_by_sequence_range<T>(
+    events: Vec<T>,
+    from_sequence: Option<u64>,
+    to_sequence: Option<u64>,
+) -> Vec<T>
+where
+    T: SequenceNumber,
+{
+    events
+        .into_iter()
+        .filter(|event| {
+            let seq = event.sequence();
+            from_sequence.map_or(true, |from| seq >= from)
+                && to_sequence.map_or(true, |to| seq <= to)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -696,6 +778,44 @@ mod tests {
 
         assert_eq!(streams, vec!["book".to_string(), "trades".to_string()]);
         assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn reads_range_filtered_events_inclusively() {
+        let root = temp_dir("persist_range_filter");
+        let store = RollingStore::new(&root).expect("store");
+        let symbol = SymbolId {
+            venue: "CME".to_string(),
+            symbol: "ESM6".to_string(),
+        };
+
+        for sequence in [10_u64, 11, 12] {
+            store
+                .append_trade(&TradePrint {
+                    symbol: symbol.clone(),
+                    price: 505000 + (sequence as i64),
+                    size: 1,
+                    aggressor_side: Side::Ask,
+                    sequence,
+                    ts_exchange_ns: 0,
+                    ts_recv_ns: 0,
+                })
+                .expect("append trade");
+        }
+
+        let trades = store
+            .read_trades_in_range(&symbol.venue, &symbol.symbol, Some(11), Some(12))
+            .expect("trades in range");
+        let events = store
+            .read_events_in_range(&symbol.venue, &symbol.symbol, Some(10), Some(11))
+            .expect("events in range");
+
+        assert_eq!(trades.len(), 2);
+        assert_eq!(trades[0].sequence, 11);
+        assert_eq!(trades[1].sequence, 12);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].sequence(), 10);
+        assert_eq!(events[1].sequence(), 11);
     }
 
     fn temp_dir(name: &str) -> PathBuf {
