@@ -4,6 +4,7 @@ use std::fs::{self, create_dir_all, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+use std::collections::BTreeSet;
 
 use of_core::{BookAction, BookUpdate, Side, TradePrint};
 use serde::Deserialize;
@@ -167,6 +168,35 @@ impl RollingStore {
         Ok(events)
     }
 
+    /// Lists venue directories currently present under the store root.
+    ///
+    /// The returned list is sorted for deterministic discovery and replay tooling.
+    pub fn list_venues(&self) -> PersistResult<Vec<String>> {
+        let mut venues = BTreeSet::new();
+        for entry in read_dir_if_exists(&self.root)? {
+            if entry.file_type()?.is_dir() {
+                venues.insert(entry.file_name().to_string_lossy().to_string());
+            }
+        }
+        Ok(venues.into_iter().collect())
+    }
+
+    /// Lists symbol directories for a given venue currently present under the store root.
+    ///
+    /// Missing venues return an empty vector. The returned list is sorted for deterministic discovery.
+    pub fn list_symbols(&self, venue: &str) -> PersistResult<Vec<String>> {
+        let mut path = self.root.clone();
+        path.push(venue);
+
+        let mut symbols = BTreeSet::new();
+        for entry in read_dir_if_exists(&path)? {
+            if entry.file_type()?.is_dir() {
+                symbols.insert(entry.file_name().to_string_lossy().to_string());
+            }
+        }
+        Ok(symbols.into_iter().collect())
+    }
+
     fn append_line(
         &self,
         venue: &str,
@@ -267,6 +297,16 @@ fn collect_files(root: &Path, out: &mut Vec<FileMeta>) -> PersistResult<()> {
         }
     }
     Ok(())
+}
+
+fn read_dir_if_exists(path: &Path) -> PersistResult<Vec<fs::DirEntry>> {
+    match fs::read_dir(path) {
+        Ok(dir) => dir
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(PersistError::Io),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(err) => Err(PersistError::Io(err)),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -597,6 +637,24 @@ mod tests {
         assert_eq!(events[2].sequence(), 12);
         assert!(matches!(events[1], StoredEvent::Book(_)));
         assert!(matches!(events[2], StoredEvent::Trade(_)));
+    }
+
+    #[test]
+    fn lists_venues_and_symbols_in_sorted_order() {
+        let root = temp_dir("persist_discovery");
+        fs::create_dir_all(root.join("BINANCE").join("BTCUSDT")).expect("btc dir");
+        fs::create_dir_all(root.join("CME").join("NQM6")).expect("nq dir");
+        fs::create_dir_all(root.join("CME").join("ESM6")).expect("es dir");
+
+        let store = RollingStore::new(&root).expect("store");
+
+        let venues = store.list_venues().expect("venues");
+        let symbols = store.list_symbols("CME").expect("symbols");
+        let missing = store.list_symbols("ICE").expect("missing");
+
+        assert_eq!(venues, vec!["BINANCE".to_string(), "CME".to_string()]);
+        assert_eq!(symbols, vec!["ESM6".to_string(), "NQM6".to_string()]);
+        assert!(missing.is_empty());
     }
 
     fn temp_dir(name: &str) -> PathBuf {

@@ -118,6 +118,8 @@ Public methods:
 - `RollingStore::with_retention(Option<RetentionPolicy>) -> RollingStore`
 - `RollingStore::append_book(&BookUpdate) -> PersistResult<()>`
 - `RollingStore::append_trade(&TradePrint) -> PersistResult<()>`
+- `RollingStore::list_venues() -> PersistResult<Vec<String>>`
+- `RollingStore::list_symbols(venue) -> PersistResult<Vec<String>>`
 - `RollingStore::read_books(venue, symbol) -> PersistResult<Vec<StoredBookEvent>>`
 - `RollingStore::read_trades(venue, symbol) -> PersistResult<Vec<StoredTradeEvent>>`
 - `RollingStore::read_events(venue, symbol) -> PersistResult<Vec<StoredEvent>>`
