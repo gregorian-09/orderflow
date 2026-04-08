@@ -47,6 +47,7 @@ class StreamKind:
     SIGNALS = 4
     HEALTH = 5
     BOOK_SNAPSHOT = 6
+    DERIVED_ANALYTICS = 7
 
 
 class Side:

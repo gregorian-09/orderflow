@@ -58,6 +58,8 @@ typedef enum {
   OF_STREAM_HEALTH = 5,
   /** Materialized order-book snapshot stream emitted after book changes. */
   OF_STREAM_BOOK_SNAPSHOT = 6,
+  /** Derived analytics snapshot stream emitted after trade-driven analytics changes. */
+  OF_STREAM_DERIVED_ANALYTICS = 7,
 } of_stream_kind_t;
 
 /** Side constants used by trade/book payloads. */
@@ -148,7 +150,7 @@ typedef struct {
   uint64_t ts_exchange_ns;
   /** Local receive timestamp in nanoseconds (0 for synthetic snapshots). */
   uint64_t ts_recv_ns;
-  /** Stream/event kind (`BOOK`, `TRADES`, `ANALYTICS`, `SIGNALS`, `HEALTH`, `BOOK_SNAPSHOT`). */
+  /** Stream/event kind (`BOOK`, `TRADES`, `ANALYTICS`, `SIGNALS`, `HEALTH`, `BOOK_SNAPSHOT`, `DERIVED_ANALYTICS`). */
   uint32_t kind;
   /** Pointer to UTF-8 JSON payload bytes. */
   const void* payload;

@@ -16,4 +16,6 @@ public final class StreamKind {
     public static final int HEALTH = 5;
     /** Materialized order-book snapshots emitted after book changes. */
     public static final int BOOK_SNAPSHOT = 6;
+    /** Derived analytics snapshots emitted after trade-driven analytics changes. */
+    public static final int DERIVED_ANALYTICS = 7;
 }

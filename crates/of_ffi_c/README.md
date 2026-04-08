@@ -37,6 +37,7 @@ Subscription stream ids:
 - `4`: `SIGNALS` snapshot callbacks
 - `5`: `HEALTH` transition callbacks
 - `6`: `BOOK_SNAPSHOT` materialized book snapshot callbacks after book changes
+- `7`: `DERIVED_ANALYTICS` session-derived analytics callbacks after trade changes
 
 ## Safety Contract
 
@@ -88,3 +89,4 @@ Most functions return `int32_t` values mapped from [`of_error_t`]:
 - Prefer explicit timestamps and sequence numbers for external ingest to maximize quality checks.
 - Snapshot functions write the required byte length back through `inout_len`; if the caller buffer is too small, retry with the returned size.
 - `BOOK_SNAPSHOT` callbacks emit the same JSON shape as `of_get_book_snapshot(...)`, but only when book state changes for the subscribed symbol.
+- `DERIVED_ANALYTICS` callbacks emit the same JSON shape as `of_get_derived_analytics_snapshot(...)`, but only when trade-driven analytics change for the subscribed symbol.

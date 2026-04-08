@@ -74,6 +74,7 @@ with Engine(EngineConfig(instance_id="py-client")) as eng:
 | `SIGNALS` | 4 | Signal snapshot stream |
 | `HEALTH` | 5 | Health transition stream |
 | `BOOK_SNAPSHOT` | 6 | Materialized book snapshot stream after book changes |
+| `DERIVED_ANALYTICS` | 7 | Derived analytics stream after trade-driven analytics changes |
 
 #### `Side`
 

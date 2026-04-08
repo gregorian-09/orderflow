@@ -75,6 +75,7 @@ try (OrderflowEngine eng = new OrderflowEngine(null, cfg)) {
 | `SIGNALS` | 4 | Signal stream |
 | `HEALTH` | 5 | Health transition stream |
 | `BOOK_SNAPSHOT` | 6 | Materialized book snapshot stream after book changes |
+| `DERIVED_ANALYTICS` | 7 | Derived analytics stream after trade-driven analytics changes |
 
 #### `Side`
 
