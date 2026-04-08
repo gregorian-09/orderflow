@@ -122,6 +122,7 @@ Last updated: 2026-04-08
   - existing field names are retained
   - existing field semantics are retained
   - new fields may be appended
+- Golden tests pin the current analytics, signal, and health JSON payload contracts at the FFI layer.
 
 ## Validation commands
 

@@ -1186,6 +1186,228 @@ mod tests {
         String::from_utf8_lossy(&buf[..len as usize]).to_string()
     }
 
+    fn signal_json(engine: *mut of_engine, symbol: &of_symbol_t) -> String {
+        let mut buf = vec![0u8; 1024];
+        let mut len = buf.len() as u32;
+        assert_eq!(
+            of_get_signal_snapshot(
+                engine,
+                symbol as *const of_symbol_t,
+                buf.as_mut_ptr().cast::<c_void>(),
+                &mut len as *mut u32,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        String::from_utf8_lossy(&buf[..len as usize]).to_string()
+    }
+
+    #[test]
+    fn analytics_snapshot_matches_golden_payload() {
+        let _guard = test_lock().lock().expect("lock");
+
+        let instance_id = CString::new("ffi-analytics-golden").expect("cstring");
+        let cfg = of_engine_config_t {
+            instance_id: instance_id.as_ptr(),
+            config_path: ptr::null(),
+            log_level: 0,
+            enable_persistence: 0,
+            audit_max_bytes: 0,
+            audit_max_files: 0,
+            audit_redact_tokens_csv: ptr::null(),
+            data_retention_max_bytes: 0,
+            data_retention_max_age_secs: 0,
+        };
+
+        let mut engine: *mut of_engine = ptr::null_mut();
+        assert_eq!(
+            of_engine_create(&cfg, &mut engine as *mut *mut of_engine),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(of_engine_start(engine), of_error_t::OF_OK as i32);
+
+        let venue = CString::new("CME").expect("cstring");
+        let symbol = CString::new("ESM6").expect("cstring");
+        let ffi_symbol = of_symbol_t {
+            venue: venue.as_ptr(),
+            symbol: symbol.as_ptr(),
+            depth_levels: 10,
+        };
+        let mut sub: *mut of_subscription = ptr::null_mut();
+        assert_eq!(
+            of_subscribe(
+                engine,
+                &ffi_symbol as *const of_symbol_t,
+                3,
+                None,
+                ptr::null_mut(),
+                &mut sub as *mut *mut of_subscription,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!sub.is_null());
+
+        let trade = of_trade_t {
+            symbol: of_symbol_t {
+                venue: venue.as_ptr(),
+                symbol: symbol.as_ptr(),
+                depth_levels: 10,
+            },
+            price: 505000,
+            size: 9,
+            aggressor_side: 1,
+            sequence: 1,
+            ts_exchange_ns: 10,
+            ts_recv_ns: 11,
+        };
+        assert_eq!(
+            of_ingest_trade(engine, &trade as *const of_trade_t, 0),
+            of_error_t::OF_OK as i32
+        );
+
+        let analytics = analytics_json(engine, &ffi_symbol);
+        assert_eq!(
+            analytics,
+            "{\"delta\":9,\"cumulative_delta\":9,\"buy_volume\":9,\"sell_volume\":0,\"last_price\":505000,\"point_of_control\":505000,\"value_area_low\":505000,\"value_area_high\":505000}"
+        );
+
+        assert_eq!(of_unsubscribe(sub), of_error_t::OF_OK as i32);
+        assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
+        of_engine_destroy(engine);
+    }
+
+    #[test]
+    fn signal_snapshot_matches_golden_payload() {
+        let _guard = test_lock().lock().expect("lock");
+
+        let instance_id = CString::new("ffi-signal-golden").expect("cstring");
+        let cfg = of_engine_config_t {
+            instance_id: instance_id.as_ptr(),
+            config_path: ptr::null(),
+            log_level: 0,
+            enable_persistence: 0,
+            audit_max_bytes: 0,
+            audit_max_files: 0,
+            audit_redact_tokens_csv: ptr::null(),
+            data_retention_max_bytes: 0,
+            data_retention_max_age_secs: 0,
+        };
+
+        let mut engine: *mut of_engine = ptr::null_mut();
+        assert_eq!(
+            of_engine_create(&cfg, &mut engine as *mut *mut of_engine),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(of_engine_start(engine), of_error_t::OF_OK as i32);
+
+        let venue = CString::new("CME").expect("cstring");
+        let symbol = CString::new("ESM6").expect("cstring");
+        let ffi_symbol = of_symbol_t {
+            venue: venue.as_ptr(),
+            symbol: symbol.as_ptr(),
+            depth_levels: 10,
+        };
+        let mut sub: *mut of_subscription = ptr::null_mut();
+        assert_eq!(
+            of_subscribe(
+                engine,
+                &ffi_symbol as *const of_symbol_t,
+                4,
+                None,
+                ptr::null_mut(),
+                &mut sub as *mut *mut of_subscription,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!sub.is_null());
+
+        let trade = of_trade_t {
+            symbol: of_symbol_t {
+                venue: venue.as_ptr(),
+                symbol: symbol.as_ptr(),
+                depth_levels: 10,
+            },
+            price: 505000,
+            size: 9,
+            aggressor_side: 1,
+            sequence: 1,
+            ts_exchange_ns: 10,
+            ts_recv_ns: 11,
+        };
+        assert_eq!(
+            of_ingest_trade(engine, &trade as *const of_trade_t, 0),
+            of_error_t::OF_OK as i32
+        );
+
+        let signal = signal_json(engine, &ffi_symbol);
+        assert_eq!(
+            signal,
+            "{\"module\":\"delta_momentum_v1\",\"state\":\"neutral\",\"confidence_bps\":500,\"quality_flags\":0,\"reason\":\"delta_inside_band\"}"
+        );
+
+        assert_eq!(of_unsubscribe(sub), of_error_t::OF_OK as i32);
+        assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
+        of_engine_destroy(engine);
+    }
+
+    #[test]
+    fn health_stream_matches_golden_payload() {
+        let _guard = test_lock().lock().expect("lock");
+
+        let instance_id = CString::new("ffi-health-golden").expect("cstring");
+        let cfg = of_engine_config_t {
+            instance_id: instance_id.as_ptr(),
+            config_path: ptr::null(),
+            log_level: 0,
+            enable_persistence: 0,
+            audit_max_bytes: 0,
+            audit_max_files: 0,
+            audit_redact_tokens_csv: ptr::null(),
+            data_retention_max_bytes: 0,
+            data_retention_max_age_secs: 0,
+        };
+
+        let mut engine: *mut of_engine = ptr::null_mut();
+        assert_eq!(
+            of_engine_create(&cfg, &mut engine as *mut *mut of_engine),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(of_engine_start(engine), of_error_t::OF_OK as i32);
+
+        let venue = CString::new("CME").expect("cstring");
+        let symbol = CString::new("ESM6").expect("cstring");
+        let ffi_symbol = of_symbol_t {
+            venue: venue.as_ptr(),
+            symbol: symbol.as_ptr(),
+            depth_levels: 10,
+        };
+
+        let mut sink = Box::new(CallbackSink::default());
+        let mut sub: *mut of_subscription = ptr::null_mut();
+        assert_eq!(
+            of_subscribe(
+                engine,
+                &ffi_symbol as *const of_symbol_t,
+                5,
+                Some(capture_event),
+                (&mut *sink as *mut CallbackSink).cast::<c_void>(),
+                &mut sub as *mut *mut of_subscription,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!sub.is_null());
+
+        assert_eq!(of_engine_poll_once(engine, 0), of_error_t::OF_OK as i32);
+        assert_eq!(sink.payloads.len(), 1);
+        assert_eq!(
+            sink.payloads[0],
+            "{\"health_seq\":1,\"started\":true,\"connected\":true,\"degraded\":false,\"reconnect_state\":\"streaming\",\"quality_flags\":0,\"quality_flags_detail\":[],\"last_error\":null,\"protocol_info\":\"mock_adapter\",\"tracked_symbols\":0,\"processed_events\":0,\"external_feed_enabled\":false,\"external_feed_reconnecting\":false,\"external_sequence_enforced\":true,\"external_last_ingest_ns\":null}"
+        );
+
+        assert_eq!(of_unsubscribe(sub), of_error_t::OF_OK as i32);
+        assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
+        of_engine_destroy(engine);
+    }
+
     #[test]
     fn health_stream_emits_on_state_change_only() {
         let _guard = test_lock().lock().expect("lock");
