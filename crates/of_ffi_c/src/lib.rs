@@ -181,7 +181,8 @@ struct SubscriptionToken {
     active: Arc<AtomicBool>,
 }
 
-
+/// Returns ABI version (`major << 16 | minor` style encoding).
+#[no_mangle]
 pub extern "C" fn of_api_version() -> u32 {
     API_VERSION
 }
@@ -560,7 +561,8 @@ pub extern "C" fn of_external_health_tick(engine: *mut of_engine) -> i32 {
     }
 }
 
-
+/// Writes current book snapshot JSON into caller buffer.
+#[no_mangle]
 pub extern "C" fn of_get_book_snapshot(
     engine: *mut of_engine,
     symbol: *const of_symbol_t,
