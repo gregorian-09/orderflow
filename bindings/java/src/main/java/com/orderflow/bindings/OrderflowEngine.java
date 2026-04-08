@@ -326,7 +326,7 @@ public final class OrderflowEngine implements AutoCloseable {
      * Returns current book snapshot as JSON string.
      *
      * @param symbol target symbol
-     * @return JSON snapshot payload
+     * @return JSON payload with venue, symbol, bids, asks, last_sequence, and timestamps
      */
     public String bookSnapshot(Symbol symbol) {
         return snapshot(symbol, SnapshotKind.BOOK);
@@ -401,23 +401,35 @@ public final class OrderflowEngine implements AutoCloseable {
         OfSymbol sym = toNativeSymbol(symbol);
         sym.write();
 
-        Memory buffer = new Memory(4096);
-        IntByReference length = new IntByReference(4096);
+        int capacity = 4096;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            Memory buffer = new Memory(capacity);
+            IntByReference length = new IntByReference(capacity);
 
-        int rc;
-        switch (kind) {
-            case BOOK -> rc = nativeLib.of_get_book_snapshot(engine, sym, buffer, length);
-            case ANALYTICS -> rc = nativeLib.of_get_analytics_snapshot(engine, sym, buffer, length);
-            case SIGNAL -> rc = nativeLib.of_get_signal_snapshot(engine, sym, buffer, length);
-            default -> throw new OrderflowException("unknown snapshot kind");
+            int rc;
+            switch (kind) {
+                case BOOK -> rc = nativeLib.of_get_book_snapshot(engine, sym, buffer, length);
+                case ANALYTICS -> rc = nativeLib.of_get_analytics_snapshot(engine, sym, buffer, length);
+                case SIGNAL -> rc = nativeLib.of_get_signal_snapshot(engine, sym, buffer, length);
+                default -> throw new OrderflowException("unknown snapshot kind");
+            }
+
+            if (rc == 0) {
+                int outLen = length.getValue();
+                if (outLen <= 0) {
+                    return "{}";
+                }
+                return new String(buffer.getByteArray(0, outLen), StandardCharsets.UTF_8);
+            }
+
+            int required = length.getValue();
+            if (rc != 1 || required <= capacity) {
+                check(rc, "snapshot");
+            }
+            capacity = required;
         }
 
-        check(rc, "snapshot");
-        int outLen = length.getValue();
-        if (outLen <= 0) {
-            return "{}";
-        }
-        return new String(buffer.getByteArray(0, outLen), StandardCharsets.UTF_8);
+        throw new OrderflowArgException("snapshot failed with OF_ERR_INVALID_ARG");
     }
 
     private static OfSymbol toNativeSymbol(Symbol symbol) {

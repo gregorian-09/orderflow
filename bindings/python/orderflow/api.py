@@ -360,7 +360,7 @@ class Engine:
         self._check(rc, "of_ingest_book")
 
     def book_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
-        """Returns current book snapshot JSON decoded as dict."""
+        """Returns current book snapshot decoded as a dict with bids/asks and timestamps."""
         return self._snapshot_call(self._ffi.lib.of_get_book_snapshot, symbol)
 
     def analytics_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
@@ -388,11 +388,18 @@ class Engine:
         self._require_handle()
         c_symbol = self._to_c_symbol(symbol)
         cap = ctypes.c_uint32(4096)
-        buf = ctypes.create_string_buffer(cap.value)
-        rc = fn(self._engine, ctypes.byref(c_symbol), buf, ctypes.byref(cap))
-        self._check(rc, fn.__name__)
-        raw = bytes(buf[: cap.value]).decode("utf-8")
-        return self._decode_json(raw)
+        for _ in range(3):
+            buf = ctypes.create_string_buffer(cap.value)
+            rc = fn(self._engine, ctypes.byref(c_symbol), buf, ctypes.byref(cap))
+            if rc == 0:
+                raw = bytes(buf[: cap.value]).decode("utf-8")
+                return self._decode_json(raw)
+            if rc != 1 or cap.value <= len(buf):
+                self._check(rc, fn.__name__)
+            cap = ctypes.c_uint32(cap.value)
+
+        self._check(1, fn.__name__)
+        return {}
 
     def _to_c_symbol(self, symbol: Symbol) -> OfSymbol:
         return OfSymbol(

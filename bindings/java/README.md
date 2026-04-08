@@ -200,6 +200,18 @@ Callback event envelope fields:
 | `String signalSnapshot(Symbol symbol)` | Signal snapshot JSON |
 | `String metricsJson()` | Runtime metrics JSON |
 
+`bookSnapshot(Symbol symbol)` returns JSON with:
+
+- `venue`
+- `symbol`
+- `bids`
+- `asks`
+- `last_sequence`
+- `ts_exchange_ns`
+- `ts_recv_ns`
+
+The Java binding retries automatically with a larger native buffer when a snapshot payload exceeds the initial allocation.
+
 ## Usage Patterns
 
 ### Listener-based flow

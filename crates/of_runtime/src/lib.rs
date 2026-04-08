@@ -1,6 +1,6 @@
 #![doc = include_str!("../README.md")]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, create_dir_all, OpenOptions};
@@ -8,13 +8,15 @@ use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use serde::Deserialize;
+
 use of_adapters::{
     create_adapter, AdapterConfig, CredentialsRef, MarketDataAdapter, ProviderKind, RawEvent,
     SubscribeReq,
 };
 use of_core::{
-    AnalyticsAccumulator, AnalyticsSnapshot, BookUpdate, DataQualityFlags, SignalSnapshot,
-    SignalState, SymbolId, TradePrint,
+    AnalyticsAccumulator, AnalyticsSnapshot, BookLevel, BookSnapshot, BookUpdate,
+    DataQualityFlags, SignalSnapshot, SignalState, SymbolId, TradePrint,
 };
 use of_persist::{RetentionPolicy, RollingStore};
 use of_signals::{SignalGateDecision, SignalModule};
@@ -121,6 +123,55 @@ struct ExternalFeedState {
     last_ingest_ns: Option<u64>,
     trade_seq: HashMap<SymbolId, u64>,
     book_seq: HashMap<SymbolId, u64>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct BookState {
+    bids: BTreeMap<u16, BookLevel>,
+    asks: BTreeMap<u16, BookLevel>,
+    last_sequence: u64,
+    ts_exchange_ns: u64,
+    ts_recv_ns: u64,
+}
+
+impl BookState {
+    fn on_book(&mut self, book: &BookUpdate) {
+        let levels = match book.side {
+            of_core::Side::Bid => &mut self.bids,
+            of_core::Side::Ask => &mut self.asks,
+        };
+
+        match book.action {
+            of_core::BookAction::Upsert => {
+                levels.insert(
+                    book.level,
+                    BookLevel {
+                        level: book.level,
+                        price: book.price,
+                        size: book.size,
+                    },
+                );
+            }
+            of_core::BookAction::Delete => {
+                levels.remove(&book.level);
+            }
+        }
+
+        self.last_sequence = book.sequence;
+        self.ts_exchange_ns = book.ts_exchange_ns;
+        self.ts_recv_ns = book.ts_recv_ns;
+    }
+
+    fn snapshot(&self, symbol: &SymbolId) -> BookSnapshot {
+        BookSnapshot {
+            symbol: symbol.clone(),
+            bids: self.bids.values().cloned().collect(),
+            asks: self.asks.values().cloned().collect(),
+            last_sequence: self.last_sequence,
+            ts_exchange_ns: self.ts_exchange_ns,
+            ts_recv_ns: self.ts_recv_ns,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -252,6 +303,7 @@ pub struct Engine<A: MarketDataAdapter, S: SignalModule> {
     adapter: A,
     signal_module: S,
     started: bool,
+    books: HashMap<SymbolId, BookState>,
     analytics: HashMap<SymbolId, AnalyticsAccumulator>,
     latest_signals: HashMap<SymbolId, SignalSnapshot>,
     processed_events: u64,
@@ -275,6 +327,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             adapter,
             signal_module,
             started: false,
+            books: HashMap::new(),
             analytics: HashMap::new(),
             latest_signals: HashMap::new(),
             processed_events: 0,
@@ -491,6 +544,11 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         self.analytics.get(symbol).map(AnalyticsAccumulator::snapshot)
     }
 
+    /// Returns the current materialized book snapshot for symbol if available.
+    pub fn book_snapshot(&self, symbol: &SymbolId) -> Option<BookSnapshot> {
+        self.books.get(symbol).map(|book| book.snapshot(symbol))
+    }
+
     /// Returns latest signal snapshot for symbol if available.
     pub fn signal_snapshot(&self, symbol: &SymbolId) -> Option<SignalSnapshot> {
         self.latest_signals.get(symbol).cloned()
@@ -515,7 +573,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             escape_json(&self.cfg.instance_id),
             self.started,
             self.processed_events,
-            self.analytics.len(),
+            self.tracked_symbol_count(),
             self.persistence.is_some(),
             adapter_health.connected,
             adapter_health.degraded,
@@ -573,6 +631,14 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
     /// Returns currently-active quality flags as raw bits.
     pub fn current_quality_flags_bits(&self) -> u32 {
         self.last_quality_flags_bits
+    }
+
+    fn tracked_symbol_count(&self) -> usize {
+        let mut symbols = HashSet::new();
+        symbols.extend(self.books.keys().cloned());
+        symbols.extend(self.analytics.keys().cloned());
+        symbols.extend(self.latest_signals.keys().cloned());
+        symbols.len()
     }
 
     fn external_quality_flags(&self) -> DataQualityFlags {
@@ -638,6 +704,10 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
     ) -> Result<(), RuntimeError> {
         match event {
             RawEvent::Book(book) => {
+                self.books
+                    .entry(book.symbol.clone())
+                    .or_default()
+                    .on_book(&book);
                 if let Some(store) = &self.persistence {
                     let _ = store.append_book(&book);
                 }
@@ -747,19 +817,15 @@ pub fn build_default_engine(cfg: EngineConfig) -> Result<DefaultEngine, RuntimeE
 /// Loads engine config from `.toml` or `.json`-like config file.
 pub fn load_engine_config_from_path(path: &str) -> Result<EngineConfig, RuntimeError> {
     let raw = fs::read_to_string(path).map_err(|e| RuntimeError::Io(e.to_string()))?;
-    let mut kv = HashMap::new();
-
     if path.ends_with(".json") {
-        parse_json_like(&raw, &mut kv)?;
+        parse_config_json(&raw)
     } else if path.ends_with(".toml") {
-        parse_toml_like(&raw, &mut kv)?;
+        parse_config_toml(&raw)
     } else {
-        return Err(RuntimeError::Config(
+        Err(RuntimeError::Config(
             "unsupported config format; use .json or .toml".to_string(),
-        ));
+        ))
     }
-
-    config_from_map(&kv)
 }
 
 /// Validates startup configuration and environment prerequisites.
@@ -862,6 +928,167 @@ fn config_hash(cfg: &EngineConfig) -> String {
     };
     provider.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RuntimeConfigFile {
+    instance_id: Option<String>,
+    enable_persistence: Option<bool>,
+    signal_threshold: Option<i64>,
+    data_root: Option<String>,
+    audit_log_path: Option<String>,
+    audit_max_bytes: Option<u64>,
+    audit_max_files: Option<u32>,
+    audit_redact_tokens: Option<StringListOrCsv>,
+    data_retention_max_bytes: Option<u64>,
+    data_retention_max_age_secs: Option<u64>,
+    provider: Option<String>,
+    endpoint: Option<String>,
+    app_name: Option<String>,
+    credentials_key_id_env: Option<String>,
+    credentials_secret_env: Option<String>,
+    adapter: Option<AdapterConfigFile>,
+    credentials: Option<CredentialsRefFile>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AdapterConfigFile {
+    provider: Option<String>,
+    endpoint: Option<String>,
+    app_name: Option<String>,
+    credentials: Option<CredentialsRefFile>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct CredentialsRefFile {
+    key_id_env: Option<String>,
+    secret_env: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum StringListOrCsv {
+    List(Vec<String>),
+    Csv(String),
+}
+
+impl StringListOrCsv {
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            StringListOrCsv::List(values) => values
+                .into_iter()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .collect(),
+            StringListOrCsv::Csv(value) => parse_csv(&value),
+        }
+    }
+}
+
+fn parse_config_json(raw: &str) -> Result<EngineConfig, RuntimeError> {
+    match serde_json::from_str::<RuntimeConfigFile>(raw) {
+        Ok(parsed) => config_from_typed(parsed),
+        Err(strict_err) => {
+            let mut kv = HashMap::new();
+            parse_json_like(raw, &mut kv)?;
+            config_from_map(&kv).map_err(|fallback_err| {
+                RuntimeError::Config(format!(
+                    "strict json parse failed: {strict_err}; legacy fallback failed: {fallback_err}"
+                ))
+            })
+        }
+    }
+}
+
+fn parse_config_toml(raw: &str) -> Result<EngineConfig, RuntimeError> {
+    match toml::from_str::<RuntimeConfigFile>(raw) {
+        Ok(parsed) => config_from_typed(parsed),
+        Err(strict_err) => {
+            let mut kv = HashMap::new();
+            parse_toml_like(raw, &mut kv)?;
+            config_from_map(&kv).map_err(|fallback_err| {
+                RuntimeError::Config(format!(
+                    "strict toml parse failed: {strict_err}; legacy fallback failed: {fallback_err}"
+                ))
+            })
+        }
+    }
+}
+
+fn config_from_typed(parsed: RuntimeConfigFile) -> Result<EngineConfig, RuntimeError> {
+    let mut cfg = EngineConfig::default();
+
+    if let Some(v) = parsed.instance_id {
+        cfg.instance_id = v;
+    }
+    if let Some(v) = parsed.enable_persistence {
+        cfg.enable_persistence = v;
+    }
+    if let Some(v) = parsed.signal_threshold {
+        cfg.signal_threshold = v;
+    }
+    if let Some(v) = parsed.data_root {
+        cfg.data_root = v;
+    }
+    if let Some(v) = parsed.audit_log_path {
+        cfg.audit_log_path = v;
+    }
+    if let Some(v) = parsed.audit_max_bytes {
+        cfg.audit_max_bytes = v;
+    }
+    if let Some(v) = parsed.audit_max_files {
+        cfg.audit_max_files = v;
+    }
+    if let Some(v) = parsed.audit_redact_tokens {
+        cfg.audit_redact_tokens = v.into_vec();
+    }
+    if let Some(v) = parsed.data_retention_max_bytes {
+        cfg.data_retention_max_bytes = v;
+    }
+    if let Some(v) = parsed.data_retention_max_age_secs {
+        cfg.data_retention_max_age_secs = v;
+    }
+
+    let adapter = parsed.adapter.unwrap_or_default();
+    let provider = adapter.provider.or(parsed.provider);
+    let endpoint = adapter.endpoint.or(parsed.endpoint);
+    let app_name = adapter.app_name.or(parsed.app_name);
+    let creds = adapter.credentials.or(parsed.credentials);
+    let key_ref = creds
+        .as_ref()
+        .and_then(|c| c.key_id_env.clone())
+        .or(parsed.credentials_key_id_env);
+    let secret_ref = creds
+        .as_ref()
+        .and_then(|c| c.secret_env.clone())
+        .or(parsed.credentials_secret_env);
+
+    if let Some(v) = provider {
+        cfg.adapter.provider = parse_provider(&v)?;
+    }
+    if let Some(v) = endpoint {
+        cfg.adapter.endpoint = Some(v);
+    }
+    if let Some(v) = app_name {
+        cfg.adapter.app_name = Some(v);
+    }
+
+    match (key_ref, secret_ref) {
+        (Some(k), Some(s)) => {
+            cfg.adapter.credentials = Some(CredentialsRef {
+                key_id_env: k,
+                secret_env: s,
+            });
+        }
+        (None, None) => {}
+        _ => {
+            return Err(RuntimeError::Config(
+                "credentials require both key_id_env and secret_env".to_string(),
+            ));
+        }
+    }
+
+    Ok(cfg)
 }
 
 fn config_from_map(map: &HashMap<String, String>) -> Result<EngineConfig, RuntimeError> {
@@ -1056,7 +1283,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use of_adapters::{MockAdapter, ProviderKind, RawEvent};
+    use of_adapters::{AdapterConfig, CredentialsRef, MockAdapter, ProviderKind, RawEvent};
     use of_core::{BookAction, BookUpdate, Side, TradePrint};
     use of_signals::DeltaMomentumSignal;
 
@@ -1149,6 +1376,81 @@ mod tests {
         assert_eq!(signal.quality_flags, DataQualityFlags::ADAPTER_DEGRADED.bits());
         assert_eq!(signal.reason, "blocked_by_quality_gate");
         assert_eq!(engine.last_events().len(), 1);
+    }
+
+    #[test]
+    fn engine_materializes_book_snapshot_from_updates() {
+        let symbol = SymbolId {
+            venue: "CME".to_string(),
+            symbol: "ESM6".to_string(),
+        };
+        let mut engine = Engine::new(
+            EngineConfig::default(),
+            MockAdapter::default(),
+            DeltaMomentumSignal::new(5),
+        );
+
+        engine.start().expect("start failed");
+        engine.subscribe(symbol.clone(), 10).expect("sub failed");
+        engine
+            .ingest_book(
+                BookUpdate {
+                    symbol: symbol.clone(),
+                    side: Side::Bid,
+                    level: 0,
+                    price: 504900,
+                    size: 20,
+                    action: BookAction::Upsert,
+                    sequence: 1,
+                    ts_exchange_ns: 10,
+                    ts_recv_ns: 11,
+                },
+                DataQualityFlags::NONE,
+            )
+            .expect("bid ingest failed");
+        engine
+            .ingest_book(
+                BookUpdate {
+                    symbol: symbol.clone(),
+                    side: Side::Ask,
+                    level: 1,
+                    price: 505100,
+                    size: 12,
+                    action: BookAction::Upsert,
+                    sequence: 2,
+                    ts_exchange_ns: 12,
+                    ts_recv_ns: 13,
+                },
+                DataQualityFlags::NONE,
+            )
+            .expect("ask ingest failed");
+        engine
+            .ingest_book(
+                BookUpdate {
+                    symbol: symbol.clone(),
+                    side: Side::Bid,
+                    level: 0,
+                    price: 0,
+                    size: 0,
+                    action: BookAction::Delete,
+                    sequence: 3,
+                    ts_exchange_ns: 14,
+                    ts_recv_ns: 15,
+                },
+                DataQualityFlags::NONE,
+            )
+            .expect("delete ingest failed");
+
+        let snapshot = engine.book_snapshot(&symbol).expect("book snapshot missing");
+        assert!(snapshot.bids.is_empty());
+        assert_eq!(snapshot.asks.len(), 1);
+        assert_eq!(snapshot.asks[0].level, 1);
+        assert_eq!(snapshot.asks[0].price, 505100);
+        assert_eq!(snapshot.asks[0].size, 12);
+        assert_eq!(snapshot.last_sequence, 3);
+        assert_eq!(snapshot.ts_exchange_ns, 14);
+        assert_eq!(snapshot.ts_recv_ns, 15);
+        assert!(engine.metrics_json().contains("\"symbols\":1"));
     }
 
     #[test]
@@ -1351,6 +1653,89 @@ endpoint = "mock://binance"
             .expect("toml parse should work");
         assert!(matches!(cfg.adapter.provider, ProviderKind::Binance));
         validate_startup_config(&cfg).expect("binance should not require creds");
+    }
+
+    #[test]
+    fn parses_nested_toml_config_strictly() {
+        let path = write_temp_file(
+            "runtime_cfg_nested.toml",
+            r#"
+instance_id = "strict_toml"
+enable_persistence = true
+signal_threshold = 300
+data_root = "strict_data"
+audit_log_path = "audit/strict.log"
+audit_redact_tokens = ["secret", "token"]
+
+[adapter]
+provider = "cqg"
+endpoint = "wss://demoapi.cqg.com/feed"
+app_name = "strict-runtime"
+
+[adapter.credentials]
+key_id_env = "OF_STRICT_KEY"
+secret_env = "OF_STRICT_SECRET"
+"#,
+        );
+
+        let cfg = load_engine_config_from_path(path.to_str().expect("valid path"))
+            .expect("strict toml parse should work");
+        assert_eq!(cfg.instance_id, "strict_toml");
+        assert!(cfg.enable_persistence);
+        assert_eq!(cfg.signal_threshold, 300);
+        assert_eq!(cfg.audit_redact_tokens, vec!["secret", "token"]);
+        assert!(matches!(cfg.adapter.provider, ProviderKind::Cqg));
+        assert_eq!(
+            cfg.adapter.endpoint.as_deref(),
+            Some("wss://demoapi.cqg.com/feed")
+        );
+        assert_eq!(cfg.adapter.app_name.as_deref(), Some("strict-runtime"));
+        let creds = cfg.adapter.credentials.expect("credentials");
+        assert_eq!(creds.key_id_env, "OF_STRICT_KEY");
+        assert_eq!(creds.secret_env, "OF_STRICT_SECRET");
+    }
+
+    #[test]
+    fn parses_nested_json_config_strictly() {
+        let path = write_temp_file(
+            "runtime_cfg_nested.json",
+            r#"{
+  "instance_id": "strict_json",
+  "signal_threshold": 175,
+  "audit_redact_tokens": ["secret", "password"],
+  "adapter": {
+    "provider": "binance",
+    "endpoint": "wss://stream.binance.com:9443/ws",
+    "app_name": "strict-json-runtime"
+  }
+}"#,
+        );
+
+        let cfg = load_engine_config_from_path(path.to_str().expect("valid path"))
+            .expect("strict json parse should work");
+        assert_eq!(cfg.instance_id, "strict_json");
+        assert_eq!(cfg.signal_threshold, 175);
+        assert_eq!(cfg.audit_redact_tokens, vec!["secret", "password"]);
+        assert!(matches!(cfg.adapter.provider, ProviderKind::Binance));
+        assert_eq!(
+            cfg.adapter.endpoint.as_deref(),
+            Some("wss://stream.binance.com:9443/ws")
+        );
+        assert_eq!(cfg.adapter.app_name.as_deref(), Some("strict-json-runtime"));
+    }
+
+    #[test]
+    fn legacy_fallback_still_accepts_flat_json_like_shape() {
+        let path = write_temp_file(
+            "runtime_cfg_legacy.json",
+            "{\n\"instance_id\": \"legacy_json\",\n\"provider\": \"mock\",\n\"audit_redact_tokens\": \"secret,token\"\n}\n",
+        );
+
+        let cfg = load_engine_config_from_path(path.to_str().expect("valid path"))
+            .expect("legacy fallback should still work");
+        assert_eq!(cfg.instance_id, "legacy_json");
+        assert!(matches!(cfg.adapter.provider, ProviderKind::Mock));
+        assert_eq!(cfg.audit_redact_tokens, vec!["secret", "token"]);
     }
 
     #[test]

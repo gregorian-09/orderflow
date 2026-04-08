@@ -223,7 +223,24 @@ int32_t of_external_health_tick(of_engine_t* engine);
 /** Polls adapter once and dispatches callbacks/snapshots. */
 int32_t of_engine_poll_once(of_engine_t* engine, uint32_t quality_flags);
 
-/** Returns current book snapshot JSON for `symbol`. */
+/**
+ * Returns current book snapshot JSON for `symbol`.
+ *
+ * Payload shape:
+ * {
+ *   "venue": "...",
+ *   "symbol": "...",
+ *   "bids": [{"level":0,"price":...,"size":...}, ...],
+ *   "asks": [{"level":0,"price":...,"size":...}, ...],
+ *   "last_sequence": ...,
+ *   "ts_exchange_ns": ...,
+ *   "ts_recv_ns": ...
+ * }
+ *
+ * On success, `*inout_len` is set to the bytes written.
+ * If `out_buf` is too small, the function returns `OF_ERR_INVALID_ARG`
+ * and sets `*inout_len` to the required byte length.
+ */
 int32_t of_get_book_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
 /** Returns current analytics snapshot JSON for `symbol`. */
 int32_t of_get_analytics_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);

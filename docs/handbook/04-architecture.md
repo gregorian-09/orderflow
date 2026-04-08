@@ -171,6 +171,6 @@ External ingest supports:
 
 ## Important Current Behavior
 
-- `of_get_book_snapshot(...)` currently returns `{}` (placeholder behavior in FFI layer).
+- `of_get_book_snapshot(...)` returns a materialized snapshot with `bids`, `asks`, `last_sequence`, and timestamps once book updates have been observed for the symbol.
 - Analytics and signal snapshots are implemented and populated.
 - Metrics and health payloads are implemented and used by bindings/dashboard.

@@ -7,7 +7,7 @@ the same normalized semantics.
 ## What This Crate Contains
 
 - Market identity: [`SymbolId`]
-- Event model: [`TradePrint`], [`BookUpdate`], [`Side`], [`BookAction`]
+- Event model: [`TradePrint`], [`BookUpdate`], [`BookLevel`], [`BookSnapshot`], [`Side`], [`BookAction`]
 - Quality flags: [`DataQualityFlags`]
 - Runtime outputs: [`AnalyticsSnapshot`], [`SignalSnapshot`], [`SignalState`]
 - Deterministic analytics engine: [`AnalyticsAccumulator`]
@@ -65,3 +65,14 @@ assert_eq!(q.bits() & DataQualityFlags::SEQUENCE_GAP.bits(), DataQualityFlags::S
 - `value_area_low` / `value_area_high` approximate the high-volume range around POC.
 
 For full orchestration and adapter integration, see `of_runtime`.
+
+## Book Snapshot Model
+
+[`BookSnapshot`] materializes the latest known order book for one symbol:
+
+- `bids`: bid-side levels ordered by `level`
+- `asks`: ask-side levels ordered by `level`
+- `last_sequence`: sequence number of the most recent applied book event
+- `ts_exchange_ns` / `ts_recv_ns`: timestamps from the most recent applied book event
+
+This snapshot model is used by the runtime and exposed through the FFI and bindings.

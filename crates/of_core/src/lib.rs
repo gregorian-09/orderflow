@@ -54,6 +54,34 @@ pub struct BookUpdate {
     pub ts_recv_ns: u64,
 }
 
+/// One normalized price level in a materialized book snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BookLevel {
+    /// Level index from top of book.
+    pub level: u16,
+    /// Level price in integer ticks or price units.
+    pub price: i64,
+    /// Aggregated size at this level.
+    pub size: i64,
+}
+
+/// Materialized order-book snapshot for a symbol.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BookSnapshot {
+    /// Snapshot symbol identity.
+    pub symbol: SymbolId,
+    /// Bid-side levels ordered by `level`.
+    pub bids: Vec<BookLevel>,
+    /// Ask-side levels ordered by `level`.
+    pub asks: Vec<BookLevel>,
+    /// Sequence number from the last applied book event.
+    pub last_sequence: u64,
+    /// Exchange timestamp from the last applied book event.
+    pub ts_exchange_ns: u64,
+    /// Local receive timestamp from the last applied book event.
+    pub ts_recv_ns: u64,
+}
+
 /// Last-trade print/tick.
 #[derive(Debug, Clone)]
 pub struct TradePrint {
@@ -377,5 +405,37 @@ mod tests {
         assert_eq!(snap.point_of_control, 0);
         assert_eq!(snap.value_area_low, 0);
         assert_eq!(snap.value_area_high, 0);
+    }
+
+    #[test]
+    fn book_snapshot_keeps_level_order() {
+        let snapshot = BookSnapshot {
+            symbol: symbol(),
+            bids: vec![
+                BookLevel {
+                    level: 0,
+                    price: 100,
+                    size: 5,
+                },
+                BookLevel {
+                    level: 2,
+                    price: 98,
+                    size: 3,
+                },
+            ],
+            asks: vec![BookLevel {
+                level: 1,
+                price: 101,
+                size: 4,
+            }],
+            last_sequence: 7,
+            ts_exchange_ns: 11,
+            ts_recv_ns: 12,
+        };
+
+        assert_eq!(snapshot.bids[0].level, 0);
+        assert_eq!(snapshot.bids[1].level, 2);
+        assert_eq!(snapshot.asks[0].level, 1);
+        assert_eq!(snapshot.last_sequence, 7);
     }
 }

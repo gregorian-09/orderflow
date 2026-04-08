@@ -1,6 +1,6 @@
 # Stabilization Checklist
 
-Last updated: 2026-02-27
+Last updated: 2026-04-08
 
 ## API freeze scope (current)
 
@@ -59,6 +59,19 @@ Last updated: 2026-02-27
 - GitHub Actions matrix added in `.github/workflows/ci.yml` for CQG feature lanes:
   - `cqg`
   - `cqg cqg_proto`
+- Python binding syntax validation runs in CI:
+  - `python3 -m py_compile bindings/python/orderflow/_ffi.py bindings/python/orderflow/api.py`
+- Java binding compile validation runs in CI:
+  - `mvn -q -f bindings/java/pom.xml -DskipTests compile`
+- Documentation coverage is enforced in CI.
+
+## Snapshot compatibility guarantees
+
+- `of_get_book_snapshot(...)` returns materialized JSON once book updates exist for the symbol.
+- If a caller buffer is too small for a snapshot payload:
+  - the function returns `OF_ERR_INVALID_ARG`
+  - `inout_len` is updated with the required byte size
+- Python and Java bindings retry with a larger buffer automatically for snapshot retrieval.
 
 ## Validation commands
 

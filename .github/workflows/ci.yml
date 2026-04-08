@@ -34,3 +34,22 @@ jobs:
         uses: ./.github/actions/setup-rust
       - name: Enforce documentation coverage
         run: python3 tools/docs_coverage.py --enforce
+
+  python-binding:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python binding syntax
+        run: python3 -m py_compile bindings/python/orderflow/_ffi.py bindings/python/orderflow/api.py
+
+  java-binding:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile Java binding
+        run: mvn -q -f bindings/java/pom.xml -DskipTests compile

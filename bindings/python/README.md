@@ -185,6 +185,18 @@ with Engine(EngineConfig(instance_id="py-client")) as eng:
 | `signal_snapshot(symbol)` | Current signal snapshot | `dict[str, Any]` |
 | `metrics()` | Runtime metrics | `dict[str, Any]` |
 
+`book_snapshot(symbol)` returns a dictionary with:
+
+- `venue`
+- `symbol`
+- `bids`
+- `asks`
+- `last_sequence`
+- `ts_exchange_ns`
+- `ts_recv_ns`
+
+The Python wrapper retries automatically if the native snapshot payload is larger than the initial buffer.
+
 ## Usage Patterns
 
 ### Poll-only flow (no callback)

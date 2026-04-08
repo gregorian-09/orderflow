@@ -125,6 +125,8 @@ Public constructor/build/config functions:
 - `Engine::new(cfg, adapter, signal_module) -> Engine<A, S>`
 - `build_default_engine(cfg: EngineConfig) -> Result<DefaultEngine, RuntimeError>`
 - `load_engine_config_from_path(path: &str) -> Result<EngineConfig, RuntimeError>`
+  - preferred input shape: typed TOML/JSON with nested `adapter` / `adapter.credentials`
+  - compatibility fallback: legacy flat config files remain accepted
 - `validate_startup_config(cfg: &EngineConfig) -> Result<(), RuntimeError>`
 
 Public runtime methods:
@@ -220,9 +222,18 @@ Used in `of_subscribe(..., kind, ...)` and callback payloads:
 
 ### C API Notes
 
-- `of_get_book_snapshot(...)` currently returns `{}`.
+- `of_get_book_snapshot(...)` returns populated JSON when book updates exist for the symbol.
+- Book snapshot JSON includes:
+  - `venue`
+  - `symbol`
+  - `bids`
+  - `asks`
+  - `last_sequence`
+  - `ts_exchange_ns`
+  - `ts_recv_ns`
 - `of_get_analytics_snapshot(...)` and `of_get_signal_snapshot(...)` return populated JSON when data exists.
 - `of_get_metrics_json(...)` allocates output string; caller must free via `of_string_free(...)`.
+- Snapshot functions report the required byte size via `inout_len`; callers should retry with a larger buffer when they receive `OF_ERR_INVALID_ARG`.
 
 ---
 

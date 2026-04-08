@@ -11,6 +11,16 @@ It is the native interface used by Python (`ctypes`), Java (JNA), and any C-comp
 - Snapshots: `of_get_book_snapshot`, `of_get_analytics_snapshot`, `of_get_signal_snapshot`
 - Health/metrics: `of_get_metrics_json`, `of_get_health_json`, `of_get_health_seq`
 
+`of_get_book_snapshot` returns a materialized JSON snapshot with:
+
+- `venue`
+- `symbol`
+- `bids`
+- `asks`
+- `last_sequence`
+- `ts_exchange_ns`
+- `ts_recv_ns`
+
 ## Safety Contract
 
 Callers must:
@@ -59,3 +69,4 @@ Most functions return `int32_t` values mapped from [`of_error_t`]:
 - Treat engine and subscription handles as opaque; do not cast or inspect internals.
 - Keep ABI structs initialized (zero-init is recommended before setting fields).
 - Prefer explicit timestamps and sequence numbers for external ingest to maximize quality checks.
+- Snapshot functions write the required byte length back through `inout_len`; if the caller buffer is too small, retry with the returned size.

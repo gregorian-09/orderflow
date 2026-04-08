@@ -105,7 +105,7 @@ Binding checklist:
 
 ## Current Technical Notes
 
-- Book snapshot API returns `{}` currently (placeholder in FFI path).
+- Book snapshot API returns a materialized `bids`/`asks` snapshot once book updates have been processed.
 - Analytics/signal snapshots are fully implemented.
 - Health stream is edge-triggered (`health_seq` change required).
 - External ingest supports continuous updates through repeated `ingest_trade`/`ingest_book`.

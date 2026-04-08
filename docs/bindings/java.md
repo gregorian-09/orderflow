@@ -53,6 +53,18 @@ Native lookup order:
 - snapshots: `bookSnapshot(...)`, `analyticsSnapshot(...)`,
   `signalSnapshot(...)`, `metricsJson()`
 
+`bookSnapshot(...)` returns JSON with:
+
+- `venue`
+- `symbol`
+- `bids`
+- `asks`
+- `last_sequence`
+- `ts_exchange_ns`
+- `ts_recv_ns`
+
+The Java binding retries with a larger native buffer automatically when snapshot payloads exceed the initial allocation.
+
 ### Exceptions
 
 - `OrderflowException`

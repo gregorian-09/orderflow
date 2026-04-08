@@ -1,16 +1,17 @@
 # of_runtime
 
 `of_runtime` is the orchestration layer for live, replay, and external-ingest workflows.
-It wires adapter events into analytics, applies quality-aware signal logic, and exposes health/metrics snapshots.
+It wires adapter events into book state and analytics, applies quality-aware signal logic, and exposes snapshots plus health/metrics payloads.
 
 ## Runtime Responsibilities
 
 1. Connect and supervise a [`MarketDataAdapter`](of_adapters::MarketDataAdapter).
 2. Process normalized [`RawEvent`](of_adapters::RawEvent) streams.
-3. Update analytics using `of_core`.
-4. Evaluate signal modules from `of_signals`.
-5. Gate risk-sensitive output using [`DataQualityFlags`](of_core::DataQualityFlags).
-6. Optionally persist event streams via `of_persist`.
+3. Materialize book snapshots from normalized book updates.
+4. Update analytics using `of_core`.
+5. Evaluate signal modules from `of_signals`.
+6. Gate risk-sensitive output using [`DataQualityFlags`](of_core::DataQualityFlags).
+7. Optionally persist event streams via `of_persist`.
 
 ## Main Types
 
@@ -19,6 +20,10 @@ It wires adapter events into analytics, applies quality-aware signal logic, and 
 - [`DefaultEngine`] - boxed adapter + default delta signal.
 - [`RuntimeError`] - lifecycle/config/adapter/io errors.
 - [`ExternalFeedPolicy`] - stale and sequence policy for non-adapter ingest mode.
+- Snapshot accessors:
+  - [`Engine::book_snapshot`]
+  - [`Engine::analytics_snapshot`]
+  - [`Engine::signal_snapshot`]
 
 ## End-to-End Example (Adapter Polling)
 
@@ -78,6 +83,12 @@ assert!(health.contains("\"started\":true"));
 # Ok::<(), of_runtime::RuntimeError>(())
 ```
 
+## Snapshot Contracts
+
+- [`Engine::book_snapshot`] returns the materialized book state for a symbol when book updates have been observed.
+- Book snapshots contain `bids` and `asks` arrays, each ordered by `level`.
+- [`Engine::analytics_snapshot`] and [`Engine::signal_snapshot`] retain their current payload semantics.
+
 ## Health and Metrics Contracts
 
 - [`Engine::metrics_json`] exposes runtime counters and adapter status.
@@ -88,6 +99,10 @@ assert!(health.contains("\"started\":true"));
 
 Use [`load_engine_config_from_path`] to load TOML config files and [`validate_startup_config`] to fail fast
 on missing credentials or invalid startup settings before going live.
+
+Preferred config files use typed TOML/JSON shapes with nested `adapter` and `adapter.credentials`
+sections. Legacy flat config shapes are still accepted through a compatibility fallback so older
+deployments continue to load without source changes.
 
 ## Operational Guidance
 

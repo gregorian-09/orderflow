@@ -44,7 +44,18 @@ This document defines the runtime adapter selection contract used by `of_runtime
 
 Use `of_runtime::load_engine_config_from_path(path)` with `.toml` or `.json` extensions.
 
-Supported keys (flat or section-qualified):
+Preferred shape:
+
+- top-level runtime keys
+- nested `adapter`
+- nested `adapter.credentials`
+
+Legacy compatibility:
+
+- older flat keys and section-qualified keys are still accepted
+- this compatibility path exists to avoid breaking existing users
+
+Supported keys (modern or legacy):
 
 - `instance_id`
 - `enable_persistence`
@@ -68,14 +79,16 @@ Supported keys (flat or section-qualified):
 instance_id = "of-prod"
 enable_persistence = true
 signal_threshold = 150
-provider = "mock"
 data_root = "data"
 audit_log_path = "audit/orderflow_audit.log"
 audit_max_bytes = 10485760
 audit_max_files = 5
-audit_redact_tokens = "secret,password,token,api_key"
+audit_redact_tokens = ["secret", "password", "token", "api_key"]
 data_retention_max_bytes = 10485760
 data_retention_max_age_secs = 604800
+
+[adapter]
+provider = "mock"
 ```
 
 ### JSON example
@@ -90,10 +103,29 @@ data_retention_max_age_secs = 604800
   "audit_log_path": "audit/orderflow_audit.log",
   "audit_max_bytes": 10485760,
   "audit_max_files": 5,
-  "audit_redact_tokens": "secret,password,token,api_key",
+  "audit_redact_tokens": ["secret", "password", "token", "api_key"],
   "data_retention_max_bytes": 10485760,
-  "data_retention_max_age_secs": 604800
+  "data_retention_max_age_secs": 604800,
+  "adapter": {
+    "provider": "mock"
+  }
 }
+```
+
+### Nested provider example
+
+```toml
+instance_id = "of-live"
+signal_threshold = 200
+
+[adapter]
+provider = "cqg"
+endpoint = "wss://demoapi.cqg.com/feed"
+app_name = "orderflow"
+
+[adapter.credentials]
+key_id_env = "CQG_USER"
+secret_env = "CQG_PASS"
 ```
 
 ## Startup validation

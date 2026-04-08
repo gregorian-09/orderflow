@@ -50,6 +50,18 @@ Native lookup order:
 - ingest: `ingest_trade`, `ingest_book`
 - snapshots: `book_snapshot`, `analytics_snapshot`, `signal_snapshot`, `metrics`
 
+`book_snapshot(symbol)` returns a dictionary with:
+
+- `venue`
+- `symbol`
+- `bids`
+- `asks`
+- `last_sequence`
+- `ts_exchange_ns`
+- `ts_recv_ns`
+
+The Python binding automatically retries with a larger native buffer when a snapshot exceeds the default initial allocation.
+
 ### Exceptions
 
 - `OrderflowError`

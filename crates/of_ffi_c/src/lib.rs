@@ -9,7 +9,10 @@ use std::sync::{
 };
 
 use of_adapters::{AdapterConfig, ProviderKind, RawEvent};
-use of_core::{BookAction, BookUpdate, DataQualityFlags, Side, SignalState, SymbolId, TradePrint};
+use of_core::{
+    BookAction, BookSnapshot, BookUpdate, DataQualityFlags, Side, SignalState, SymbolId,
+    TradePrint,
+};
 use of_runtime::{
     build_default_engine, load_engine_config_from_path, DefaultEngine, EngineConfig,
     ExternalFeedPolicy,
@@ -640,13 +643,26 @@ fn write_json_to_c_buffer(
 /// Writes current book snapshot JSON into caller buffer.
 #[no_mangle]
 pub extern "C" fn of_get_book_snapshot(
-    _engine: *mut of_engine,
-    _symbol: *const of_symbol_t,
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
     out_buf: *mut c_void,
     inout_len: *mut u32,
 ) -> i32 {
-    let payload = "{}";
-    match write_json_to_c_buffer(payload, out_buf, inout_len) {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+
+    let engine = unsafe { &mut *engine };
+    let payload = match engine.inner.book_snapshot(&symbol) {
+        Some(snapshot) => format_book_snapshot(&snapshot),
+        None => "{}".to_string(),
+    };
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
         Ok(_) => of_error_t::OF_OK as i32,
         Err(e) => e as i32,
     }
@@ -719,7 +735,11 @@ pub extern "C" fn of_get_signal_snapshot(
             };
             format!(
                 "{{\"module\":\"{}\",\"state\":\"{}\",\"confidence_bps\":{},\"quality_flags\":{},\"reason\":\"{}\"}}",
-                snap.module_id, state, snap.confidence_bps, snap.quality_flags, snap.reason
+                escape_json(snap.module_id),
+                state,
+                snap.confidence_bps,
+                snap.quality_flags,
+                escape_json(&snap.reason)
             )
         }
         None => "{}".to_string(),
@@ -863,7 +883,11 @@ fn dispatch_callbacks(engine: &mut of_engine, quality_flags: u32) {
                         };
                         format!(
                             "{{\"module\":\"{}\",\"state\":\"{}\",\"confidence_bps\":{},\"quality_flags\":{},\"reason\":\"{}\"}}",
-                            s.module_id, state, s.confidence_bps, s.quality_flags, s.reason
+                            escape_json(s.module_id),
+                            state,
+                            s.confidence_bps,
+                            s.quality_flags,
+                            escape_json(&s.reason)
                         )
                     }
                     None => "{}".to_string(),
@@ -954,6 +978,32 @@ fn format_book_event(book: &of_core::BookUpdate) -> String {
     )
 }
 
+fn format_book_snapshot(snapshot: &BookSnapshot) -> String {
+    format!(
+        "{{\"venue\":\"{}\",\"symbol\":\"{}\",\"bids\":[{}],\"asks\":[{}],\"last_sequence\":{},\"ts_exchange_ns\":{},\"ts_recv_ns\":{}}}",
+        escape_json(&snapshot.symbol.venue),
+        escape_json(&snapshot.symbol.symbol),
+        format_book_levels(&snapshot.bids),
+        format_book_levels(&snapshot.asks),
+        snapshot.last_sequence,
+        snapshot.ts_exchange_ns,
+        snapshot.ts_recv_ns
+    )
+}
+
+fn format_book_levels(levels: &[of_core::BookLevel]) -> String {
+    levels
+        .iter()
+        .map(|level| {
+            format!(
+                "{{\"level\":{},\"price\":{},\"size\":{}}}",
+                level.level, level.price, level.size
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 fn escape_json(input: &str) -> String {
     input
         .replace('\\', "\\\\")
@@ -1005,6 +1055,21 @@ mod tests {
         let mut len = buf.len() as u32;
         assert_eq!(
             of_get_analytics_snapshot(
+                engine,
+                symbol as *const of_symbol_t,
+                buf.as_mut_ptr().cast::<c_void>(),
+                &mut len as *mut u32,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        String::from_utf8_lossy(&buf[..len as usize]).to_string()
+    }
+
+    fn book_json(engine: *mut of_engine, symbol: &of_symbol_t) -> String {
+        let mut buf = vec![0u8; 2048];
+        let mut len = buf.len() as u32;
+        assert_eq!(
+            of_get_book_snapshot(
                 engine,
                 symbol as *const of_symbol_t,
                 buf.as_mut_ptr().cast::<c_void>(),
@@ -1309,6 +1374,142 @@ mod tests {
         assert_eq!(sink.kinds, vec![3]);
 
         assert_eq!(of_unsubscribe(sub), of_error_t::OF_OK as i32);
+        assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
+        of_engine_destroy(engine);
+    }
+
+    #[test]
+    fn book_snapshot_returns_materialized_levels() {
+        let _guard = test_lock().lock().expect("lock");
+
+        let instance_id = CString::new("ffi-book-snapshot-test").expect("cstring");
+        let cfg = of_engine_config_t {
+            instance_id: instance_id.as_ptr(),
+            config_path: ptr::null(),
+            log_level: 0,
+            enable_persistence: 0,
+            audit_max_bytes: 0,
+            audit_max_files: 0,
+            audit_redact_tokens_csv: ptr::null(),
+            data_retention_max_bytes: 0,
+            data_retention_max_age_secs: 0,
+        };
+
+        let mut engine: *mut of_engine = ptr::null_mut();
+        assert_eq!(
+            of_engine_create(&cfg, &mut engine as *mut *mut of_engine),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!engine.is_null());
+        assert_eq!(of_engine_start(engine), of_error_t::OF_OK as i32);
+
+        let venue = CString::new("CME").expect("cstring");
+        let symbol = CString::new("ESM6").expect("cstring");
+        let ffi_symbol = of_symbol_t {
+            venue: venue.as_ptr(),
+            symbol: symbol.as_ptr(),
+            depth_levels: 10,
+        };
+
+        let ask = of_book_t {
+            symbol: of_symbol_t {
+                venue: venue.as_ptr(),
+                symbol: symbol.as_ptr(),
+                depth_levels: 10,
+            },
+            side: 1,
+            level: 0,
+            price: 505100,
+            size: 9,
+            action: 0,
+            sequence: 7,
+            ts_exchange_ns: 22,
+            ts_recv_ns: 23,
+        };
+        assert_eq!(
+            of_ingest_book(engine, &ask as *const of_book_t, 0),
+            of_error_t::OF_OK as i32
+        );
+
+        let json = book_json(engine, &ffi_symbol);
+        assert!(json.contains("\"venue\":\"CME\""));
+        assert!(json.contains("\"symbol\":\"ESM6\""));
+        assert!(json.contains("\"bids\":[]"));
+        assert!(json.contains("\"asks\":[{\"level\":0,\"price\":505100,\"size\":9}]"));
+        assert!(json.contains("\"last_sequence\":7"));
+        assert!(json.contains("\"ts_exchange_ns\":22"));
+        assert!(json.contains("\"ts_recv_ns\":23"));
+
+        assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
+        of_engine_destroy(engine);
+    }
+
+    #[test]
+    fn book_snapshot_reports_required_buffer_size() {
+        let _guard = test_lock().lock().expect("lock");
+
+        let instance_id = CString::new("ffi-book-buffer-size-test").expect("cstring");
+        let cfg = of_engine_config_t {
+            instance_id: instance_id.as_ptr(),
+            config_path: ptr::null(),
+            log_level: 0,
+            enable_persistence: 0,
+            audit_max_bytes: 0,
+            audit_max_files: 0,
+            audit_redact_tokens_csv: ptr::null(),
+            data_retention_max_bytes: 0,
+            data_retention_max_age_secs: 0,
+        };
+
+        let mut engine: *mut of_engine = ptr::null_mut();
+        assert_eq!(
+            of_engine_create(&cfg, &mut engine as *mut *mut of_engine),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!engine.is_null());
+        assert_eq!(of_engine_start(engine), of_error_t::OF_OK as i32);
+
+        let venue = CString::new("CME").expect("cstring");
+        let symbol = CString::new("ESM6").expect("cstring");
+        let ffi_symbol = of_symbol_t {
+            venue: venue.as_ptr(),
+            symbol: symbol.as_ptr(),
+            depth_levels: 10,
+        };
+
+        let ask = of_book_t {
+            symbol: of_symbol_t {
+                venue: venue.as_ptr(),
+                symbol: symbol.as_ptr(),
+                depth_levels: 10,
+            },
+            side: 1,
+            level: 0,
+            price: 505100,
+            size: 9,
+            action: 0,
+            sequence: 7,
+            ts_exchange_ns: 22,
+            ts_recv_ns: 23,
+        };
+        assert_eq!(
+            of_ingest_book(engine, &ask as *const of_book_t, 0),
+            of_error_t::OF_OK as i32
+        );
+
+        let mut buf = [0u8; 8];
+        let mut len = buf.len() as u32;
+        assert_eq!(
+            of_get_book_snapshot(
+                engine,
+                &ffi_symbol as *const of_symbol_t,
+                buf.as_mut_ptr().cast::<c_void>(),
+                &mut len as *mut u32,
+            ),
+            of_error_t::OF_ERR_INVALID_ARG as i32
+        );
+        assert!(len > buf.len() as u32);
+
         assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
         of_engine_destroy(engine);
     }
