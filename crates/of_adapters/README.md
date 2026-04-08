@@ -20,6 +20,17 @@ The crate is built around a feature-gated provider model:
 
 This keeps the default build deterministic while allowing production adapters where needed.
 
+Current provider notes:
+
+- `Rithmic`:
+  - mock mode emits deterministic book and trade events for end-to-end testing
+  - live `ws://` / `wss://` mode now performs websocket reachability validation before reporting connected
+  - health metadata includes mode, endpoint, app name, and uptime
+- `CQG`:
+  - reconnect/resubscribe and sequencing logic are implemented
+- `Binance`:
+  - live websocket transport parses trade and depth events
+
 ## Create an Adapter
 
 ```rust

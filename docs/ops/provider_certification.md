@@ -72,6 +72,11 @@ python3 tools/provider_conformance.py \
   --duration 30
 ```
 
+Rithmic live note:
+- The adapter now validates websocket reachability during `connect()`.
+- Mock mode emits deterministic book and trade events for local integration tests.
+- Live certification still requires vendor-specific endpoint and credential validation in a real environment.
+
 For Binance (crypto):
 
 ```bash

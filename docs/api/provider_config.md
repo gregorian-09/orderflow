@@ -180,7 +180,7 @@ Behavior:
 
 - Mock provider: functional.
 - CQG provider: implemented adapter flow with reconnect/resubscribe, level updates, explicit unsubscribe, and optional `cqg_proto` codec mode.
-- Rithmic provider: implemented adapter flow with credential validation, mock/live endpoint modes (`mock://`, `ws://`, `wss://`), subscribe/unsubscribe, and health reporting.
+- Rithmic provider: implemented adapter flow with credential validation, mock/live endpoint modes (`mock://`, `ws://`, `wss://`), subscribe/unsubscribe, websocket reachability checks for live connect, deterministic mock book/trade emission, and richer health reporting.
 - Binance provider (crypto): implemented adapter flow with endpoint validation, real websocket execution (`ws://`, `wss://`) including subscribe/unsubscribe command flow, ping/pong handling, live `aggTrade` + `depthUpdate` parsing, mock mode (`mock://`), and health reporting.
 - Audit logging: enabled by default; writes lifecycle/subscription/quality-block events.
 - Audit rotation: rotates at `audit_max_bytes`, keeps up to `audit_max_files` archives (`.1`, `.2`, ...).

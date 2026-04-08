@@ -45,7 +45,10 @@ Last updated: 2026-04-08
 - Adapter config validation + env credential resolution implemented.
 - Subscribe/unsubscribe lifecycle implemented.
 - Mock/live endpoint modes supported at config boundary (`mock://`, `ws://`, `wss://`).
+- Mock mode emits deterministic book + trade flows for end-to-end tests.
+- Live mode validates websocket reachability before reporting connected.
 - Health reporting integrated into runtime metrics/health stream.
+- `protocol_info` includes mode, endpoint, app name, and uptime metadata.
 
 ## Binance guarantees
 
