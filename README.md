@@ -28,3 +28,20 @@ Build C ABI for bindings:
 ```bash
 cargo build -p of_ffi_c
 ```
+
+## Tooling
+
+Replay utility example:
+
+```bash
+cargo run -p replay_cli -- data
+cargo run -p replay_cli -- data CME
+cargo run -p replay_cli -- data CME ESM6 100 200
+```
+
+The replay CLI now supports discovery-first workflows:
+
+- list venues under a persistence root
+- list symbols for a venue
+- inspect available streams for a symbol
+- print merged replay events with optional inclusive sequence bounds

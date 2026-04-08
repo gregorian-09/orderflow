@@ -5,7 +5,4 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-of_adapters = { path = "../../crates/of_adapters" }
-of_core = { path = "../../crates/of_core" }
-of_runtime = { path = "../../crates/of_runtime" }
-of_signals = { path = "../../crates/of_signals" }
+of_persist = { path = "../../crates/of_persist" }
