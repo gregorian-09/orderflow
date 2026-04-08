@@ -577,21 +577,33 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             .as_ref()
             .map(|s| format!("\"{}\"", escape_json(s)))
             .unwrap_or_else(|| "null".to_string());
+        let quality_flags_detail = quality_flags_detail_json(self.last_quality_flags_bits);
+        let external_last_ingest = optional_u64_json(self.external.last_ingest_ns);
 
         format!(
-            "{{\"instance_id\":\"{}\",\"started\":{},\"processed_events\":{},\"symbols\":{},\"persistence\":{},\"adapter_connected\":{},\"adapter_degraded\":{},\"adapter_last_error\":{},\"adapter_protocol_info\":{},\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_stale_after_ms\":{}}}",
+            "{{\"instance_id\":\"{}\",\"started\":{},\"processed_events\":{},\"symbols\":{},\"book_symbols\":{},\"analytics_symbols\":{},\"signal_symbols\":{},\"persistence\":{},\"health_seq\":{},\"quality_flags\":{},\"quality_flags_detail\":{},\"adapter_connected\":{},\"adapter_degraded\":{},\"adapter_last_error\":{},\"adapter_protocol_info\":{},\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_sequence_enforced\":{},\"external_stale_after_ms\":{},\"external_last_ingest_ns\":{},\"external_trade_sequence_symbols\":{},\"external_book_sequence_symbols\":{}}}",
             escape_json(&self.cfg.instance_id),
             self.started,
             self.processed_events,
             self.tracked_symbol_count(),
+            self.books.len(),
+            self.analytics.len(),
+            self.latest_signals.len(),
             self.persistence.is_some(),
+            self.health_seq,
+            self.last_quality_flags_bits,
+            quality_flags_detail,
             adapter_health.connected,
             adapter_health.degraded,
             last_error_json,
             protocol_info_json,
             self.external.enabled,
             self.external.reconnecting,
-            self.external.policy.stale_after_ms
+            self.external.policy.enforce_sequence,
+            self.external.policy.stale_after_ms,
+            external_last_ingest,
+            self.external.trade_seq.len(),
+            self.external.book_seq.len()
         )
     }
 
@@ -620,16 +632,25 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             .as_ref()
             .map(|s| format!("\"{}\"", escape_json(s)))
             .unwrap_or_else(|| "null".to_string());
+        let quality_flags_detail = quality_flags_detail_json(self.last_quality_flags_bits);
+        let external_last_ingest = optional_u64_json(self.external.last_ingest_ns);
         format!(
-            "{{\"health_seq\":{},\"started\":{},\"connected\":{},\"degraded\":{},\"reconnect_state\":\"{}\",\"quality_flags\":{},\"last_error\":{},\"protocol_info\":{}}}",
+            "{{\"health_seq\":{},\"started\":{},\"connected\":{},\"degraded\":{},\"reconnect_state\":\"{}\",\"quality_flags\":{},\"quality_flags_detail\":{},\"last_error\":{},\"protocol_info\":{},\"tracked_symbols\":{},\"processed_events\":{},\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_sequence_enforced\":{},\"external_last_ingest_ns\":{}}}",
             self.health_seq,
             self.started,
             adapter_health.connected,
             adapter_health.degraded,
             reconnect_state,
             self.last_quality_flags_bits,
+            quality_flags_detail,
             last_error_json,
-            protocol_info_json
+            protocol_info_json,
+            self.tracked_symbol_count(),
+            self.processed_events,
+            self.external.enabled,
+            self.external.reconnecting,
+            self.external.policy.enforce_sequence,
+            external_last_ingest
         )
     }
 
@@ -790,6 +811,49 @@ fn escape_json(input: &str) -> String {
         .replace('\n', "\\n")
         .replace('\r', "\\r")
         .replace('\t', "\\t")
+}
+
+fn optional_u64_json(value: Option<u64>) -> String {
+    value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn quality_flag_names(bits: u32) -> Vec<&'static str> {
+    let mut names = Vec::new();
+    if bits & DataQualityFlags::STALE_FEED.bits() != 0 {
+        names.push("STALE_FEED");
+    }
+    if bits & DataQualityFlags::SEQUENCE_GAP.bits() != 0 {
+        names.push("SEQUENCE_GAP");
+    }
+    if bits & DataQualityFlags::CLOCK_SKEW.bits() != 0 {
+        names.push("CLOCK_SKEW");
+    }
+    if bits & DataQualityFlags::DEPTH_TRUNCATED.bits() != 0 {
+        names.push("DEPTH_TRUNCATED");
+    }
+    if bits & DataQualityFlags::OUT_OF_ORDER.bits() != 0 {
+        names.push("OUT_OF_ORDER");
+    }
+    if bits & DataQualityFlags::ADAPTER_DEGRADED.bits() != 0 {
+        names.push("ADAPTER_DEGRADED");
+    }
+    names
+}
+
+fn quality_flags_detail_json(bits: u32) -> String {
+    let names = quality_flag_names(bits);
+    if names.is_empty() {
+        return "[]".to_string();
+    }
+
+    let items = names
+        .into_iter()
+        .map(|name| format!("\"{name}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{items}]")
 }
 
 /// Builds the default runtime engine using configured provider and signal module.
@@ -1616,6 +1680,8 @@ mod tests {
             "\"quality_flags\":{}",
             DataQualityFlags::ADAPTER_DEGRADED.bits()
         )));
+        assert!(degraded.contains("\"quality_flags_detail\":[\"ADAPTER_DEGRADED\"]"));
+        assert!(degraded.contains("\"external_feed_reconnecting\":true"));
 
         engine
             .set_external_reconnecting(false)
@@ -1641,6 +1707,8 @@ mod tests {
             "\"quality_flags\":{}",
             DataQualityFlags::STALE_FEED.bits()
         )));
+        assert!(stale.contains("\"quality_flags_detail\":[\"STALE_FEED\"]"));
+        assert!(stale.contains("\"external_last_ingest_ns\":"));
     }
 
     #[test]
@@ -1657,6 +1725,59 @@ mod tests {
         let metrics = engine.metrics_json();
         assert!(metrics.contains("\"started\":true"));
         assert!(metrics.contains("\"adapter_protocol_info\""));
+        assert!(metrics.contains("\"health_seq\":"));
+        assert!(metrics.contains("\"quality_flags_detail\":"));
+    }
+
+    #[test]
+    fn health_and_metrics_include_additive_observability_fields() {
+        let symbol = SymbolId {
+            venue: "CME".to_string(),
+            symbol: "ESM6".to_string(),
+        };
+        let mut engine = Engine::new(
+            EngineConfig::default(),
+            MockAdapter::default(),
+            DeltaMomentumSignal::new(5),
+        );
+
+        engine.start().expect("start failed");
+        engine.subscribe(symbol.clone(), 10).expect("sub failed");
+        engine
+            .configure_external_feed(ExternalFeedPolicy {
+                stale_after_ms: 15_000,
+                enforce_sequence: true,
+            })
+            .expect("configure external feed");
+        engine
+            .ingest_trade(
+                TradePrint {
+                    symbol,
+                    price: 505000,
+                    size: 2,
+                    aggressor_side: Side::Ask,
+                    sequence: 1,
+                    ts_exchange_ns: 11,
+                    ts_recv_ns: 12,
+                },
+                DataQualityFlags::NONE,
+            )
+            .expect("ingest trade");
+
+        let health = engine.health_json();
+        assert!(health.contains("\"tracked_symbols\":1"));
+        assert!(health.contains("\"processed_events\":1"));
+        assert!(health.contains("\"external_feed_enabled\":true"));
+        assert!(health.contains("\"external_sequence_enforced\":true"));
+        assert!(health.contains("\"quality_flags_detail\":[]"));
+
+        let metrics = engine.metrics_json();
+        assert!(metrics.contains("\"book_symbols\":0"));
+        assert!(metrics.contains("\"analytics_symbols\":1"));
+        assert!(metrics.contains("\"signal_symbols\":1"));
+        assert!(metrics.contains("\"external_trade_sequence_symbols\":1"));
+        assert!(metrics.contains("\"external_book_sequence_symbols\":0"));
+        assert!(metrics.contains("\"external_last_ingest_ns\":"));
     }
 
     #[test]

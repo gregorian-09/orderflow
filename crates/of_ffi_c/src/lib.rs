@@ -1255,8 +1255,55 @@ mod tests {
         assert!(sink.payloads[0].contains("\"health_seq\""));
         assert!(sink.payloads[0].contains("\"reconnect_state\""));
         assert!(sink.payloads[0].contains("\"protocol_info\""));
+        assert!(sink.payloads[0].contains("\"quality_flags_detail\""));
+        assert!(sink.payloads[0].contains("\"tracked_symbols\""));
 
         assert_eq!(of_unsubscribe(sub), of_error_t::OF_OK as i32);
+        assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
+        of_engine_destroy(engine);
+    }
+
+    #[test]
+    fn metrics_json_includes_additive_observability_fields() {
+        let _guard = test_lock().lock().expect("lock");
+
+        let instance_id = CString::new("ffi-metrics-test").expect("cstring");
+        let cfg = of_engine_config_t {
+            instance_id: instance_id.as_ptr(),
+            config_path: ptr::null(),
+            log_level: 0,
+            enable_persistence: 0,
+            audit_max_bytes: 0,
+            audit_max_files: 0,
+            audit_redact_tokens_csv: ptr::null(),
+            data_retention_max_bytes: 0,
+            data_retention_max_age_secs: 0,
+        };
+
+        let mut engine: *mut of_engine = ptr::null_mut();
+        assert_eq!(
+            of_engine_create(&cfg, &mut engine as *mut *mut of_engine),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!engine.is_null());
+        assert_eq!(of_engine_start(engine), of_error_t::OF_OK as i32);
+
+        let mut out: *const c_char = ptr::null();
+        let mut out_len = 0u32;
+        assert_eq!(
+            of_get_metrics_json(engine, &mut out as *mut *const c_char, &mut out_len as *mut u32),
+            of_error_t::OF_OK as i32
+        );
+        let metrics = unsafe {
+            String::from_utf8_lossy(std::slice::from_raw_parts(out.cast::<u8>(), out_len as usize))
+                .to_string()
+        };
+        assert!(metrics.contains("\"health_seq\":"));
+        assert!(metrics.contains("\"quality_flags_detail\":"));
+        assert!(metrics.contains("\"book_symbols\":"));
+        assert!(metrics.contains("\"external_last_ingest_ns\":"));
+        of_string_free(out);
+
         assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
         of_engine_destroy(engine);
     }

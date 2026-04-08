@@ -96,6 +96,11 @@ assert!(health.contains("\"started\":true"));
 - [`Engine::metrics_json`] exposes runtime counters and adapter status.
 - [`Engine::health_json`] exposes connectivity/degradation/reconnect state and active quality flags.
 - [`Engine::health_seq`] increments on meaningful health transitions for cheap external polling.
+- Existing JSON field names remain stable; new observability fields are added additively.
+- [`Engine::health_json`] also includes `quality_flags_detail`, `tracked_symbols`,
+  `processed_events`, and external supervision fields such as `external_last_ingest_ns`.
+- [`Engine::metrics_json`] also includes `health_seq`, per-subsystem symbol counts,
+  `quality_flags_detail`, and external sequence-cache counts for live diagnostics.
 
 ## Config Loading
 

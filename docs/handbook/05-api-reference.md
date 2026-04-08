@@ -438,8 +438,15 @@ Context manager support:
   "degraded": false,
   "reconnect_state": "streaming|degraded|disconnected",
   "quality_flags": 0,
+  "quality_flags_detail": [],
   "last_error": null,
-  "protocol_info": "mock_adapter"
+  "protocol_info": "mock_adapter",
+  "tracked_symbols": 1,
+  "processed_events": 120,
+  "external_feed_enabled": true,
+  "external_feed_reconnecting": false,
+  "external_sequence_enforced": true,
+  "external_last_ingest_ns": 1712500000123456789
 }
 ```
 
@@ -477,16 +484,35 @@ Context manager support:
   "started": true,
   "processed_events": 120,
   "symbols": 1,
+  "book_symbols": 1,
+  "analytics_symbols": 1,
+  "signal_symbols": 1,
   "persistence": false,
+  "health_seq": 3,
+  "quality_flags": 0,
+  "quality_flags_detail": [],
   "adapter_connected": true,
   "adapter_degraded": false,
   "adapter_last_error": null,
   "adapter_protocol_info": "mock_adapter",
   "external_feed_enabled": true,
   "external_feed_reconnecting": false,
-  "external_stale_after_ms": 15000
+  "external_sequence_enforced": true,
+  "external_stale_after_ms": 15000,
+  "external_last_ingest_ns": 1712500000123456789,
+  "external_trade_sequence_symbols": 1,
+  "external_book_sequence_symbols": 1
 }
 ```
+
+### Callback schema guarantees
+
+- `of_event_t.schema_id` is currently `1` for all shipped stream payloads.
+- Within `schema_id = 1`, payload evolution is additive-only:
+  - existing field names are retained
+  - existing field meanings are retained
+  - new fields may be appended
+- Removing or repurposing fields requires a future schema-id change.
 
 ---
 

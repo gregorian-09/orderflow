@@ -27,8 +27,12 @@ Last updated: 2026-04-08
   - `started`, `connected`, `degraded`
   - `reconnect_state`
   - `quality_flags`
+  - `quality_flags_detail`
   - `last_error`
   - `protocol_info`
+  - `tracked_symbols`
+  - `processed_events`
+  - external supervision fields
 
 ## CQG guarantees (scaffold)
 
@@ -110,6 +114,14 @@ Last updated: 2026-04-08
   - the function returns `OF_ERR_INVALID_ARG`
   - `inout_len` is updated with the required byte size
 - Python and Java bindings retry with a larger buffer automatically for snapshot retrieval.
+
+## Callback schema guarantees
+
+- `of_event_t.schema_id` remains `1` for all currently shipped payloads.
+- Within schema `1`, payload changes are additive-only:
+  - existing field names are retained
+  - existing field semantics are retained
+  - new fields may be appended
 
 ## Validation commands
 
