@@ -108,6 +108,7 @@ Public types:
 - `RollingStore`
 - `StoredBookEvent`
 - `StoredTradeEvent`
+- `StoredEvent`
 
 Public methods:
 
@@ -117,6 +118,7 @@ Public methods:
 - `RollingStore::append_trade(&TradePrint) -> PersistResult<()>`
 - `RollingStore::read_books(venue, symbol) -> PersistResult<Vec<StoredBookEvent>>`
 - `RollingStore::read_trades(venue, symbol) -> PersistResult<Vec<StoredTradeEvent>>`
+- `RollingStore::read_events(venue, symbol) -> PersistResult<Vec<StoredEvent>>`
 
 ### `of_runtime`
 

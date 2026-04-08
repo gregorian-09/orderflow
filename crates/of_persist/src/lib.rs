@@ -70,6 +70,25 @@ pub struct StoredTradeEvent {
     pub aggressor_side: Side,
 }
 
+/// Merged persisted event used for replay-oriented symbol reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoredEvent {
+    /// Materialized book update record.
+    Book(StoredBookEvent),
+    /// Materialized trade record.
+    Trade(StoredTradeEvent),
+}
+
+impl StoredEvent {
+    /// Returns the persisted sequence number used for replay ordering.
+    pub fn sequence(&self) -> u64 {
+        match self {
+            Self::Book(book) => book.sequence,
+            Self::Trade(trade) => trade.sequence,
+        }
+    }
+}
+
 impl RollingStore {
     /// Creates a store rooted at `root`, creating directories as needed.
     pub fn new(root: impl AsRef<Path>) -> PersistResult<Self> {
@@ -126,6 +145,26 @@ impl RollingStore {
     pub fn read_trades(&self, venue: &str, symbol: &str) -> PersistResult<Vec<StoredTradeEvent>> {
         let path = self.stream_path(venue, symbol, "trades");
         read_jsonl_stream(&path, parse_trade_line)
+    }
+
+    /// Reads and merges persisted book and trade events for the given venue and symbol.
+    ///
+    /// Events are ordered by ascending sequence number. When two events share the
+    /// same sequence, book events are returned before trade events so replay order
+    /// remains deterministic across runs.
+    pub fn read_events(&self, venue: &str, symbol: &str) -> PersistResult<Vec<StoredEvent>> {
+        let mut events = self
+            .read_books(venue, symbol)?
+            .into_iter()
+            .map(StoredEvent::Book)
+            .chain(self.read_trades(venue, symbol)?.into_iter().map(StoredEvent::Trade))
+            .collect::<Vec<_>>();
+        events.sort_by(|left, right| {
+            left.sequence()
+                .cmp(&right.sequence())
+                .then_with(|| stored_event_kind_rank(left).cmp(&stored_event_kind_rank(right)))
+        });
+        Ok(events)
     }
 
     fn append_line(
@@ -324,6 +363,13 @@ fn invalid_data(path: &Path, line_no: usize, message: String) -> PersistError {
     ))
 }
 
+fn stored_event_kind_rank(event: &StoredEvent) -> u8 {
+    match event {
+        StoredEvent::Book(_) => 0,
+        StoredEvent::Trade(_) => 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -495,6 +541,62 @@ mod tests {
         match err {
             PersistError::Io(inner) => assert_eq!(inner.kind(), std::io::ErrorKind::InvalidData),
         }
+    }
+
+    #[test]
+    fn reads_merged_symbol_events_in_sequence_order() {
+        let root = temp_dir("persist_merged_readback");
+        let store = RollingStore::new(&root).expect("store");
+        let symbol = SymbolId {
+            venue: "CME".to_string(),
+            symbol: "ESM6".to_string(),
+        };
+
+        store
+            .append_trade(&TradePrint {
+                symbol: symbol.clone(),
+                price: 505_050,
+                size: 2,
+                aggressor_side: Side::Ask,
+                sequence: 12,
+                ts_exchange_ns: 0,
+                ts_recv_ns: 0,
+            })
+            .expect("append trade");
+        store
+            .append_book(&BookUpdate {
+                symbol: symbol.clone(),
+                side: Side::Bid,
+                level: 0,
+                price: 505_000,
+                size: 10,
+                action: BookAction::Upsert,
+                sequence: 10,
+                ts_exchange_ns: 0,
+                ts_recv_ns: 0,
+            })
+            .expect("append book");
+        store
+            .append_book(&BookUpdate {
+                symbol: symbol.clone(),
+                side: Side::Ask,
+                level: 0,
+                price: 505_075,
+                size: 9,
+                action: BookAction::Upsert,
+                sequence: 12,
+                ts_exchange_ns: 0,
+                ts_recv_ns: 0,
+            })
+            .expect("append book");
+
+        let events = store.read_events(&symbol.venue, &symbol.symbol).expect("read events");
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].sequence(), 10);
+        assert_eq!(events[1].sequence(), 12);
+        assert_eq!(events[2].sequence(), 12);
+        assert!(matches!(events[1], StoredEvent::Book(_)));
+        assert!(matches!(events[2], StoredEvent::Trade(_)));
     }
 
     fn temp_dir(name: &str) -> PathBuf {

@@ -7,6 +7,7 @@ It is designed for replay, auditability, and post-trade research workflows.
 
 - [`RollingStore`] - append-only store for `book` and `trades` streams.
 - [`StoredBookEvent`] / [`StoredTradeEvent`] - typed readback records parsed from existing JSONL files.
+- [`StoredEvent`] - merged replay-oriented enum for interleaved symbol reads.
 - [`RetentionPolicy`] - bounded retention by total bytes and/or max file age.
 - [`PersistError`] / [`PersistResult<T>`] - persistence error contract.
 
@@ -24,6 +25,7 @@ This makes stream files easy to map into replay and analytics pipelines.
 
 - `read_books(venue, symbol)` reads `book.jsonl` into [`StoredBookEvent`] values
 - `read_trades(venue, symbol)` reads `trades.jsonl` into [`StoredTradeEvent`] values
+- `read_events(venue, symbol)` merges both streams into [`StoredEvent`] values ordered by sequence
 - missing streams return an empty vector
 - malformed lines return `PersistError::Io` with `InvalidData`
 
@@ -59,6 +61,22 @@ let trades = store.read_trades("CME", "ESM6").expect("read trades");
 
 for trade in trades {
     println!("seq={} price={} size={}", trade.sequence, trade.price, trade.size);
+}
+```
+
+## Replay Read Example
+
+```rust
+use of_persist::{RollingStore, StoredEvent};
+
+let store = RollingStore::new("data").expect("store");
+let events = store.read_events("CME", "ESM6").expect("read events");
+
+for event in events {
+    match event {
+        StoredEvent::Book(book) => println!("book seq={} px={}", book.sequence, book.price),
+        StoredEvent::Trade(trade) => println!("trade seq={} px={}", trade.sequence, trade.price),
+    }
 }
 ```
 
