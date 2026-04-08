@@ -177,6 +177,7 @@ Public runtime methods:
 - `poll_once(DataQualityFlags)`
 - `analytics_snapshot(&SymbolId)`
 - `derived_analytics_snapshot(&SymbolId)`
+- `session_candle_snapshot(&SymbolId)`
 - `signal_snapshot(&SymbolId)`
 - `metrics_json() -> String`
 - `health_seq() -> u64`
@@ -240,6 +241,7 @@ Snapshots and metrics:
 - `of_get_book_snapshot(...)`
 - `of_get_analytics_snapshot(...)`
 - `of_get_derived_analytics_snapshot(...)`
+- `of_get_session_candle_snapshot(...)`
 - `of_get_signal_snapshot(...)`
 - `of_get_metrics_json(...)`
 - `of_string_free(...)`
@@ -269,7 +271,7 @@ Used in `of_subscribe(..., kind, ...)` and callback payloads:
   - `last_sequence`
   - `ts_exchange_ns`
   - `ts_recv_ns`
-- `of_get_analytics_snapshot(...)`, `of_get_derived_analytics_snapshot(...)`, and `of_get_signal_snapshot(...)` return populated JSON when data exists.
+- `of_get_analytics_snapshot(...)`, `of_get_derived_analytics_snapshot(...)`, `of_get_session_candle_snapshot(...)`, and `of_get_signal_snapshot(...)` return populated JSON when data exists.
 - `of_get_metrics_json(...)` allocates output string; caller must free via `of_string_free(...)`.
 - Snapshot functions report the required byte size via `inout_len`; callers should retry with a larger buffer when they receive `OF_ERR_INVALID_ARG`.
 
@@ -308,6 +310,7 @@ Used in `of_subscribe(..., kind, ...)` and callback payloads:
 - `book_snapshot(symbol) -> dict`
 - `analytics_snapshot(symbol) -> dict`
 - `derived_analytics_snapshot(symbol) -> dict`
+- `session_candle_snapshot(symbol) -> dict`
 - `signal_snapshot(symbol) -> dict`
 - `metrics() -> dict`
 
@@ -419,6 +422,20 @@ Context manager support:
   "vwap": 504966,
   "average_trade_size": 7,
   "imbalance_bps": 3333
+}
+```
+
+### Session candle snapshot (`of_get_session_candle_snapshot`)
+
+```json
+{
+  "open": 505000,
+  "high": 505000,
+  "low": 504900,
+  "close": 504900,
+  "trade_count": 2,
+  "first_ts_exchange_ns": 10,
+  "last_ts_exchange_ns": 20
 }
 ```
 

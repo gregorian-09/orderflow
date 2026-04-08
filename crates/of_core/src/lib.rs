@@ -137,6 +137,25 @@ pub struct DerivedAnalyticsSnapshot {
     pub imbalance_bps: i64,
 }
 
+/// Session candle-style summary derived from the current analytics session.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionCandleSnapshot {
+    /// First trade price observed in the current analytics session.
+    pub open: i64,
+    /// Highest trade price observed in the current analytics session.
+    pub high: i64,
+    /// Lowest trade price observed in the current analytics session.
+    pub low: i64,
+    /// Most recent trade price observed in the current analytics session.
+    pub close: i64,
+    /// Number of trades included in the current candle/session view.
+    pub trade_count: u64,
+    /// Exchange timestamp of the first trade in the current session candle.
+    pub first_ts_exchange_ns: u64,
+    /// Exchange timestamp of the latest trade in the current session candle.
+    pub last_ts_exchange_ns: u64,
+}
+
 /// Output state emitted by signal modules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignalState {
@@ -222,12 +241,25 @@ pub struct AnalyticsAccumulator {
     volume_profile: HashMap<i64, i64>,
     session_trade_count: u64,
     session_turnover: i128,
+    session_candle: SessionCandleSnapshot,
 }
 
 impl AnalyticsAccumulator {
     /// Applies a trade print to analytics and recomputes profile levels.
     pub fn on_trade(&mut self, trade: &TradePrint) {
         self.snapshot.last_price = trade.price;
+        if self.session_trade_count == 0 {
+            self.session_candle.open = trade.price;
+            self.session_candle.high = trade.price;
+            self.session_candle.low = trade.price;
+            self.session_candle.first_ts_exchange_ns = trade.ts_exchange_ns;
+        } else {
+            self.session_candle.high = self.session_candle.high.max(trade.price);
+            self.session_candle.low = self.session_candle.low.min(trade.price);
+        }
+        self.session_candle.close = trade.price;
+        self.session_candle.trade_count = self.session_trade_count.saturating_add(1);
+        self.session_candle.last_ts_exchange_ns = trade.ts_exchange_ns;
         self.session_trade_count = self.session_trade_count.saturating_add(1);
         self.session_turnover += (trade.price as i128) * (trade.size as i128);
         *self.volume_profile.entry(trade.price).or_insert(0) += trade.size;
@@ -253,6 +285,7 @@ impl AnalyticsAccumulator {
         self.snapshot.sell_volume = 0;
         self.session_trade_count = 0;
         self.session_turnover = 0;
+        self.session_candle = SessionCandleSnapshot::default();
     }
 
     /// Resets all session analytics and volume-profile state.
@@ -293,6 +326,11 @@ impl AnalyticsAccumulator {
             average_trade_size,
             imbalance_bps,
         }
+    }
+
+    /// Returns candle-style session summary for the current analytics session.
+    pub fn session_candle_snapshot(&self) -> SessionCandleSnapshot {
+        self.session_candle.clone()
     }
 
     fn recompute_profile_levels(&mut self) {
@@ -468,6 +506,51 @@ mod tests {
         assert_eq!(reset.total_volume, 0);
         assert_eq!(reset.trade_count, 0);
         assert_eq!(reset.vwap, 0);
+    }
+
+    #[test]
+    fn computes_session_candle_snapshot() {
+        let mut acc = AnalyticsAccumulator::default();
+        acc.on_trade(&TradePrint {
+            symbol: symbol(),
+            price: 100,
+            size: 5,
+            aggressor_side: Side::Ask,
+            sequence: 1,
+            ts_exchange_ns: 10,
+            ts_recv_ns: 11,
+        });
+        acc.on_trade(&TradePrint {
+            symbol: symbol(),
+            price: 98,
+            size: 3,
+            aggressor_side: Side::Bid,
+            sequence: 2,
+            ts_exchange_ns: 20,
+            ts_recv_ns: 21,
+        });
+        acc.on_trade(&TradePrint {
+            symbol: symbol(),
+            price: 101,
+            size: 2,
+            aggressor_side: Side::Ask,
+            sequence: 3,
+            ts_exchange_ns: 30,
+            ts_recv_ns: 31,
+        });
+
+        let candle = acc.session_candle_snapshot();
+        assert_eq!(candle.open, 100);
+        assert_eq!(candle.high, 101);
+        assert_eq!(candle.low, 98);
+        assert_eq!(candle.close, 101);
+        assert_eq!(candle.trade_count, 3);
+        assert_eq!(candle.first_ts_exchange_ns, 10);
+        assert_eq!(candle.last_ts_exchange_ns, 30);
+
+        acc.reset_session_delta();
+        let reset = acc.session_candle_snapshot();
+        assert_eq!(reset, SessionCandleSnapshot::default());
     }
 
     #[test]

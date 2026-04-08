@@ -9,7 +9,7 @@ the same normalized semantics.
 - Market identity: [`SymbolId`]
 - Event model: [`TradePrint`], [`BookUpdate`], [`BookLevel`], [`BookSnapshot`], [`Side`], [`BookAction`]
 - Quality flags: [`DataQualityFlags`]
-- Runtime outputs: [`AnalyticsSnapshot`], [`DerivedAnalyticsSnapshot`], [`SignalSnapshot`], [`SignalState`]
+- Runtime outputs: [`AnalyticsSnapshot`], [`DerivedAnalyticsSnapshot`], [`SessionCandleSnapshot`], [`SignalSnapshot`], [`SignalState`]
 - Deterministic analytics engine: [`AnalyticsAccumulator`]
 
 ## Design Principles
@@ -65,6 +65,8 @@ assert_eq!(q.bits() & DataQualityFlags::SEQUENCE_GAP.bits(), DataQualityFlags::S
 - `value_area_low` / `value_area_high` approximate the high-volume range around POC.
 - [`DerivedAnalyticsSnapshot`] adds session totals such as `total_volume`, `trade_count`, `vwap`,
   `average_trade_size`, and `imbalance_bps` without changing the original analytics payload.
+- [`SessionCandleSnapshot`] adds a candle-style session view with `open`, `high`, `low`, `close`,
+  `trade_count`, and first/last exchange timestamps.
 
 For full orchestration and adapter integration, see `of_runtime`.
 

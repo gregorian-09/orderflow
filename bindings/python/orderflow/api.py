@@ -373,6 +373,10 @@ class Engine:
         """Returns current derived analytics snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_derived_analytics_snapshot, symbol)
 
+    def session_candle_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns current session candle snapshot JSON decoded as dict."""
+        return self._snapshot_call(self._ffi.lib.of_get_session_candle_snapshot, symbol)
+
     def signal_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
         """Returns current signal snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_signal_snapshot, symbol)

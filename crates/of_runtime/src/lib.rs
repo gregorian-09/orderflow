@@ -16,7 +16,8 @@ use of_adapters::{
 };
 use of_core::{
     AnalyticsAccumulator, AnalyticsSnapshot, BookLevel, BookSnapshot, BookUpdate,
-    DataQualityFlags, DerivedAnalyticsSnapshot, SignalSnapshot, SignalState, SymbolId, TradePrint,
+    DataQualityFlags, DerivedAnalyticsSnapshot, SessionCandleSnapshot, SignalSnapshot, SignalState,
+    SymbolId, TradePrint,
 };
 use of_persist::{RetentionPolicy, RollingStore};
 use of_signals::{SignalGateDecision, SignalModule};
@@ -552,6 +553,13 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         self.analytics
             .get(symbol)
             .map(AnalyticsAccumulator::derived_snapshot)
+    }
+
+    /// Returns session candle snapshot for symbol if available.
+    pub fn session_candle_snapshot(&self, symbol: &SymbolId) -> Option<SessionCandleSnapshot> {
+        self.analytics
+            .get(symbol)
+            .map(AnalyticsAccumulator::session_candle_snapshot)
     }
 
     /// Returns the current materialized book snapshot for symbol if available.
@@ -1638,6 +1646,61 @@ mod tests {
         assert_eq!(derived.average_trade_size, 7);
         assert_eq!(derived.vwap, 504966);
         assert_eq!(derived.imbalance_bps, 3333);
+    }
+
+    #[test]
+    fn engine_exposes_session_candle_snapshot() {
+        let symbol = SymbolId {
+            venue: "CME".to_string(),
+            symbol: "ESM6".to_string(),
+        };
+        let mut engine = Engine::new(
+            EngineConfig::default(),
+            MockAdapter::default(),
+            DeltaMomentumSignal::new(5),
+        );
+
+        engine.start().expect("start failed");
+        engine.subscribe(symbol.clone(), 10).expect("sub failed");
+        engine
+            .ingest_trade(
+                TradePrint {
+                    symbol: symbol.clone(),
+                    price: 505000,
+                    size: 10,
+                    aggressor_side: Side::Ask,
+                    sequence: 1,
+                    ts_exchange_ns: 10,
+                    ts_recv_ns: 11,
+                },
+                DataQualityFlags::NONE,
+            )
+            .expect("trade 1");
+        engine
+            .ingest_trade(
+                TradePrint {
+                    symbol: symbol.clone(),
+                    price: 504900,
+                    size: 5,
+                    aggressor_side: Side::Bid,
+                    sequence: 2,
+                    ts_exchange_ns: 20,
+                    ts_recv_ns: 21,
+                },
+                DataQualityFlags::NONE,
+            )
+            .expect("trade 2");
+
+        let candle = engine
+            .session_candle_snapshot(&symbol)
+            .expect("session candle missing");
+        assert_eq!(candle.open, 505000);
+        assert_eq!(candle.high, 505000);
+        assert_eq!(candle.low, 504900);
+        assert_eq!(candle.close, 504900);
+        assert_eq!(candle.trade_count, 2);
+        assert_eq!(candle.first_ts_exchange_ns, 10);
+        assert_eq!(candle.last_ts_exchange_ns, 20);
     }
 
     #[test]

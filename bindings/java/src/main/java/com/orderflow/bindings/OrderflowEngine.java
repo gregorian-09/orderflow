@@ -353,6 +353,16 @@ public final class OrderflowEngine implements AutoCloseable {
     }
 
     /**
+     * Returns current session candle snapshot as JSON string.
+     *
+     * @param symbol target symbol
+     * @return JSON payload with open, high, low, close, trade_count, and first/last exchange timestamps
+     */
+    public String sessionCandleSnapshot(Symbol symbol) {
+        return snapshot(symbol, SnapshotKind.SESSION_CANDLE);
+    }
+
+    /**
      * Returns current signal snapshot as JSON string.
      *
      * @param symbol target symbol
@@ -421,6 +431,7 @@ public final class OrderflowEngine implements AutoCloseable {
                 case BOOK -> rc = nativeLib.of_get_book_snapshot(engine, sym, buffer, length);
                 case ANALYTICS -> rc = nativeLib.of_get_analytics_snapshot(engine, sym, buffer, length);
                 case DERIVED_ANALYTICS -> rc = nativeLib.of_get_derived_analytics_snapshot(engine, sym, buffer, length);
+                case SESSION_CANDLE -> rc = nativeLib.of_get_session_candle_snapshot(engine, sym, buffer, length);
                 case SIGNAL -> rc = nativeLib.of_get_signal_snapshot(engine, sym, buffer, length);
                 default -> throw new OrderflowException("unknown snapshot kind");
             }
@@ -483,6 +494,7 @@ public final class OrderflowEngine implements AutoCloseable {
         BOOK,
         ANALYTICS,
         DERIVED_ANALYTICS,
+        SESSION_CANDLE,
         SIGNAL,
     }
 }

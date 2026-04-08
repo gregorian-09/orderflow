@@ -201,6 +201,7 @@ Callback event envelope fields:
 | `String bookSnapshot(Symbol symbol)` | Book snapshot JSON |
 | `String analyticsSnapshot(Symbol symbol)` | Analytics snapshot JSON |
 | `String derivedAnalyticsSnapshot(Symbol symbol)` | Derived analytics snapshot JSON |
+| `String sessionCandleSnapshot(Symbol symbol)` | Session candle snapshot JSON |
 | `String signalSnapshot(Symbol symbol)` | Signal snapshot JSON |
 | `String metricsJson()` | Runtime metrics JSON |
 
@@ -212,6 +213,16 @@ Callback event envelope fields:
 - `asks`
 - `last_sequence`
 - `ts_exchange_ns`
+
+`sessionCandleSnapshot(Symbol symbol)` returns JSON with:
+
+- `open`
+- `high`
+- `low`
+- `close`
+- `trade_count`
+- `first_ts_exchange_ns`
+- `last_ts_exchange_ns`
 - `ts_recv_ns`
 
 The Java binding retries automatically with a larger native buffer when a snapshot payload exceeds the initial allocation.

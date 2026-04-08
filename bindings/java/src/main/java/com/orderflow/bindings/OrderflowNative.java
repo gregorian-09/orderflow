@@ -55,6 +55,8 @@ public interface OrderflowNative extends Library {
     int of_get_analytics_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
     /** Reads derived analytics snapshot JSON into caller buffer. */
     int of_get_derived_analytics_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    /** Reads session candle snapshot JSON into caller buffer. */
+    int of_get_session_candle_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
     /** Reads signal snapshot JSON into caller buffer. */
     int of_get_signal_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
 

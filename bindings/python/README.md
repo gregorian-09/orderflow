@@ -186,6 +186,7 @@ with Engine(EngineConfig(instance_id="py-client")) as eng:
 | `book_snapshot(symbol)` | Current book snapshot | `dict[str, Any]` |
 | `analytics_snapshot(symbol)` | Current analytics snapshot | `dict[str, Any]` |
 | `derived_analytics_snapshot(symbol)` | Current derived analytics snapshot | `dict[str, Any]` |
+| `session_candle_snapshot(symbol)` | Current session candle snapshot | `dict[str, Any]` |
 | `signal_snapshot(symbol)` | Current signal snapshot | `dict[str, Any]` |
 | `metrics()` | Runtime metrics | `dict[str, Any]` |
 
@@ -200,6 +201,16 @@ with Engine(EngineConfig(instance_id="py-client")) as eng:
 - `ts_recv_ns`
 
 The Python wrapper retries automatically if the native snapshot payload is larger than the initial buffer.
+
+`session_candle_snapshot(symbol)` returns a dictionary with:
+
+- `open`
+- `high`
+- `low`
+- `close`
+- `trade_count`
+- `first_ts_exchange_ns`
+- `last_ts_exchange_ns`
 
 ## Usage Patterns
 

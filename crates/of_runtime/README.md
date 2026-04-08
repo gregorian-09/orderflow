@@ -24,6 +24,7 @@ It wires adapter events into book state and analytics, applies quality-aware sig
   - [`Engine::book_snapshot`]
   - [`Engine::analytics_snapshot`]
   - [`Engine::derived_analytics_snapshot`]
+  - [`Engine::session_candle_snapshot`]
   - [`Engine::signal_snapshot`]
 
 ## End-to-End Example (Adapter Polling)
@@ -90,6 +91,8 @@ assert!(health.contains("\"started\":true"));
 - Book snapshots contain `bids` and `asks` arrays, each ordered by `level`.
 - [`Engine::analytics_snapshot`] and [`Engine::signal_snapshot`] retain their current payload semantics.
 - [`Engine::derived_analytics_snapshot`] exposes additive session metrics without changing the original analytics snapshot contract.
+- [`Engine::session_candle_snapshot`] exposes additive candle-style session state with `open`, `high`, `low`,
+  `close`, `trade_count`, and first/last exchange timestamps.
 
 ## Health and Metrics Contracts
 

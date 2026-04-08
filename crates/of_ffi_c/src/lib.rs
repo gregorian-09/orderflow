@@ -10,8 +10,8 @@ use std::sync::{
 
 use of_adapters::{AdapterConfig, ProviderKind, RawEvent};
 use of_core::{
-    BookAction, BookSnapshot, BookUpdate, DataQualityFlags, DerivedAnalyticsSnapshot, Side,
-    SignalState, SymbolId, TradePrint,
+    BookAction, BookSnapshot, BookUpdate, DataQualityFlags, DerivedAnalyticsSnapshot,
+    SessionCandleSnapshot, Side, SignalState, SymbolId, TradePrint,
 };
 use of_runtime::{
     build_default_engine, load_engine_config_from_path, DefaultEngine, EngineConfig,
@@ -726,6 +726,35 @@ pub extern "C" fn of_get_derived_analytics_snapshot(
     }
 }
 
+/// Writes current session candle snapshot JSON into caller buffer.
+#[no_mangle]
+pub extern "C" fn of_get_session_candle_snapshot(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+
+    let engine = unsafe { &mut *engine };
+    let payload = match engine.inner.session_candle_snapshot(&symbol) {
+        Some(snap) => format_session_candle_snapshot(&snap),
+        None => "{}".to_string(),
+    };
+
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
 /// Writes current signal snapshot JSON into caller buffer.
 #[no_mangle]
 pub extern "C" fn of_get_signal_snapshot(
@@ -1097,6 +1126,19 @@ fn format_derived_analytics_snapshot(snap: &DerivedAnalyticsSnapshot) -> String 
     )
 }
 
+fn format_session_candle_snapshot(snap: &SessionCandleSnapshot) -> String {
+    format!(
+        "{{\"open\":{},\"high\":{},\"low\":{},\"close\":{},\"trade_count\":{},\"first_ts_exchange_ns\":{},\"last_ts_exchange_ns\":{}}}",
+        snap.open,
+        snap.high,
+        snap.low,
+        snap.close,
+        snap.trade_count,
+        snap.first_ts_exchange_ns,
+        snap.last_ts_exchange_ns
+    )
+}
+
 fn format_book_levels(levels: &[of_core::BookLevel]) -> String {
     levels
         .iter()
@@ -1191,6 +1233,21 @@ mod tests {
         let mut len = buf.len() as u32;
         assert_eq!(
             of_get_signal_snapshot(
+                engine,
+                symbol as *const of_symbol_t,
+                buf.as_mut_ptr().cast::<c_void>(),
+                &mut len as *mut u32,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        String::from_utf8_lossy(&buf[..len as usize]).to_string()
+    }
+
+    fn session_candle_json(engine: *mut of_engine, symbol: &of_symbol_t) -> String {
+        let mut buf = vec![0u8; 1024];
+        let mut len = buf.len() as u32;
+        assert_eq!(
+            of_get_session_candle_snapshot(
                 engine,
                 symbol as *const of_symbol_t,
                 buf.as_mut_ptr().cast::<c_void>(),
@@ -1342,6 +1399,85 @@ mod tests {
         assert_eq!(
             signal,
             "{\"module\":\"delta_momentum_v1\",\"state\":\"neutral\",\"confidence_bps\":500,\"quality_flags\":0,\"reason\":\"delta_inside_band\"}"
+        );
+
+        assert_eq!(of_unsubscribe(sub), of_error_t::OF_OK as i32);
+        assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
+        of_engine_destroy(engine);
+    }
+
+    #[test]
+    fn session_candle_snapshot_matches_golden_payload() {
+        let _guard = test_lock().lock().expect("lock");
+
+        let instance_id = CString::new("ffi-session-candle-golden").expect("cstring");
+        let cfg = of_engine_config_t {
+            instance_id: instance_id.as_ptr(),
+            config_path: ptr::null(),
+            log_level: 0,
+            enable_persistence: 0,
+            audit_max_bytes: 0,
+            audit_max_files: 0,
+            audit_redact_tokens_csv: ptr::null(),
+            data_retention_max_bytes: 0,
+            data_retention_max_age_secs: 0,
+        };
+
+        let mut engine: *mut of_engine = ptr::null_mut();
+        assert_eq!(
+            of_engine_create(&cfg, &mut engine as *mut *mut of_engine),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(of_engine_start(engine), of_error_t::OF_OK as i32);
+
+        let venue = CString::new("CME").expect("cstring");
+        let symbol = CString::new("ESM6").expect("cstring");
+        let ffi_symbol = of_symbol_t {
+            venue: venue.as_ptr(),
+            symbol: symbol.as_ptr(),
+            depth_levels: 10,
+        };
+        let mut sub: *mut of_subscription = ptr::null_mut();
+        assert_eq!(
+            of_subscribe(
+                engine,
+                &ffi_symbol as *const of_symbol_t,
+                3,
+                None,
+                ptr::null_mut(),
+                &mut sub as *mut *mut of_subscription,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!sub.is_null());
+
+        for (price, size, side, seq, ts) in [
+            (505000, 9, 1u32, 1u64, 10u64),
+            (504900, 4, 0u32, 2u64, 20u64),
+        ] {
+            let trade = of_trade_t {
+                symbol: of_symbol_t {
+                    venue: venue.as_ptr(),
+                    symbol: symbol.as_ptr(),
+                    depth_levels: 10,
+                },
+                price,
+                size,
+                aggressor_side: side,
+                sequence: seq,
+                ts_exchange_ns: ts,
+                ts_recv_ns: ts + 1,
+            };
+            assert_eq!(
+                of_ingest_trade(engine, &trade as *const of_trade_t, 0),
+                of_error_t::OF_OK as i32
+            );
+        }
+
+        let candle = session_candle_json(engine, &ffi_symbol);
+        assert_eq!(
+            candle,
+            "{\"open\":505000,\"high\":505000,\"low\":504900,\"close\":504900,\"trade_count\":2,\"first_ts_exchange_ns\":10,\"last_ts_exchange_ns\":20}"
         );
 
         assert_eq!(of_unsubscribe(sub), of_error_t::OF_OK as i32);

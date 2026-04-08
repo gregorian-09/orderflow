@@ -219,6 +219,14 @@ class OrderflowLib:
         ]
         lib.of_get_derived_analytics_snapshot.restype = c_int32
 
+        lib.of_get_session_candle_snapshot.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_get_session_candle_snapshot.restype = c_int32
+
         lib.of_get_signal_snapshot.argtypes = [
             c_void_p,
             ctypes.POINTER(OfSymbol),

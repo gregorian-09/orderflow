@@ -100,6 +100,7 @@ Last updated: 2026-04-08
   - `of_get_book_snapshot`
   - `of_get_analytics_snapshot`
   - `of_get_derived_analytics_snapshot`
+  - `of_get_session_candle_snapshot`
   - `of_get_signal_snapshot`
   - `of_get_metrics_json`
   - `of_string_free`
