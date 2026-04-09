@@ -16,6 +16,21 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
   - [`SweepDetectionSignal`]
   - [`CompositeSignal`]
 
+## New In 0.2.0
+
+Relative to the `0.1.x` line, `of_signals` now includes a broader built-in
+catalog:
+
+- [`VolumeImbalanceSignal`]
+- [`CumulativeDeltaSignal`]
+- [`AbsorptionSignal`]
+- [`ExhaustionSignal`]
+- [`SweepDetectionSignal`]
+- [`CompositeSignal`]
+
+The original trait contract stayed stable, so downstream custom modules do not
+need a migration.
+
 ## Public API Inventory
 
 Public types:
@@ -226,3 +241,132 @@ Implement [`SignalModule`] and keep it:
 - explicit about confidence and reason fields
 - strict about quality gating for unsafe feed states
 - compatible with the stable `SignalSnapshot` contract so bindings and FFI callers keep working
+
+## Real-World Use Cases
+
+### 1. Gate entries on feed quality
+
+Even a simple threshold signal becomes materially safer when `quality_gate(...)`
+blocks action during stale, gap, or degraded feed states.
+
+### 2. Build multi-factor orderflow strategies
+
+Use several modules together to express:
+
+- context: `CumulativeDeltaSignal`
+- trigger: `SweepDetectionSignal`
+- reversal filter: `AbsorptionSignal` or `ExhaustionSignal`
+
+### 3. Keep strategy logic deterministic in replay
+
+Because modules consume normalized analytics instead of live provider payloads,
+the same module can be replayed over historical sessions and compared to live
+behavior with much less drift.
+
+## Strategy Pattern: Composite Confirmation
+
+A practical strategy stack often looks like:
+
+1. `CumulativeDeltaSignal` for directional regime bias
+2. `VolumeImbalanceSignal` for immediate orderflow pressure
+3. `SweepDetectionSignal` for breakout confirmation
+4. `CompositeSignal` to require majority confirmation
+
+## Detailed Example: Build A Composite Intraday Bias Module
+
+```rust
+use of_core::{AnalyticsSnapshot, DataQualityFlags, SignalState};
+use of_signals::{
+    CompositeSignal, CumulativeDeltaSignal, SweepDetectionSignal, SignalGateDecision,
+    SignalModule, VolumeImbalanceSignal,
+};
+
+fn main() {
+    let mut signal = CompositeSignal::new(vec![
+        Box::new(CumulativeDeltaSignal::new(400)),
+        Box::new(VolumeImbalanceSignal::new(150)),
+        Box::new(SweepDetectionSignal::new(200, 4)),
+    ]);
+
+    let analytics = AnalyticsSnapshot {
+        buy_volume: 900,
+        sell_volume: 500,
+        delta: 400,
+        cumulative_delta: 650,
+        last_price: 505_075,
+        point_of_control: 505_000,
+        value_area_low: 504_750,
+        value_area_high: 505_050,
+        ..Default::default()
+    };
+
+    if signal.quality_gate(DataQualityFlags::NONE) == SignalGateDecision::Pass {
+        signal.on_analytics(&analytics);
+        let snapshot = signal.snapshot();
+        if matches!(snapshot.state, SignalState::LongBias) {
+            println!("long bias: {}", snapshot.reason);
+        }
+    }
+}
+```
+
+## Detailed Example: Write Your Own Signal Module
+
+```rust
+use of_core::{AnalyticsSnapshot, DataQualityFlags, SignalSnapshot, SignalState};
+use of_signals::{SignalGateDecision, SignalModule};
+
+struct POCReclaimSignal {
+    last: SignalSnapshot,
+}
+
+impl Default for POCReclaimSignal {
+    fn default() -> Self {
+        Self {
+            last: SignalSnapshot {
+                module_id: "poc_reclaim_v1",
+                state: SignalState::Neutral,
+                confidence_bps: 0,
+                quality_flags: 0,
+                reason: "init".to_string(),
+            },
+        }
+    }
+}
+
+impl SignalModule for POCReclaimSignal {
+    fn on_analytics(&mut self, analytics: &AnalyticsSnapshot) {
+        let state = if analytics.delta > 200 && analytics.point_of_control >= analytics.value_area_low {
+            SignalState::LongBias
+        } else if analytics.delta < -200 && analytics.point_of_control <= analytics.value_area_high {
+            SignalState::ShortBias
+        } else {
+            SignalState::Neutral
+        };
+
+        self.last = SignalSnapshot {
+            module_id: "poc_reclaim_v1",
+            state,
+            confidence_bps: 7000,
+            reason: "POC reclaim heuristic".to_string(),
+            quality_flags: 0,
+        };
+    }
+
+    fn snapshot(&self) -> SignalSnapshot {
+        self.last.clone()
+    }
+
+    fn quality_gate(&self, flags: DataQualityFlags) -> SignalGateDecision {
+        if flags.intersects(
+            DataQualityFlags::STALE_FEED
+                | DataQualityFlags::SEQUENCE_GAP
+                | DataQualityFlags::ADAPTER_DEGRADED,
+        ) {
+            SignalGateDecision::Block
+        } else {
+            SignalGateDecision::Pass
+        }
+    }
+}
+```

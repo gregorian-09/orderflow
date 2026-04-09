@@ -13,6 +13,16 @@ It wires adapter events into book state and analytics, applies quality-aware sig
 6. Gate risk-sensitive output using [`DataQualityFlags`](of_core::DataQualityFlags).
 7. Optionally persist event streams via `of_persist`.
 
+## New In 0.2.0
+
+Relative to the `0.1.x` line, `of_runtime` now adds or hardens:
+
+- real [`Engine::book_snapshot`] support
+- additive derived analytics, session candle, and interval candle snapshots
+- config compatibility reporting with [`ConfigLoadReport`]
+- stronger live supervision and richer health/metrics payloads
+- cleaner internal modularization without changing the public API
+
 ## Main Types
 
 - [`EngineConfig`] - runtime, adapter, audit, and retention config.
@@ -269,3 +279,94 @@ parsing succeeded or the legacy fallback path was required.
 - Use `configure_external_feed` + `external_health_tick` when ingesting from non-adapter bridges.
 - For deterministic simulation, pair `MockAdapter` with replayed events and fixed timestamps.
 - Prefer [`load_engine_config_report_from_path`] in user-facing CLIs or services so you can warn when a config only loaded through compatibility fallback.
+
+## Real-World Use Cases
+
+### 1. Live runtime with adapter-managed transport
+
+Use the engine as the orchestration layer when the adapter owns connectivity and
+you want signal generation, health, persistence, and snapshots in one place.
+
+### 2. Broker bridge or gateway ingestion
+
+If another process already owns the transport, use `configure_external_feed`,
+`ingest_trade`, and `ingest_book` to keep quality supervision and analytics
+inside the runtime.
+
+### 3. Deterministic replay and regression testing
+
+Pair `MockAdapter` or external ingest with fixed event sequences and compare
+snapshots, health transitions, and signal outputs.
+
+## Detailed Example: Bridge-Driven Runtime
+
+```rust,no_run
+use of_adapters::MockAdapter;
+use of_core::{BookAction, BookUpdate, DataQualityFlags, Side, SymbolId, TradePrint};
+use of_runtime::{Engine, EngineConfig, ExternalFeedPolicy};
+use of_signals::CompositeSignal;
+
+let symbol = SymbolId {
+    venue: "BINANCE".into(),
+    symbol: "BTCUSDT".into(),
+};
+
+let mut engine = Engine::new(
+    EngineConfig::default(),
+    MockAdapter::default(),
+    CompositeSignal::default(),
+);
+
+engine.start()?;
+engine.configure_external_feed(ExternalFeedPolicy {
+    stale_after_ms: 5_000,
+    enforce_sequence: true,
+})?;
+
+engine.ingest_book(
+    BookUpdate {
+        symbol: symbol.clone(),
+        side: Side::Bid,
+        level: 0,
+        price: 6_250_000,
+        size: 10,
+        action: BookAction::Upsert,
+        sequence: 1,
+        ts_exchange_ns: 1_000,
+        ts_recv_ns: 1_200,
+    },
+    DataQualityFlags::NONE,
+)?;
+
+engine.ingest_trade(
+    TradePrint {
+        symbol: symbol.clone(),
+        price: 6_250_100,
+        size: 2,
+        aggressor_side: Side::Ask,
+        sequence: 2,
+        ts_exchange_ns: 2_000,
+        ts_recv_ns: 2_100,
+    },
+    DataQualityFlags::NONE,
+)?;
+
+if let Some(book) = engine.book_snapshot(&symbol) {
+    println!("best bid levels={}", book.bids.len());
+}
+if let Some(derived) = engine.derived_analytics_snapshot(&symbol) {
+    println!("trade_count={} vwap={}", derived.trade_count, derived.vwap);
+}
+# Ok::<(), of_runtime::RuntimeError>(())
+```
+
+## Strategy Construction Pattern With `of_runtime`
+
+A practical runtime-backed strategy flow is:
+
+1. subscribe one or more symbols
+2. ingest or poll normalized events
+3. read `analytics_snapshot` and `derived_analytics_snapshot` for context
+4. use `signal_snapshot` as the strategy-facing decision surface
+5. block action whenever `current_quality_flags_bits()` or `signal_snapshot.quality_flags` indicates degradation
+6. persist the session so the same sequence can be replayed later

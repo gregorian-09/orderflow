@@ -11,6 +11,19 @@ It is designed for replay, auditability, and post-trade research workflows.
 - [`RetentionPolicy`] - bounded retention by total bytes and/or max file age.
 - [`PersistError`] / [`PersistResult<T>`] - persistence error contract.
 
+## New In 0.2.0
+
+Relative to the `0.1.x` line, `of_persist` is no longer write-only. It now
+includes:
+
+- discovery APIs for venues, symbols, and streams
+- typed readback APIs for books and trades
+- merged event replay reads
+- inclusive sequence-range filtering
+
+That makes the crate useful for replay, incident analysis, and research instead
+of only append-only storage.
+
 ## Public API Inventory
 
 Public types:
@@ -187,3 +200,68 @@ let _ = store;
 - [`PersistError::Io`] wraps filesystem and parse failures.
 - directory creation happens eagerly on store creation, so path permission issues surface early.
 - retention pruning is best-effort within normal append flows; it is not a separate daemon or background compactor.
+
+## Real-World Use Cases
+
+### 1. Incident review after a bad fill or missed signal
+
+Read back the exact normalized book/trade stream that the runtime saw and
+reconstruct the session around the problematic sequence range.
+
+### 2. Research dataset generation
+
+Persist normalized data during live or simulated sessions, then read back only
+the venue/symbol windows needed for offline analysis.
+
+### 3. Deterministic replay
+
+Use `read_events(...)` or `read_events_in_range(...)` to feed ordered events
+back into test or replay tooling.
+
+## Detailed Example: Investigate A Sequence Window
+
+```rust
+use of_persist::{RollingStore, StoredEvent};
+
+fn main() {
+    let store = RollingStore::new("data").expect("store");
+    let events = store
+        .read_events_in_range("CME", "ESM6", Some(10_000), Some(10_150))
+        .expect("events");
+
+    for event in events {
+        match event {
+            StoredEvent::Book(book) => {
+                println!(
+                    "BOOK seq={} level={} px={} size={}",
+                    book.sequence, book.level, book.price, book.size
+                );
+            }
+            StoredEvent::Trade(trade) => {
+                println!(
+                    "TRADE seq={} px={} size={}",
+                    trade.sequence, trade.price, trade.size
+                );
+            }
+        }
+    }
+}
+```
+
+## Detailed Example: Discovery-First Replay Preparation
+
+```rust
+use of_persist::RollingStore;
+
+fn main() {
+    let store = RollingStore::new("data").expect("store");
+
+    for venue in store.list_venues().expect("venues") {
+        println!("venue={venue}");
+        for symbol in store.list_symbols(&venue).expect("symbols") {
+            let streams = store.list_streams(&venue, &symbol).expect("streams");
+            println!("  symbol={symbol} streams={streams:?}");
+        }
+    }
+}
+```

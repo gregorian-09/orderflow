@@ -12,6 +12,18 @@ the same normalized semantics.
 - Runtime outputs: [`AnalyticsSnapshot`], [`DerivedAnalyticsSnapshot`], [`SessionCandleSnapshot`], [`IntervalCandleSnapshot`], [`SignalSnapshot`], [`SignalState`]
 - Deterministic analytics engine: [`AnalyticsAccumulator`]
 
+## New In 0.2.0
+
+Relative to the `0.1.x` line, `of_core` now includes:
+
+- [`BookSnapshot`] as a first-class materialized depth model
+- [`DerivedAnalyticsSnapshot`] for additive totals such as `vwap` and `trade_count`
+- [`SessionCandleSnapshot`] for session-wide OHLC state
+- [`IntervalCandleSnapshot`] for rolling-window OHLC state
+
+These are additive data-model extensions. They do not change the older
+`AnalyticsSnapshot` contract.
+
 ## Public API Inventory
 
 Public types:
@@ -190,3 +202,113 @@ This snapshot model is used by the runtime and exposed through the FFI and bindi
 - Use [`SessionCandleSnapshot`] when you want one candle for the entire active session.
 - Use [`IntervalCandleSnapshot`] when you want a rolling lookback window.
 - Use [`BookSnapshot`] when you need reconstructed depth instead of raw incremental updates.
+
+## Real-World Use Cases
+
+### 1. Offline research and replay analytics
+
+Use [`AnalyticsAccumulator`] directly when you already have normalized trade
+data and want deterministic session analytics without the full runtime.
+
+Typical use cases:
+
+- replaying one session from a CSV/JSONL converter
+- validating a strategy hypothesis before wiring live adapters
+- generating session summaries for dashboards or reports
+
+### 2. Shared schema between components
+
+Use `of_core` as the common contract when writing:
+
+- custom adapters that emit normalized [`BookUpdate`] and [`TradePrint`]
+- custom signal modules that consume [`AnalyticsSnapshot`]
+- persistence or replay tools that must stay aligned with runtime semantics
+
+### 3. Strategy prototyping before runtime integration
+
+For early-stage ideas, it is often faster to work only with [`TradePrint`],
+[`AnalyticsAccumulator`], and the output snapshot types before integrating with
+`of_runtime`.
+
+## Detailed Example: Build Session Analytics From Trades
+
+```rust
+use of_core::{AnalyticsAccumulator, Side, SymbolId, TradePrint};
+
+fn main() {
+    let symbol = SymbolId {
+        venue: "CME".to_string(),
+        symbol: "ESM6".to_string(),
+    };
+
+    let trades = vec![
+        TradePrint {
+            symbol: symbol.clone(),
+            price: 505_000,
+            size: 8,
+            aggressor_side: Side::Ask,
+            sequence: 1,
+            ts_exchange_ns: 1_000,
+            ts_recv_ns: 1_100,
+        },
+        TradePrint {
+            symbol: symbol.clone(),
+            price: 505_025,
+            size: 4,
+            aggressor_side: Side::Ask,
+            sequence: 2,
+            ts_exchange_ns: 2_000,
+            ts_recv_ns: 2_100,
+        },
+        TradePrint {
+            symbol,
+            price: 505_000,
+            size: 6,
+            aggressor_side: Side::Bid,
+            sequence: 3,
+            ts_exchange_ns: 3_000,
+            ts_recv_ns: 3_100,
+        },
+    ];
+
+    let mut acc = AnalyticsAccumulator::default();
+    for trade in &trades {
+        acc.on_trade(trade);
+    }
+
+    let analytics = acc.snapshot();
+    let derived = acc.derived_snapshot();
+    let session_candle = acc.session_candle_snapshot();
+    let interval_candle = acc.interval_candle_snapshot(5_000);
+
+    println!(
+        "delta={} poc={} total_volume={} vwap={:.2}",
+        analytics.delta,
+        analytics.point_of_control,
+        derived.total_volume,
+        derived.vwap
+    );
+    println!(
+        "session ohlc=({}, {}, {}, {}) trades={}",
+        session_candle.open,
+        session_candle.high,
+        session_candle.low,
+        session_candle.close,
+        session_candle.trade_count
+    );
+    println!(
+        "interval close={} interval_vwap={:.2}",
+        interval_candle.close,
+        interval_candle.vwap
+    );
+}
+```
+
+## Strategy-Prototyping Pattern
+
+A common progression is:
+
+1. use [`TradePrint`] and [`AnalyticsAccumulator`] to compute deterministic features
+2. test threshold logic over [`AnalyticsSnapshot`] and [`DerivedAnalyticsSnapshot`]
+3. once stable, move the logic into an `of_signals::SignalModule`
+4. finally run it inside `of_runtime` for live or replay orchestration

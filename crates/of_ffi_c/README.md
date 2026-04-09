@@ -11,6 +11,20 @@ It is the native interface used by Python (`ctypes`), Java (JNA), and any C-comp
 - Polling and snapshots: `of_engine_poll_once`, `of_get_book_snapshot`, `of_get_analytics_snapshot`, `of_get_derived_analytics_snapshot`, `of_get_session_candle_snapshot`, `of_get_interval_candle_snapshot`, `of_get_signal_snapshot`
 - Metrics and memory management: `of_get_metrics_json`, `of_string_free`
 
+## New In 0.2.0
+
+Relative to the `0.1.x` line, the C ABI now exposes:
+
+- `of_get_book_snapshot(...)`
+- `of_get_derived_analytics_snapshot(...)`
+- `of_get_session_candle_snapshot(...)`
+- `of_get_interval_candle_snapshot(...)`
+- `BOOK_SNAPSHOT` callback stream support
+- `DERIVED_ANALYTICS` callback stream support
+
+These are additive ABI extensions; existing lifecycle and polling calls remain
+valid.
+
 ## Public ABI Inventory
 
 Public C structs/types:
@@ -258,6 +272,68 @@ Most functions return `int32_t` values mapped from [`of_error_t`]:
 
 - Treat engine and subscription handles as opaque; do not cast or inspect internals.
 - Keep ABI structs initialized (zero-init is recommended before setting fields).
+- Prefer explicit timestamps and sequence numbers for external ingest to maximize quality checks.
+- Snapshot functions write the required byte length back through `inout_len`; if the caller buffer is too small, retry with the returned size.
+- `BOOK_SNAPSHOT` callbacks emit the same JSON shape as `of_get_book_snapshot(...)`, but only when book state changes for the subscribed symbol.
+- `DERIVED_ANALYTICS` callbacks emit the same JSON shape as `of_get_derived_analytics_snapshot(...)`, but only when trade-driven analytics change for the subscribed symbol.
+
+## Real-World Use Cases
+
+### 1. Embed the runtime in a C or C++ trading host
+
+Use the lifecycle, subscription, and polling APIs directly from a native host
+process that already owns process supervision and deployment.
+
+### 2. Drive Python or Java bindings from the same native ABI
+
+The Python and Java packages both rely on this ABI, so host-side operators can
+reason about one native contract instead of three unrelated APIs.
+
+### 3. Build a custom host-side event pump
+
+Use callbacks for snapshot/event delivery and poll-driven control for host-side
+scheduling.
+
+## Detailed Example: Poll And Read Snapshots
+
+```c
+#include "orderflow.h"
+#include <stdint.h>
+#include <stdio.h>
+
+int main(void) {
+  of_engine_t* engine = NULL;
+  of_engine_config_t cfg = {0};
+  cfg.instance_id = "native-demo";
+
+  if (of_engine_create(&cfg, &engine) != OF_OK) return 1;
+  if (of_engine_start(engine) != OF_OK) return 2;
+
+  of_symbol_t symbol = {0};
+  symbol.venue = "SIM";
+  symbol.symbol = "ESM6";
+  symbol.depth_levels = 10;
+
+  if (of_subscribe(engine, &symbol, OF_STREAM_ANALYTICS, NULL, NULL, NULL) != OF_OK) return 3;
+
+  if (of_engine_poll_once(engine, OF_DQ_NONE) != OF_OK) return 4;
+
+  char buf[2048];
+  uint32_t len = (uint32_t)sizeof(buf);
+  if (of_get_analytics_snapshot(engine, &symbol, buf, &len) == OF_OK) {
+    printf("analytics: %.*s\n", (int)len, buf);
+  }
+
+  len = (uint32_t)sizeof(buf);
+  if (of_get_book_snapshot(engine, &symbol, buf, &len) == OF_OK) {
+    printf("book: %.*s\n", (int)len, buf);
+  }
+
+  of_engine_stop(engine);
+  of_engine_destroy(engine);
+  return 0;
+}
+```
 - Prefer explicit timestamps and sequence numbers for external ingest to maximize quality checks.
 - Snapshot functions write the required byte length back through `inout_len`; if the caller buffer is too small, retry with the returned size.
 - `BOOK_SNAPSHOT` callbacks emit the same JSON shape as `of_get_book_snapshot(...)`, but only when book state changes for the subscribed symbol.

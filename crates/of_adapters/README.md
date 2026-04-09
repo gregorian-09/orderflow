@@ -11,6 +11,19 @@ It standardizes lifecycle, subscription, polling, and health reporting while kee
 - Config: [`AdapterConfig`], [`ProviderKind`], [`CredentialsRef`]
 - Health: [`AdapterHealth`]
 
+## New In 0.2.0
+
+Relative to the `0.1.x` line, the adapter layer now has materially stronger
+live-path supervision:
+
+- reconnect with backoff
+- subscription replay after reconnect
+- richer `AdapterHealth::protocol_info`
+- stronger degraded and timeout handling in the live providers
+
+The trait surface stayed stable; the hardening happened behind the same public
+adapter interface.
+
 ## Public API Inventory
 
 Public types:
@@ -181,3 +194,124 @@ All adapter operations return [`AdapterResult<T>`] with [`AdapterError`], coveri
 - [`SubscribeReq::depth_levels`] is advisory and provider-dependent; mock and depth-aware providers use it directly.
 - repeated subscribe calls for the same symbol should be treated as update-or-refresh, not as a duplicate stream request.
 - unsubscribe should remove future delivery for that symbol, but does not retroactively clear already-polled events from the caller buffer.
+
+## Real-World Use Cases
+
+### 1. Bridge a proprietary broker or exchange feed
+
+If you already have SDK access for a venue that Orderflow does not support,
+implement [`MarketDataAdapter`] and normalize that SDK’s messages into
+[`RawEvent`].
+
+### 2. Simulate live behavior in tests
+
+Use [`MockAdapter`] to feed deterministic `BookUpdate` and `TradePrint` events
+into `of_runtime` without network dependencies.
+
+### 3. Build a gateway process
+
+Run your provider-specific adapter in one process and expose normalized output
+to downstream strategy or runtime layers. This keeps transport complexity out
+of the strategy code.
+
+## How To Create Your Own Adapter
+
+The minimum implementation steps are:
+
+1. define a struct that owns connection state, subscriptions, and any pending event queue
+2. implement [`MarketDataAdapter`] for that struct
+3. normalize provider payloads into [`RawEvent::Book`] and [`RawEvent::Trade`]
+4. expose meaningful health through [`AdapterHealth`]
+5. add factory/config wiring if you want the adapter selectable via [`create_adapter`]
+
+Important design rules:
+
+- keep emitted prices and sizes integer-normalized
+- preserve provider sequence numbers whenever available
+- preserve both exchange and local receive timestamps
+- keep reconnect/backoff logic in the adapter, not in strategy code
+- emit only normalized events from the public surface
+
+## Detailed Example: Custom Adapter Skeleton
+
+```rust
+use of_adapters::{
+    AdapterHealth, AdapterResult, MarketDataAdapter, RawEvent, SubscribeReq,
+};
+use of_core::{BookAction, BookUpdate, Side, SymbolId, TradePrint};
+
+#[derive(Default)]
+struct DemoAdapter {
+    connected: bool,
+    subscribed: Vec<SymbolId>,
+    queue: Vec<RawEvent>,
+}
+
+impl DemoAdapter {
+    fn on_trade_message(&mut self, symbol: &SymbolId, price: i64, size: i64, side: Side, seq: u64) {
+        self.queue.push(RawEvent::Trade(TradePrint {
+            symbol: symbol.clone(),
+            price,
+            size,
+            aggressor_side: side,
+            sequence: seq,
+            ts_exchange_ns: 10,
+            ts_recv_ns: 20,
+        }));
+    }
+
+    fn on_book_message(&mut self, symbol: &SymbolId, level: u16, price: i64, size: i64, seq: u64) {
+        self.queue.push(RawEvent::Book(BookUpdate {
+            symbol: symbol.clone(),
+            side: Side::Bid,
+            level,
+            price,
+            size,
+            action: BookAction::Upsert,
+            sequence: seq,
+            ts_exchange_ns: 10,
+            ts_recv_ns: 20,
+        }));
+    }
+}
+
+impl MarketDataAdapter for DemoAdapter {
+    fn connect(&mut self) -> AdapterResult<()> {
+        self.connected = true;
+        Ok(())
+    }
+
+    fn subscribe(&mut self, req: SubscribeReq) -> AdapterResult<()> {
+        self.subscribed.push(req.symbol);
+        Ok(())
+    }
+
+    fn unsubscribe(&mut self, symbol: SymbolId) -> AdapterResult<()> {
+        self.subscribed.retain(|s| s != &symbol);
+        Ok(())
+    }
+
+    fn poll(&mut self, out: &mut Vec<RawEvent>) -> AdapterResult<usize> {
+        let n = self.queue.len();
+        out.extend(self.queue.drain(..));
+        Ok(n)
+    }
+
+    fn health(&self) -> AdapterHealth {
+        AdapterHealth {
+            connected: self.connected,
+            degraded: false,
+            last_error: None,
+            protocol_info: Some(format!("subs={}", self.subscribed.len())),
+        }
+    }
+}
+```
+
+## Adapter Authoring Checklist
+
+- normalize every provider event into `BookUpdate` or `TradePrint`
+- treat `poll()` as the public emission point
+- make `health()` useful for operators, not just for tests
+- decide how reconnect/backoff affects `degraded`
+- ensure unsubscribe removes future delivery for the symbol

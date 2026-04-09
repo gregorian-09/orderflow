@@ -71,6 +71,96 @@ python3 tools/provider_conformance.py --help
 6. Add config validation requirements in `of_runtime::validate_startup_config` if needed.
 7. Add conformance tests and docs updates.
 
+### Detailed Adapter Skeleton
+
+```rust
+use of_adapters::{
+    AdapterError, AdapterHealth, AdapterResult, MarketDataAdapter, RawEvent, SubscribeReq,
+};
+use of_core::{BookAction, BookUpdate, Side, SymbolId, TradePrint};
+
+#[derive(Default)]
+struct BridgeAdapter {
+    connected: bool,
+    subscriptions: Vec<SubscribeReq>,
+    pending: Vec<RawEvent>,
+}
+
+impl BridgeAdapter {
+    fn push_trade_from_sdk(&mut self, symbol: SymbolId, price: i64, size: i64, seq: u64) {
+        self.pending.push(RawEvent::Trade(TradePrint {
+            symbol,
+            price,
+            size,
+            aggressor_side: Side::Ask,
+            sequence: seq,
+            ts_exchange_ns: 1,
+            ts_recv_ns: 2,
+        }));
+    }
+
+    fn push_book_from_sdk(&mut self, symbol: SymbolId, level: u16, price: i64, size: i64, seq: u64) {
+        self.pending.push(RawEvent::Book(BookUpdate {
+            symbol,
+            side: Side::Bid,
+            level,
+            price,
+            size,
+            action: BookAction::Upsert,
+            sequence: seq,
+            ts_exchange_ns: 1,
+            ts_recv_ns: 2,
+        }));
+    }
+}
+
+impl MarketDataAdapter for BridgeAdapter {
+    fn connect(&mut self) -> AdapterResult<()> {
+        self.connected = true;
+        Ok(())
+    }
+
+    fn subscribe(&mut self, req: SubscribeReq) -> AdapterResult<()> {
+        if !self.connected {
+            return Err(AdapterError::Disconnected);
+        }
+        self.subscriptions.push(req);
+        Ok(())
+    }
+
+    fn unsubscribe(&mut self, symbol: SymbolId) -> AdapterResult<()> {
+        self.subscriptions.retain(|req| req.symbol != symbol);
+        Ok(())
+    }
+
+    fn poll(&mut self, out: &mut Vec<RawEvent>) -> AdapterResult<usize> {
+        if !self.connected {
+            return Err(AdapterError::Disconnected);
+        }
+        let n = self.pending.len();
+        out.extend(self.pending.drain(..));
+        Ok(n)
+    }
+
+    fn health(&self) -> AdapterHealth {
+        AdapterHealth {
+            connected: self.connected,
+            degraded: false,
+            last_error: None,
+            protocol_info: Some(format!("subscriptions={}", self.subscriptions.len())),
+        }
+    }
+}
+```
+
+### Adapter Authoring Rules
+
+- normalize before leaving the adapter boundary
+- preserve timestamps and sequences whenever the provider exposes them
+- use `degraded` to reflect reconnecting or stale transport states
+- keep provider-native error handling out of runtime and strategy modules
+- test `poll()` behavior with empty, single-event, and burst-event cases
+
 ## Extension Pattern: Add a New Signal Module
 
 1. Implement `SignalModule` in `of_signals`.
