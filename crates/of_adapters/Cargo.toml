@@ -9,6 +9,8 @@ homepage.workspace = true
 description = "Provider adapters and market-data abstraction for the Orderflow engine"
 readme = "README.md"
 documentation = "https://docs.rs/of_adapters"
+keywords = ["orderflow", "market-data", "trading", "adapters", "finance"]
+categories = ["finance", "api-bindings"]
 
 [features]
 default = []

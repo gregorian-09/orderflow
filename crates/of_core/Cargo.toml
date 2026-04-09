@@ -9,6 +9,8 @@ homepage.workspace = true
 description = "Core domain models and analytics primitives for the Orderflow engine"
 readme = "README.md"
 documentation = "https://docs.rs/of_core"
+keywords = ["orderflow", "market-data", "trading", "analytics", "finance"]
+categories = ["finance", "algorithms"]
 
 [package.metadata.docs.rs]
 all-features = true

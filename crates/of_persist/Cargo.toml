@@ -9,6 +9,8 @@ homepage.workspace = true
 description = "Persistence and retention utilities for Orderflow normalized data"
 readme = "README.md"
 documentation = "https://docs.rs/of_persist"
+keywords = ["orderflow", "market-data", "persistence", "replay", "finance"]
+categories = ["finance", "database-implementations"]
 
 [package.metadata.docs.rs]
 all-features = true

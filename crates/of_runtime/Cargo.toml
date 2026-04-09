@@ -9,6 +9,8 @@ homepage.workspace = true
 description = "Runtime orchestration and health supervision for the Orderflow engine"
 readme = "README.md"
 documentation = "https://docs.rs/of_runtime"
+keywords = ["orderflow", "market-data", "trading", "runtime", "finance"]
+categories = ["finance", "simulation"]
 
 [package.metadata.docs.rs]
 all-features = true

@@ -9,6 +9,8 @@ homepage.workspace = true
 description = "Signal modules and gating policy for the Orderflow engine"
 readme = "README.md"
 documentation = "https://docs.rs/of_signals"
+keywords = ["orderflow", "trading", "signals", "analytics", "finance"]
+categories = ["finance", "algorithms"]
 
 [package.metadata.docs.rs]
 all-features = true

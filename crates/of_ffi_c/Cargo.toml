@@ -9,6 +9,8 @@ homepage.workspace = true
 description = "C ABI facade for the Orderflow runtime"
 readme = "README.md"
 documentation = "https://docs.rs/of_ffi_c"
+keywords = ["orderflow", "ffi", "market-data", "trading", "finance"]
+categories = ["finance", "api-bindings"]
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]
