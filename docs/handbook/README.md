@@ -19,7 +19,19 @@ It is written for three audiences:
 4. [Architecture](./04-architecture.md)  
    Components, data flow, UML-style diagrams, and module boundaries.
 5. [API Reference](./05-api-reference.md)  
-   Full Rust/C/Python/Java API coverage with payload contracts.
+   API index and compatibility map across Rust/C/Python/Java.
+5a. [of_core Reference](./05a-of-core-reference.md)  
+   Canonical data model, analytics types, and accumulator semantics.
+5b. [of_adapters Reference](./05b-of-adapters-reference.md)  
+   Provider boundary, trait contract, config, and health semantics.
+5c. [of_signals Reference](./05c-of-signals-reference.md)  
+   Built-in signal modules, trait contract, and output interpretation.
+5d. [of_persist Reference](./05d-of-persist-reference.md)  
+   Storage layout, readback, retention, and replay-oriented contracts.
+5e. [of_runtime Reference](./05e-of-runtime-reference.md)  
+   Engine lifecycle, snapshots, health, config, and persistence integration.
+5f. [of_ffi_c Reference](./05f-of-ffi-c-reference.md)  
+   C ABI structs, enums, functions, ownership rules, and payload contracts.
 6. [Contributor Guide](./06-contributor-guide.md)  
    Build/test/extend instructions and implementation notes.
 7. [References](./07-references.md)  

@@ -1,6 +1,9 @@
 # API Reference (Rust, C, Python, Java)
 
-This page is the complete public API map for the current codebase.
+This page is the API index for the current codebase. The detailed Rust crate
+reference has been split into dedicated handbook chapters so each public
+surface can carry field-level and method-level documentation without collapsing
+into one oversized page.
 
 ## Compatibility Layers
 
@@ -8,6 +11,23 @@ This page is the complete public API map for the current codebase.
 - **C ABI** (`crates/of_ffi_c/include/orderflow.h`) is the stable cross-language boundary.
 - **Python** wraps C ABI with `ctypes`.
 - **Java** wraps C ABI with JNA.
+
+## Detailed Handbook Chapters
+
+Rust crate chapters:
+
+- [`of_core` reference](./05a-of-core-reference.md)
+- [`of_adapters` reference](./05b-of-adapters-reference.md)
+- [`of_signals` reference](./05c-of-signals-reference.md)
+- [`of_persist` reference](./05d-of-persist-reference.md)
+- [`of_runtime` reference](./05e-of-runtime-reference.md)
+- [`of_ffi_c` reference](./05f-of-ffi-c-reference.md)
+
+Binding-specific docs:
+
+- [Python binding handbook](../bindings/python.md)
+- [Java binding handbook](../bindings/java.md)
+- [C ABI header](../../crates/of_ffi_c/include/orderflow.h)
 
 ---
 
