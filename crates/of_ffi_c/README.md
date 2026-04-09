@@ -104,6 +104,98 @@ Subscription stream ids:
 - `6`: `BOOK_SNAPSHOT` materialized book snapshot callbacks after book changes
 - `7`: `DERIVED_ANALYTICS` session-derived analytics callbacks after trade changes
 
+## C Struct Reference
+
+`of_engine_config_t`:
+
+- `instance_id`: optional runtime instance id override
+- `config_path`: optional `.toml` or `.json` runtime config path
+- `log_level`: reserved for host integrations
+- `enable_persistence`: non-zero enables persistence
+- `audit_max_bytes`: audit rotation size
+- `audit_max_files`: audit retention count
+- `audit_redact_tokens_csv`: comma-separated audit redaction tokens
+- `data_retention_max_bytes`: persistence byte cap
+- `data_retention_max_age_secs`: persistence age cap in seconds
+
+`of_symbol_t`:
+
+- `venue`: venue/exchange name
+- `symbol`: normalized symbol string
+- `depth_levels`: requested book depth for subscribe calls
+
+`of_trade_t`:
+
+- `symbol`: embedded [`of_symbol_t`]
+- `price`, `size`: integer-normalized trade values
+- `aggressor_side`: one of `OF_SIDE_BID` or `OF_SIDE_ASK`
+- `sequence`: venue sequence or `0` when unavailable
+- `ts_exchange_ns`, `ts_recv_ns`: exchange and local timestamps
+
+`of_book_t`:
+
+- `symbol`: embedded [`of_symbol_t`]
+- `side`: one of `OF_SIDE_BID` or `OF_SIDE_ASK`
+- `level`: top-of-book-relative depth index
+- `price`, `size`: integer-normalized book values
+- `action`: one of `OF_BOOK_ACTION_UPSERT` or `OF_BOOK_ACTION_DELETE`
+- `sequence`: venue sequence or `0` when unavailable
+- `ts_exchange_ns`, `ts_recv_ns`: exchange and local timestamps
+
+`of_external_feed_policy_t`:
+
+- `stale_after_ms`: max allowed ingest silence before stale status
+- `enforce_sequence`: non-zero enables sequence-gap/out-of-order checks
+
+`of_event_t` callback envelope:
+
+- `kind`: stream kind id
+- `payload` / `payload_len`: UTF-8 JSON payload bytes
+- `schema_id`: payload schema id, currently `1`
+- `quality_flags`: `OF_DQ_*` bits associated with the event
+- timestamps are copied from the underlying event when available
+
+## Function Family Reference
+
+Lifecycle:
+
+- `of_engine_create`
+- `of_engine_start`
+- `of_engine_stop`
+- `of_engine_destroy`
+
+Subscription:
+
+- `of_subscribe`
+- `of_unsubscribe`
+- `of_unsubscribe_symbol`
+- `of_reset_symbol_session`
+
+External ingest and supervision:
+
+- `of_ingest_trade`
+- `of_ingest_book`
+- `of_configure_external_feed`
+- `of_external_set_reconnecting`
+- `of_external_health_tick`
+
+Polling and snapshots:
+
+- `of_engine_poll_once`
+- `of_get_book_snapshot`
+- `of_get_analytics_snapshot`
+- `of_get_derived_analytics_snapshot`
+- `of_get_session_candle_snapshot`
+- `of_get_interval_candle_snapshot`
+- `of_get_signal_snapshot`
+
+Metadata and ownership helpers:
+
+- `of_api_version`
+- `of_build_info`
+- `of_get_metrics_json`
+- `of_string_free`
+
 ## Safety Contract
 
 Callers must:
@@ -112,6 +204,13 @@ Callers must:
 - pass UTF-8 `char*` values where strings are expected
 - preserve pointer validity for the full duration of each call
 - free owned strings returned by the API using `of_string_free`
+
+Additional ownership rules:
+
+- snapshot getters that write into caller buffers do not allocate for the caller
+- functions returning owned `char*` require `of_string_free`
+- callback payload pointers are only valid for the duration of the callback
+- opaque `of_engine_t*` and `of_subscription_t*` handles must be destroyed/unsubscribed only through exported API calls
 
 ## Minimal C Example
 
@@ -146,6 +245,14 @@ Most functions return `int32_t` values mapped from [`of_error_t`]:
 - `OF_ERR_INVALID_ARG` for invalid pointers/inputs
 - `OF_ERR_STATE` for lifecycle misuse or invalid runtime state
 - `OF_ERR_IO`, `OF_ERR_DATA_QUALITY`, and other domain-specific failures
+
+## Snapshot and Callback Payload Contracts
+
+- `of_get_book_snapshot(...)` and `BOOK_SNAPSHOT` callbacks share the same JSON schema
+- `of_get_derived_analytics_snapshot(...)` and `DERIVED_ANALYTICS` callbacks share the same JSON schema
+- `of_get_session_candle_snapshot(...)` and `of_get_interval_candle_snapshot(...)` are additive snapshot families and do not alter the older analytics/signal contracts
+- `inout_len` is both input capacity and output required size; if the buffer is too small, retry with the returned byte count
+- payload field names are treated as stable once published; new fields are added additively
 
 ## Integration Notes
 

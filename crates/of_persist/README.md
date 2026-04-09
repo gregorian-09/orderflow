@@ -48,6 +48,29 @@ Events are written to:
 
 This makes stream files easy to map into replay and analytics pipelines.
 
+## Record Schema Reference
+
+[`StoredBookEvent`] contains:
+
+- `side`, `level`, `price`, `size`, `action`
+- `sequence`
+- `ts_exchange_ns`
+- `ts_recv_ns`
+
+[`StoredTradeEvent`] contains:
+
+- `price`, `size`, `aggressor_side`
+- `sequence`
+- `ts_exchange_ns`
+- `ts_recv_ns`
+
+[`StoredEvent`] is the merged replay enum:
+
+- `StoredEvent::Book(StoredBookEvent)`
+- `StoredEvent::Trade(StoredTradeEvent)`
+
+[`StoredEvent::sequence`] returns the merged event sequence regardless of variant.
+
 ## Readback API
 
 `RollingStore` now supports additive typed readback over the same files it already writes:
@@ -63,6 +86,23 @@ This makes stream files easy to map into replay and analytics pipelines.
 - `read_events_in_range(venue, symbol, from_sequence, to_sequence)` applies inclusive sequence filtering to merged reads
 - missing streams return an empty vector
 - malformed lines return `PersistError::Io` with `InvalidData`
+
+## Ordering and Range Semantics
+
+- append methods always write one JSON object per line
+- `read_books*` and `read_trades*` preserve file order
+- `read_events*` merges book and trade streams by ascending sequence
+- `*_in_range` methods use inclusive `from_sequence` / `to_sequence` bounds
+- `None` for a bound means it is open-ended on that side
+- missing `book.jsonl` or `trades.jsonl` files are treated as empty streams, not hard errors
+
+## RollingStore Contract
+
+- [`RollingStore::new`] creates the persistence root if needed.
+- [`RollingStore::with_retention`] returns an updated store handle with retention settings attached.
+- [`RollingStore::append_book`] and [`RollingStore::append_trade`] write normalized events, not provider-native payloads.
+- Discovery APIs operate on directory/file presence and do not require a separate index.
+- Readback APIs parse the same JSONL files the writer produces, so replay stays aligned with persisted runtime output.
 
 ## Quick Example
 
@@ -141,3 +181,9 @@ let _ = store;
 - `max_age_secs > 0`: files older than threshold are pruned.
 - `max_total_bytes > 0`: oldest files are pruned until under limit.
 - `0` means that limit is disabled.
+
+## Error Semantics
+
+- [`PersistError::Io`] wraps filesystem and parse failures.
+- directory creation happens eagerly on store creation, so path permission issues surface early.
+- retention pruning is best-effort within normal append flows; it is not a separate daemon or background compactor.

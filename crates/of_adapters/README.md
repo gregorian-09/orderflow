@@ -63,6 +63,59 @@ Current provider notes:
   - reconnect replays active subscriptions automatically
   - health metadata includes reconnect attempt, subscription count, and message/data ages
 
+## Trait Contract
+
+[`MarketDataAdapter`] is intentionally small, but each method has a specific contract:
+
+- `connect()` establishes transport/session state and should be idempotent where practical.
+- `subscribe(SubscribeReq)` starts or updates delivery for one symbol and depth.
+- `unsubscribe(SymbolId)` stops delivery for that symbol.
+- `poll(&mut Vec<RawEvent>)` appends zero or more normalized events into the caller-owned buffer and returns the number appended.
+- `health()` returns the latest transport/supervision state without mutating adapter state.
+
+Normalization rules:
+
+- adapters emit only [`RawEvent::Book`] and [`RawEvent::Trade`]
+- provider-native protocol details stay inside the adapter implementation
+- all emitted symbols, sequences, timestamps, and sides should already be normalized for runtime consumption
+
+## AdapterConfig Reference
+
+- `provider`: selects `Mock`, `Rithmic`, `Cqg`, or `Binance`.
+- `credentials`: optional env-var references for providers that need authenticated bootstrap.
+- `endpoint`: websocket or provider endpoint URI for live adapters.
+- `app_name`: optional client or bridge identifier used in health metadata where supported.
+
+[`CredentialsRef`] contains env-var names, not secret values:
+
+- `key_id_env`: env var that stores the provider user/key id
+- `secret_env`: env var that stores the secret/password/token
+
+## Health Semantics
+
+[`AdapterHealth`] is the bridge between provider supervision and runtime quality decisions.
+
+- `connected = true` means the transport/session is considered up
+- `degraded = true` means the adapter is reconnecting, stale, or otherwise unhealthy enough for runtime quality gating
+- `last_error` is the latest human-readable adapter failure if known
+- `protocol_info` is provider-specific diagnostic text intended for logging and dashboards
+
+## Factory Behavior
+
+[`create_adapter`] is feature-gated.
+
+- `ProviderKind::Mock` is always available.
+- live providers require their Cargo feature to be enabled.
+- requesting a provider without its feature returns [`AdapterError::FeatureDisabled`].
+- missing endpoint or credential references return [`AdapterError::NotConfigured`].
+
+## Choosing an Adapter
+
+- Use [`MockAdapter`] for deterministic tests, replay, and CI.
+- Use `Rithmic` or `CQG` when an authenticated futures feed is needed.
+- Use `Binance` when a public crypto depth/trade feed is sufficient.
+- Keep provider-specific auth, transport, and reconnect tuning out of runtime code and inside the adapter layer.
+
 ## Create an Adapter
 
 ```rust
@@ -122,3 +175,9 @@ All adapter operations return [`AdapterResult<T>`] with [`AdapterError`], coveri
 - missing configuration
 - provider feature not enabled at build time
 - provider-specific operational errors
+
+## Subscription Semantics
+
+- [`SubscribeReq::depth_levels`] is advisory and provider-dependent; mock and depth-aware providers use it directly.
+- repeated subscribe calls for the same symbol should be treated as update-or-refresh, not as a duplicate stream request.
+- unsubscribe should remove future delivery for that symbol, but does not retroactively clear already-polled events from the caller buffer.

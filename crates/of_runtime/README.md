@@ -78,6 +78,100 @@ Public `Engine<A, S>` methods:
 - [`Engine::last_events`]
 - [`Engine::current_quality_flags_bits`]
 
+## EngineConfig Field Reference
+
+[`EngineConfig`] is the runtime control plane.
+
+- `instance_id`: logical engine name used in audit/metrics output.
+- `enable_persistence`: enables JSONL persistence through [`RollingStore`](of_persist::RollingStore).
+- `data_root`: persistence root directory when persistence is enabled.
+- `audit_log_path`: audit log file path used by runtime audit output.
+- `audit_max_bytes`: max bytes before audit rotation.
+- `audit_max_files`: max rotated audit files retained.
+- `audit_redact_tokens`: case-insensitive token list scrubbed from audit text.
+- `data_retention_max_bytes`: persisted-data byte cap; `0` disables the limit.
+- `data_retention_max_age_secs`: persisted-data age cap in seconds; `0` disables the limit.
+- `adapter`: provider configuration forwarded to [`of_adapters`].
+- `signal_threshold`: default threshold used by [`build_default_engine`].
+
+## Lifecycle Contract
+
+The runtime has a simple state machine:
+
+1. Build an [`Engine`] with [`Engine::new`] or [`build_default_engine`].
+2. Optionally attach persistence with [`Engine::with_persistence`].
+3. Call [`Engine::start`] before subscribe, poll, or external-ingest operations.
+4. Use either adapter polling or external ingest.
+5. Read snapshots and health/metrics as needed.
+6. Call [`Engine::stop`] when done.
+
+Operational rules:
+
+- [`Engine::start`] validates config and connects the adapter.
+- [`Engine::subscribe`] and [`Engine::unsubscribe`] require a started engine.
+- [`Engine::poll_once`] is for adapter-driven mode.
+- [`Engine::ingest_trade`] and [`Engine::ingest_book`] are for externally-fed mode.
+- Snapshot getters return `Option<_>` and remain `None` until enough symbol data has been observed.
+- [`Engine::reset_symbol_session`] clears session analytics for one symbol without dropping the subscription itself.
+
+## External Ingest Contract
+
+Use external ingest when a separate bridge, broker API, or custom parser already owns transport.
+
+- [`Engine::configure_external_feed`] enables stale/sequence supervision rules.
+- [`Engine::set_external_reconnecting`] lets a bridge tell the runtime it is currently degraded/reconnecting.
+- [`Engine::external_health_tick`] advances stale-feed supervision when no data has arrived recently.
+- [`Engine::ingest_trade`] and [`Engine::ingest_book`] accept caller-supplied [`DataQualityFlags`](of_core::DataQualityFlags) so upstream bridges can forward their own quality judgments.
+
+The runtime still applies its own sequence and stale checks on top of caller-supplied flags.
+
+## Snapshot Semantics
+
+All snapshot getters are additive and side-effect free.
+
+- [`Engine::analytics_snapshot`] returns the base analytics payload for one symbol.
+- [`Engine::derived_analytics_snapshot`] returns the additive totals view for one symbol.
+- [`Engine::session_candle_snapshot`] returns one session candle for one symbol.
+- [`Engine::interval_candle_snapshot`] computes one rolling-window candle for one symbol using the provided `window_ns`.
+- [`Engine::book_snapshot`] returns the materialized book when book updates have been seen.
+- [`Engine::signal_snapshot`] returns the latest evaluated signal state for one symbol.
+
+Return behavior:
+
+- `None` means the runtime has not yet observed enough data to build that snapshot for the requested symbol.
+- Returned snapshots are clones of runtime state; callers can keep them without affecting engine internals.
+
+## Health and Metrics Reference
+
+- [`Engine::health_seq`] is the cheap monotonic change counter for external polling loops.
+- [`Engine::health_json`] is the user-facing operational snapshot and includes connectivity, degradation, quality flags, supervision metadata, and tracked symbol counts.
+- [`Engine::metrics_json`] is the counter-oriented metrics payload and includes processed event counts, quality flag detail, and subsystem counts.
+- [`Engine::current_quality_flags_bits`] exposes the current runtime quality bitset directly for low-allocation callers.
+- [`Engine::last_events`] exposes the last processed raw event batch for inspection/testing.
+
+Compatibility rule:
+
+- field names in JSON payloads are treated as stable once published
+- new metrics/health fields are added additively rather than replacing old fields
+
+## Config Loading and Validation Reference
+
+- [`load_engine_config_from_path`] returns only the parsed [`EngineConfig`].
+- [`load_engine_config_report_from_path`] also returns file format, compatibility mode, and optional warning text.
+- [`validate_startup_config`] checks required env vars, retention settings, adapter endpoint rules, and signal/audit sanity before going live.
+- [`ConfigCompatibilityMode::Strict`] means typed TOML/JSON parsing succeeded directly.
+- [`ConfigCompatibilityMode::LegacyFallback`] means an older flat-key config was accepted through the compatibility loader.
+- [`ConfigLoadReport::used_legacy_fallback`] is the simplest check for surfacing upgrade guidance in hosts or CLIs.
+
+## Persistence Integration
+
+When persistence is enabled, the runtime writes normalized `book` and `trade` streams through [`RollingStore`](of_persist::RollingStore).
+
+- Persistence is optional and does not change runtime snapshot semantics.
+- Retention limits are enforced through [`RetentionPolicy`](of_persist::RetentionPolicy).
+- The runtime persists normalized events, not provider-native wire payloads.
+- Readback and replay are handled by `of_persist` and `examples/replay_cli`.
+
 ## End-to-End Example (Adapter Polling)
 
 ```rust,no_run
@@ -174,3 +268,4 @@ parsing succeeded or the legacy fallback path was required.
 - Call [`Engine::start`] before subscribe/poll/ingest operations.
 - Use `configure_external_feed` + `external_health_tick` when ingesting from non-adapter bridges.
 - For deterministic simulation, pair `MockAdapter` with replayed events and fixed timestamps.
+- Prefer [`load_engine_config_report_from_path`] in user-facing CLIs or services so you can warn when a config only loaded through compatibility fallback.

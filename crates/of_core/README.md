@@ -61,6 +61,63 @@ Public `AnalyticsAccumulator` methods:
 - Stable schema: types are designed for cross-language transport and long-lived storage.
 - Minimal dependencies: this crate stays small so it can be embedded broadly.
 
+## Type Semantics Reference
+
+### Market identity and direction
+
+- [`SymbolId`] is the canonical identity key used everywhere in the project.
+  `venue` should be the normalized venue name and `symbol` should remain stable for the life of a stream.
+- [`Side`] uses `Bid` and `Ask` for both book updates and trade aggressor direction.
+- [`BookAction`] uses `Upsert` for insert-or-replace semantics and `Delete` for level removal.
+
+### Book event types
+
+- [`BookUpdate`] represents a single level mutation.
+  `level` is the depth index from top of book.
+  `price` and `size` are integer-normalized values.
+  `sequence`, `ts_exchange_ns`, and `ts_recv_ns` preserve replay ordering and latency analysis.
+- [`BookLevel`] is the materialized view of one price level after runtime consolidation.
+- [`BookSnapshot`] is the full reconstructed book for one symbol at one point in time.
+  `bids` and `asks` are level-ordered arrays.
+  `last_sequence` is the sequence of the last applied update.
+  `ts_exchange_ns` and `ts_recv_ns` are copied from that last applied update.
+
+### Trade event types
+
+- [`TradePrint`] represents one normalized trade.
+  `price` and `size` are integer-normalized.
+  `aggressor_side` is the trade direction used by the analytics engine.
+  `sequence` may be zero when a source does not provide a venue sequence.
+
+### Analytics and signal output types
+
+- [`AnalyticsSnapshot`] is the base session analytics payload.
+  It includes directional volume, delta, cumulative delta, POC, value area, and the active quality flags.
+- [`DerivedAnalyticsSnapshot`] adds additive session totals that were intentionally kept out of the original analytics payload so older consumers would not break.
+- [`SessionCandleSnapshot`] is a session-wide candle view derived from ingested trades.
+- [`IntervalCandleSnapshot`] is a rolling-window candle view computed on demand from recent trades for a caller-supplied `window_ns`.
+- [`SignalState`] is the stable directional state machine used across the runtime and bindings.
+- [`SignalSnapshot`] packages state, confidence, reason text, and quality flags for downstream consumers.
+
+## AnalyticsAccumulator Contract
+
+[`AnalyticsAccumulator`] is session-oriented.
+
+- [`AnalyticsAccumulator::on_trade`] mutates all session analytics state from one trade.
+- [`AnalyticsAccumulator::reset_session_delta`] clears directional volume and delta state but keeps longer-lived session context that is not explicitly reset.
+- [`AnalyticsAccumulator::reset_session`] clears the full session state, including candle and derived totals.
+- [`AnalyticsAccumulator::snapshot`] returns the base analytics payload.
+- [`AnalyticsAccumulator::derived_snapshot`] returns additive totals such as `vwap` and `average_trade_size`.
+- [`AnalyticsAccumulator::session_candle_snapshot`] returns the session candle built from all trades seen since the last session reset.
+- [`AnalyticsAccumulator::interval_candle_snapshot`] computes a rolling candle over the recent trade window without mutating session state.
+
+Important behavior:
+
+- No book data is required for `AnalyticsAccumulator`; it is trade-driven.
+- All price and size arithmetic uses integer math at ingest time and converts only where a derived floating result is needed, such as `vwap`.
+- `point_of_control` is volume-based, not quote-based.
+- Value area fields are derived from traded-volume distribution, not full order-book depth.
+
 ## Quick Start
 
 ```rust
@@ -125,3 +182,11 @@ For full orchestration and adapter integration, see `of_runtime`.
 - `ts_exchange_ns` / `ts_recv_ns`: timestamps from the most recent applied book event
 
 This snapshot model is used by the runtime and exposed through the FFI and bindings.
+
+## Choosing the Right Snapshot Type
+
+- Use [`AnalyticsSnapshot`] when you want the original compact analytics contract.
+- Use [`DerivedAnalyticsSnapshot`] when you need totals such as `trade_count` or `vwap`.
+- Use [`SessionCandleSnapshot`] when you want one candle for the entire active session.
+- Use [`IntervalCandleSnapshot`] when you want a rolling lookback window.
+- Use [`BookSnapshot`] when you need reconstructed depth instead of raw incremental updates.

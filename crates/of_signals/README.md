@@ -48,6 +48,35 @@ Public constructors:
 
 Signal output uses `of_core::SignalSnapshot` and states such as `LongBias`, `ShortBias`, `Neutral`, and `Blocked`.
 
+## SignalModule Contract
+
+[`SignalModule`] is the extension point for strategy logic.
+
+- `on_analytics(&AnalyticsSnapshot)` consumes the latest analytics state and updates internal signal state.
+- `snapshot()` returns the last computed [`SignalSnapshot`](of_core::SignalSnapshot).
+- `quality_gate(DataQualityFlags)` tells the runtime whether the signal should be blocked under the current feed-quality conditions.
+
+Recommended implementation rules:
+
+- keep updates deterministic so replay and live runs match
+- include human-readable `reason` text in the snapshot when practical
+- use `confidence` consistently so downstream hosts can compare modules
+- block aggressively on stale, gap, or degraded feed conditions when a strategy should not trade through uncertainty
+
+## Constructor Parameter Reference
+
+- [`DeltaMomentumSignal::new`] takes an absolute `delta` threshold.
+- [`VolumeImbalanceSignal::new`] takes an absolute session `buy_volume - sell_volume` threshold.
+- [`CumulativeDeltaSignal::new`] takes an absolute `cumulative_delta` threshold.
+- [`AbsorptionSignal::new`] takes:
+  - `threshold`: directional pressure required before checking for absorption
+  - `price_band`: max distance from POC/value location used by the heuristic
+- [`ExhaustionSignal::new`] takes an absolute delta threshold for stalled reversal detection.
+- [`SweepDetectionSignal::new`] takes:
+  - `threshold`: directional delta threshold
+  - `breakout_ticks`: minimum break outside value area
+- [`CompositeSignal::new`] takes owned child modules and aggregates their votes.
+
 ## Delta Momentum Strategy
 
 [`DeltaMomentumSignal`] is a reference implementation that:
@@ -106,6 +135,18 @@ Signal output uses `of_core::SignalSnapshot` and states such as `LongBias`, `Sho
 - updates each child on the same analytics snapshot
 - emits the majority directional view when one side has more votes
 - remains `Neutral` when there is no directional majority
+
+## Output Interpretation
+
+All built-in modules return [`SignalSnapshot`](of_core::SignalSnapshot), which downstream runtimes and bindings expose unchanged.
+
+- `state` is the durable directional state
+- `confidence` is a normalized score chosen by the module
+- `reason` is short human-readable rationale
+- `quality_flags` echoes the quality context that contributed to blocking or caution
+
+Built-in modules are intentionally heuristic rather than venue-specific alpha models.
+They are meant as production-ready references and defaults, not as the only strategy approach.
 
 ## Quick Example
 
@@ -184,3 +225,4 @@ Implement [`SignalModule`] and keep it:
 - deterministic (important for replay parity)
 - explicit about confidence and reason fields
 - strict about quality gating for unsafe feed states
+- compatible with the stable `SignalSnapshot` contract so bindings and FFI callers keep working
