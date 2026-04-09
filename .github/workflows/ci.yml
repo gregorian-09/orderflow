@@ -25,7 +25,10 @@ jobs:
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
           package: ${{ matrix.package }}
-          release-type: patch
+          # The workspace is still in the 0.x line. Minor bumps in this phase
+          # are allowed to carry semver-breaking Rust API changes while we
+          # stabilize toward 1.0.
+          release-type: major
 
   rust:
     runs-on: ubuntu-latest
