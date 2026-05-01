@@ -40,3 +40,6 @@ package-dir = {"" = "."}
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["orderflow*"]
+
+[tool.setuptools.package-data]
+orderflow = ["py.typed"]

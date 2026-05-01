@@ -9,6 +9,8 @@ Production-focused Python API for the Orderflow runtime.
 This package wraps the stable `of_ffi_c` ABI via `ctypes` and provides a typed,
 high-level interface for lifecycle management, subscriptions, snapshots, and
 external feed ingestion.
+The package includes a PEP 561 `py.typed` marker so type checkers can consume
+the inline annotations shipped with the binding.
 
 The README is intentionally API-complete so the PyPI page can be used as a
 single reference, similar to high-signal package pages such as TA-Lib and
