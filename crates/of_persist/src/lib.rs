@@ -9,6 +9,8 @@ use std::collections::BTreeSet;
 use of_core::{BookAction, BookUpdate, Side, TradePrint};
 use serde::Deserialize;
 
+const JSONL_SCHEMA_VERSION: u32 = 1;
+
 /// Persistence-layer errors.
 #[derive(Debug)]
 pub enum PersistError {
@@ -113,8 +115,16 @@ impl RollingStore {
             &event.symbol.symbol,
             "book",
             &format!(
-                "{{\"seq\":{},\"side\":\"{:?}\",\"level\":{},\"price\":{},\"size\":{},\"action\":\"{:?}\"}}",
-                event.sequence, event.side, event.level, event.price, event.size, event.action
+                "{{\"schema\":{},\"seq\":{},\"side\":\"{:?}\",\"level\":{},\"price\":{},\"size\":{},\"action\":\"{:?}\",\"ts_exchange_ns\":{},\"ts_recv_ns\":{}}}",
+                JSONL_SCHEMA_VERSION,
+                event.sequence,
+                event.side,
+                event.level,
+                event.price,
+                event.size,
+                event.action,
+                event.ts_exchange_ns,
+                event.ts_recv_ns
             ),
         )
     }
@@ -126,8 +136,14 @@ impl RollingStore {
             &event.symbol.symbol,
             "trades",
             &format!(
-                "{{\"seq\":{},\"price\":{},\"size\":{},\"aggressor\":\"{:?}\"}}",
-                event.sequence, event.price, event.size, event.aggressor_side
+                "{{\"schema\":{},\"seq\":{},\"price\":{},\"size\":{},\"aggressor\":\"{:?}\",\"ts_exchange_ns\":{},\"ts_recv_ns\":{}}}",
+                JSONL_SCHEMA_VERSION,
+                event.sequence,
+                event.price,
+                event.size,
+                event.aggressor_side,
+                event.ts_exchange_ns,
+                event.ts_recv_ns
             ),
         )
     }
@@ -647,6 +663,65 @@ mod tests {
                 action: BookAction::Upsert,
             }]
         );
+        assert_eq!(
+            trades,
+            vec![StoredTradeEvent {
+                sequence: 11,
+                price: 505_025,
+                size: 3,
+                aggressor_side: Side::Ask,
+            }]
+        );
+    }
+
+    #[test]
+    fn writes_schema_metadata_without_breaking_readback() {
+        let root = temp_dir("persist_schema_metadata");
+        let store = RollingStore::new(&root).expect("store");
+        let symbol = SymbolId {
+            venue: "CME".to_string(),
+            symbol: "ESM6".to_string(),
+        };
+
+        store
+            .append_trade(&TradePrint {
+                symbol: symbol.clone(),
+                price: 505_025,
+                size: 3,
+                aggressor_side: Side::Ask,
+                sequence: 11,
+                ts_exchange_ns: 123,
+                ts_recv_ns: 456,
+            })
+            .expect("append trade");
+
+        let raw = fs::read_to_string(root.join("CME").join("ESM6").join("trades.jsonl"))
+            .expect("read raw stream");
+        assert!(raw.contains("\"schema\":1"));
+        assert!(raw.contains("\"ts_exchange_ns\":123"));
+        assert!(raw.contains("\"ts_recv_ns\":456"));
+
+        let trades = store
+            .read_trades(&symbol.venue, &symbol.symbol)
+            .expect("read trades");
+        assert_eq!(trades.len(), 1);
+        assert_eq!(trades[0].sequence, 11);
+    }
+
+    #[test]
+    fn reads_legacy_records_without_schema_metadata() {
+        let root = temp_dir("persist_legacy_schema");
+        let stream_dir = root.join("CME").join("ESM6");
+        fs::create_dir_all(&stream_dir).expect("create dir");
+        fs::write(
+            stream_dir.join("trades.jsonl"),
+            b"{\"seq\":11,\"price\":505025,\"size\":3,\"aggressor\":\"Ask\"}\n",
+        )
+        .expect("write legacy trade");
+
+        let store = RollingStore::new(&root).expect("store");
+        let trades = store.read_trades("CME", "ESM6").expect("read legacy trades");
+
         assert_eq!(
             trades,
             vec![StoredTradeEvent {

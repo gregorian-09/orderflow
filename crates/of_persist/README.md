@@ -63,19 +63,21 @@ This makes stream files easy to map into replay and analytics pipelines.
 
 ## Record Schema Reference
 
+Persisted JSONL records are additive and versioned with `"schema": 1`.
+Newly-written records include event timestamps (`ts_exchange_ns`,
+`ts_recv_ns`) alongside sequence and payload fields. The typed readback API
+continues to accept legacy records that do not contain schema or timestamp
+fields.
+
 [`StoredBookEvent`] contains:
 
 - `side`, `level`, `price`, `size`, `action`
 - `sequence`
-- `ts_exchange_ns`
-- `ts_recv_ns`
 
 [`StoredTradeEvent`] contains:
 
 - `price`, `size`, `aggressor_side`
 - `sequence`
-- `ts_exchange_ns`
-- `ts_recv_ns`
 
 [`StoredEvent`] is the merged replay enum:
 

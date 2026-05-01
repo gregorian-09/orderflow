@@ -26,6 +26,14 @@ Files are stored as:
 
 Each line is one JSON object representing one normalized event.
 
+Newly-written JSONL records include additive metadata:
+
+- `schema`: record schema version, currently `1`
+- `ts_exchange_ns`: exchange timestamp from the normalized event
+- `ts_recv_ns`: receive timestamp from the normalized event
+
+Legacy records without these metadata fields remain readable.
+
 ## Configuration Type
 
 ### `RetentionPolicy`
@@ -52,8 +60,6 @@ Rules:
 | `size` | `i64` | Integer-normalized size |
 | `action` | `BookAction` | Upsert or delete |
 | `sequence` | `u64` | Event sequence |
-| `ts_exchange_ns` | `u64` | Exchange timestamp |
-| `ts_recv_ns` | `u64` | Receive timestamp |
 
 ### `StoredTradeEvent`
 
@@ -63,8 +69,6 @@ Rules:
 | `size` | `i64` | Integer-normalized size |
 | `aggressor_side` | `Side` | Trade direction |
 | `sequence` | `u64` | Event sequence |
-| `ts_exchange_ns` | `u64` | Exchange timestamp |
-| `ts_recv_ns` | `u64` | Receive timestamp |
 
 ### `StoredEvent`
 
