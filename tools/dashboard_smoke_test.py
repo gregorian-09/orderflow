@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 
@@ -19,12 +19,23 @@ ROOT = Path(__file__).resolve().parents[1]
 HOST = "127.0.0.1"
 PORT = int(os.getenv("OF_DASH_TEST_PORT", "8095"))
 BASE_URL = f"http://{HOST}:{PORT}"
+TOKEN = os.getenv("OF_DASH_TEST_TOKEN", "dashboard-smoke-token")
+
+
+def _auth_path(path: str) -> str:
+    joiner = "&" if "?" in path else "?"
+    return f"{path}{joiner}token={TOKEN}" if TOKEN else path
 
 
 def _http_json(path: str, timeout: float = 1.0) -> Dict[str, Any]:
-    with urlopen(f"{BASE_URL}{path}", timeout=timeout) as resp:  # noqa: S310
+    with urlopen(f"{BASE_URL}{_auth_path(path)}", timeout=timeout) as resp:  # noqa: S310
         data = resp.read().decode("utf-8")
     return json.loads(data)
+
+
+def _http_text(path: str, timeout: float = 1.0) -> str:
+    with urlopen(f"{BASE_URL}{_auth_path(path)}", timeout=timeout) as resp:  # noqa: S310
+        return resp.read().decode("utf-8")
 
 
 def _wait_json(path: str, deadline: float) -> Dict[str, Any]:
@@ -91,6 +102,8 @@ def _start_server() -> subprocess.Popen[bytes]:
     env = os.environ.copy()
     env["OF_DASH_HOST"] = HOST
     env["OF_DASH_PORT"] = str(PORT)
+    if TOKEN:
+        env["OF_DASH_TOKEN"] = TOKEN
     return subprocess.Popen(  # noqa: S603
         [sys.executable, "dashboard/server.py"],
         cwd=str(ROOT),
@@ -116,7 +129,17 @@ def main() -> int:
     try:
         ready_by = time.time() + 15
         session = _wait_json("/session", ready_by)
+        if TOKEN:
+            try:
+                urlopen(f"{BASE_URL}/session", timeout=1.0)  # noqa: S310
+                raise AssertionError("unauthenticated /session unexpectedly succeeded")
+            except HTTPError as exc:
+                if exc.code != 401:
+                    raise
         _assert_session_shape(session)
+        metrics = _http_text("/metrics")
+        if "orderflow_runtime_processed_events_total" not in metrics:
+            raise AssertionError("/metrics missing runtime processed-events metric")
         bar = _first_bar_with_levels(time.time() + 20)
         _assert_bar_derived_fields(bar)
         print("dashboard smoke test: PASS")

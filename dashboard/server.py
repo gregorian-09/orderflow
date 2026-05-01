@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hmac
 import os
 import sys
 import threading
@@ -13,6 +14,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 PY_BINDING = ROOT / "bindings" / "python"
@@ -205,6 +207,96 @@ class DashboardController:
 
 
 CONTROLLER = DashboardController()
+
+
+def _dashboard_token() -> str:
+    return os.getenv("OF_DASH_TOKEN", "").strip()
+
+
+def _extract_request_token(headers: Any, raw_path: str) -> str:
+    auth = headers.get("Authorization", "")
+    prefix = "Bearer "
+    if auth.startswith(prefix):
+        return auth[len(prefix) :].strip()
+    header_token = headers.get("X-Orderflow-Token", "")
+    if header_token:
+        return header_token.strip()
+    query = parse_qs(urlparse(raw_path).query)
+    values = query.get("token") or query.get("auth_token") or []
+    return values[0].strip() if values else ""
+
+
+def _prom_label_value(value: Any) -> str:
+    return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def _prom_bool(value: Any) -> int:
+    return 1 if bool(value) else 0
+
+
+def _prom_number(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _prometheus_metrics(snapshot: Dict[str, Any]) -> str:
+    metrics = snapshot.get("metrics") or {}
+    health = snapshot.get("health") or {}
+    instance_id = metrics.get("instance_id") or os.getenv("OF_DASH_INSTANCE_ID", "orderflow-dashboard")
+    venue = os.getenv("OF_DASH_VENUE", "CME")
+    symbol = os.getenv("OF_DASH_SYMBOL", "ESM6")
+    mode = snapshot.get("mode", "live")
+    labels = (
+        f'instance_id="{_prom_label_value(instance_id)}",'
+        f'venue="{_prom_label_value(venue)}",'
+        f'symbol="{_prom_label_value(symbol)}",'
+        f'mode="{_prom_label_value(mode)}"'
+    )
+
+    lines = [
+        "# HELP orderflow_dashboard_info Dashboard session identity.",
+        "# TYPE orderflow_dashboard_info gauge",
+        f"orderflow_dashboard_info{{{labels}}} 1",
+        "# HELP orderflow_dashboard_state_seq Dashboard state sequence.",
+        "# TYPE orderflow_dashboard_state_seq gauge",
+        f"orderflow_dashboard_state_seq{{{labels}}} {_prom_number(snapshot.get('seq')):g}",
+        "# HELP orderflow_runtime_processed_events_total Runtime or replay processed events.",
+        "# TYPE orderflow_runtime_processed_events_total counter",
+        f"orderflow_runtime_processed_events_total{{{labels}}} {_prom_number(metrics.get('processed_events')):g}",
+        "# HELP orderflow_runtime_symbols Runtime tracked symbol count.",
+        "# TYPE orderflow_runtime_symbols gauge",
+        f"orderflow_runtime_symbols{{{labels}}} {_prom_number(metrics.get('symbols')):g}",
+        "# HELP orderflow_runtime_health_seq Runtime health transition sequence.",
+        "# TYPE orderflow_runtime_health_seq gauge",
+        f"orderflow_runtime_health_seq{{{labels}}} {_prom_number(health.get('health_seq', metrics.get('health_seq'))):g}",
+        "# HELP orderflow_runtime_adapter_connected Adapter connection state.",
+        "# TYPE orderflow_runtime_adapter_connected gauge",
+        f"orderflow_runtime_adapter_connected{{{labels}}} {_prom_bool(metrics.get('adapter_connected', health.get('connected')))}",
+        "# HELP orderflow_runtime_adapter_degraded Adapter degradation state.",
+        "# TYPE orderflow_runtime_adapter_degraded gauge",
+        f"orderflow_runtime_adapter_degraded{{{labels}}} {_prom_bool(metrics.get('adapter_degraded', health.get('degraded')))}",
+        "# HELP orderflow_runtime_quality_flags Current runtime data-quality bitset.",
+        "# TYPE orderflow_runtime_quality_flags gauge",
+        f"orderflow_runtime_quality_flags{{{labels}}} {_prom_number(health.get('quality_flags', metrics.get('quality_flags'))):g}",
+        "# HELP orderflow_dashboard_history_points Retained dashboard history points.",
+        "# TYPE orderflow_dashboard_history_points gauge",
+        f"orderflow_dashboard_history_points{{{labels}}} {len(snapshot.get('history') or [])}",
+        "# HELP orderflow_dashboard_bars Retained dashboard footprint bars.",
+        "# TYPE orderflow_dashboard_bars gauge",
+        f"orderflow_dashboard_bars{{{labels}}} {len(snapshot.get('bars') or [])}",
+        "# HELP orderflow_dashboard_replay_index Current replay event index.",
+        "# TYPE orderflow_dashboard_replay_index gauge",
+        f"orderflow_dashboard_replay_index{{{labels}}} {_prom_number(snapshot.get('replay_index')):g}",
+        "# HELP orderflow_dashboard_replay_total Replay event count.",
+        "# TYPE orderflow_dashboard_replay_total gauge",
+        f"orderflow_dashboard_replay_total{{{labels}}} {_prom_number(snapshot.get('replay_total')):g}",
+        "# HELP orderflow_dashboard_simulated Dashboard simulation fallback state.",
+        "# TYPE orderflow_dashboard_simulated gauge",
+        f"orderflow_dashboard_simulated{{{labels}}} {_prom_bool(snapshot.get('simulated'))}",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 class ReplayAccumulator:
@@ -728,33 +820,47 @@ def _engine_loop() -> None:
 
 class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
-        if self.path in ("/", "/index.html"):
+        if not self._authorize():
+            return
+
+        path = urlparse(self.path).path
+        if path in ("/", "/index.html"):
             self._serve_file(ROOT / "dashboard" / "static" / "index.html", "text/html; charset=utf-8")
             return
-        if self.path == "/state":
+        if path == "/state":
             self._write_json(CONTROLLER.snapshot())
             return
-        if self.path == "/session":
+        if path == "/session":
             self._write_json(CONTROLLER.session_metadata())
             return
-        if self.path == "/events":
+        if path == "/events":
             self._serve_sse()
+            return
+        if path == "/metrics":
+            self._write_text(
+                _prometheus_metrics(CONTROLLER.snapshot()),
+                "text/plain; version=0.0.4; charset=utf-8",
+            )
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path == "/reset":
+        if not self._authorize():
+            return
+
+        path = urlparse(self.path).path
+        if path == "/reset":
             CONTROLLER.request_reset()
             self._write_json({"ok": True})
             return
-        if self.path == "/mode":
+        if path == "/mode":
             body_json = self._read_json_body()
             if not CONTROLLER.set_mode(body_json.get("mode", "live")):
                 self.send_error(HTTPStatus.BAD_REQUEST, "invalid mode")
                 return
             self._write_json({"ok": True})
             return
-        if self.path == "/replay/control":
+        if path == "/replay/control":
             CONTROLLER.replay_control(self._read_json_body())
             self._write_json({"ok": True})
             return
@@ -785,10 +891,33 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception:
             return {}
 
+    def _authorize(self) -> bool:
+        expected = _dashboard_token()
+        if not expected:
+            return True
+        supplied = _extract_request_token(self.headers, self.path)
+        if hmac.compare_digest(supplied, expected):
+            return True
+        self._write_json({"error": "unauthorized"}, HTTPStatus.UNAUTHORIZED)
+        return False
+
     def _write_json(self, payload: Dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _write_text(
+        self,
+        body_text: str,
+        content_type: str,
+        status: HTTPStatus = HTTPStatus.OK,
+    ) -> None:
+        body = body_text.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

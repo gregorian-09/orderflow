@@ -13,6 +13,8 @@ The backend also exposes:
 
 - `GET /state`: full UI state snapshot
 - `GET /session`: lightweight session/replay metadata for external controls or diagnostics
+- `GET /events`: server-sent state updates for the browser UI
+- `GET /metrics`: Prometheus text exposition for dashboard/runtime health
 
 `/state` bar payloads now include derived footprint fields such as `buy_volume`, `sell_volume`, `imbalance_ask`, `imbalance_bid`, `stacked_ask`, and `stacked_bid` so the frontend can reuse backend-calculated bar summaries.
 
@@ -48,6 +50,10 @@ Then open:
 http://127.0.0.1:8080
 ```
 
+To require a token for dashboard endpoints, set `OF_DASH_TOKEN` and open the UI
+with `?token=<value>` once. The browser stores the token in session storage and
+uses it for JSON control calls and the server-sent event stream.
+
 ## Smoke test
 
 From repo root:
@@ -67,5 +73,6 @@ This boots the dashboard server on a test port, validates `GET /session`, and ch
 - `OF_DASH_DEPTH`: depth levels (default `10`)
 - `OF_DASH_HOST`: bind host (default `127.0.0.1`)
 - `OF_DASH_PORT`: bind port (default `8080`)
+- `OF_DASH_TOKEN`: optional bearer/query token required for all dashboard endpoints
 
 If no live events are flowing, the UI falls back to simulated deltas so users can still see panel behavior and layout.

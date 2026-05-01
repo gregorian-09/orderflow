@@ -413,6 +413,11 @@
     </div>
   </div>
   <script>
+    const initialParams = new URLSearchParams(window.location.search);
+    const initialToken = initialParams.get("token") || initialParams.get("auth_token") || "";
+    if (initialToken) sessionStorage.setItem("of_dash_token", initialToken);
+    const authToken = sessionStorage.getItem("of_dash_token") || "";
+
     const state = {
       snap: null,
       bars: [],
@@ -432,6 +437,19 @@
       selectedIndex: null,
       source: null,
     };
+
+    function withAuth(path) {
+      if (!authToken) return path;
+      const url = new URL(path, window.location.origin);
+      url.searchParams.set("token", authToken);
+      return `${url.pathname}${url.search}`;
+    }
+
+    function authHeaders(extra) {
+      const headers = Object.assign({}, extra || {});
+      if (authToken) headers.Authorization = `Bearer ${authToken}`;
+      return headers;
+    }
 
     const chart = document.getElementById("chart");
     const chartCtx = chart.getContext("2d");
@@ -1418,16 +1436,16 @@
     }
 
     function postJson(path, body) {
-      return fetch(path, {
+      return fetch(withAuth(path), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(body || {}),
       }).catch(() => null);
     }
 
     async function refreshState() {
       try {
-        const res = await fetch("/state", { cache: "no-store" });
+        const res = await fetch(withAuth("/state"), { cache: "no-store", headers: authHeaders() });
         if (!res.ok) return;
         state.snap = await res.json();
         render();
@@ -1437,7 +1455,7 @@
     function connectEvents() {
       if (!window.EventSource) return;
       try {
-        const source = new EventSource("/events");
+        const source = new EventSource(withAuth("/events"));
         source.addEventListener("state", (ev) => {
           try {
             state.snap = JSON.parse(ev.data);
