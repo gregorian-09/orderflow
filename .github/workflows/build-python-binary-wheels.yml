@@ -19,7 +19,7 @@ jobs:
           - os: ubuntu-latest
             platform_tag: manylinux2014_x86_64
             native_lib: target/release/libof_ffi_c.so
-          - os: macos-13
+          - os: macos-latest
             platform_tag: macosx_10_12_x86_64
             native_lib: target/release/libof_ffi_c.dylib
           - os: windows-latest
