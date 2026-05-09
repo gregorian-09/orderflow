@@ -43,8 +43,7 @@ jobs:
           cp target/release/libof_ffi_c.so bindings/python/orderflow/native/
           python -m pip install --upgrade wheel
           python -m build bindings/python --wheel --outdir dist
-          tagged_wheel=$(python -m wheel tags --remove --python-tag py3 --abi-tag none --platform-tag manylinux2014_x86_64 dist/*.whl)
-          mv "$tagged_wheel" dist/
+          python -m wheel tags --remove --python-tag py3 --abi-tag none --platform-tag manylinux2014_x86_64 dist/*.whl
 
       - name: Publish to TestPyPI
         if: github.event_name == 'workflow_dispatch' && inputs.repository == 'testpypi'
