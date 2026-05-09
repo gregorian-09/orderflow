@@ -15,7 +15,7 @@ use of_core::{
 };
 use of_runtime::{
     build_default_engine, load_engine_config_from_path, DefaultEngine, EngineConfig,
-    ExternalFeedPolicy,
+    ExternalFeedPolicy, RuntimeError,
 };
 use support::{
     action_from_ffi, dispatch_callbacks, dispatch_health_callbacks, escape_json,
@@ -801,7 +801,21 @@ pub extern "C" fn of_engine_poll_once(engine: *mut of_engine, quality_flags: u32
             dispatch_callbacks(engine, engine.inner.current_quality_flags_bits());
             of_error_t::OF_OK as i32
         }
-        Err(_) => of_error_t::OF_ERR_STATE as i32,
+        Err(err) => {
+            let status = map_runtime_error(&err);
+            if err.is_backpressure() {
+                dispatch_callbacks(engine, engine.inner.current_quality_flags_bits());
+            }
+            status
+        }
+    }
+}
+
+fn map_runtime_error(err: &RuntimeError) -> i32 {
+    if err.is_backpressure() {
+        of_error_t::OF_ERR_BACKPRESSURE as i32
+    } else {
+        of_error_t::OF_ERR_STATE as i32
     }
 }
 

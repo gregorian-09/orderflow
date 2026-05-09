@@ -203,6 +203,10 @@ Polling and snapshots:
 - `of_get_interval_candle_snapshot`
 - `of_get_signal_snapshot`
 
+When the runtime backpressure limit is enabled through
+`OF_RUNTIME_MAX_EVENTS_PER_POLL`, `of_engine_poll_once` returns
+`OF_ERR_BACKPRESSURE` if a poll drains more events than the configured limit.
+
 Metadata and ownership helpers:
 
 - `of_api_version`

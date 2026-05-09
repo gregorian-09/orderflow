@@ -141,6 +141,7 @@ signals, book state, persistence, health reporting, and external ingest flows.
 | `health_json()` | `String` | Operational health JSON |
 | `last_events()` | `&[RawEvent]` | Last processed raw event batch |
 | `current_quality_flags_bits()` | `u32` | Current runtime quality bitset |
+| `with_max_events_per_poll(max)` | `Engine` | Enables or disables an optional per-poll drain limit |
 
 ## Lifecycle Rules
 
@@ -175,6 +176,18 @@ Important rules:
 - `metrics_json()` is the counter-focused operational snapshot.
 - JSON field names are treated as stable once published.
 - New fields are added additively rather than replacing existing fields.
+- `max_events_per_poll` and `backpressure_dropped_events` are included when
+  inspecting runtime health/metrics payloads.
+
+## Backpressure Rules
+
+- Backpressure is disabled by default.
+- Set `OF_RUNTIME_MAX_EVENTS_PER_POLL` for default engines, or call
+  `with_max_events_per_poll(Some(n))` when constructing an engine directly.
+- If an adapter poll drains more than the limit, the runtime processes up to the
+  limit, drops the remainder from that drain, sets the `ADAPTER_DEGRADED`
+  quality flag, and returns a backpressure error.
+- C ABI callers receive `OF_ERR_BACKPRESSURE` for that condition.
 
 ## Config Loading Rules
 

@@ -17,6 +17,8 @@ use of_signals::{SignalGateDecision, SignalModule};
 use crate::config::config_hash;
 use crate::validate_startup_config;
 
+const MAX_EVENTS_PER_POLL_ENV: &str = "OF_RUNTIME_MAX_EVENTS_PER_POLL";
+
 /// Runtime engine configuration.
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
@@ -92,6 +94,13 @@ impl fmt::Display for RuntimeError {
 }
 
 impl Error for RuntimeError {}
+
+impl RuntimeError {
+    /// Returns true when this error represents an opt-in runtime backpressure condition.
+    pub fn is_backpressure(&self) -> bool {
+        matches!(self, Self::Adapter(message) if message.starts_with("backpressure:"))
+    }
+}
 
 /// Policy controlling quality constraints for externally-ingested feeds.
 #[derive(Debug, Clone)]
@@ -289,6 +298,13 @@ fn unix_ts_nanos() -> u64 {
         .unwrap_or(0)
 }
 
+fn max_events_per_poll_from_env() -> Option<usize> {
+    std::env::var(MAX_EVENTS_PER_POLL_ENV)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+}
+
 fn combine_quality_flags(lhs: DataQualityFlags, rhs: DataQualityFlags) -> DataQualityFlags {
     DataQualityFlags::from_bits_truncate(lhs.bits() | rhs.bits())
 }
@@ -310,6 +326,8 @@ pub struct Engine<A: MarketDataAdapter, S: SignalModule> {
     last_quality_flags_bits: u32,
     last_events: Vec<RawEvent>,
     external: ExternalFeedState,
+    max_events_per_poll: Option<usize>,
+    backpressure_dropped_events: u64,
 }
 
 /// Default engine type used by C ABI and high-level bindings.
@@ -334,6 +352,8 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             last_quality_flags_bits: 0,
             last_events: Vec::new(),
             external: ExternalFeedState::default(),
+            max_events_per_poll: max_events_per_poll_from_env(),
+            backpressure_dropped_events: 0,
         }
     }
 
@@ -345,6 +365,17 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
 
     fn with_audit(mut self, audit: Option<AuditLog>) -> Self {
         self.audit = audit;
+        self
+    }
+
+    /// Sets an optional per-poll event drain limit.
+    ///
+    /// `None` preserves the default unbounded drain behavior. `Some(0)` is
+    /// treated as disabled. When a poll exceeds the configured limit, the
+    /// runtime processes up to the limit, drops the remainder from that drain,
+    /// sets the `ADAPTER_DEGRADED` quality flag, and returns a backpressure error.
+    pub fn with_max_events_per_poll(mut self, max: Option<usize>) -> Self {
+        self.max_events_per_poll = max.filter(|value| *value > 0);
         self
     }
 
@@ -525,12 +556,49 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         self.adapter
             .poll(&mut events)
             .map_err(|e| RuntimeError::Adapter(e.to_string()))?;
+
+        let drained_events = events.len();
+        let mut effective_quality = quality_flags;
+        let backpressure = self
+            .max_events_per_poll
+            .filter(|max| drained_events > *max)
+            .map(|max| {
+                let dropped = drained_events.saturating_sub(max);
+                self.backpressure_dropped_events = self
+                    .backpressure_dropped_events
+                    .saturating_add(dropped as u64);
+                events.truncate(max);
+                dropped
+            });
+
+        if backpressure.is_some() {
+            effective_quality = combine_quality_flags(effective_quality, DataQualityFlags::ADAPTER_DEGRADED);
+        }
+
         self.last_events = events.clone();
 
         for event in events {
-            self.process_event(event, quality_flags)?;
+            self.process_event(event, effective_quality)?;
         }
-        self.update_health_state(quality_flags);
+        self.update_health_state(effective_quality);
+
+        if let Some(dropped) = backpressure {
+            self.audit_event(
+                "backpressure",
+                &format!(
+                    "{{\"drained_events\":{},\"processed_events\":{},\"dropped_events\":{},\"max_events_per_poll\":{}}}",
+                    drained_events,
+                    self.last_events.len(),
+                    dropped,
+                    self.max_events_per_poll.unwrap_or(0)
+                ),
+            )?;
+            return Err(RuntimeError::Adapter(format!(
+                "backpressure: drained_events={drained_events} processed_events={} dropped_events={dropped} max_events_per_poll={}",
+                self.last_events.len(),
+                self.max_events_per_poll.unwrap_or(0)
+            )));
+        }
 
         Ok(self.last_events.len())
     }
@@ -593,9 +661,10 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             .unwrap_or_else(|| "null".to_string());
         let quality_flags_detail = quality_flags_detail_json(self.last_quality_flags_bits);
         let external_last_ingest = optional_u64_json(self.external.last_ingest_ns);
+        let max_events_per_poll = optional_usize_json(self.max_events_per_poll);
 
         format!(
-            "{{\"instance_id\":\"{}\",\"started\":{},\"processed_events\":{},\"symbols\":{},\"book_symbols\":{},\"analytics_symbols\":{},\"signal_symbols\":{},\"persistence\":{},\"health_seq\":{},\"quality_flags\":{},\"quality_flags_detail\":{},\"adapter_connected\":{},\"adapter_degraded\":{},\"adapter_last_error\":{},\"adapter_protocol_info\":{},\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_sequence_enforced\":{},\"external_stale_after_ms\":{},\"external_last_ingest_ns\":{},\"external_trade_sequence_symbols\":{},\"external_book_sequence_symbols\":{}}}",
+            "{{\"instance_id\":\"{}\",\"started\":{},\"processed_events\":{},\"symbols\":{},\"book_symbols\":{},\"analytics_symbols\":{},\"signal_symbols\":{},\"persistence\":{},\"health_seq\":{},\"quality_flags\":{},\"quality_flags_detail\":{},\"adapter_connected\":{},\"adapter_degraded\":{},\"adapter_last_error\":{},\"adapter_protocol_info\":{},\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_sequence_enforced\":{},\"external_stale_after_ms\":{},\"external_last_ingest_ns\":{},\"external_trade_sequence_symbols\":{},\"external_book_sequence_symbols\":{},\"max_events_per_poll\":{},\"backpressure_dropped_events\":{}}}",
             escape_json(&self.cfg.instance_id),
             self.started,
             self.processed_events,
@@ -617,7 +686,9 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             self.external.policy.stale_after_ms,
             external_last_ingest,
             self.external.trade_seq.len(),
-            self.external.book_seq.len()
+            self.external.book_seq.len(),
+            max_events_per_poll,
+            self.backpressure_dropped_events
         )
     }
 
@@ -648,8 +719,9 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             .unwrap_or_else(|| "null".to_string());
         let quality_flags_detail = quality_flags_detail_json(self.last_quality_flags_bits);
         let external_last_ingest = optional_u64_json(self.external.last_ingest_ns);
+        let max_events_per_poll = optional_usize_json(self.max_events_per_poll);
         format!(
-            "{{\"health_seq\":{},\"started\":{},\"connected\":{},\"degraded\":{},\"reconnect_state\":\"{}\",\"quality_flags\":{},\"quality_flags_detail\":{},\"last_error\":{},\"protocol_info\":{},\"tracked_symbols\":{},\"processed_events\":{},\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_sequence_enforced\":{},\"external_last_ingest_ns\":{}}}",
+            "{{\"health_seq\":{},\"started\":{},\"connected\":{},\"degraded\":{},\"reconnect_state\":\"{}\",\"quality_flags\":{},\"quality_flags_detail\":{},\"last_error\":{},\"protocol_info\":{},\"tracked_symbols\":{},\"processed_events\":{},\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_sequence_enforced\":{},\"external_last_ingest_ns\":{},\"max_events_per_poll\":{},\"backpressure_dropped_events\":{}}}",
             self.health_seq,
             self.started,
             adapter_health.connected,
@@ -664,7 +736,9 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             self.external.enabled,
             self.external.reconnecting,
             self.external.policy.enforce_sequence,
-            external_last_ingest
+            external_last_ingest,
+            max_events_per_poll,
+            self.backpressure_dropped_events
         )
     }
 
@@ -803,13 +877,14 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         self.last_quality_flags_bits = quality_flags.bits();
         let adapter_health = self.adapter.health();
         let fingerprint = format!(
-            "{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}",
             self.started,
             adapter_health.connected,
             adapter_health.degraded,
             self.last_quality_flags_bits,
             adapter_health.last_error.as_deref().unwrap_or(""),
-            adapter_health.protocol_info.as_deref().unwrap_or("")
+            adapter_health.protocol_info.as_deref().unwrap_or(""),
+            self.backpressure_dropped_events
         );
         if fingerprint != self.last_health_fingerprint {
             self.health_seq = self.health_seq.saturating_add(1);
@@ -828,6 +903,12 @@ fn escape_json(input: &str) -> String {
 }
 
 fn optional_u64_json(value: Option<u64>) -> String {
+    value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn optional_usize_json(value: Option<usize>) -> String {
     value
         .map(|v| v.to_string())
         .unwrap_or_else(|| "null".to_string())

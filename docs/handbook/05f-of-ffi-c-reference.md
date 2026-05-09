@@ -150,7 +150,7 @@ functions.
 | `OF_ERR_STATE` | `2` | Invalid lifecycle or runtime state |
 | `OF_ERR_IO` | `3` | I/O failure |
 | `OF_ERR_AUTH` | `4` | Authentication/authorization failure |
-| `OF_ERR_BACKPRESSURE` | `5` | Backpressure condition |
+| `OF_ERR_BACKPRESSURE` | `5` | Runtime poll exceeded an enabled backpressure limit |
 | `OF_ERR_DATA_QUALITY` | `6` | Quality policy rejected operation |
 | `OF_ERR_INTERNAL` | `255` | Internal or unknown failure |
 
@@ -180,7 +180,7 @@ functions.
 | `of_unsubscribe(sub)` | `int32_t` | Deactivates a subscription token |
 | `of_unsubscribe_symbol(engine, symbol)` | `int32_t` | Removes all streams for one symbol |
 | `of_reset_symbol_session(engine, symbol)` | `int32_t` | Resets per-symbol session analytics |
-| `of_engine_poll_once(engine, quality_flags)` | `int32_t` | Polls adapter once and dispatches callbacks |
+| `of_engine_poll_once(engine, quality_flags)` | `int32_t` | Polls adapter once and dispatches callbacks; returns `OF_ERR_BACKPRESSURE` if an enabled runtime drain limit is exceeded |
 
 ### External ingest and supervision
 

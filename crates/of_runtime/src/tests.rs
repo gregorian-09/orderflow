@@ -772,6 +772,48 @@ secret_env = "OF_STRICT_SECRET"
         assert_eq!(post.point_of_control, 0);
     }
 
+    #[test]
+    fn poll_backpressure_limit_marks_health_and_counts_drops() {
+        let symbol = SymbolId {
+            venue: "CME".to_string(),
+            symbol: "ESM6".to_string(),
+        };
+        let mut adapter = MockAdapter::default();
+        for sequence in 1..=3 {
+            adapter.push_event(RawEvent::Trade(TradePrint {
+                symbol: symbol.clone(),
+                price: 505000,
+                size: 1,
+                aggressor_side: Side::Ask,
+                sequence,
+                ts_exchange_ns: sequence,
+                ts_recv_ns: sequence + 1,
+            }));
+        }
+
+        let mut engine = Engine::new(
+            EngineConfig::default(),
+            adapter,
+            DeltaMomentumSignal::new(5),
+        )
+        .with_max_events_per_poll(Some(2));
+
+        engine.start().expect("start");
+        engine.subscribe(symbol.clone(), 10).expect("subscribe");
+        let err = engine
+            .poll_once(DataQualityFlags::NONE)
+            .expect_err("poll should report backpressure");
+
+        assert!(err.is_backpressure());
+        assert_eq!(engine.last_events().len(), 2);
+        let analytics = engine.analytics_snapshot(&symbol).expect("analytics");
+        assert_eq!(analytics.buy_volume, 2);
+        assert_eq!(engine.current_quality_flags_bits(), DataQualityFlags::ADAPTER_DEGRADED.bits());
+        let metrics = engine.metrics_json();
+        assert!(metrics.contains("\"max_events_per_poll\":2"));
+        assert!(metrics.contains("\"backpressure_dropped_events\":1"));
+    }
+
     fn write_temp_file(name: &str, content: &str) -> PathBuf {
         let mut path = std::env::temp_dir();
         let nonce = format!(

@@ -113,6 +113,17 @@ mod tests {
     }
 
     #[test]
+    fn maps_runtime_backpressure_to_c_status() {
+        assert_eq!(
+            map_runtime_error(&RuntimeError::Adapter(
+                "backpressure: drained_events=3 processed_events=2 dropped_events=1 max_events_per_poll=2"
+                    .to_string()
+            )),
+            of_error_t::OF_ERR_BACKPRESSURE as i32
+        );
+    }
+
+    #[test]
     fn analytics_snapshot_matches_golden_payload() {
         let _guard = test_lock().lock().expect("lock");
 
@@ -456,7 +467,7 @@ mod tests {
         assert_eq!(sink.payloads.len(), 1);
         assert_eq!(
             sink.payloads[0],
-            "{\"health_seq\":1,\"started\":true,\"connected\":true,\"degraded\":false,\"reconnect_state\":\"streaming\",\"quality_flags\":0,\"quality_flags_detail\":[],\"last_error\":null,\"protocol_info\":\"mock_adapter\",\"tracked_symbols\":0,\"processed_events\":0,\"external_feed_enabled\":false,\"external_feed_reconnecting\":false,\"external_sequence_enforced\":true,\"external_last_ingest_ns\":null}"
+            "{\"health_seq\":1,\"started\":true,\"connected\":true,\"degraded\":false,\"reconnect_state\":\"streaming\",\"quality_flags\":0,\"quality_flags_detail\":[],\"last_error\":null,\"protocol_info\":\"mock_adapter\",\"tracked_symbols\":0,\"processed_events\":0,\"external_feed_enabled\":false,\"external_feed_reconnecting\":false,\"external_sequence_enforced\":true,\"external_last_ingest_ns\":null,\"max_events_per_poll\":null,\"backpressure_dropped_events\":0}"
         );
 
         assert_eq!(of_unsubscribe(sub), of_error_t::OF_OK as i32);

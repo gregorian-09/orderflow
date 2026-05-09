@@ -158,6 +158,9 @@ Return behavior:
 - [`Engine::metrics_json`] is the counter-oriented metrics payload and includes processed event counts, quality flag detail, and subsystem counts.
 - [`Engine::current_quality_flags_bits`] exposes the current runtime quality bitset directly for low-allocation callers.
 - [`Engine::last_events`] exposes the last processed raw event batch for inspection/testing.
+- [`Engine::with_max_events_per_poll`] optionally enables a per-poll drain limit
+  for hosts that need explicit backpressure. The same limit can be set for
+  default engines with `OF_RUNTIME_MAX_EVENTS_PER_POLL`.
 
 Compatibility rule:
 
@@ -260,7 +263,17 @@ assert!(health.contains("\"started\":true"));
 - [`Engine::health_json`] also includes `quality_flags_detail`, `tracked_symbols`,
   `processed_events`, and external supervision fields such as `external_last_ingest_ns`.
 - [`Engine::metrics_json`] also includes `health_seq`, per-subsystem symbol counts,
-  `quality_flags_detail`, and external sequence-cache counts for live diagnostics.
+  `quality_flags_detail`, external sequence-cache counts, `max_events_per_poll`,
+  and `backpressure_dropped_events` for live diagnostics.
+
+## Backpressure Policy
+
+Backpressure is disabled by default to preserve existing poll behavior. When
+`with_max_events_per_poll(Some(n))` or `OF_RUNTIME_MAX_EVENTS_PER_POLL=n` is
+set, a poll that drains more than `n` adapter events processes the first `n`
+events, drops the remainder from that drain, sets the `ADAPTER_DEGRADED`
+quality flag, and returns a backpressure error. The C ABI maps that condition to
+`OF_ERR_BACKPRESSURE`.
 
 ## Config Loading
 
