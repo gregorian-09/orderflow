@@ -16,4 +16,4 @@ categories = ["finance", "algorithms"]
 all-features = true
 
 [dependencies]
-of_core = { path = "../of_core", version = "0.2.0" }
+of_core = { path = "../of_core", version = "0.3.0" }

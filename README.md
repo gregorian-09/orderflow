@@ -12,10 +12,22 @@ Orderflow is a multi-language market data and analytics engine with:
 
 Start with:
 
-- [Release 0.2.0 notes](./docs/ops/release-0.2.0.md)
+- [Release 0.3.0 notes](./docs/ops/release-0.3.0.md)
 - [docs/README.md](./docs/README.md)
 - [docs/handbook/README.md](./docs/handbook/README.md)
 - [docs/bindings/README.md](./docs/bindings/README.md)
+
+## What's New In 0.3.0
+
+`0.3.0` is a non-breaking operational hardening release:
+
+- optional dashboard auth with `OF_DASH_TOKEN`
+- Prometheus `/metrics` for dashboard/runtime monitoring
+- opt-in runtime backpressure and adapter circuit breaker policy
+- additive aggregate health fields in runtime JSON
+- versioned JSONL persistence records with event timestamps
+- persist -> replay -> signal/book parity regression coverage
+- Python `py.typed` marker and bundled native-wheel loading support
 
 ## Quick Build
 

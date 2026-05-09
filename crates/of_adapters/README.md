@@ -11,6 +11,13 @@ It standardizes lifecycle, subscription, polling, and health reporting while kee
 - Config: [`AdapterConfig`], [`ProviderKind`], [`CredentialsRef`]
 - Health: [`AdapterHealth`]
 
+## New In 0.3.0
+
+`0.3.0` adds runtime-level aggregate health and opt-in circuit breaking around
+adapter polling without changing the [`MarketDataAdapter`] trait. Existing
+adapters continue to implement the same lifecycle, subscription, polling, and
+health methods.
+
 ## New In 0.2.0
 
 Relative to the `0.1.x` line, the adapter layer now has materially stronger

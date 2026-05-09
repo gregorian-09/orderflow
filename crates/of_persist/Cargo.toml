@@ -16,6 +16,6 @@ categories = ["finance", "database-implementations"]
 all-features = true
 
 [dependencies]
-of_core = { path = "../of_core", version = "0.2.0" }
+of_core = { path = "../of_core", version = "0.3.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

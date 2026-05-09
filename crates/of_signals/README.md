@@ -16,6 +16,12 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
   - [`SweepDetectionSignal`]
   - [`CompositeSignal`]
 
+## New In 0.3.0
+
+`0.3.0` adds runtime-level replay parity coverage that verifies persisted
+streams replay into matching signal state. The `SignalModule` trait and built-in
+signal constructors remain unchanged.
+
 ## New In 0.2.0
 
 Relative to the `0.1.x` line, `of_signals` now includes a broader built-in

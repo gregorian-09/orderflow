@@ -11,6 +11,18 @@ It is designed for replay, auditability, and post-trade research workflows.
 - [`RetentionPolicy`] - bounded retention by total bytes and/or max file age.
 - [`PersistError`] / [`PersistResult<T>`] - persistence error contract.
 
+## New In 0.3.0
+
+Newly-written JSONL records now include additive schema metadata:
+
+- `"schema": 1`
+- `ts_exchange_ns`
+- `ts_recv_ns`
+
+Legacy records without these fields remain readable. Runtime tests now cover
+persist -> readback -> replay parity for analytics, signals, and materialized
+book state.
+
 ## New In 0.2.0
 
 Relative to the `0.1.x` line, `of_persist` is no longer write-only. It now

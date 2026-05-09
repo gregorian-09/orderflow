@@ -16,6 +16,16 @@ The README is intentionally API-complete so the PyPI page can be used as a
 single reference, similar to high-signal package pages such as TA-Lib and
 FastAPI.
 
+## What's New In 0.3.0
+
+- PEP 561 `py.typed` marker for static type checkers.
+- Binary wheels can bundle the native `of_ffi_c` runtime under
+  `orderflow/native/`.
+- Native library lookup now checks explicit `library_path=`,
+  `ORDERFLOW_LIBRARY_PATH`, bundled wheel libraries, then the local debug build.
+- Runtime `metrics()` may include additive backpressure, aggregate health, and
+  circuit-breaker fields when using a `0.3.0` native library.
+
 ## Architecture
 
 ![Orderflow architecture](https://raw.githubusercontent.com/gregorian-09/orderflow/main/docs/handbook/assets/diagrams/png/04-architecture-01.png)

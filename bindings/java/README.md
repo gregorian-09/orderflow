@@ -17,9 +17,17 @@ entire public surface from one place.
 <dependency>
   <groupId>io.github.gregorian-09</groupId>
   <artifactId>orderflow-java-binding</artifactId>
-  <version>0.1.4</version>
+  <version>0.3.0</version>
 </dependency>
 ```
+
+## What's New In 0.3.0
+
+- Java API compatibility is preserved.
+- A `0.3.0` native runtime exposes additive metrics JSON fields for runtime
+  backpressure, aggregate adapter health, and circuit-breaker state.
+- Existing native resolution behavior is unchanged: explicit path,
+  `ORDERFLOW_LIBRARY_PATH`, then local debug library.
 
 ## Java Version
 

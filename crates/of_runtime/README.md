@@ -13,6 +13,19 @@ It wires adapter events into book state and analytics, applies quality-aware sig
 6. Gate risk-sensitive output using [`DataQualityFlags`](of_core::DataQualityFlags).
 7. Optionally persist event streams via `of_persist`.
 
+## New In 0.3.0
+
+`0.3.0` is an additive operational hardening release for `of_runtime`:
+
+- opt-in backpressure with [`Engine::with_max_events_per_poll`] and
+  `OF_RUNTIME_MAX_EVENTS_PER_POLL`
+- opt-in adapter circuit breaking with [`Engine::with_circuit_breaker`],
+  `OF_RUNTIME_CIRCUIT_BREAKER_FAILURES`, and
+  `OF_RUNTIME_CIRCUIT_BREAKER_COOLDOWN_MS`
+- additive aggregate health fields in `health_json()` and `metrics_json()`
+- end-to-end persist -> readback -> replay parity coverage for analytics,
+  signals, and materialized book state
+
 ## New In 0.2.0
 
 Relative to the `0.1.x` line, `of_runtime` now adds or hardens:
@@ -87,6 +100,8 @@ Public `Engine<A, S>` methods:
 - [`Engine::health_json`]
 - [`Engine::last_events`]
 - [`Engine::current_quality_flags_bits`]
+- [`Engine::with_max_events_per_poll`]
+- [`Engine::with_circuit_breaker`]
 
 ## EngineConfig Field Reference
 

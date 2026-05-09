@@ -12,7 +12,7 @@ The layout follows production-oriented documentation principles:
 
 ## Start Here
 
-- [Release 0.2.0 Notes](./ops/release-0.2.0.md)
+- [Release 0.3.0 Notes](./ops/release-0.3.0.md)
 - [Handbook Home](./handbook/README.md)
 - [Binding Docs](./bindings/README.md)
 - [API Docs (legacy entry)](./api/README.md)

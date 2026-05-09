@@ -11,6 +11,12 @@ It is the native interface used by Python (`ctypes`), Java (JNA), and any C-comp
 - Polling and snapshots: `of_engine_poll_once`, `of_get_book_snapshot`, `of_get_analytics_snapshot`, `of_get_derived_analytics_snapshot`, `of_get_session_candle_snapshot`, `of_get_interval_candle_snapshot`, `of_get_signal_snapshot`
 - Metrics and memory management: `of_get_metrics_json`, `of_string_free`
 
+## New In 0.3.0
+
+The C ABI remains stable in `0.3.0`. Existing exported symbols are unchanged,
+while `of_get_metrics_json(...)` returns additive runtime fields for
+backpressure, aggregate adapter health, and circuit-breaker state.
+
 ## New In 0.2.0
 
 Relative to the `0.1.x` line, the C ABI now exposes:

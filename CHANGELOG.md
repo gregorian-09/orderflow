@@ -8,6 +8,59 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ### Added
 - Placeholder for the next release cycle.
 
+## [0.3.0] - 2026-05-09
+This is a non-breaking operational hardening release after `0.2.0`. For the
+complete user-facing release guide, see
+[`docs/ops/release-0.3.0.md`](docs/ops/release-0.3.0.md).
+
+### Added
+- Optional dashboard token authentication through `OF_DASH_TOKEN`, disabled by
+  default for local development compatibility.
+- Dashboard Prometheus `/metrics` endpoint with runtime counters, quality flags,
+  adapter status, backpressure counters, aggregate health, and circuit-breaker
+  state.
+- Runtime opt-in backpressure with `Engine::with_max_events_per_poll(Some(n))`
+  and `OF_RUNTIME_MAX_EVENTS_PER_POLL`.
+- Runtime aggregate adapter health fields in health/metrics JSON:
+  `adapter_total_count`, `adapter_healthy_count`, and
+  `runtime_health_status`.
+- Runtime opt-in adapter circuit breaker with
+  `Engine::with_circuit_breaker(...)`,
+  `OF_RUNTIME_CIRCUIT_BREAKER_FAILURES`, and
+  `OF_RUNTIME_CIRCUIT_BREAKER_COOLDOWN_MS`.
+- Additive circuit-breaker health/metrics fields:
+  `circuit_breaker_enabled`, `circuit_breaker_open`,
+  `circuit_breaker_consecutive_failures`, `circuit_breaker_opened_count`, and
+  `circuit_breaker_cooldown_ms`.
+- Additive JSONL persistence record metadata: `"schema": 1`,
+  `ts_exchange_ns`, and `ts_recv_ns`.
+- Runtime end-to-end persistence replay parity regression covering ingest,
+  persistence, readback, replay, analytics, signals, and materialized book
+  state.
+- Python PEP 561 marker (`py.typed`) for type-checker support.
+- Python bundled native library lookup under `orderflow/native/`.
+- GitHub Actions workflow for platform-tagged Python binary wheels.
+
+### Changed
+- Package versions are aligned at `0.3.0` for Rust, C, Python, and Java.
+- Python publish workflow now builds an sdist plus a Linux platform wheel with
+  the native `of_ffi_c` runtime staged inside the package.
+- Cargo lockfile dependency selections were kept compatible with the project's
+  minimum supported Rust/Cargo toolchain.
+
+### Upgrade Notes
+- This release is additive and non-breaking for existing `0.2.0` integrations.
+- Existing Rust, C, Python, and Java APIs continue to work; no required
+  rename/removal migration is needed.
+- If you use direct C or native bindings, update the native library and header
+  together.
+- If you use Python or Java, keep the binding package and native library on the
+  same release version.
+- Consider enabling `OF_DASH_TOKEN` before exposing the dashboard outside a
+  trusted local environment.
+- Consider enabling backpressure and circuit breaking for live deployments that
+  need explicit failure containment.
+
 ## [0.2.0] - 2026-04-08
 This is the first hardening-focused feature release after the initial `0.1.x`
 line. For the complete user-facing release guide, see

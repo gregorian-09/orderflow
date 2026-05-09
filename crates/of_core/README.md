@@ -12,6 +12,12 @@ the same normalized semantics.
 - Runtime outputs: [`AnalyticsSnapshot`], [`DerivedAnalyticsSnapshot`], [`SessionCandleSnapshot`], [`IntervalCandleSnapshot`], [`SignalSnapshot`], [`SignalState`]
 - Deterministic analytics engine: [`AnalyticsAccumulator`]
 
+## New In 0.3.0
+
+`0.3.0` keeps the core data model API stable. The release hardens the runtime,
+persistence, dashboard, and binding layers around these types rather than
+changing `of_core` contracts.
+
 ## New In 0.2.0
 
 Relative to the `0.1.x` line, `of_core` now includes:
