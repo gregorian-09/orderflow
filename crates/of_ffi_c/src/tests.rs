@@ -467,7 +467,7 @@ mod tests {
         assert_eq!(sink.payloads.len(), 1);
         assert_eq!(
             sink.payloads[0],
-            "{\"health_seq\":1,\"started\":true,\"connected\":true,\"degraded\":false,\"reconnect_state\":\"streaming\",\"quality_flags\":0,\"quality_flags_detail\":[],\"last_error\":null,\"protocol_info\":\"mock_adapter\",\"tracked_symbols\":0,\"processed_events\":0,\"external_feed_enabled\":false,\"external_feed_reconnecting\":false,\"external_sequence_enforced\":true,\"external_last_ingest_ns\":null,\"max_events_per_poll\":null,\"backpressure_dropped_events\":0}"
+            "{\"health_seq\":1,\"started\":true,\"connected\":true,\"degraded\":false,\"reconnect_state\":\"streaming\",\"quality_flags\":0,\"quality_flags_detail\":[],\"last_error\":null,\"protocol_info\":\"mock_adapter\",\"tracked_symbols\":0,\"processed_events\":0,\"adapter_total_count\":1,\"adapter_healthy_count\":1,\"runtime_health_status\":\"healthy\",\"external_feed_enabled\":false,\"external_feed_reconnecting\":false,\"external_sequence_enforced\":true,\"external_last_ingest_ns\":null,\"max_events_per_poll\":null,\"backpressure_dropped_events\":0,\"circuit_breaker_enabled\":false,\"circuit_breaker_open\":false,\"circuit_breaker_consecutive_failures\":0,\"circuit_breaker_opened_count\":0,\"circuit_breaker_cooldown_ms\":1000}"
         );
 
         assert_eq!(of_unsubscribe(sub), of_error_t::OF_OK as i32);
@@ -591,6 +591,11 @@ mod tests {
         assert!(metrics.contains("\"quality_flags_detail\":"));
         assert!(metrics.contains("\"book_symbols\":"));
         assert!(metrics.contains("\"external_last_ingest_ns\":"));
+        assert!(metrics.contains("\"adapter_total_count\":1"));
+        assert!(metrics.contains("\"adapter_healthy_count\":1"));
+        assert!(metrics.contains("\"runtime_health_status\":\"healthy\""));
+        assert!(metrics.contains("\"circuit_breaker_enabled\":false"));
+        assert!(metrics.contains("\"circuit_breaker_open\":false"));
         of_string_free(out);
 
         assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
