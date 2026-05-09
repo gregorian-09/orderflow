@@ -3,7 +3,10 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use of_adapters::{AdapterConfig, CredentialsRef, MockAdapter, ProviderKind, RawEvent};
+    use of_adapters::{
+        AdapterConfig, AdapterError, AdapterHealth, AdapterResult, CredentialsRef,
+        MarketDataAdapter, MockAdapter, ProviderKind, RawEvent, SubscribeReq,
+    };
     use of_core::{BookAction, BookUpdate, DataQualityFlags, Side, SignalState, SymbolId, TradePrint};
     use of_persist::{RollingStore, StoredEvent};
     use of_signals::DeltaMomentumSignal;
@@ -816,6 +819,47 @@ secret_env = "OF_STRICT_SECRET"
     }
 
     #[test]
+    fn circuit_breaker_opens_after_repeated_adapter_failures() {
+        let symbol = SymbolId {
+            venue: "CME".to_string(),
+            symbol: "ESM6".to_string(),
+        };
+        let mut engine = Engine::new(
+            EngineConfig::default(),
+            FailingAdapter::default(),
+            DeltaMomentumSignal::new(5),
+        )
+        .with_circuit_breaker(1, 60_000);
+
+        engine.start().expect("start");
+        engine.subscribe(symbol, 10).expect("subscribe");
+        let first = engine
+            .poll_once(DataQualityFlags::NONE)
+            .expect_err("first poll should fail from adapter");
+        assert!(!first.is_circuit_open());
+
+        let second = engine
+            .poll_once(DataQualityFlags::NONE)
+            .expect_err("second poll should hit open circuit");
+        assert!(second.is_circuit_open());
+        assert_eq!(engine.current_quality_flags_bits(), DataQualityFlags::ADAPTER_DEGRADED.bits());
+
+        let health = engine.health_json();
+        assert!(health.contains("\"adapter_total_count\":1"));
+        assert!(health.contains("\"adapter_healthy_count\":0"));
+        assert!(health.contains("\"runtime_health_status\":\"degraded\""));
+        assert!(health.contains("\"circuit_breaker_enabled\":true"));
+        assert!(health.contains("\"circuit_breaker_open\":true"));
+        assert!(health.contains("\"circuit_breaker_consecutive_failures\":1"));
+        assert!(health.contains("\"circuit_breaker_opened_count\":1"));
+
+        let metrics = engine.metrics_json();
+        assert!(metrics.contains("\"adapter_total_count\":1"));
+        assert!(metrics.contains("\"adapter_healthy_count\":0"));
+        assert!(metrics.contains("\"circuit_breaker_open\":true"));
+    }
+
+    #[test]
     fn persisted_events_replay_to_matching_runtime_state() {
         let root = temp_dir("e2e_persist_replay");
         let symbol = SymbolId {
@@ -971,5 +1015,38 @@ secret_env = "OF_STRICT_SECRET"
         ));
         fs::create_dir_all(&path).expect("temp dir create should work");
         path
+    }
+
+    #[derive(Debug, Default)]
+    struct FailingAdapter {
+        connected: bool,
+    }
+
+    impl MarketDataAdapter for FailingAdapter {
+        fn connect(&mut self) -> AdapterResult<()> {
+            self.connected = true;
+            Ok(())
+        }
+
+        fn subscribe(&mut self, _req: SubscribeReq) -> AdapterResult<()> {
+            Ok(())
+        }
+
+        fn unsubscribe(&mut self, _symbol: SymbolId) -> AdapterResult<()> {
+            Ok(())
+        }
+
+        fn poll(&mut self, _out: &mut Vec<RawEvent>) -> AdapterResult<usize> {
+            Err(AdapterError::Other("forced poll failure".to_string()))
+        }
+
+        fn health(&self) -> AdapterHealth {
+            AdapterHealth {
+                connected: self.connected,
+                degraded: false,
+                last_error: None,
+                protocol_info: Some("failing_adapter".to_string()),
+            }
+        }
     }
 }

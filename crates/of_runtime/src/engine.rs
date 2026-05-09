@@ -18,6 +18,9 @@ use crate::config::config_hash;
 use crate::validate_startup_config;
 
 const MAX_EVENTS_PER_POLL_ENV: &str = "OF_RUNTIME_MAX_EVENTS_PER_POLL";
+const CIRCUIT_BREAKER_FAILURES_ENV: &str = "OF_RUNTIME_CIRCUIT_BREAKER_FAILURES";
+const CIRCUIT_BREAKER_COOLDOWN_MS_ENV: &str = "OF_RUNTIME_CIRCUIT_BREAKER_COOLDOWN_MS";
+const DEFAULT_CIRCUIT_BREAKER_COOLDOWN_MS: u64 = 1_000;
 
 /// Runtime engine configuration.
 #[derive(Debug, Clone)]
@@ -100,6 +103,11 @@ impl RuntimeError {
     pub fn is_backpressure(&self) -> bool {
         matches!(self, Self::Adapter(message) if message.starts_with("backpressure:"))
     }
+
+    /// Returns true when this error represents an open adapter circuit breaker.
+    pub fn is_circuit_open(&self) -> bool {
+        matches!(self, Self::Adapter(message) if message.starts_with("circuit_open:"))
+    }
 }
 
 /// Policy controlling quality constraints for externally-ingested feeds.
@@ -128,6 +136,74 @@ struct ExternalFeedState {
     last_ingest_ns: Option<u64>,
     trade_seq: HashMap<SymbolId, u64>,
     book_seq: HashMap<SymbolId, u64>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CircuitBreakerState {
+    failure_threshold: u32,
+    cooldown_ms: u64,
+    consecutive_failures: u32,
+    open_until_ns: Option<u64>,
+    opened_count: u64,
+}
+
+impl CircuitBreakerState {
+    fn from_env() -> Self {
+        let failure_threshold = std::env::var(CIRCUIT_BREAKER_FAILURES_ENV)
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u32>().ok())
+            .unwrap_or(0);
+        let cooldown_ms = std::env::var(CIRCUIT_BREAKER_COOLDOWN_MS_ENV)
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_CIRCUIT_BREAKER_COOLDOWN_MS);
+        Self {
+            failure_threshold,
+            cooldown_ms,
+            ..Self::default()
+        }
+    }
+
+    fn configured(failure_threshold: u32, cooldown_ms: u64) -> Self {
+        Self {
+            failure_threshold,
+            cooldown_ms: if cooldown_ms == 0 {
+                DEFAULT_CIRCUIT_BREAKER_COOLDOWN_MS
+            } else {
+                cooldown_ms
+            },
+            ..Self::default()
+        }
+    }
+
+    fn enabled(&self) -> bool {
+        self.failure_threshold > 0
+    }
+
+    fn is_open_at(&self, now_ns: u64) -> bool {
+        self.open_until_ns
+            .map(|open_until| now_ns < open_until)
+            .unwrap_or(false)
+    }
+
+    fn record_success(&mut self) {
+        self.consecutive_failures = 0;
+        self.open_until_ns = None;
+    }
+
+    fn record_failure(&mut self, now_ns: u64) {
+        if !self.enabled() {
+            return;
+        }
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        if self.consecutive_failures >= self.failure_threshold {
+            self.open_until_ns = Some(
+                now_ns.saturating_add(self.cooldown_ms.saturating_mul(1_000_000)),
+            );
+            self.opened_count = self.opened_count.saturating_add(1);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -328,6 +404,7 @@ pub struct Engine<A: MarketDataAdapter, S: SignalModule> {
     external: ExternalFeedState,
     max_events_per_poll: Option<usize>,
     backpressure_dropped_events: u64,
+    circuit_breaker: CircuitBreakerState,
 }
 
 /// Default engine type used by C ABI and high-level bindings.
@@ -354,6 +431,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             external: ExternalFeedState::default(),
             max_events_per_poll: max_events_per_poll_from_env(),
             backpressure_dropped_events: 0,
+            circuit_breaker: CircuitBreakerState::from_env(),
         }
     }
 
@@ -376,6 +454,17 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
     /// sets the `ADAPTER_DEGRADED` quality flag, and returns a backpressure error.
     pub fn with_max_events_per_poll(mut self, max: Option<usize>) -> Self {
         self.max_events_per_poll = max.filter(|value| *value > 0);
+        self
+    }
+
+    /// Sets adapter circuit-breaker policy for repeated poll failures.
+    ///
+    /// A `failure_threshold` of `0` disables the breaker and preserves legacy
+    /// adapter polling behavior. When enabled, consecutive adapter poll errors
+    /// open the circuit for `cooldown_ms` and surface a `circuit_open` adapter
+    /// error on polls attempted during that window.
+    pub fn with_circuit_breaker(mut self, failure_threshold: u32, cooldown_ms: u64) -> Self {
+        self.circuit_breaker = CircuitBreakerState::configured(failure_threshold, cooldown_ms);
         self
     }
 
@@ -552,10 +641,27 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             return Err(RuntimeError::NotStarted);
         }
 
+        let now_ns = unix_ts_nanos();
+        if self.circuit_breaker.is_open_at(now_ns) {
+            let effective_quality =
+                combine_quality_flags(quality_flags, DataQualityFlags::ADAPTER_DEGRADED);
+            self.update_health_state(effective_quality);
+            return Err(RuntimeError::Adapter(format!(
+                "circuit_open: cooldown_ms={} consecutive_failures={}",
+                self.circuit_breaker.cooldown_ms,
+                self.circuit_breaker.consecutive_failures
+            )));
+        }
+
         let mut events = Vec::new();
-        self.adapter
-            .poll(&mut events)
-            .map_err(|e| RuntimeError::Adapter(e.to_string()))?;
+        if let Err(err) = self.adapter.poll(&mut events) {
+            self.circuit_breaker.record_failure(now_ns);
+            let effective_quality =
+                combine_quality_flags(quality_flags, DataQualityFlags::ADAPTER_DEGRADED);
+            self.update_health_state(effective_quality);
+            return Err(RuntimeError::Adapter(err.to_string()));
+        }
+        self.circuit_breaker.record_success();
 
         let drained_events = events.len();
         let mut effective_quality = quality_flags;
@@ -662,9 +768,25 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         let quality_flags_detail = quality_flags_detail_json(self.last_quality_flags_bits);
         let external_last_ingest = optional_u64_json(self.external.last_ingest_ns);
         let max_events_per_poll = optional_usize_json(self.max_events_per_poll);
+        let circuit_open = self.circuit_breaker.is_open_at(unix_ts_nanos());
+        let adapter_healthy = self.started
+            && adapter_health.connected
+            && !adapter_health.degraded
+            && !circuit_open;
+        let runtime_health_status = if !self.started || !adapter_health.connected {
+            "disconnected"
+        } else if adapter_health.degraded
+            || circuit_open
+            || self.external.reconnecting
+            || self.last_quality_flags_bits != 0
+        {
+            "degraded"
+        } else {
+            "healthy"
+        };
 
         format!(
-            "{{\"instance_id\":\"{}\",\"started\":{},\"processed_events\":{},\"symbols\":{},\"book_symbols\":{},\"analytics_symbols\":{},\"signal_symbols\":{},\"persistence\":{},\"health_seq\":{},\"quality_flags\":{},\"quality_flags_detail\":{},\"adapter_connected\":{},\"adapter_degraded\":{},\"adapter_last_error\":{},\"adapter_protocol_info\":{},\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_sequence_enforced\":{},\"external_stale_after_ms\":{},\"external_last_ingest_ns\":{},\"external_trade_sequence_symbols\":{},\"external_book_sequence_symbols\":{},\"max_events_per_poll\":{},\"backpressure_dropped_events\":{}}}",
+            "{{\"instance_id\":\"{}\",\"started\":{},\"processed_events\":{},\"symbols\":{},\"book_symbols\":{},\"analytics_symbols\":{},\"signal_symbols\":{},\"persistence\":{},\"health_seq\":{},\"quality_flags\":{},\"quality_flags_detail\":{},\"adapter_connected\":{},\"adapter_degraded\":{},\"adapter_last_error\":{},\"adapter_protocol_info\":{},\"adapter_total_count\":1,\"adapter_healthy_count\":{},\"runtime_health_status\":\"{}\",\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_sequence_enforced\":{},\"external_stale_after_ms\":{},\"external_last_ingest_ns\":{},\"external_trade_sequence_symbols\":{},\"external_book_sequence_symbols\":{},\"max_events_per_poll\":{},\"backpressure_dropped_events\":{},\"circuit_breaker_enabled\":{},\"circuit_breaker_open\":{},\"circuit_breaker_consecutive_failures\":{},\"circuit_breaker_opened_count\":{},\"circuit_breaker_cooldown_ms\":{}}}",
             escape_json(&self.cfg.instance_id),
             self.started,
             self.processed_events,
@@ -680,6 +802,8 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             adapter_health.degraded,
             last_error_json,
             protocol_info_json,
+            if adapter_healthy { 1 } else { 0 },
+            runtime_health_status,
             self.external.enabled,
             self.external.reconnecting,
             self.external.policy.enforce_sequence,
@@ -688,7 +812,12 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             self.external.trade_seq.len(),
             self.external.book_seq.len(),
             max_events_per_poll,
-            self.backpressure_dropped_events
+            self.backpressure_dropped_events,
+            self.circuit_breaker.enabled(),
+            circuit_open,
+            self.circuit_breaker.consecutive_failures,
+            self.circuit_breaker.opened_count,
+            self.circuit_breaker.cooldown_ms
         )
     }
 
@@ -700,9 +829,10 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
     /// Returns health snapshot as compact JSON payload.
     pub fn health_json(&self) -> String {
         let adapter_health = self.adapter.health();
+        let circuit_open = self.circuit_breaker.is_open_at(unix_ts_nanos());
         let reconnect_state = if !adapter_health.connected {
             "disconnected"
-        } else if adapter_health.degraded || self.external.reconnecting {
+        } else if adapter_health.degraded || self.external.reconnecting || circuit_open {
             "degraded"
         } else {
             "streaming"
@@ -720,8 +850,23 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         let quality_flags_detail = quality_flags_detail_json(self.last_quality_flags_bits);
         let external_last_ingest = optional_u64_json(self.external.last_ingest_ns);
         let max_events_per_poll = optional_usize_json(self.max_events_per_poll);
+        let adapter_healthy = self.started
+            && adapter_health.connected
+            && !adapter_health.degraded
+            && !circuit_open;
+        let runtime_health_status = if !self.started || !adapter_health.connected {
+            "disconnected"
+        } else if adapter_health.degraded
+            || circuit_open
+            || self.external.reconnecting
+            || self.last_quality_flags_bits != 0
+        {
+            "degraded"
+        } else {
+            "healthy"
+        };
         format!(
-            "{{\"health_seq\":{},\"started\":{},\"connected\":{},\"degraded\":{},\"reconnect_state\":\"{}\",\"quality_flags\":{},\"quality_flags_detail\":{},\"last_error\":{},\"protocol_info\":{},\"tracked_symbols\":{},\"processed_events\":{},\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_sequence_enforced\":{},\"external_last_ingest_ns\":{},\"max_events_per_poll\":{},\"backpressure_dropped_events\":{}}}",
+            "{{\"health_seq\":{},\"started\":{},\"connected\":{},\"degraded\":{},\"reconnect_state\":\"{}\",\"quality_flags\":{},\"quality_flags_detail\":{},\"last_error\":{},\"protocol_info\":{},\"tracked_symbols\":{},\"processed_events\":{},\"adapter_total_count\":1,\"adapter_healthy_count\":{},\"runtime_health_status\":\"{}\",\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_sequence_enforced\":{},\"external_last_ingest_ns\":{},\"max_events_per_poll\":{},\"backpressure_dropped_events\":{},\"circuit_breaker_enabled\":{},\"circuit_breaker_open\":{},\"circuit_breaker_consecutive_failures\":{},\"circuit_breaker_opened_count\":{},\"circuit_breaker_cooldown_ms\":{}}}",
             self.health_seq,
             self.started,
             adapter_health.connected,
@@ -733,12 +878,19 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             protocol_info_json,
             self.tracked_symbol_count(),
             self.processed_events,
+            if adapter_healthy { 1 } else { 0 },
+            runtime_health_status,
             self.external.enabled,
             self.external.reconnecting,
             self.external.policy.enforce_sequence,
             external_last_ingest,
             max_events_per_poll,
-            self.backpressure_dropped_events
+            self.backpressure_dropped_events,
+            self.circuit_breaker.enabled(),
+            circuit_open,
+            self.circuit_breaker.consecutive_failures,
+            self.circuit_breaker.opened_count,
+            self.circuit_breaker.cooldown_ms
         )
     }
 
@@ -877,14 +1029,17 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         self.last_quality_flags_bits = quality_flags.bits();
         let adapter_health = self.adapter.health();
         let fingerprint = format!(
-            "{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             self.started,
             adapter_health.connected,
             adapter_health.degraded,
             self.last_quality_flags_bits,
             adapter_health.last_error.as_deref().unwrap_or(""),
             adapter_health.protocol_info.as_deref().unwrap_or(""),
-            self.backpressure_dropped_events
+            self.backpressure_dropped_events,
+            self.circuit_breaker.is_open_at(unix_ts_nanos()),
+            self.circuit_breaker.consecutive_failures,
+            self.circuit_breaker.opened_count
         );
         if fingerprint != self.last_health_fingerprint {
             self.health_seq = self.health_seq.saturating_add(1);

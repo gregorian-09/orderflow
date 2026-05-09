@@ -263,8 +263,9 @@ assert!(health.contains("\"started\":true"));
 - [`Engine::health_json`] also includes `quality_flags_detail`, `tracked_symbols`,
   `processed_events`, and external supervision fields such as `external_last_ingest_ns`.
 - [`Engine::metrics_json`] also includes `health_seq`, per-subsystem symbol counts,
-  `quality_flags_detail`, external sequence-cache counts, `max_events_per_poll`,
-  and `backpressure_dropped_events` for live diagnostics.
+  `quality_flags_detail`, external sequence-cache counts, aggregate adapter
+  health, circuit-breaker state, `max_events_per_poll`, and
+  `backpressure_dropped_events` for live diagnostics.
 
 ## Backpressure Policy
 
@@ -274,6 +275,20 @@ set, a poll that drains more than `n` adapter events processes the first `n`
 events, drops the remainder from that drain, sets the `ADAPTER_DEGRADED`
 quality flag, and returns a backpressure error. The C ABI maps that condition to
 `OF_ERR_BACKPRESSURE`.
+
+## Circuit Breaker Policy
+
+Adapter circuit breaking is disabled by default to preserve existing polling
+semantics. Direct Rust callers can opt in with
+`with_circuit_breaker(failure_threshold, cooldown_ms)`. Default engines can opt
+in with `OF_RUNTIME_CIRCUIT_BREAKER_FAILURES`; the cooldown defaults to 1000 ms
+and can be overridden with `OF_RUNTIME_CIRCUIT_BREAKER_COOLDOWN_MS`.
+
+When enabled, consecutive adapter poll failures open the circuit for the
+configured cooldown window. Polls attempted during that window return a
+`circuit_open` adapter error, mark the runtime degraded, and expose
+`circuit_breaker_*`, `adapter_total_count`, `adapter_healthy_count`, and
+`runtime_health_status` fields through health and metrics JSON.
 
 ## Config Loading
 

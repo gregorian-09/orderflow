@@ -142,6 +142,7 @@ signals, book state, persistence, health reporting, and external ingest flows.
 | `last_events()` | `&[RawEvent]` | Last processed raw event batch |
 | `current_quality_flags_bits()` | `u32` | Current runtime quality bitset |
 | `with_max_events_per_poll(max)` | `Engine` | Enables or disables an optional per-poll drain limit |
+| `with_circuit_breaker(failure_threshold, cooldown_ms)` | `Engine` | Enables or disables adapter poll circuit breaking |
 
 ## Lifecycle Rules
 
@@ -176,6 +177,10 @@ Important rules:
 - `metrics_json()` is the counter-focused operational snapshot.
 - JSON field names are treated as stable once published.
 - New fields are added additively rather than replacing existing fields.
+- Aggregate fields such as `adapter_total_count`, `adapter_healthy_count`, and
+  `runtime_health_status` summarize runtime health without replacing the
+  adapter-specific fields.
+- Circuit-breaker state is exposed as additive `circuit_breaker_*` fields.
 - `max_events_per_poll` and `backpressure_dropped_events` are included when
   inspecting runtime health/metrics payloads.
 
@@ -188,6 +193,18 @@ Important rules:
   limit, drops the remainder from that drain, sets the `ADAPTER_DEGRADED`
   quality flag, and returns a backpressure error.
 - C ABI callers receive `OF_ERR_BACKPRESSURE` for that condition.
+
+## Circuit Breaker Rules
+
+- Circuit breaking is disabled by default.
+- Set `OF_RUNTIME_CIRCUIT_BREAKER_FAILURES` for default engines, or call
+  `with_circuit_breaker(failure_threshold, cooldown_ms)` when constructing an
+  engine directly.
+- `OF_RUNTIME_CIRCUIT_BREAKER_COOLDOWN_MS` overrides the default 1000 ms
+  cooldown for default engines.
+- When consecutive adapter poll failures reach the threshold, later polls during
+  the cooldown return a `circuit_open` adapter error and mark the runtime
+  degraded.
 
 ## Config Loading Rules
 
