@@ -33,13 +33,15 @@ pip install orderflow-gregorian09
 ### Native runtime requirement
 
 The Python package is a wrapper. A compatible `libof_ffi_c` shared library must
-be available at runtime.
+be available at runtime. Binary wheels can bundle this library under
+`orderflow/native/`; source installs can still use an externally-built runtime.
 
 Library resolution order:
 
 1. `library_path=` passed to `Engine(...)`
 2. `ORDERFLOW_LIBRARY_PATH` environment variable
-3. default local debug path (`target/debug/libof_ffi_c.*`)
+3. bundled wheel library (`orderflow/native/libof_ffi_c.*`)
+4. default local debug path (`target/debug/libof_ffi_c.*`)
 
 ```bash
 export ORDERFLOW_LIBRARY_PATH=/absolute/path/to/libof_ffi_c.so

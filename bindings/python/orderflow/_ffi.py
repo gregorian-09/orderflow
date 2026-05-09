@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import sys
 from ctypes import c_char_p, c_int32, c_int64, c_uint16, c_uint32, c_uint64, c_uint8, c_void_p
 from pathlib import Path
 from typing import Optional
@@ -99,24 +100,39 @@ class OfEvent(ctypes.Structure):
 OfEventCallback = ctypes.CFUNCTYPE(None, ctypes.POINTER(OfEvent), c_void_p)
 
 
-def default_library_path() -> Path:
-    """Return default shared library path relative to workspace root."""
+def _library_filename() -> str:
+    if sys.platform == "win32":
+        return "of_ffi_c.dll"
+    if sys.platform == "darwin":
+        return "libof_ffi_c.dylib"
+    return "libof_ffi_c.so"
+
+
+def _workspace_debug_library_path() -> Path:
+    return Path(__file__).resolve().parents[3] / "target" / "debug" / _library_filename()
+
+
+def _package_native_library_path() -> Path:
+    return Path(__file__).resolve().parent / "native" / _library_filename()
+
+
+def _library_search_paths() -> list[Path]:
     env_path = os.environ.get("ORDERFLOW_LIBRARY_PATH", "").strip()
     if env_path:
-        return Path(env_path)
+        return [Path(env_path)]
+    return [
+        _package_native_library_path(),
+        _workspace_debug_library_path(),
+    ]
 
-    suffix = {
-        "linux": "so",
-        "darwin": "dylib",
-        "win32": "dll",
-    }
-    import sys
 
-    ext = suffix.get(sys.platform, "so")
-    root = Path(__file__).resolve().parents[3]
-    if ext == "dll":
-        return root / "target" / "debug" / "of_ffi_c.dll"
-    return root / "target" / "debug" / f"libof_ffi_c.{ext}"
+def default_library_path() -> Path:
+    """Return the first available shared library path."""
+    paths = _library_search_paths()
+    for path in paths:
+        if path.exists():
+            return path
+    return paths[-1]
 
 
 class OrderflowLib:
@@ -127,8 +143,11 @@ class OrderflowLib:
         path = Path(library_path) if library_path else default_library_path()
         self.path = path
         if not path.exists():
+            candidates = [path] if library_path else _library_search_paths()
+            searched = ", ".join(str(candidate) for candidate in candidates)
             raise FileNotFoundError(
-                f"Orderflow shared library not found at '{path}'. Build with: cargo build -p of_ffi_c"
+                "Orderflow shared library not found. "
+                f"Searched: {searched}. Build with: cargo build -p of_ffi_c"
             )
         self.lib = ctypes.CDLL(str(path))
         self._bind_symbols()

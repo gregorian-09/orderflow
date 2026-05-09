@@ -42,4 +42,4 @@ where = ["."]
 include = ["orderflow*"]
 
 [tool.setuptools.package-data]
-orderflow = ["py.typed"]
+orderflow = ["py.typed", "native/*"]

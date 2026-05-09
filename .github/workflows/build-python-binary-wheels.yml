@@ -1,0 +1,61 @@
+name: Build Python Binary Wheels
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  wheel:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform_tag: manylinux2014_x86_64
+            native_lib: target/release/libof_ffi_c.so
+          - os: macos-13
+            platform_tag: macosx_10_12_x86_64
+            native_lib: target/release/libof_ffi_c.dylib
+          - os: windows-latest
+            platform_tag: win_amd64
+            native_lib: target/release/of_ffi_c.dll
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build native runtime
+        run: cargo build --release -p of_ffi_c
+
+      - name: Stage native runtime in Python package
+        shell: bash
+        run: |
+          mkdir -p bindings/python/orderflow/native
+          cp "${{ matrix.native_lib }}" bindings/python/orderflow/native/
+
+      - name: Build platform wheel
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip build wheel
+          python -m build bindings/python --wheel --outdir dist
+          tagged_wheel=$(python -m wheel tags --remove --python-tag py3 --abi-tag none --platform-tag "${{ matrix.platform_tag }}" dist/*.whl)
+          mv "$tagged_wheel" dist/
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel-${{ matrix.platform_tag }}
+          path: dist/*.whl
