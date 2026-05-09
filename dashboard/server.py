@@ -254,6 +254,8 @@ def _prometheus_metrics(snapshot: Dict[str, Any]) -> str:
         f'symbol="{_prom_label_value(symbol)}",'
         f'mode="{_prom_label_value(mode)}"'
     )
+    runtime_health_status = metrics.get("runtime_health_status") or health.get("runtime_health_status") or "unknown"
+    status_labels = f'{labels},status="{_prom_label_value(str(runtime_health_status))}"'
 
     lines = [
         "# HELP orderflow_dashboard_info Dashboard session identity.",
@@ -277,9 +279,30 @@ def _prometheus_metrics(snapshot: Dict[str, Any]) -> str:
         "# HELP orderflow_runtime_adapter_degraded Adapter degradation state.",
         "# TYPE orderflow_runtime_adapter_degraded gauge",
         f"orderflow_runtime_adapter_degraded{{{labels}}} {_prom_bool(metrics.get('adapter_degraded', health.get('degraded')))}",
+        "# HELP orderflow_runtime_adapter_total_count Total adapters supervised by the runtime.",
+        "# TYPE orderflow_runtime_adapter_total_count gauge",
+        f"orderflow_runtime_adapter_total_count{{{labels}}} {_prom_number(metrics.get('adapter_total_count', health.get('adapter_total_count'))):g}",
+        "# HELP orderflow_runtime_adapter_healthy_count Healthy adapters supervised by the runtime.",
+        "# TYPE orderflow_runtime_adapter_healthy_count gauge",
+        f"orderflow_runtime_adapter_healthy_count{{{labels}}} {_prom_number(metrics.get('adapter_healthy_count', health.get('adapter_healthy_count'))):g}",
+        "# HELP orderflow_runtime_health_status Runtime aggregate health status.",
+        "# TYPE orderflow_runtime_health_status gauge",
+        f"orderflow_runtime_health_status{{{status_labels}}} 1",
         "# HELP orderflow_runtime_quality_flags Current runtime data-quality bitset.",
         "# TYPE orderflow_runtime_quality_flags gauge",
         f"orderflow_runtime_quality_flags{{{labels}}} {_prom_number(health.get('quality_flags', metrics.get('quality_flags'))):g}",
+        "# HELP orderflow_runtime_circuit_breaker_enabled Runtime adapter circuit-breaker enabled state.",
+        "# TYPE orderflow_runtime_circuit_breaker_enabled gauge",
+        f"orderflow_runtime_circuit_breaker_enabled{{{labels}}} {_prom_bool(metrics.get('circuit_breaker_enabled', health.get('circuit_breaker_enabled')))}",
+        "# HELP orderflow_runtime_circuit_breaker_open Runtime adapter circuit-breaker open state.",
+        "# TYPE orderflow_runtime_circuit_breaker_open gauge",
+        f"orderflow_runtime_circuit_breaker_open{{{labels}}} {_prom_bool(metrics.get('circuit_breaker_open', health.get('circuit_breaker_open')))}",
+        "# HELP orderflow_runtime_circuit_breaker_consecutive_failures Consecutive adapter poll failures.",
+        "# TYPE orderflow_runtime_circuit_breaker_consecutive_failures gauge",
+        f"orderflow_runtime_circuit_breaker_consecutive_failures{{{labels}}} {_prom_number(metrics.get('circuit_breaker_consecutive_failures', health.get('circuit_breaker_consecutive_failures'))):g}",
+        "# HELP orderflow_runtime_circuit_breaker_opened_total Number of times the adapter circuit breaker opened.",
+        "# TYPE orderflow_runtime_circuit_breaker_opened_total counter",
+        f"orderflow_runtime_circuit_breaker_opened_total{{{labels}}} {_prom_number(metrics.get('circuit_breaker_opened_count', health.get('circuit_breaker_opened_count'))):g}",
         "# HELP orderflow_runtime_backpressure_dropped_events_total Events dropped by the runtime backpressure policy.",
         "# TYPE orderflow_runtime_backpressure_dropped_events_total counter",
         f"orderflow_runtime_backpressure_dropped_events_total{{{labels}}} {_prom_number(metrics.get('backpressure_dropped_events', health.get('backpressure_dropped_events'))):g}",

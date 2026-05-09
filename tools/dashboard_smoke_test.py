@@ -140,6 +140,10 @@ def main() -> int:
         metrics = _http_text("/metrics")
         if "orderflow_runtime_processed_events_total" not in metrics:
             raise AssertionError("/metrics missing runtime processed-events metric")
+        if "orderflow_runtime_adapter_healthy_count" not in metrics:
+            raise AssertionError("/metrics missing aggregate adapter health metric")
+        if "orderflow_runtime_circuit_breaker_open" not in metrics:
+            raise AssertionError("/metrics missing circuit-breaker metric")
         bar = _first_bar_with_levels(time.time() + 20)
         _assert_bar_derived_fields(bar)
         print("dashboard smoke test: PASS")
