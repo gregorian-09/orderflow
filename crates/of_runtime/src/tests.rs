@@ -5,6 +5,7 @@ mod tests {
 
     use of_adapters::{AdapterConfig, CredentialsRef, MockAdapter, ProviderKind, RawEvent};
     use of_core::{BookAction, BookUpdate, DataQualityFlags, Side, SignalState, SymbolId, TradePrint};
+    use of_persist::{RollingStore, StoredEvent};
     use of_signals::DeltaMomentumSignal;
 
     use super::*;
@@ -812,6 +813,133 @@ secret_env = "OF_STRICT_SECRET"
         let metrics = engine.metrics_json();
         assert!(metrics.contains("\"max_events_per_poll\":2"));
         assert!(metrics.contains("\"backpressure_dropped_events\":1"));
+    }
+
+    #[test]
+    fn persisted_events_replay_to_matching_runtime_state() {
+        let root = temp_dir("e2e_persist_replay");
+        let symbol = SymbolId {
+            venue: "CME".to_string(),
+            symbol: "ESM6".to_string(),
+        };
+
+        let persistence = RollingStore::new(&root).expect("store");
+        let mut live = Engine::new(
+            EngineConfig::default(),
+            MockAdapter::default(),
+            DeltaMomentumSignal::new(5),
+        )
+        .with_persistence(Some(persistence.clone()));
+        live.start().expect("live start");
+        live.subscribe(symbol.clone(), 10).expect("live subscribe");
+        live.ingest_book(
+            BookUpdate {
+                symbol: symbol.clone(),
+                side: Side::Bid,
+                level: 0,
+                price: 504900,
+                size: 20,
+                action: BookAction::Upsert,
+                sequence: 1,
+                ts_exchange_ns: 10,
+                ts_recv_ns: 11,
+            },
+            DataQualityFlags::NONE,
+        )
+        .expect("live book");
+        for (sequence, price, size, side) in [
+            (2, 505000, 10, Side::Ask),
+            (3, 504900, 4, Side::Bid),
+            (4, 505100, 7, Side::Ask),
+        ] {
+            live.ingest_trade(
+                TradePrint {
+                    symbol: symbol.clone(),
+                    price,
+                    size,
+                    aggressor_side: side,
+                    sequence,
+                    ts_exchange_ns: sequence * 10,
+                    ts_recv_ns: sequence * 10 + 1,
+                },
+                DataQualityFlags::NONE,
+            )
+            .expect("live trade");
+        }
+
+        let replay_events = persistence
+            .read_events(&symbol.venue, &symbol.symbol)
+            .expect("read persisted events");
+        assert_eq!(replay_events.len(), 4);
+
+        let mut replay = Engine::new(
+            EngineConfig::default(),
+            MockAdapter::default(),
+            DeltaMomentumSignal::new(5),
+        );
+        replay.start().expect("replay start");
+        replay.subscribe(symbol.clone(), 10).expect("replay subscribe");
+        for event in replay_events {
+            match event {
+                StoredEvent::Book(book) => replay
+                    .ingest_book(
+                        BookUpdate {
+                            symbol: symbol.clone(),
+                            side: book.side,
+                            level: book.level,
+                            price: book.price,
+                            size: book.size,
+                            action: book.action,
+                            sequence: book.sequence,
+                            ts_exchange_ns: 0,
+                            ts_recv_ns: 0,
+                        },
+                        DataQualityFlags::NONE,
+                    )
+                    .expect("replay book"),
+                StoredEvent::Trade(trade) => replay
+                    .ingest_trade(
+                        TradePrint {
+                            symbol: symbol.clone(),
+                            price: trade.price,
+                            size: trade.size,
+                            aggressor_side: trade.aggressor_side,
+                            sequence: trade.sequence,
+                            ts_exchange_ns: 0,
+                            ts_recv_ns: 0,
+                        },
+                        DataQualityFlags::NONE,
+                    )
+                    .expect("replay trade"),
+            }
+        }
+
+        let live_analytics = live.analytics_snapshot(&symbol).expect("live analytics");
+        let replay_analytics = replay
+            .analytics_snapshot(&symbol)
+            .expect("replay analytics");
+        assert_eq!(replay_analytics.delta, live_analytics.delta);
+        assert_eq!(
+            replay_analytics.cumulative_delta,
+            live_analytics.cumulative_delta
+        );
+        assert_eq!(replay_analytics.buy_volume, live_analytics.buy_volume);
+        assert_eq!(replay_analytics.sell_volume, live_analytics.sell_volume);
+        assert_eq!(replay_analytics.last_price, live_analytics.last_price);
+        assert_eq!(
+            replay_analytics.point_of_control,
+            live_analytics.point_of_control
+        );
+
+        let live_signal = live.signal_snapshot(&symbol).expect("live signal");
+        let replay_signal = replay.signal_snapshot(&symbol).expect("replay signal");
+        assert_eq!(replay_signal.state, live_signal.state);
+        assert_eq!(replay_signal.confidence_bps, live_signal.confidence_bps);
+
+        let live_book = live.book_snapshot(&symbol).expect("live book snapshot");
+        let replay_book = replay.book_snapshot(&symbol).expect("replay book snapshot");
+        assert_eq!(replay_book.bids, live_book.bids);
+        assert_eq!(replay_book.asks, live_book.asks);
     }
 
     fn write_temp_file(name: &str, content: &str) -> PathBuf {
