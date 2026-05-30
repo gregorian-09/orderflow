@@ -41,6 +41,12 @@ of_get_book_snapshot
 of_get_book_analytics_snapshot
 of_compute_weighted_average_price
 of_compute_depth_slope
+of_get_mid_price
+of_get_effective_spread_bps
+of_get_half_spread_cost_bps
+of_get_realised_spread_bps
+of_get_book_event_analytics
+of_get_resiliency_snapshot
 of_get_analytics_snapshot
   of_get_bar_series          # requires feature "tickbar"
   of_get_derived_analytics_snapshot
