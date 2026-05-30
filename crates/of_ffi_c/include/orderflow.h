@@ -299,6 +299,38 @@ int32_t of_compute_weighted_average_price(of_engine_t* engine, const of_symbol_t
  */
 int32_t of_compute_depth_slope(of_engine_t* engine, const of_symbol_t* symbol, uint32_t levels, void* out_buf, uint32_t* inout_len);
 
+/**
+ * Returns mid price as JSON: `{"mid": N}`, or `{}` if no book data.
+ */
+int32_t of_get_mid_price(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+
+/**
+ * Returns last effective spread in bps: `{"bps": N}`.
+ */
+int32_t of_get_effective_spread_bps(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+
+/**
+ * Returns average half-spread cost in bps over `window` trades: `{"bps": N}`.
+ */
+int32_t of_get_half_spread_cost_bps(of_engine_t* engine, const of_symbol_t* symbol, uint32_t window, void* out_buf, uint32_t* inout_len);
+
+/**
+ * Returns realised spread in bps for trade `hold_ticks` ago: `{"bps": N}`.
+ */
+int32_t of_get_realised_spread_bps(of_engine_t* engine, const of_symbol_t* symbol, uint32_t hold_ticks, void* out_buf, uint32_t* inout_len);
+
+/**
+ * Returns book-event analytics snapshot JSON over `window_ns` window.
+ *
+ * Payload includes bid/ask arrival/cancel rates, change intensity, and event volumes.
+ */
+int32_t of_get_book_event_analytics(of_engine_t* engine, const of_symbol_t* symbol, uint64_t window_ns, void* out_buf, uint32_t* inout_len);
+
+/**
+ * Returns resiliency snapshot JSON (recovery time, depth elasticity).
+ */
+int32_t of_get_resiliency_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+
 /** Returns current analytics snapshot JSON for `symbol`. */
 int32_t of_get_analytics_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
 /** Returns current derived analytics snapshot JSON for `symbol`. */
