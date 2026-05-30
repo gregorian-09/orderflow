@@ -384,6 +384,29 @@ class Engine:
         """Returns current book analytics snapshot with spread, depth, imbalance, microprice."""
         return self._snapshot_call(self._ffi.lib.of_get_book_analytics_snapshot, symbol)
 
+    def weighted_average_price(self, symbol: Symbol, qty: int) -> Optional[Dict[str, Any]]:
+        """Computes weighted average price for an order of `qty` by walking the book.
+
+        Positive qty = buy (walks asks), negative qty = sell (walks bids).
+        Returns dict with 'price' key, or empty dict if insufficient liquidity.
+        """
+        return self._snapshot_call(
+            self._ffi.lib.of_compute_weighted_average_price,
+            symbol,
+            ctypes.c_int64(qty),
+        )
+
+    def depth_slope(self, symbol: Symbol, levels: int = 5) -> Dict[str, Any]:
+        """Computes depth slope (avg volume decay per level) over first `levels` levels.
+
+        Returns dict with 'slope' key. Returns {'slope': 0.0} if fewer than 2 levels.
+        """
+        return self._snapshot_call(
+            self._ffi.lib.of_compute_depth_slope,
+            symbol,
+            ctypes.c_uint32(levels),
+        )
+
     def analytics_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
         """Returns current analytics snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_analytics_snapshot, symbol)

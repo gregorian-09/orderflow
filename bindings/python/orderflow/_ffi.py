@@ -233,6 +233,24 @@ class OrderflowLib:
         ]
         lib.of_get_book_analytics_snapshot.restype = c_int32
 
+        lib.of_compute_weighted_average_price.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            ctypes.c_int64,
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_compute_weighted_average_price.restype = c_int32
+
+        lib.of_compute_depth_slope.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            ctypes.c_uint32,
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_compute_depth_slope.restype = c_int32
+
         lib.of_get_analytics_snapshot.argtypes = [
             c_void_p,
             ctypes.POINTER(OfSymbol),
