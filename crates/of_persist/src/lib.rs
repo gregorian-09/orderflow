@@ -526,8 +526,8 @@ where
         .into_iter()
         .filter(|event| {
             let seq = event.sequence();
-            from_sequence.map_or(true, |from| seq >= from)
-                && to_sequence.map_or(true, |to| seq <= to)
+            from_sequence.is_none_or(|from| seq >= from)
+                && to_sequence.is_none_or(|to| seq <= to)
         })
         .collect()
 }

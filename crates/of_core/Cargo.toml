@@ -16,3 +16,9 @@ categories = ["finance", "algorithms"]
 all-features = true
 
 [dependencies]
+tickbar = { version = "0.1", optional = true }
+
+[features]
+default = []
+tickbar = ["dep:tickbar"]
+

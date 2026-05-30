@@ -11,7 +11,7 @@ the same normalized semantics.
 - Quality flags: [`DataQualityFlags`]
 - Runtime outputs: [`AnalyticsSnapshot`], [`DerivedAnalyticsSnapshot`], [`SessionCandleSnapshot`], [`IntervalCandleSnapshot`], [`SignalSnapshot`], [`SignalState`]
 - Deterministic analytics engine: [`AnalyticsAccumulator`]
-
+-
 ## New In 0.3.0
 
 `0.3.0` keeps the core data model API stable. The release hardens the runtime,
@@ -48,6 +48,7 @@ Public types:
 - [`SignalState`]
 - [`SignalSnapshot`]
 - [`DataQualityFlags`]
+- [`CompletedBar`]
 - [`AnalyticsAccumulator`]
 
 Public `DataQualityFlags` methods:
@@ -72,6 +73,9 @@ Public `AnalyticsAccumulator` methods:
 - [`AnalyticsAccumulator::derived_snapshot`]
 - [`AnalyticsAccumulator::session_candle_snapshot`]
 - [`AnalyticsAccumulator::interval_candle_snapshot`]
+- [`AnalyticsAccumulator::with_tickbar`] (requires `tickbar` feature)
+- [`AnalyticsAccumulator::bar_series`] (requires `tickbar` feature)
+- [`AnalyticsAccumulator::reset_tickbar`] (requires `tickbar` feature)
 
 ## Design Principles
 

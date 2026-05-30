@@ -6,7 +6,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
-- Placeholder for the next release cycle.
+- Tickbar integration: fixed-interval OHLCV bar aggregation using the `tickbar`
+  crate. New `CompletedBar` domain type, `AnalyticsAccumulator::with_tickbar()`,
+  `bar_series()`, and `reset_tickbar()` methods. Exposed through C ABI
+  (`of_engine_set_tickbar_interval`, `of_get_bar_series`), Python binding
+  (`set_tickbar_interval()`, `bar_series()`), and Java binding
+  (`setTickbarInterval()`, `barSeries()`). Feature-gated behind `tickbar`
+  (off by default).
 
 ## [0.3.0] - 2026-05-09
 This is a non-breaking operational hardening release after `0.2.0`. For the

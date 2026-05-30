@@ -7,13 +7,22 @@ use std::path::{Path, PathBuf};
 
 use of_adapters::{create_adapter, AdapterConfig, MarketDataAdapter, RawEvent, SubscribeReq};
 use of_core::{
-    AmihudSnapshot, AmihudTracker, AnalyticsAccumulator, AnalyticsSnapshot, BookAnalyticsSnapshot,
-    BookEventAnalyticsSnapshot, BookEventTracker, BookLevel, BookSnapshot, BookUpdate,
-    ClassificationVote, CvdEnhancementSnapshot, CvdEnhancements, DataQualityFlags,
-    DerivedAnalyticsSnapshot, IntervalCandleSnapshot, KyleLambdaSnapshot, KyleLambdaTracker,
+    ACDModel, ACDSnapshot, AgentTypeDetector, AgentTypeSnapshot, AlmgrenChriss,
+    AlmgrenChrissSnapshot, AmihudSnapshot, AmihudTracker, AnalyticsAccumulator, AnalyticsSnapshot,
+    BookAnalyticsSnapshot, BookEventAnalyticsSnapshot, BookEventTracker, BookLevel, BookSnapshot,
+    BookUpdate, ClassificationVote, CvdEnhancementSnapshot, CvdEnhancements, DarkLitCorrelator,
+    DarkLitCorrelationSnapshot, DarkPoolSnapshot, DarkPoolTracker, DataQualityFlags,
+    DerivedAnalyticsSnapshot, FuturesSnapshot, FuturesTracker, HasbrouckSnapshot, HasbrouckVAR,
+    InstitutionalFlowSnapshot, InstitutionalFlowTracker, IntervalCandleSnapshot,
+    KineticEnergySnapshot, KineticEnergyTracker, KyleLambdaSnapshot, KyleLambdaTracker,
+    MicrostructureNoise, NoiseSnapshot, OIAnalysisSnapshot, OIAnalyzer, OptionsFlowSnapshot,
+    OptionsFlowTracker, PatternDetector, PatternSnapshot, RegimeDetector, RegimeSnapshot,
     ResiliencySnapshot, ResiliencyTracker, SessionCandleSnapshot, SignalSnapshot, SignalState,
-    SpreadTracker, SymbolId, TradeClassifier, TradePrint, VpinSnapshot, VpinTracker,
-    compute_book_analytics, compute_depth_slope, compute_mid_price, compute_weighted_average_price,
+    LOBFeatureSnapshot, SpreadDecomposition, SpreadDecompositionSnapshot, SpreadTracker, SymbolId,
+    TradeClassifier, TradePrint, VolatilityEstimator, VolatilitySignature,
+    VolatilitySignatureSnapshot, VolatilitySnapshot, VpinSnapshot, VpinTracker, AnalyticsConfig,
+    compute_book_analytics, compute_depth_slope, compute_effective_spread_bps, compute_lob_features,
+    compute_mid_price, compute_weighted_average_price,
 };
 #[cfg(feature = "tickbar")]
 use of_core::CompletedBar;
@@ -429,6 +438,44 @@ pub struct Engine<A: MarketDataAdapter, S: SignalModule> {
     amihud_trackers: HashMap<SymbolId, AmihudTracker>,
     /// Per-symbol CVD enhancement trackers.
     cvd_enhancements: HashMap<SymbolId, CvdEnhancements>,
+    /// Per-symbol pattern detectors.
+    pattern_detectors: HashMap<SymbolId, PatternDetector>,
+    /// Per-symbol volatility estimators.
+    volatility_estimators: HashMap<SymbolId, VolatilityEstimator>,
+    /// Per-symbol microstructure noise trackers.
+    noise_trackers: HashMap<SymbolId, MicrostructureNoise>,
+    /// Per-symbol Hasbrouck VAR trackers.
+    hasbrouck_vars: HashMap<SymbolId, HasbrouckVAR>,
+    /// Per-symbol Almgren-Chriss trackers.
+    almgren_chriss: HashMap<SymbolId, AlmgrenChriss>,
+    /// Per-symbol spread decomposition trackers.
+    spread_decomps: HashMap<SymbolId, SpreadDecomposition>,
+    /// Per-symbol ACD model trackers.
+    acd_models: HashMap<SymbolId, ACDModel>,
+    /// Previous trade timestamps for ACD duration calculation.
+    prev_trade_ts: HashMap<SymbolId, u64>,
+    /// Per-symbol regime detectors.
+    regime_detectors: HashMap<SymbolId, RegimeDetector>,
+    /// Per-symbol kinetic energy trackers.
+    kinetic_trackers: HashMap<SymbolId, KineticEnergyTracker>,
+    /// Per-symbol dark pool trackers.
+    dark_pool_trackers: HashMap<SymbolId, DarkPoolTracker>,
+    /// Per-symbol options flow trackers.
+    options_trackers: HashMap<SymbolId, OptionsFlowTracker>,
+    /// Per-symbol futures trackers.
+    futures_trackers: HashMap<SymbolId, FuturesTracker>,
+    /// Per-symbol volatility signature trackers.
+    vol_signature_trackers: HashMap<SymbolId, VolatilitySignature>,
+    /// Per-symbol agent-type detectors.
+    agent_type_detectors: HashMap<SymbolId, AgentTypeDetector>,
+    /// Per-symbol dark-lit correlators.
+    dark_lit_correlators: HashMap<SymbolId, DarkLitCorrelator>,
+    /// Per-symbol institutional flow trackers.
+    institutional_flow: HashMap<SymbolId, InstitutionalFlowTracker>,
+    /// Per-symbol OI analyzers.
+    oi_analyzers: HashMap<SymbolId, OIAnalyzer>,
+    /// Analytics thresholds and buffer sizes.
+    analytics_config: AnalyticsConfig,
 }
 
 /// Default engine type used by C ABI and high-level bindings.
@@ -466,7 +513,31 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             kyle_lambda_trackers: HashMap::new(),
             amihud_trackers: HashMap::new(),
             cvd_enhancements: HashMap::new(),
+            pattern_detectors: HashMap::new(),
+            volatility_estimators: HashMap::new(),
+            noise_trackers: HashMap::new(),
+            hasbrouck_vars: HashMap::new(),
+            almgren_chriss: HashMap::new(),
+            spread_decomps: HashMap::new(),
+            acd_models: HashMap::new(),
+            prev_trade_ts: HashMap::new(),
+            regime_detectors: HashMap::new(),
+            kinetic_trackers: HashMap::new(),
+            dark_pool_trackers: HashMap::new(),
+            options_trackers: HashMap::new(),
+            futures_trackers: HashMap::new(),
+            vol_signature_trackers: HashMap::new(),
+            agent_type_detectors: HashMap::new(),
+            dark_lit_correlators: HashMap::new(),
+            institutional_flow: HashMap::new(),
+            oi_analyzers: HashMap::new(),
+            analytics_config: AnalyticsConfig::default(),
         }
+    }
+
+    /// Override analytics thresholds and buffer sizes.
+    pub fn set_analytics_config(&mut self, config: AnalyticsConfig) {
+        self.analytics_config = config;
     }
 
     /// Injects optional persistence backend.
@@ -523,8 +594,26 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
     /// Stops runtime state and emits health transition.
     pub fn stop(&mut self) {
         self.started = false;
+        let _ = self.audit_event("engine_stopping", "{\"draining\":true}");
+        // Drain remaining adapter events
+        let mut drain_buf = Vec::new();
+        let _ = self.adapter.poll(&mut drain_buf);
+        for event in drain_buf {
+            let _ = match event {
+                RawEvent::Trade(t) => self.ingest_trade(t, DataQualityFlags::NONE),
+                RawEvent::Book(b) => self.ingest_book(b, DataQualityFlags::NONE),
+            };
+        }
         self.update_health_state(DataQualityFlags::NONE);
-        let _ = self.audit_event("engine_stopped", "{}");
+        let details = format!("{{\"processed_events\":{}}}", self.processed_events);
+        let _ = self.audit_event("engine_stopped", &details);
+    }
+
+    /// Graceful shutdown with signal handler.
+    pub fn shutdown_gracefully(&mut self) {
+        let _ = self.audit_event("shutdown_initiated", "{}");
+        self.stop();
+        let _ = self.audit_event("shutdown_complete", "{}");
     }
 
     /// Subscribes to symbol stream through adapter.
@@ -929,6 +1018,109 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             .unwrap_or_default()
     }
 
+    /// Returns the pattern detection snapshot for symbol.
+    pub fn pattern_snapshot(&self, symbol: &SymbolId) -> PatternSnapshot {
+        self.pattern_detectors.get(symbol).map(|pd| {
+            let empty_book = BookSnapshot {
+                symbol: symbol.clone(),
+                bids: vec![],
+                asks: vec![],
+                last_sequence: 0,
+                ts_exchange_ns: 0,
+                ts_recv_ns: 0,
+            };
+            let book = self.books.get(symbol).map(|b| b.snapshot(symbol)).unwrap_or(empty_book);
+            pd.snapshot(&book, 0, 0.0, 0.0)
+        }).unwrap_or_default()
+    }
+
+    /// Returns volatility snapshot for symbol.
+    pub fn volatility_snapshot(&self, symbol: &SymbolId) -> VolatilitySnapshot {
+        self.volatility_estimators.get(symbol).map(|v| v.snapshot()).unwrap_or_default()
+    }
+
+    /// Returns microstructure noise snapshot for symbol.
+    pub fn noise_snapshot(&self, symbol: &SymbolId) -> NoiseSnapshot {
+        self.noise_trackers.get(symbol).map(|n| n.snapshot()).unwrap_or_default()
+    }
+
+    /// Returns Hasbrouck VAR snapshot for symbol.
+    pub fn hasbrouck_snapshot(&self, symbol: &SymbolId) -> HasbrouckSnapshot {
+        self.hasbrouck_vars.get(symbol).map(|h| h.snapshot()).unwrap_or_default()
+    }
+
+    /// Returns Almgren-Chriss snapshot for symbol.
+    pub fn almgren_chriss_snapshot(&self, symbol: &SymbolId) -> AlmgrenChrissSnapshot {
+        self.almgren_chriss.get(symbol).map(|a| a.snapshot()).unwrap_or_default()
+    }
+
+    /// Returns spread decomposition snapshot for symbol.
+    pub fn spread_decomp_snapshot(&self, symbol: &SymbolId) -> SpreadDecompositionSnapshot {
+        self.spread_decomps.get(symbol).map(|s| s.snapshot()).unwrap_or_default()
+    }
+
+    /// Returns ACD snapshot for symbol.
+    pub fn acd_snapshot(&self, symbol: &SymbolId) -> ACDSnapshot {
+        self.acd_models.get(symbol).map(|a| a.snapshot()).unwrap_or_default()
+    }
+
+    /// Returns regime snapshot for symbol.
+    pub fn regime_snapshot(&self, symbol: &SymbolId) -> RegimeSnapshot {
+        self.regime_detectors.get(symbol).map(|r| r.snapshot()).unwrap_or_default()
+    }
+
+    pub fn kinetic_energy_snapshot(&self, symbol: &SymbolId) -> KineticEnergySnapshot {
+        self.kinetic_trackers.get(symbol).map(|k| k.snapshot()).unwrap_or_default()
+    }
+
+    pub fn dark_pool_snapshot(&self, symbol: &SymbolId) -> DarkPoolSnapshot {
+        self.dark_pool_trackers.get(symbol).map(|d| d.snapshot()).unwrap_or_default()
+    }
+
+    pub fn options_flow_snapshot(&self, symbol: &SymbolId) -> OptionsFlowSnapshot {
+        self.options_trackers.get(symbol).map(|o| o.snapshot()).unwrap_or_default()
+    }
+
+    pub fn futures_snapshot(&self, symbol: &SymbolId) -> FuturesSnapshot {
+        self.futures_trackers.get(symbol).map(|f| f.snapshot()).unwrap_or_default()
+    }
+
+    /// Returns volatility signature snapshot for symbol.
+    pub fn vol_signature_snapshot(&self, symbol: &SymbolId) -> VolatilitySignatureSnapshot {
+        self.vol_signature_trackers.get(symbol).map(|v| v.snapshot()).unwrap_or_default()
+    }
+
+    /// Returns agent-type snapshot for symbol.
+    pub fn agent_type_snapshot(&self, symbol: &SymbolId) -> AgentTypeSnapshot {
+        self.agent_type_detectors.get(symbol).map(|a| a.snapshot()).unwrap_or_default()
+    }
+
+    /// Returns dark-lit correlation snapshot for symbol.
+    pub fn dark_lit_correlation_snapshot(&self, symbol: &SymbolId) -> DarkLitCorrelationSnapshot {
+        self.dark_lit_correlators.get(symbol).map(|d| d.snapshot()).unwrap_or_default()
+    }
+
+    /// Returns institutional flow snapshot for symbol.
+    pub fn institutional_flow_snapshot(&self, symbol: &SymbolId) -> InstitutionalFlowSnapshot {
+        self.institutional_flow.get(symbol).map(|i| i.snapshot()).unwrap_or_default()
+    }
+
+    /// Returns OI analysis snapshot for symbol.
+    pub fn oi_analysis_snapshot(&self, symbol: &SymbolId) -> OIAnalysisSnapshot {
+        self.oi_analyzers.get(symbol).map(|o| o.snapshot()).unwrap_or_default()
+    }
+
+    /// Computes LOB feature snapshot from internal book state for a symbol.
+    pub fn lob_features(&self, symbol: &SymbolId, trade_imbalance: f64, cancel_rate: f64, arrival_rate: f64) -> LOBFeatureSnapshot {
+        match self.books.get(symbol) {
+            Some(book) => {
+                let snap = book.snapshot(symbol);
+                compute_lob_features(&snap, trade_imbalance, cancel_rate, arrival_rate)
+            }
+            None => LOBFeatureSnapshot::default(),
+        }
+    }
+
     /// Returns the last classification vote for symbol.
     pub fn last_classification(&self, symbol: &SymbolId) -> Option<ClassificationVote> {
         self.classifiers.get(symbol).map(|c| {
@@ -1174,7 +1366,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                 }
                 self.event_trackers
                     .entry(book.symbol.clone())
-                    .or_insert_with(|| BookEventTracker::new(65536))
+                    .or_insert_with(|| BookEventTracker::new(self.analytics_config.event_tracker_max_len as usize))
                     .on_book_update(book.side, book.action, book.size, book.ts_exchange_ns);
                 if let Some(rt) = self.resiliency_trackers.get_mut(&book.symbol) {
                     let snapshot = self.books.get(&book.symbol).map(|b| b.snapshot(&book.symbol));
@@ -1183,6 +1375,9 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                         let ask_depth: i64 = snap.asks.iter().map(|l| l.size).sum();
                         rt.on_trade_post(bid_depth, ask_depth, book.ts_exchange_ns);
                     }
+                }
+                if let Some(pd) = self.pattern_detectors.get_mut(&book.symbol) {
+                    pd.on_book_update(book.side, book.price, book.size);
                 }
                 self.processed_events += 1;
             }
@@ -1202,14 +1397,14 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                     if let Some(mid) = mid {
                         self.spread_trackers
                             .entry(symbol.clone())
-                            .or_insert_with(|| SpreadTracker::new(1024))
+                            .or_insert_with(|| SpreadTracker::new(self.analytics_config.spread_tracker_max_len as usize))
                             .on_trade(trade.price, mid, trade.ts_exchange_ns);
                     }
 
                     // Classify trade and feed VPIN, Kyle's Lambda, CVD
                     let classifier = self.classifiers
                         .entry(symbol.clone())
-                        .or_insert_with(TradeClassifier::new);
+                        .or_default();
                     let classification = classifier.classify(trade.price, trade.size, bid, ask);
 
                     // Determine classified buy/sell volume
@@ -1225,7 +1420,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                     // Feed VPIN
                     self.vpin_trackers
                         .entry(symbol.clone())
-                        .or_insert_with(|| VpinTracker::new(5000, 50))
+                        .or_insert_with(|| VpinTracker::new(self.analytics_config.vpin_volume_bucket, self.analytics_config.vpin_max_buckets as usize))
                         .on_trade(buy_vol, sell_vol);
 
                     // Feed Kyle's Lambda with signed volume and price change
@@ -1236,22 +1431,97 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                     let price_change = trade.price - prev_price;
                     self.kyle_lambda_trackers
                         .entry(symbol.clone())
-                        .or_insert_with(|| KyleLambdaTracker::new(100))
+                        .or_insert_with(|| KyleLambdaTracker::new(self.analytics_config.kyle_lambda_max_len as usize))
                         .on_trade(signed_vol, price_change);
 
                     // Feed CVD enhancements with per-trade delta
                     let net_delta = buy_vol - sell_vol;
                     self.cvd_enhancements
                         .entry(symbol.clone())
-                        .or_insert_with(|| CvdEnhancements::new(50))
+                        .or_insert_with(|| CvdEnhancements::new(self.analytics_config.cvd_max_len as usize))
                         .on_bar(net_delta, trade.size, trade.price);
+
+                    // Feed pattern detector (compute cumulative delta from prior state)
+                    let prior_cumulative_delta = self.analytics.get(&symbol)
+                        .map(|a| a.snapshot().cumulative_delta)
+                        .unwrap_or(0);
+                    let new_cumulative_delta = prior_cumulative_delta + net_delta;
+                    self.pattern_detectors
+                        .entry(symbol.clone())
+                        .or_default()
+                        .on_trade(trade.price, trade.size, trade.aggressor_side, trade.ts_exchange_ns, new_cumulative_delta, buy_vol, sell_vol);
+
+                    // Volatility estimator: per-trade OHLC
+                    let prev_price_vol = self.analytics.get(&symbol)
+                        .map(|a| a.snapshot().last_price)
+                        .unwrap_or(trade.price);
+                    let vol_est = self.volatility_estimators.entry(symbol.clone()).or_insert_with(|| VolatilityEstimator::new(self.analytics_config.vol_estimator_max_len as usize));
+                    let high = trade.price.max(prev_price_vol) as f64;
+                    let low = trade.price.min(prev_price_vol) as f64;
+                    let close = trade.price as f64;
+                    let open = prev_price_vol as f64;
+                    vol_est.on_bar(open, high, low, close);
+
+                    // Microstructure noise
+                    self.noise_trackers
+                        .entry(symbol.clone())
+                        .or_insert_with(|| MicrostructureNoise::new(self.analytics_config.noise_max_len as usize))
+                        .on_trade(trade.price, trade.size);
+
+                    // Hasbrouck VAR
+                    let ret = (trade.price as f64 / prev_price_vol.max(1) as f64).ln();
+                    let signed_vol_f = if buy_vol > 0 { trade.size as f64 } else { -(trade.size as f64) };
+                    self.hasbrouck_vars
+                        .entry(symbol.clone())
+                        .or_insert_with(|| HasbrouckVAR::new(self.analytics_config.hasbrouck_max_len as usize))
+                        .on_trade(ret, signed_vol_f);
+
+                    // Almgren-Chriss
+                    let pc = (trade.price - prev_price_vol) as f64;
+                    self.almgren_chriss
+                        .entry(symbol.clone())
+                        .or_insert_with(|| AlmgrenChriss::new(self.analytics_config.almgren_chriss_max_len as usize))
+                        .on_trade(pc, signed_vol_f);
+
+                    // ACD model (trade duration)
+                    let prev_ts_acd = self.prev_trade_ts.get(&symbol).copied().unwrap_or(0);
+                    self.acd_models
+                        .entry(symbol.clone())
+                        .or_insert_with(|| ACDModel::new(self.analytics_config.acd_max_len as usize))
+                        .on_trade(trade.ts_exchange_ns, prev_ts_acd);
+                    self.prev_trade_ts.insert(symbol.clone(), trade.ts_exchange_ns);
+
+                    // Volatility signature
+                    self.vol_signature_trackers
+                        .entry(symbol.clone())
+                        .or_insert_with(|| VolatilitySignature::new(self.analytics_config.vol_signature_max_len as usize))
+                        .on_return(ret);
+
+                    // Agent-type identification
+                    let cr = self.event_trackers.get(&symbol)
+                        .map(|et| et.cancel_rate_per_sec(self.analytics_config.cancel_arrival_window_ns).0).unwrap_or(0.0);
+                        let ar = self.event_trackers.get(&symbol)
+                        .map(|et| et.arrival_rate_per_sec(self.analytics_config.cancel_arrival_window_ns).0).unwrap_or(0.0);
+                    self.agent_type_detectors
+                        .entry(symbol.clone())
+                        .or_insert_with(|| AgentTypeDetector::new(self.analytics_config.agent_max_len as usize))
+                        .on_event(trade.size, cr, ar);
+
+                    // Institutional flow (large trades only)
+                    if trade.size > self.analytics_config.institutional_trade_threshold {
+                        let is_buy = buy_vol > sell_vol;
+                        self.institutional_flow
+                            .entry(symbol.clone())
+                            .or_insert_with(|| InstitutionalFlowTracker::new(self.analytics_config.institutional_max_len as usize))
+                            .on_trade(trade.size, is_buy);
+                    }
 
                     // Feed resiliency tracker with pre-trade depth
                     let bid_depth: i64 = snapshot.bids.iter().map(|l| l.size).sum();
                     let ask_depth: i64 = snapshot.asks.iter().map(|l| l.size).sum();
                     self.resiliency_trackers
                         .entry(symbol.clone())
-                        .or_insert_with(|| ResiliencyTracker::new(1024))
+                        .or_insert_with(|| ResiliencyTracker::new(self.analytics_config.resiliency_max_len as usize))
                         .on_trade_pre(bid_depth, ask_depth);
                 }
                 #[cfg(feature = "tickbar")]
@@ -1282,7 +1552,41 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                         ),
                     )?;
                 }
-                self.latest_signals.insert(symbol, signal);
+                self.latest_signals.insert(symbol.clone(), signal);
+
+                // Spread decomposition
+                if let Some(st) = self.spread_trackers.get(&symbol) {
+                    let eff = st.last_effective_spread_bps() as f64;
+                    let real = st.realised_spread_bps(10) as f64;
+                    if eff > 0.0 || real > 0.0 {
+                        let quoted = if let Some(book_state) = self.books.get(&symbol) {
+                            let bs = book_state.snapshot(&symbol);
+                            let bid = bs.bids.first().map(|l| l.price).unwrap_or(0);
+                            let ask = bs.asks.first().map(|l| l.price).unwrap_or(0);
+                            if bid > 0 && ask > 0 {
+                                compute_effective_spread_bps(ask, bid) as f64
+                            } else { 0.0 }
+                        } else { 0.0 };
+                        self.spread_decomps
+                            .entry(symbol.clone())
+                            .or_insert_with(|| SpreadDecomposition::new(self.analytics_config.spread_decomp_max_len as usize))
+                            .on_spread(eff, real, quoted);
+                    }
+                }
+
+                // Regime detector
+                let vpin_s = self.vpin_trackers.get(&symbol).map(|v| v.snapshot());
+                let vol_s = self.volatility_estimators.get(&symbol).map(|v| v.snapshot());
+                let spread_val = self.spread_trackers.get(&symbol)
+                    .map(|s| s.last_effective_spread_bps() as f64)
+                    .unwrap_or(0.0);
+                let vol_val = vol_s.map(|v| v.classic_rv).unwrap_or(0.0);
+                let vpin_val = vpin_s.map(|v| v.vpin).unwrap_or(0.0);
+                self.regime_detectors
+                    .entry(symbol.clone())
+                    .or_insert_with(|| RegimeDetector::new(self.analytics_config.regime_max_len as usize))
+                    .on_metrics(spread_val, vol_val, vpin_val);
+
                 self.processed_events += 1;
             }
         }

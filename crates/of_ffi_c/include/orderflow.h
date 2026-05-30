@@ -9,6 +9,31 @@ extern "C" {
 
 /** Opaque runtime engine handle. */
 typedef struct of_engine of_engine_t;
+/** Analytics configuration struct — mirrors of_core::AnalyticsConfig. */
+typedef struct {
+  double agent_small_trade_threshold;
+  int64_t institutional_trade_threshold;
+  uint64_t cancel_arrival_window_ns;
+  uint32_t vpin_volume_bucket;
+  uint32_t vpin_max_buckets;
+  uint32_t kyle_lambda_max_len;
+  uint32_t cvd_max_len;
+  uint32_t vol_estimator_max_len;
+  uint32_t noise_max_len;
+  uint32_t hasbrouck_max_len;
+  uint32_t almgren_chriss_max_len;
+  uint32_t acd_max_len;
+  uint32_t vol_signature_max_len;
+  uint32_t agent_max_len;
+  uint32_t agent_min_samples;
+  uint32_t institutional_max_len;
+  uint32_t resiliency_max_len;
+  uint32_t spread_decomp_max_len;
+  uint32_t regime_max_len;
+  uint32_t event_tracker_max_len;
+  uint32_t spread_tracker_max_len;
+  uint32_t default_max_len;
+} of_analytics_config_t;
 /** Opaque subscription handle returned by `of_subscribe`. */
 typedef struct of_subscription of_subscription_t;
 
@@ -339,6 +364,41 @@ int32_t of_get_kyle_lambda_snapshot(of_engine_t* engine, const of_symbol_t* symb
 int32_t of_get_amihud_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
 /** Returns CVD enhancement snapshot JSON (delta ratio, z-score, divergence). */
 int32_t of_get_cvd_enhancement_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns pattern detection snapshot JSON (imbalance, iceberg, hidden accumulation/distribution, session type). */
+int32_t of_get_pattern_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns volatility snapshot JSON (classic RV, Parkinson, Garman-Klass, Yang-Zhang). */
+int32_t of_get_volatility_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns microstructure noise snapshot JSON. */
+int32_t of_get_noise_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns Hasbrouck VAR snapshot JSON (permanent/temporary impact, information share). */
+int32_t of_get_hasbrouck_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns Almgren-Chriss market impact snapshot JSON. */
+int32_t of_get_almgren_chriss_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns spread decomposition snapshot JSON. */
+int32_t of_get_spread_decomp_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns ACD trade duration model snapshot JSON. */
+int32_t of_get_acd_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns market regime snapshot JSON. */
+int32_t of_get_regime_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns kinetic energy snapshot JSON. */
+int32_t of_get_kinetic_energy_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns dark pool analytics snapshot JSON. */
+int32_t of_get_dark_pool_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns options flow snapshot JSON. */
+int32_t of_get_options_flow_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns futures analytics snapshot JSON. */
+int32_t of_get_futures_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+
+/** Returns volatility signature snapshot JSON for `symbol`. */
+int32_t of_get_vol_signature_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns agent type identification snapshot JSON for `symbol`. */
+int32_t of_get_agent_type_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns dark-lit correlation snapshot JSON for `symbol`. */
+int32_t of_get_dark_lit_correlation_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns institutional flow snapshot JSON for `symbol`. */
+int32_t of_get_institutional_flow_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns OI analysis snapshot JSON for `symbol`. */
+int32_t of_get_oi_analysis_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
 
 /** Returns current analytics snapshot JSON for `symbol`. */
 int32_t of_get_analytics_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
@@ -369,6 +429,12 @@ int32_t of_get_signal_snapshot(of_engine_t* engine, const of_symbol_t* symbol, v
 int32_t of_get_metrics_json(of_engine_t* engine, const char** out_json, uint32_t* out_len);
 /** Releases strings allocated by `of_get_metrics_json`. */
 void of_string_free(const char* p);
+
+/** Computes LOB feature snapshot from engine book state and flow metrics. */
+int32_t of_compute_lob_features(of_engine_t* engine, const of_symbol_t* symbol, double trade_imbalance, double cancel_rate, double arrival_rate, void* out_buf, uint32_t* inout_len);
+
+/** Override analytics thresholds and buffer sizes. Pass NULL to reset to defaults. */
+int32_t of_engine_set_analytics_config(of_engine_t* engine, const of_analytics_config_t* config);
 
 #ifdef __cplusplus
 }

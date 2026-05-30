@@ -15,6 +15,10 @@ categories = ["finance", "simulation"]
 [package.metadata.docs.rs]
 all-features = true
 
+[features]
+default = []
+tickbar = ["of_core/tickbar"]
+
 [dependencies]
 of_adapters = { path = "../of_adapters", version = "0.3.0" }
 of_core = { path = "../of_core", version = "0.3.0" }

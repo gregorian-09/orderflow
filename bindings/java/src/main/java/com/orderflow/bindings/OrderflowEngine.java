@@ -500,6 +500,23 @@ public final class OrderflowEngine implements AutoCloseable {
                 case KYLE_LAMBDA -> rc = nativeLib.of_get_kyle_lambda_snapshot(engine, sym, buffer, length);
                 case AMIHUD -> rc = nativeLib.of_get_amihud_snapshot(engine, sym, buffer, length);
                 case CVD_ENHANCEMENT -> rc = nativeLib.of_get_cvd_enhancement_snapshot(engine, sym, buffer, length);
+                case PATTERN -> rc = nativeLib.of_get_pattern_snapshot(engine, sym, buffer, length);
+                case VOLATILITY -> rc = nativeLib.of_get_volatility_snapshot(engine, sym, buffer, length);
+                case NOISE -> rc = nativeLib.of_get_noise_snapshot(engine, sym, buffer, length);
+                case HASBROUCK -> rc = nativeLib.of_get_hasbrouck_snapshot(engine, sym, buffer, length);
+                case ALMGREN_CHRISS -> rc = nativeLib.of_get_almgren_chriss_snapshot(engine, sym, buffer, length);
+                case SPREAD_DECOMP -> rc = nativeLib.of_get_spread_decomp_snapshot(engine, sym, buffer, length);
+                case ACD -> rc = nativeLib.of_get_acd_snapshot(engine, sym, buffer, length);
+                case REGIME -> rc = nativeLib.of_get_regime_snapshot(engine, sym, buffer, length);
+                case KINETIC_ENERGY -> rc = nativeLib.of_get_kinetic_energy_snapshot(engine, sym, buffer, length);
+                case DARK_POOL -> rc = nativeLib.of_get_dark_pool_snapshot(engine, sym, buffer, length);
+                case OPTIONS_FLOW -> rc = nativeLib.of_get_options_flow_snapshot(engine, sym, buffer, length);
+                case FUTURES -> rc = nativeLib.of_get_futures_snapshot(engine, sym, buffer, length);
+                case VOL_SIGNATURE -> rc = nativeLib.of_get_vol_signature_snapshot(engine, sym, buffer, length);
+                case AGENT_TYPE -> rc = nativeLib.of_get_agent_type_snapshot(engine, sym, buffer, length);
+                case DARK_LIT_CORRELATION -> rc = nativeLib.of_get_dark_lit_correlation_snapshot(engine, sym, buffer, length);
+                case INSTITUTIONAL_FLOW -> rc = nativeLib.of_get_institutional_flow_snapshot(engine, sym, buffer, length);
+                case OI_ANALYSIS -> rc = nativeLib.of_get_oi_analysis_snapshot(engine, sym, buffer, length);
                 default -> throw new OrderflowException("unknown snapshot kind");
             }
 
@@ -630,6 +647,45 @@ public final class OrderflowEngine implements AutoCloseable {
     /** Returns CVD enhancement snapshot JSON. */
     public String cvdEnhancementSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.CVD_ENHANCEMENT); }
 
+    public String patternSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.PATTERN); }
+
+    public String volatilitySnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.VOLATILITY); }
+    public String noiseSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.NOISE); }
+    public String hasbrouckSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.HASBROUCK); }
+    public String almgrenChrissSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.ALMGREN_CHRISS); }
+    public String spreadDecompSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.SPREAD_DECOMP); }
+    public String acdSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.ACD); }
+    public String regimeSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.REGIME); }
+
+    public String kineticEnergySnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.KINETIC_ENERGY); }
+    public String darkPoolSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.DARK_POOL); }
+    public String optionsFlowSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.OPTIONS_FLOW); }
+    public String futuresSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.FUTURES); }
+
+    public String volSignatureSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.VOL_SIGNATURE); }
+    public String agentTypeSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.AGENT_TYPE); }
+    public String darkLitCorrelationSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.DARK_LIT_CORRELATION); }
+    public String institutionalFlowSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.INSTITUTIONAL_FLOW); }
+    public String oiAnalysisSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.OI_ANALYSIS); }
+
+    public String lobFeatures(Symbol symbol, double tradeImbalance, double cancelRate, double arrivalRate) {
+        requireEngine();
+        OfSymbol sym = toNativeSymbol(symbol);
+        int capacity = 8192;
+        Memory buf = new Memory(capacity);
+        IntByReference len = new IntByReference(capacity);
+        int rc = nativeLib.of_compute_lob_features(engine, sym, tradeImbalance, cancelRate, arrivalRate, buf, len);
+        if (rc == 0) { return buf.getString(0); }
+        check(rc, "lobFeatures");
+        throw new OrderflowArgException("lobFeatures failed");
+    }
+
+    public void setAnalyticsConfig(Pointer config) {
+        requireEngine();
+        int rc = nativeLib.of_engine_set_analytics_config(engine, config);
+        check(rc, "setAnalyticsConfig");
+    }
+
     private enum SnapshotKind {
         BOOK,
         BOOK_ANALYTICS,
@@ -646,6 +702,23 @@ public final class OrderflowEngine implements AutoCloseable {
         KYLE_LAMBDA,
         AMIHUD,
         CVD_ENHANCEMENT,
+        PATTERN,
+        VOLATILITY,
+        NOISE,
+        HASBROUCK,
+        ALMGREN_CHRISS,
+        SPREAD_DECOMP,
+        ACD,
+        REGIME,
+        KINETIC_ENERGY,
+        DARK_POOL,
+        OPTIONS_FLOW,
+        FUTURES,
+        VOL_SIGNATURE,
+        AGENT_TYPE,
+        DARK_LIT_CORRELATION,
+        INSTITUTIONAL_FLOW,
+        OI_ANALYSIS,
     }
 
     private enum QueryKind {

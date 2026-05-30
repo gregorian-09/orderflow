@@ -4,10 +4,13 @@ use std::sync::atomic::Ordering;
 
 use of_adapters::RawEvent;
 use of_core::{
-    BookAction, BookAnalyticsSnapshot, BookEventAnalyticsSnapshot, BookSnapshot,
-    CvdEnhancementSnapshot, DerivedAnalyticsSnapshot, IntervalCandleSnapshot,
-    KyleLambdaSnapshot, ResiliencySnapshot, SessionCandleSnapshot, Side, SignalState, SymbolId,
-    VpinSnapshot,
+    ACDSnapshot, AgentTypeSnapshot, AlmgrenChrissSnapshot, BookAction, BookAnalyticsSnapshot,
+    BookEventAnalyticsSnapshot, BookSnapshot, CvdEnhancementSnapshot, DarkLitCorrelationSnapshot,
+    DarkPoolSnapshot, DerivedAnalyticsSnapshot, FuturesSnapshot, HasbrouckSnapshot,
+    InstitutionalFlowSnapshot, IntervalCandleSnapshot, KineticEnergySnapshot, KyleLambdaSnapshot,
+    LOBFeatureSnapshot, NoiseSnapshot, OIAnalysisSnapshot, OptionsFlowSnapshot, PatternSnapshot,
+    RegimeSnapshot, ResiliencySnapshot, SessionCandleSnapshot, Side, SignalState,
+    SpreadDecompositionSnapshot, SymbolId, VolatilitySignatureSnapshot, VolatilitySnapshot, VpinSnapshot,
 };
 #[cfg(feature = "tickbar")]
 use of_core::CompletedBar;
@@ -416,6 +419,49 @@ pub(crate) fn format_cvd_enhancement_snapshot(snap: &CvdEnhancementSnapshot) -> 
     )
 }
 
+pub(crate) fn format_pattern_snapshot(snap: &PatternSnapshot) -> String {
+    format!(
+        "{{\"imbalance_detected\":{},\"stacked_imbalance_detected\":{},\"absorption_detected\":{},\"exhaustion_detected\":{},\"initiation_detected\":{},\"tailing_detected\":{},\"iceberg_detected\":{},\"spoofing_detected\":{},\"flip_detected\":{},\"liquidity_gap_detected\":{},\"stop_hunt_detected\":{},\"hidden_accumulation\":{},\"hidden_distribution\":{},\"trapped_traders_detected\":{},\"delta_clock_ns\":{},\"trend_day\":{},\"range_day\":{},\"reversal_day\":{},\"session_type_score\":{:.4},\"volume_entropy\":{:.6},\"volume_skew\":{:.6},\"initial_balance_high\":{},\"initial_balance_low\":{},\"hvn_count\":{},\"lvn_count\":{},\"composite_hvn\":{},\"composite_lvn\":{},\"vwap_per_bin_json\":{}}}",
+        bool_str(snap.imbalance_detected),
+        bool_str(snap.stacked_imbalance_detected),
+        bool_str(snap.absorption_detected),
+        bool_str(snap.exhaustion_detected),
+        bool_str(snap.initiation_detected),
+        bool_str(snap.tailing_detected),
+        bool_str(snap.iceberg_detected),
+        bool_str(snap.spoofing_detected),
+        bool_str(snap.flip_detected),
+        bool_str(snap.liquidity_gap_detected),
+        bool_str(snap.stop_hunt_detected),
+        bool_str(snap.hidden_accumulation),
+        bool_str(snap.hidden_distribution),
+        bool_str(snap.trapped_traders_detected),
+        snap.delta_clock_ns,
+        bool_str(snap.trend_day),
+        bool_str(snap.range_day),
+        bool_str(snap.reversal_day),
+        snap.session_type_score,
+        snap.volume_entropy,
+        snap.volume_skew,
+        snap.initial_balance_high,
+        snap.initial_balance_low,
+        snap.hvn_count,
+        snap.lvn_count,
+        snap.composite_hvn,
+        snap.composite_lvn,
+        json_from_bytes(&snap.vwap_per_bin_json),
+    )
+}
+
+fn json_from_bytes(buf: &[u8; 512]) -> &str {
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(0);
+    if end == 0 { "{}" } else { std::str::from_utf8(&buf[..end]).unwrap_or("{}") }
+}
+
+fn bool_str(b: bool) -> &'static str {
+    if b { "true" } else { "false" }
+}
+
 pub(crate) fn format_analytics_snapshot(snap: &of_core::AnalyticsSnapshot) -> String {
     format!(
         "{{\"delta\":{},\"cumulative_delta\":{},\"buy_volume\":{},\"sell_volume\":{},\"last_price\":{},\"point_of_control\":{},\"value_area_low\":{},\"value_area_high\":{}}}",
@@ -511,4 +557,96 @@ pub(crate) fn escape_json(input: &str) -> String {
         .replace('\n', "\\n")
         .replace('\r', "\\r")
         .replace('\t', "\\t")
+}
+
+pub(crate) fn format_kinetic_energy_snapshot(snap: &KineticEnergySnapshot) -> String {
+    format!("{{\"kinetic_energy\":{:.8},\"order_flow_momentum\":{:.8},\"energy_change\":{:.8}}}",
+        snap.kinetic_energy, snap.order_flow_momentum, snap.energy_change)
+}
+
+pub(crate) fn format_dark_pool_snapshot(snap: &DarkPoolSnapshot) -> String {
+    format!("{{\"dark_volume_pct\":{:.4},\"dark_zscore\":{:.4},\"dark_lit_divergence\":{}}}",
+        snap.dark_volume_pct, snap.dark_zscore, bool_str(snap.dark_lit_divergence))
+}
+
+pub(crate) fn format_options_flow_snapshot(snap: &OptionsFlowSnapshot) -> String {
+    format!("{{\"sweep_detected\":{},\"put_call_ratio\":{:.4},\"delta_notional\":{:.0},\"gamma_positioning\":{:.6}}}",
+        bool_str(snap.sweep_detected), snap.put_call_ratio, snap.delta_notional, snap.gamma_positioning)
+}
+
+pub(crate) fn format_futures_snapshot(snap: &FuturesSnapshot) -> String {
+    format!("{{\"basis_bps\":{:.4},\"calendar_spread\":{:.4},\"settlement_pressure\":{:.4},\"roll_progress\":{:.4}}}",
+        snap.basis_bps, snap.calendar_spread, snap.settlement_pressure, snap.roll_progress)
+}
+
+pub(crate) fn format_volatility_snapshot(snap: &VolatilitySnapshot) -> String {
+    format!("{{\"classic_rv\":{:.8},\"parkinson\":{:.8},\"garman_klass\":{:.8},\"yang_zhang\":{:.8}}}",
+        snap.classic_rv, snap.parkinson, snap.garman_klass, snap.yang_zhang)
+}
+
+pub(crate) fn format_noise_snapshot(snap: &NoiseSnapshot) -> String {
+    format!("{{\"noise_variance\":{:.8},\"signal_to_noise\":{:.4}}}",
+        snap.noise_variance, snap.signal_to_noise)
+}
+
+pub(crate) fn format_hasbrouck_snapshot(snap: &HasbrouckSnapshot) -> String {
+    format!("{{\"permanent_impact\":{:.6},\"temporary_impact\":{:.6},\"information_share\":{:.4}}}",
+        snap.permanent_impact, snap.temporary_impact, snap.information_share)
+}
+
+pub(crate) fn format_almgren_chriss_snapshot(snap: &AlmgrenChrissSnapshot) -> String {
+    format!("{{\"permanent_impact_coef\":{:.6},\"temporary_impact_coef\":{:.6}}}",
+        snap.permanent_impact_coef, snap.temporary_impact_coef)
+}
+
+pub(crate) fn format_spread_decomp_snapshot(snap: &SpreadDecompositionSnapshot) -> String {
+    format!("{{\"adverse_selection\":{:.6},\"order_processing_cost\":{:.6},\"inventory_component\":{:.6},\"pin\":{:.4}}}",
+        snap.adverse_selection, snap.order_processing_cost, snap.inventory_component, snap.pin)
+}
+
+pub(crate) fn format_acd_snapshot(snap: &ACDSnapshot) -> String {
+    format!("{{\"mean_duration_ns\":{:.0},\"intensity\":{:.6},\"alpha\":{:.4},\"beta\":{:.4}}}",
+        snap.mean_duration_ns, snap.intensity, snap.alpha, snap.beta)
+}
+
+pub(crate) fn format_regime_snapshot(snap: &RegimeSnapshot) -> String {
+    format!("{{\"regime\":{},\"spread_z\":{:.4},\"vol_z\":{:.4},\"vpin_z\":{:.4}}}",
+        snap.regime, snap.spread_z, snap.vol_z, snap.vpin_z)
+}
+
+pub(crate) fn format_vol_signature_snapshot(snap: &VolatilitySignatureSnapshot) -> String {
+    let points_str: Vec<String> = snap.points[..snap.point_count as usize].iter().map(|p| {
+        format!("{{\"lag\":{},\"rv\":{:.8}}}", p.lag, p.rv)
+    }).collect();
+    format!("{{\"points\":[{}],\"optimal_lag\":{}}}",
+        points_str.join(","), snap.optimal_lag)
+}
+
+pub(crate) fn format_agent_type_snapshot(snap: &AgentTypeSnapshot) -> String {
+    format!("{{\"irp\":{:.4},\"ipin\":{:.6},\"ivpin\":{:.6},\"hft_reflexivity\":{:.4}}}",
+        snap.irp, snap.ipin, snap.ivpin, snap.hft_reflexivity)
+}
+
+pub(crate) fn format_dark_lit_correlation_snapshot(snap: &DarkLitCorrelationSnapshot) -> String {
+    format!("{{\"correlation\":{:.4},\"siphon_active\":{}}}",
+        snap.correlation, if snap.siphon_active { "true" } else { "false" })
+}
+
+pub(crate) fn format_institutional_flow_snapshot(snap: &InstitutionalFlowSnapshot) -> String {
+    format!("{{\"institutional_buy_ratio\":{:.4},\"crowding_score\":{:.4}}}",
+        snap.institutional_buy_ratio, snap.crowding_score)
+}
+
+pub(crate) fn format_oi_analysis_snapshot(snap: &OIAnalysisSnapshot) -> String {
+    format!("{{\"oi_divergence\":{},\"oi_build_rate\":{:.6},\"max_pain_distance_bps\":{:.2}}}",
+        if snap.oi_divergence { "true" } else { "false" },
+        snap.oi_build_rate, snap.max_pain_distance_bps)
+}
+
+pub(crate) fn format_lob_feature_snapshot(snap: &LOBFeatureSnapshot) -> String {
+    format!("{{\"spread_bps\":{:.4},\"depth_imbalance\":{:.4},\"microprice\":{:.4},\"depth_slope\":{:.4},\"order_intensity\":{:.4},\"price_pressure_1\":{:.4},\"price_pressure_5\":{:.4},\"price_pressure_10\":{:.4},\"bid_ask_ratio_1\":{:.4},\"bid_ask_ratio_5\":{:.4},\"bid_ask_ratio_10\":{:.4},\"weighted_spread\":{:.4},\"volume_concentration\":{:.4},\"cancel_intensity\":{:.4},\"arrival_intensity\":{:.4},\"trade_flow_imbalance\":{:.4}}}",
+        snap.spread_bps, snap.depth_imbalance, snap.microprice, snap.depth_slope,
+        snap.order_intensity, snap.price_pressure_1, snap.price_pressure_5, snap.price_pressure_10,
+        snap.bid_ask_ratio_1, snap.bid_ask_ratio_5, snap.bid_ask_ratio_10, snap.weighted_spread,
+        snap.volume_concentration, snap.cancel_intensity, snap.arrival_intensity, snap.trade_flow_imbalance)
 }

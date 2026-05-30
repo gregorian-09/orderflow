@@ -241,7 +241,7 @@ impl MarketDataAdapter for MockAdapter {
             return Err(AdapterError::Disconnected);
         }
         let n = self.queue.len();
-        out.extend(self.queue.drain(..));
+        out.append(&mut self.queue);
         Ok(n)
     }
 

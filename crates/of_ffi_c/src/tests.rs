@@ -1297,6 +1297,215 @@ mod tests {
         of_engine_destroy(engine);
     }
 
+    #[cfg(feature = "tickbar")]
+    #[test]
+    fn bar_series_returns_completed_bars_for_tickbar_interval() {
+        let _guard = test_lock().lock().expect("lock");
+
+        let instance_id = CString::new("ffi-bar-series-test").expect("cstring");
+        let cfg = of_engine_config_t {
+            instance_id: instance_id.as_ptr(),
+            config_path: ptr::null(),
+            log_level: 0,
+            enable_persistence: 0,
+            audit_max_bytes: 0,
+            audit_max_files: 0,
+            audit_redact_tokens_csv: ptr::null(),
+            data_retention_max_bytes: 0,
+            data_retention_max_age_secs: 0,
+        };
+
+        let mut engine: *mut of_engine = ptr::null_mut();
+        assert_eq!(
+            of_engine_create(&cfg, &mut engine as *mut *mut of_engine),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!engine.is_null());
+        assert_eq!(of_engine_start(engine), of_error_t::OF_OK as i32);
+
+        // Enable tickbar with 1000ns interval BEFORE ingesting trades
+        assert_eq!(
+            of_engine_set_tickbar_interval(engine, 1000),
+            of_error_t::OF_OK as i32
+        );
+
+        let venue = CString::new("CME").expect("cstring");
+        let symbol = CString::new("ESM6").expect("cstring");
+        let ffi_symbol = of_symbol_t {
+            venue: venue.as_ptr(),
+            symbol: symbol.as_ptr(),
+            depth_levels: 10,
+        };
+
+        // Trade at T=0ns → bar [0, 1000)
+        let trade1 = of_trade_t {
+            symbol: of_symbol_t {
+                venue: venue.as_ptr(),
+                symbol: symbol.as_ptr(),
+                depth_levels: 10,
+            },
+            price: 505000,
+            size: 9,
+            aggressor_side: 1,
+            sequence: 1,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 1,
+        };
+        assert_eq!(
+            of_ingest_trade(engine, &trade1 as *const of_trade_t, 0),
+            of_error_t::OF_OK as i32
+        );
+
+        // Trade at T=500ns → same bar [0, 1000)
+        let trade2 = of_trade_t {
+            symbol: of_symbol_t {
+                venue: venue.as_ptr(),
+                symbol: symbol.as_ptr(),
+                depth_levels: 10,
+            },
+            price: 504900,
+            size: 4,
+            aggressor_side: 0,
+            sequence: 2,
+            ts_exchange_ns: 500,
+            ts_recv_ns: 501,
+        };
+        assert_eq!(
+            of_ingest_trade(engine, &trade2 as *const of_trade_t, 0),
+            of_error_t::OF_OK as i32
+        );
+
+        // Trade at T=1500ns → bar [1000, 2000)
+        let trade3 = of_trade_t {
+            symbol: of_symbol_t {
+                venue: venue.as_ptr(),
+                symbol: symbol.as_ptr(),
+                depth_levels: 10,
+            },
+            price: 505100,
+            size: 8,
+            aggressor_side: 1,
+            sequence: 3,
+            ts_exchange_ns: 1500,
+            ts_recv_ns: 1501,
+        };
+        assert_eq!(
+            of_ingest_trade(engine, &trade3 as *const of_trade_t, 0),
+            of_error_t::OF_OK as i32
+        );
+
+        // Query bar series
+        let mut buf = vec![0u8; 2048];
+        let mut len = buf.len() as u32;
+        assert_eq!(
+            of_get_bar_series(
+                engine,
+                &ffi_symbol as *const of_symbol_t,
+                buf.as_mut_ptr().cast::<c_void>(),
+                &mut len as *mut u32,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        let json = String::from_utf8_lossy(&buf[..len as usize]).to_string();
+        assert!(json.starts_with('['));
+        assert!(json.ends_with(']'));
+        assert!(json.contains("\"timestamp_ns\":0"));
+        assert!(json.contains("\"open\":505000"));
+        assert!(json.contains("\"close\":504900"));
+        assert!(json.contains("\"timestamp_ns\":1000"));
+        assert!(json.contains("\"open\":505100"));
+
+        // Should have 2 bars: [0,1000) from trades at 0 and 500, and [1000,2000) from trade at 1500
+        assert!(
+            json.matches("open").count() >= 2,
+            "expected at least 2 bars, got JSON: {json}"
+        );
+
+        assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
+        of_engine_destroy(engine);
+    }
+
+    #[cfg(feature = "tickbar")]
+    #[test]
+    fn bar_series_returns_empty_array_when_tickbar_not_configured() {
+        // Test that of_get_bar_series returns "[]" when no tickbar interval was set.
+        let _guard = test_lock().lock().expect("lock");
+
+        let instance_id = CString::new("ffi-bar-series-empty-test").expect("cstring");
+        let cfg = of_engine_config_t {
+            instance_id: instance_id.as_ptr(),
+            config_path: ptr::null(),
+            log_level: 0,
+            enable_persistence: 0,
+            audit_max_bytes: 0,
+            audit_max_files: 0,
+            audit_redact_tokens_csv: ptr::null(),
+            data_retention_max_bytes: 0,
+            data_retention_max_age_secs: 0,
+        };
+
+        let mut engine: *mut of_engine = ptr::null_mut();
+        assert_eq!(
+            of_engine_create(&cfg, &mut engine as *mut *mut of_engine),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!engine.is_null());
+        assert_eq!(of_engine_start(engine), of_error_t::OF_OK as i32);
+
+        let venue = CString::new("CME").expect("cstring");
+        let symbol = CString::new("ESM6").expect("cstring");
+        let ffi_symbol = of_symbol_t {
+            venue: venue.as_ptr(),
+            symbol: symbol.as_ptr(),
+            depth_levels: 10,
+        };
+
+        // Ingest a trade (no tickbar interval set)
+        let trade = of_trade_t {
+            symbol: of_symbol_t {
+                venue: venue.as_ptr(),
+                symbol: symbol.as_ptr(),
+                depth_levels: 10,
+            },
+            price: 505000,
+            size: 9,
+            aggressor_side: 1,
+            sequence: 1,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 1,
+        };
+        assert_eq!(
+            of_ingest_trade(engine, &trade as *const of_trade_t, 0),
+            of_error_t::OF_OK as i32
+        );
+
+        let mut buf = vec![0u8; 1024];
+        let mut len = buf.len() as u32;
+        assert_eq!(
+            of_get_bar_series(
+                engine,
+                &ffi_symbol as *const of_symbol_t,
+                buf.as_mut_ptr().cast::<c_void>(),
+                &mut len as *mut u32,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        let json = String::from_utf8_lossy(&buf[..len as usize]).to_string();
+        assert_eq!(json, "[]");
+
+        assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
+        of_engine_destroy(engine);
+    }
+
+    #[cfg(feature = "tickbar")]
+    #[test]
+    fn bar_series_rejects_null_engine() {
+        assert_eq!(
+            of_get_bar_series(ptr::null_mut(), ptr::null(), ptr::null_mut(), ptr::null_mut()),
+            of_error_t::OF_ERR_INVALID_ARG as i32
+        );
+    }
+
     #[test]
     fn derived_analytics_stream_emits_session_snapshot_payload() {
         let _guard = test_lock().lock().expect("lock");

@@ -1,4 +1,5 @@
 #![allow(non_camel_case_types)]
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 #![doc = include_str!("../README.md")]
 
 mod support;
@@ -11,7 +12,7 @@ use std::sync::{
 
 use of_adapters::{AdapterConfig, ProviderKind};
 use of_core::{
-    BookUpdate, DataQualityFlags, SignalState, SymbolId, TradePrint,
+    AnalyticsConfig, BookUpdate, DataQualityFlags, SignalState, SymbolId, TradePrint,
 };
 use of_runtime::{
     build_default_engine, load_engine_config_from_path, DefaultEngine, EngineConfig,
@@ -19,12 +20,19 @@ use of_runtime::{
 };
 use support::{
     action_from_ffi, dispatch_callbacks, dispatch_health_callbacks, escape_json,
+    format_acd_snapshot, format_agent_type_snapshot, format_almgren_chriss_snapshot,
     format_amihud_snapshot, format_analytics_snapshot, format_book_analytics_snapshot,
     format_book_event_analytics_snapshot, format_book_snapshot,
-    format_cvd_enhancement_snapshot, format_derived_analytics_snapshot,
-    format_interval_candle_snapshot, format_kyle_lambda_snapshot, format_resiliency_snapshot,
-    format_session_candle_snapshot, format_vpin_snapshot, non_empty_string, parse_csv,
-    side_from_ffi, symbol_from_ffi, symbol_from_ffi_ref, write_json_to_c_buffer,
+    format_cvd_enhancement_snapshot, format_dark_lit_correlation_snapshot,
+    format_dark_pool_snapshot, format_derived_analytics_snapshot, format_futures_snapshot,
+    format_hasbrouck_snapshot, format_institutional_flow_snapshot,
+    format_interval_candle_snapshot, format_kinetic_energy_snapshot, format_kyle_lambda_snapshot,
+    format_noise_snapshot, format_oi_analysis_snapshot, format_options_flow_snapshot,
+    format_pattern_snapshot,     format_lob_feature_snapshot, format_regime_snapshot, format_resiliency_snapshot,
+    format_session_candle_snapshot, format_spread_decomp_snapshot, format_vol_signature_snapshot,
+    format_volatility_snapshot, format_vpin_snapshot,
+    non_empty_string, parse_csv, side_from_ffi, symbol_from_ffi, symbol_from_ffi_ref,
+    write_json_to_c_buffer,
 };
 #[cfg(feature = "tickbar")]
 use support::format_bar_series;
@@ -909,6 +917,80 @@ pub extern "C" fn of_get_cvd_enhancement_snapshot(
     }
 }
 
+/// Writes pattern detection snapshot JSON into caller buffer.
+#[no_mangle]
+pub extern "C" fn of_get_pattern_snapshot(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() { return of_error_t::OF_ERR_INVALID_ARG as i32; }
+    let (symbol, _) = match symbol_from_ffi(symbol) { Ok(v) => v, Err(e) => return e as i32 };
+    let engine = unsafe { &mut *engine };
+    let payload = format_pattern_snapshot(&engine.inner.pattern_snapshot(&symbol));
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32, Err(e) => e as i32,
+    }
+}
+
+macro_rules! snapshot_c_abi {
+    ($name:ident, $format:ident, $method:ident) => {
+        #[no_mangle]
+        pub extern "C" fn $name(
+            engine: *mut of_engine,
+            symbol: *const of_symbol_t,
+            out_buf: *mut c_void,
+            inout_len: *mut u32,
+        ) -> i32 {
+            if engine.is_null() { return of_error_t::OF_ERR_INVALID_ARG as i32; }
+            let (symbol, _) = match symbol_from_ffi(symbol) { Ok(v) => v, Err(e) => return e as i32 };
+            let engine = unsafe { &mut *engine };
+            let payload = $format(&engine.inner.$method(&symbol));
+            match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+                Ok(_) => of_error_t::OF_OK as i32, Err(e) => e as i32,
+            }
+        }
+    };
+}
+
+snapshot_c_abi!(of_get_volatility_snapshot, format_volatility_snapshot, volatility_snapshot);
+snapshot_c_abi!(of_get_noise_snapshot, format_noise_snapshot, noise_snapshot);
+snapshot_c_abi!(of_get_hasbrouck_snapshot, format_hasbrouck_snapshot, hasbrouck_snapshot);
+snapshot_c_abi!(of_get_almgren_chriss_snapshot, format_almgren_chriss_snapshot, almgren_chriss_snapshot);
+snapshot_c_abi!(of_get_spread_decomp_snapshot, format_spread_decomp_snapshot, spread_decomp_snapshot);
+snapshot_c_abi!(of_get_acd_snapshot, format_acd_snapshot, acd_snapshot);
+snapshot_c_abi!(of_get_regime_snapshot, format_regime_snapshot, regime_snapshot);
+snapshot_c_abi!(of_get_kinetic_energy_snapshot, format_kinetic_energy_snapshot, kinetic_energy_snapshot);
+snapshot_c_abi!(of_get_dark_pool_snapshot, format_dark_pool_snapshot, dark_pool_snapshot);
+snapshot_c_abi!(of_get_options_flow_snapshot, format_options_flow_snapshot, options_flow_snapshot);
+snapshot_c_abi!(of_get_futures_snapshot, format_futures_snapshot, futures_snapshot);
+snapshot_c_abi!(of_get_vol_signature_snapshot, format_vol_signature_snapshot, vol_signature_snapshot);
+snapshot_c_abi!(of_get_agent_type_snapshot, format_agent_type_snapshot, agent_type_snapshot);
+snapshot_c_abi!(of_get_dark_lit_correlation_snapshot, format_dark_lit_correlation_snapshot, dark_lit_correlation_snapshot);
+snapshot_c_abi!(of_get_institutional_flow_snapshot, format_institutional_flow_snapshot, institutional_flow_snapshot);
+snapshot_c_abi!(of_get_oi_analysis_snapshot, format_oi_analysis_snapshot, oi_analysis_snapshot);
+
+/// Computes LOB feature snapshot from engine book state and caller-provided flow metrics.
+#[no_mangle]
+pub extern "C" fn of_compute_lob_features(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    trade_imbalance: f64,
+    cancel_rate: f64,
+    arrival_rate: f64,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() { return of_error_t::OF_ERR_INVALID_ARG as i32; }
+    let (symbol, _) = match symbol_from_ffi(symbol) { Ok(v) => v, Err(e) => return e as i32 };
+    let engine = unsafe { &*engine };
+    let payload = format_lob_feature_snapshot(&engine.inner.lob_features(&symbol, trade_imbalance, cancel_rate, arrival_rate));
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32, Err(e) => e as i32,
+    }
+}
+
 /// Writes current analytics snapshot JSON into caller buffer.
 #[no_mangle]
 pub extern "C" fn of_get_analytics_snapshot(
@@ -1188,6 +1270,26 @@ pub extern "C" fn of_engine_poll_once(engine: *mut of_engine, quality_flags: u32
             status
         }
     }
+}
+
+/// Override analytics thresholds and buffer sizes at runtime.
+/// Pass a pointer to a populated [`OfAnalyticsConfig`]. Passing NULL resets to defaults.
+#[no_mangle]
+pub extern "C" fn of_engine_set_analytics_config(
+    engine: *mut of_engine,
+    config: *const AnalyticsConfig,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    if config.is_null() {
+        engine.inner.set_analytics_config(AnalyticsConfig::default());
+    } else {
+        let cfg = unsafe { *config };
+        engine.inner.set_analytics_config(cfg);
+    }
+    of_error_t::OF_OK as i32
 }
 
 fn map_runtime_error(err: &RuntimeError) -> i32 {

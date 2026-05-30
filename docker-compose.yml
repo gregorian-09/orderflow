@@ -1,0 +1,24 @@
+version: "3.9"
+services:
+  orderflow:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      OF_DASH_INSTANCE_ID: orderflow-prod
+      OF_DASH_VENUE: CME
+      OF_DASH_SYMBOL: ESM6
+      OF_DASH_DEPTH: "10"
+      OF_DASH_BAR_EVENTS: "24"
+      OF_DASH_MAX_BARS: "120"
+      OF_DASH_TOKEN: "${OF_DASH_TOKEN:-}"
+      OF_RUNTIME_MAX_EVENTS_PER_POLL: "100"
+      RUST_LOG: info
+    volumes:
+      - ./data:/opt/orderflow/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/state"]
+      interval: 10s
+      timeout: 3s
+      retries: 3

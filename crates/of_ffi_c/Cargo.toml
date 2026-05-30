@@ -21,6 +21,7 @@ rithmic = ["of_adapters/rithmic"]
 cqg = ["of_adapters/cqg"]
 cqg_proto = ["of_adapters/cqg_proto"]
 binance = ["of_adapters/binance"]
+tickbar = ["of_core/tickbar", "of_runtime/tickbar"]
 
 [package.metadata.docs.rs]
 all-features = true

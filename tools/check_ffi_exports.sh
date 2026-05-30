@@ -51,7 +51,26 @@ of_get_vpin_snapshot
 of_get_kyle_lambda_snapshot
 of_get_amihud_snapshot
 of_get_cvd_enhancement_snapshot
-of_get_analytics_snapshot
+of_get_pattern_snapshot
+of_get_volatility_snapshot
+of_get_noise_snapshot
+of_get_hasbrouck_snapshot
+of_get_almgren_chriss_snapshot
+of_get_spread_decomp_snapshot
+of_get_acd_snapshot
+of_get_regime_snapshot
+of_get_kinetic_energy_snapshot
+of_get_dark_pool_snapshot
+of_get_options_flow_snapshot
+  of_get_futures_snapshot
+  of_compute_lob_features
+  of_engine_set_analytics_config
+  of_get_vol_signature_snapshot
+  of_get_agent_type_snapshot
+  of_get_dark_lit_correlation_snapshot
+  of_get_institutional_flow_snapshot
+  of_get_oi_analysis_snapshot
+  of_get_analytics_snapshot
   of_get_bar_series          # requires feature "tickbar"
   of_get_derived_analytics_snapshot
   of_get_session_candle_snapshot

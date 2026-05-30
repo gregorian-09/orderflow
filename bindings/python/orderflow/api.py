@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
 from ._ffi import (
+    OfAnalyticsConfig,
     OfBook,
     OfEngineConfig,
     OfEvent,
@@ -456,8 +457,76 @@ class Engine:
         return self._snapshot_call(self._ffi.lib.of_get_amihud_snapshot, symbol)
 
     def cvd_enhancement_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
-        """Returns CVD enhancement snapshot (delta ratio, z-score, divergence)."""
+        """CVD enhancement analytics (delta ratio, z-score, divergence)."""
         return self._snapshot_call(self._ffi.lib.of_get_cvd_enhancement_snapshot, symbol)
+
+    def pattern_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Pattern detection snapshot (imbalance, iceberg, hidden accumulation/distribution, session type)."""
+        return self._snapshot_call(self._ffi.lib.of_get_pattern_snapshot, symbol)
+
+    def volatility_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        return self._snapshot_call(self._ffi.lib.of_get_volatility_snapshot, symbol)
+
+    def noise_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        return self._snapshot_call(self._ffi.lib.of_get_noise_snapshot, symbol)
+
+    def hasbrouck_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        return self._snapshot_call(self._ffi.lib.of_get_hasbrouck_snapshot, symbol)
+
+    def almgren_chriss_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        return self._snapshot_call(self._ffi.lib.of_get_almgren_chriss_snapshot, symbol)
+
+    def spread_decomp_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        return self._snapshot_call(self._ffi.lib.of_get_spread_decomp_snapshot, symbol)
+
+    def acd_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        return self._snapshot_call(self._ffi.lib.of_get_acd_snapshot, symbol)
+
+    def regime_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        return self._snapshot_call(self._ffi.lib.of_get_regime_snapshot, symbol)
+
+    def kinetic_energy_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        return self._snapshot_call(self._ffi.lib.of_get_kinetic_energy_snapshot, symbol)
+
+    def dark_pool_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        return self._snapshot_call(self._ffi.lib.of_get_dark_pool_snapshot, symbol)
+
+    def options_flow_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        return self._snapshot_call(self._ffi.lib.of_get_options_flow_snapshot, symbol)
+
+    def futures_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        return self._snapshot_call(self._ffi.lib.of_get_futures_snapshot, symbol)
+
+    def vol_signature_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns volatility signature snapshot JSON decoded as dict."""
+        return self._snapshot_call(self._ffi.lib.of_get_vol_signature_snapshot, symbol)
+
+    def agent_type_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns agent type identification snapshot JSON decoded as dict."""
+        return self._snapshot_call(self._ffi.lib.of_get_agent_type_snapshot, symbol)
+
+    def dark_lit_correlation_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns dark-lit correlation snapshot JSON decoded as dict."""
+        return self._snapshot_call(self._ffi.lib.of_get_dark_lit_correlation_snapshot, symbol)
+
+    def institutional_flow_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns institutional flow snapshot JSON decoded as dict."""
+        return self._snapshot_call(self._ffi.lib.of_get_institutional_flow_snapshot, symbol)
+
+    def oi_analysis_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns OI analysis snapshot JSON decoded as dict."""
+        return self._snapshot_call(self._ffi.lib.of_get_oi_analysis_snapshot, symbol)
+
+    def lob_features(self, symbol: Symbol, trade_imbalance: float = 0.0, cancel_rate: float = 0.0, arrival_rate: float = 0.0) -> Dict[str, Any]:
+        """Computes LOB feature snapshot from engine book state and flow metrics."""
+        return self._snapshot_call(self._ffi.lib.of_compute_lob_features, symbol, trade_imbalance, cancel_rate, arrival_rate)
+
+    def set_analytics_config(self, config: Optional["OfAnalyticsConfig"] = None) -> None:
+        """Override analytics thresholds and buffer sizes. None resets to defaults."""
+        ptr = ctypes.byref(config) if config is not None else None
+        rc = self._ffi.lib.of_engine_set_analytics_config(self._handle, ptr)
+        if rc != 0:
+            raise RuntimeError(f"set_analytics_config failed with error code {rc}")
 
     def analytics_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
         """Returns current analytics snapshot JSON decoded as dict."""

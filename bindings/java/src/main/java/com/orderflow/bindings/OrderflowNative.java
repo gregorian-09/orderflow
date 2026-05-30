@@ -75,6 +75,23 @@ public interface OrderflowNative extends Library {
     int of_get_kyle_lambda_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
     int of_get_amihud_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
     int of_get_cvd_enhancement_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_pattern_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_volatility_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_noise_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_hasbrouck_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_almgren_chriss_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_spread_decomp_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_acd_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_regime_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_kinetic_energy_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_dark_pool_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_options_flow_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_futures_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_vol_signature_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_agent_type_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_dark_lit_correlation_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_institutional_flow_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_oi_analysis_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
     /** Reads analytics snapshot JSON into caller buffer. */
     int of_get_analytics_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
     /** Reads derived analytics snapshot JSON into caller buffer. */
@@ -87,6 +104,10 @@ public interface OrderflowNative extends Library {
     int of_get_signal_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
     /** Reads completed bar series JSON array into caller buffer. */
     int of_get_bar_series(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+
+    int of_compute_lob_features(Pointer engine, OfSymbol symbol, double tradeImbalance, double cancelRate, double arrivalRate, Memory outBuf, IntByReference inoutLen);
+
+    int of_engine_set_analytics_config(Pointer engine, Pointer config);
 
     /** Returns metrics JSON pointer and length. */
     int of_get_metrics_json(Pointer engine, PointerByReference outJson, IntByReference outLen);

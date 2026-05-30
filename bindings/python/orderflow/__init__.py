@@ -23,6 +23,7 @@ If the native shared library is not in the default location, set
 ``ORDERFLOW_LIBRARY_PATH`` or pass ``library_path=...`` to ``Engine``.
 """
 
+from ._ffi import OfAnalyticsConfig
 from .api import (
     BookAction,
     DataQualityFlags,
@@ -43,6 +44,7 @@ __all__ = [
     "Engine",
     "EngineConfig",
     "ExternalFeedPolicy",
+    "OfAnalyticsConfig",
     "OrderflowArgError",
     "OrderflowError",
     "OrderflowStateError",

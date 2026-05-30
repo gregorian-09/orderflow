@@ -14,7 +14,7 @@ from __future__ import annotations
 import ctypes
 import os
 import sys
-from ctypes import c_char_p, c_int32, c_int64, c_uint16, c_uint32, c_uint64, c_uint8, c_void_p
+from ctypes import c_char_p, c_double, c_int32, c_int64, c_uint16, c_uint32, c_uint64, c_uint8, c_void_p
 from pathlib import Path
 from typing import Optional
 
@@ -33,6 +33,62 @@ class OfEngineConfig(ctypes.Structure):
         ("data_retention_max_bytes", c_uint64),
         ("data_retention_max_age_secs", c_uint64),
     ]
+
+
+class OfAnalyticsConfig(ctypes.Structure):
+    """ctypes mirror of `of_analytics_config_t`."""
+
+    _fields_ = [
+        ("agent_small_trade_threshold", c_double),
+        ("institutional_trade_threshold", c_int64),
+        ("cancel_arrival_window_ns", c_uint64),
+        ("vpin_volume_bucket", c_uint32),
+        ("vpin_max_buckets", c_uint32),
+        ("kyle_lambda_max_len", c_uint32),
+        ("cvd_max_len", c_uint32),
+        ("vol_estimator_max_len", c_uint32),
+        ("noise_max_len", c_uint32),
+        ("hasbrouck_max_len", c_uint32),
+        ("almgren_chriss_max_len", c_uint32),
+        ("acd_max_len", c_uint32),
+        ("vol_signature_max_len", c_uint32),
+        ("agent_max_len", c_uint32),
+        ("agent_min_samples", c_uint32),
+        ("institutional_max_len", c_uint32),
+        ("resiliency_max_len", c_uint32),
+        ("spread_decomp_max_len", c_uint32),
+        ("regime_max_len", c_uint32),
+        ("event_tracker_max_len", c_uint32),
+        ("spread_tracker_max_len", c_uint32),
+        ("default_max_len", c_uint32),
+    ]
+
+    @staticmethod
+    def defaults() -> "OfAnalyticsConfig":
+        return OfAnalyticsConfig(
+            agent_small_trade_threshold=100.0,
+            institutional_trade_threshold=5000,
+            cancel_arrival_window_ns=1_000_000_000,
+            vpin_volume_bucket=5000,
+            vpin_max_buckets=50,
+            kyle_lambda_max_len=100,
+            cvd_max_len=50,
+            vol_estimator_max_len=100,
+            noise_max_len=100,
+            hasbrouck_max_len=100,
+            almgren_chriss_max_len=100,
+            acd_max_len=100,
+            vol_signature_max_len=200,
+            agent_max_len=100,
+            agent_min_samples=5,
+            institutional_max_len=100,
+            resiliency_max_len=1024,
+            spread_decomp_max_len=100,
+            regime_max_len=100,
+            event_tracker_max_len=65536,
+            spread_tracker_max_len=1024,
+            default_max_len=100,
+        )
 
 
 class OfSymbol(ctypes.Structure):
@@ -334,6 +390,38 @@ class OrderflowLib:
         ]
         lib.of_get_cvd_enhancement_snapshot.restype = c_int32
 
+        lib.of_get_pattern_snapshot.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_get_pattern_snapshot.restype = c_int32
+
+        # T3-T7 analytics
+        t3_funcs = [
+            "of_get_volatility_snapshot",
+            "of_get_noise_snapshot",
+            "of_get_hasbrouck_snapshot",
+            "of_get_almgren_chriss_snapshot",
+            "of_get_spread_decomp_snapshot",
+            "of_get_acd_snapshot",
+            "of_get_regime_snapshot",
+            "of_get_kinetic_energy_snapshot",
+            "of_get_dark_pool_snapshot",
+            "of_get_options_flow_snapshot",
+            "of_get_futures_snapshot",
+            "of_get_vol_signature_snapshot",
+            "of_get_agent_type_snapshot",
+            "of_get_dark_lit_correlation_snapshot",
+            "of_get_institutional_flow_snapshot",
+            "of_get_oi_analysis_snapshot",
+        ]
+        for fname in t3_funcs:
+            fn = getattr(lib, fname)
+            fn.argtypes = [c_void_p, ctypes.POINTER(OfSymbol), c_void_p, ctypes.POINTER(c_uint32)]
+            fn.restype = c_int32
+
         lib.of_get_analytics_snapshot.argtypes = [
             c_void_p,
             ctypes.POINTER(OfSymbol),
@@ -389,6 +477,20 @@ class OrderflowLib:
             ctypes.POINTER(c_uint32),
         ]
         lib.of_get_metrics_json.restype = c_int32
+
+        lib.of_compute_lob_features.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            c_double,
+            c_double,
+            c_double,
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_compute_lob_features.restype = c_int32
+
+        lib.of_engine_set_analytics_config.argtypes = [c_void_p, c_void_p]
+        lib.of_engine_set_analytics_config.restype = c_int32
 
         lib.of_string_free.argtypes = [c_char_p]
         lib.of_string_free.restype = None
