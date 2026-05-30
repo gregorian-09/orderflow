@@ -39,6 +39,8 @@ expected_symbols=(
   of_external_health_tick
 of_get_book_snapshot
 of_get_book_analytics_snapshot
+of_compute_weighted_average_price
+of_compute_depth_slope
 of_get_analytics_snapshot
   of_get_bar_series          # requires feature "tickbar"
   of_get_derived_analytics_snapshot
