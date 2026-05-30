@@ -207,6 +207,25 @@ public final class OrderflowEngine implements AutoCloseable {
                 "of_external_set_reconnecting");
     }
 
+    /**
+     * Sets the tickbar aggregation interval for new per-symbol accumulators.
+     *
+     * <p>A positive {@code intervalNs} enables tickbar aggregation at the
+     * given interval for symbols whose accumulators are created after this
+     * call. Zero or negative values disable tickbar aggregation for future
+     * accumulators. Existing accumulators are not affected.
+     *
+     * <p>Requires the native library to be built with the {@code tickbar} feature.
+     *
+     * @param intervalNs aggregation interval in nanoseconds (0 or negative to disable)
+     */
+    public void setTickbarInterval(long intervalNs) {
+        requireEngine();
+        check(
+                nativeLib.of_engine_set_tickbar_interval(engine, intervalNs),
+                "of_engine_set_tickbar_interval");
+    }
+
     /** Re-evaluates external-feed health without ingesting new events. */
     public void externalHealthTick() {
         requireEngine();
@@ -333,6 +352,16 @@ public final class OrderflowEngine implements AutoCloseable {
     }
 
     /**
+     * Returns current book analytics snapshot (spread, depth, imbalance, microprice) as JSON string.
+     *
+     * @param symbol target symbol
+     * @return JSON payload with computed book metrics
+     */
+    public String bookAnalyticsSnapshot(Symbol symbol) {
+        return snapshot(symbol, SnapshotKind.BOOK_ANALYTICS);
+    }
+
+    /**
      * Returns current analytics snapshot as JSON string.
      *
      * @param symbol target symbol
@@ -381,6 +410,19 @@ public final class OrderflowEngine implements AutoCloseable {
      */
     public String signalSnapshot(Symbol symbol) {
         return snapshot(symbol, SnapshotKind.SIGNAL);
+    }
+
+    /**
+     * Returns completed bar series JSON array for a symbol.
+     *
+     * <p>Requires the native library to be built with the {@code tickbar} feature.
+     * Returns {@code []} when tickbar aggregation is not configured for the symbol.
+     *
+     * @param symbol target symbol
+     * @return JSON array of bar objects, each with timestamp_ns, open, high, low, close, volume, tick_count, vwap
+     */
+    public String barSeries(Symbol symbol) {
+        return snapshot(symbol, SnapshotKind.BAR_SERIES);
     }
 
     /**
@@ -444,11 +486,13 @@ public final class OrderflowEngine implements AutoCloseable {
             int rc;
             switch (kind) {
                 case BOOK -> rc = nativeLib.of_get_book_snapshot(engine, sym, buffer, length);
+                case BOOK_ANALYTICS -> rc = nativeLib.of_get_book_analytics_snapshot(engine, sym, buffer, length);
                 case ANALYTICS -> rc = nativeLib.of_get_analytics_snapshot(engine, sym, buffer, length);
                 case DERIVED_ANALYTICS -> rc = nativeLib.of_get_derived_analytics_snapshot(engine, sym, buffer, length);
                 case SESSION_CANDLE -> rc = nativeLib.of_get_session_candle_snapshot(engine, sym, buffer, length);
                 case INTERVAL_CANDLE -> rc = nativeLib.of_get_interval_candle_snapshot(engine, sym, windowNs, buffer, length);
                 case SIGNAL -> rc = nativeLib.of_get_signal_snapshot(engine, sym, buffer, length);
+                case BAR_SERIES -> rc = nativeLib.of_get_bar_series(engine, sym, buffer, length);
                 default -> throw new OrderflowException("unknown snapshot kind");
             }
 
@@ -508,10 +552,12 @@ public final class OrderflowEngine implements AutoCloseable {
 
     private enum SnapshotKind {
         BOOK,
+        BOOK_ANALYTICS,
         ANALYTICS,
         DERIVED_ANALYTICS,
         SESSION_CANDLE,
         INTERVAL_CANDLE,
         SIGNAL,
+        BAR_SERIES,
     }
 }

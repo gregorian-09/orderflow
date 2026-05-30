@@ -48,9 +48,13 @@ public interface OrderflowNative extends Library {
     int of_external_health_tick(Pointer engine);
     /** Polls adapter once. */
     int of_engine_poll_once(Pointer engine, int qualityFlags);
+    /** Sets tickbar aggregation interval for new per-symbol accumulators. */
+    int of_engine_set_tickbar_interval(Pointer engine, long intervalNs);
 
     /** Reads book snapshot JSON into caller buffer. */
     int of_get_book_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    /** Reads book analytics snapshot JSON into caller buffer. */
+    int of_get_book_analytics_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
     /** Reads analytics snapshot JSON into caller buffer. */
     int of_get_analytics_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
     /** Reads derived analytics snapshot JSON into caller buffer. */
@@ -61,6 +65,8 @@ public interface OrderflowNative extends Library {
     int of_get_interval_candle_snapshot(Pointer engine, OfSymbol symbol, long windowNs, Memory outBuf, IntByReference inoutLen);
     /** Reads signal snapshot JSON into caller buffer. */
     int of_get_signal_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    /** Reads completed bar series JSON array into caller buffer. */
+    int of_get_bar_series(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
 
     /** Returns metrics JSON pointer and length. */
     int of_get_metrics_json(Pointer engine, PointerByReference outJson, IntByReference outLen);
