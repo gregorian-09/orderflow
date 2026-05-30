@@ -4,8 +4,9 @@ use std::sync::atomic::Ordering;
 
 use of_adapters::RawEvent;
 use of_core::{
-    BookAction, BookAnalyticsSnapshot, BookSnapshot, DerivedAnalyticsSnapshot,
-    IntervalCandleSnapshot, SessionCandleSnapshot, Side, SignalState, SymbolId,
+    BookAction, BookAnalyticsSnapshot, BookEventAnalyticsSnapshot, BookSnapshot,
+    DerivedAnalyticsSnapshot, IntervalCandleSnapshot, ResiliencySnapshot, SessionCandleSnapshot,
+    Side, SignalState, SymbolId,
 };
 #[cfg(feature = "tickbar")]
 use of_core::CompletedBar;
@@ -356,6 +357,26 @@ pub(crate) fn format_book_analytics_snapshot(snap: &BookAnalyticsSnapshot) -> St
         snap.bid_depth,
         snap.ask_depth,
         snap.depth_imbalance_bps
+    )
+}
+
+pub(crate) fn format_book_event_analytics_snapshot(snap: &BookEventAnalyticsSnapshot) -> String {
+    format!(
+        "{{\"bid_arrival_rate\":{:.4},\"ask_arrival_rate\":{:.4},\"bid_cancel_rate\":{:.4},\"ask_cancel_rate\":{:.4},\"change_intensity\":{:.4},\"bid_event_volume\":{},\"ask_event_volume\":{}}}",
+        snap.bid_arrival_rate,
+        snap.ask_arrival_rate,
+        snap.bid_cancel_rate,
+        snap.ask_cancel_rate,
+        snap.change_intensity,
+        snap.bid_event_volume,
+        snap.ask_event_volume,
+    )
+}
+
+pub(crate) fn format_resiliency_snapshot(snap: &ResiliencySnapshot) -> String {
+    format!(
+        "{{\"recovery_time_ms\":{:.4},\"depth_elasticity\":{:.4}}}",
+        snap.recovery_time_ms, snap.depth_elasticity,
     )
 }
 

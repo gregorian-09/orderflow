@@ -19,10 +19,10 @@ use of_runtime::{
 };
 use support::{
     action_from_ffi, dispatch_callbacks, dispatch_health_callbacks, escape_json,
-    format_analytics_snapshot, format_book_analytics_snapshot, format_book_snapshot,
-    format_derived_analytics_snapshot, format_interval_candle_snapshot,
-    format_session_candle_snapshot, non_empty_string, parse_csv, side_from_ffi, symbol_from_ffi,
-    symbol_from_ffi_ref, write_json_to_c_buffer,
+    format_analytics_snapshot, format_book_analytics_snapshot, format_book_event_analytics_snapshot,
+    format_book_snapshot, format_derived_analytics_snapshot, format_interval_candle_snapshot,
+    format_resiliency_snapshot, format_session_candle_snapshot, non_empty_string, parse_csv,
+    side_from_ffi, symbol_from_ffi, symbol_from_ffi_ref, write_json_to_c_buffer,
 };
 #[cfg(feature = "tickbar")]
 use support::format_bar_series;
@@ -684,6 +684,155 @@ pub extern "C" fn of_compute_depth_slope(
     let slope = engine.inner.depth_slope(&symbol, levels as usize);
     let payload = format!("{{\"slope\":{:.4}}}", slope);
 
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes mid price as JSON: `{"mid": N}`, or `{}` if no book data.
+#[no_mangle]
+pub extern "C" fn of_get_mid_price(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let payload = match engine.inner.mid_price(&symbol) {
+        Some(mid) => format!("{{\"mid\":{}}}", mid),
+        None => "{}".to_string(),
+    };
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes last effective spread in bps as JSON: `{"bps": N}`, or `{}`.
+#[no_mangle]
+pub extern "C" fn of_get_effective_spread_bps(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let bps = engine.inner.effective_spread_bps(&symbol);
+    let payload = format!("{{\"bps\":{}}}", bps);
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes average half-spread cost over `window` trades: `{"bps": N}`.
+#[no_mangle]
+pub extern "C" fn of_get_half_spread_cost_bps(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    window: u32,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let bps = engine.inner.half_spread_cost_bps(&symbol, window as usize);
+    let payload = format!("{{\"bps\":{}}}", bps);
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes realised spread over `hold_ticks` ticks ago: `{"bps": N}`.
+#[no_mangle]
+pub extern "C" fn of_get_realised_spread_bps(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    hold_ticks: u32,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let bps = engine.inner.realised_spread_bps(&symbol, hold_ticks as usize);
+    let payload = format!("{{\"bps\":{}}}", bps);
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes book-event analytics snapshot JSON over `window_ns`.
+#[no_mangle]
+pub extern "C" fn of_get_book_event_analytics(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    window_ns: u64,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let snap = engine.inner.book_event_analytics(&symbol, window_ns);
+    let payload = format_book_event_analytics_snapshot(&snap);
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes resiliency snapshot JSON.
+#[no_mangle]
+pub extern "C" fn of_get_resiliency_snapshot(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let snap = engine.inner.resiliency_snapshot(&symbol);
+    let payload = format_resiliency_snapshot(&snap);
     match write_json_to_c_buffer(&payload, out_buf, inout_len) {
         Ok(_) => of_error_t::OF_OK as i32,
         Err(e) => e as i32,
