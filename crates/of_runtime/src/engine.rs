@@ -7,10 +7,13 @@ use std::path::{Path, PathBuf};
 
 use of_adapters::{create_adapter, AdapterConfig, MarketDataAdapter, RawEvent, SubscribeReq};
 use of_core::{
-    AnalyticsAccumulator, AnalyticsSnapshot, BookLevel, BookSnapshot, BookUpdate,
-    DataQualityFlags, DerivedAnalyticsSnapshot, IntervalCandleSnapshot, SessionCandleSnapshot,
-    SignalSnapshot, SignalState, SymbolId, TradePrint,
+    AnalyticsAccumulator, AnalyticsSnapshot, BookAnalyticsSnapshot, BookLevel, BookSnapshot,
+    BookUpdate, DataQualityFlags, DerivedAnalyticsSnapshot, IntervalCandleSnapshot,
+    SessionCandleSnapshot, SignalSnapshot, SignalState, SymbolId, TradePrint,
+    compute_book_analytics,
 };
+#[cfg(feature = "tickbar")]
+use of_core::CompletedBar;
 use of_persist::{RetentionPolicy, RollingStore};
 use of_signals::{SignalGateDecision, SignalModule};
 
@@ -405,6 +408,8 @@ pub struct Engine<A: MarketDataAdapter, S: SignalModule> {
     max_events_per_poll: Option<usize>,
     backpressure_dropped_events: u64,
     circuit_breaker: CircuitBreakerState,
+    #[cfg(feature = "tickbar")]
+    tickbar_interval_ns: Option<i64>,
 }
 
 /// Default engine type used by C ABI and high-level bindings.
@@ -432,6 +437,8 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             max_events_per_poll: max_events_per_poll_from_env(),
             backpressure_dropped_events: 0,
             circuit_breaker: CircuitBreakerState::from_env(),
+            #[cfg(feature = "tickbar")]
+            tickbar_interval_ns: None,
         }
     }
 
@@ -742,9 +749,37 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             .map(|acc| acc.interval_candle_snapshot(window_ns))
     }
 
+    /// Sets the tickbar aggregation interval. New per-symbol accumulators will use this interval.
+    /// Existing accumulators are not affected. Pass `None` to disable tickbar for new symbols.
+    #[cfg(feature = "tickbar")]
+    pub fn set_tickbar_interval(&mut self, interval_ns: Option<i64>) {
+        self.tickbar_interval_ns = interval_ns;
+    }
+
+    /// Returns the configured tickbar interval, if any.
+    #[cfg(feature = "tickbar")]
+    pub fn tickbar_interval(&self) -> Option<i64> {
+        self.tickbar_interval_ns
+    }
+
+    /// Returns completed tickbar series for symbol if a tickbar aggregator is configured.
+    #[cfg(feature = "tickbar")]
+    pub fn bar_series(&mut self, symbol: &SymbolId) -> Option<Vec<CompletedBar>> {
+        self.analytics
+            .get_mut(symbol)
+            .and_then(AnalyticsAccumulator::bar_series)
+    }
+
     /// Returns the current materialized book snapshot for symbol if available.
     pub fn book_snapshot(&self, symbol: &SymbolId) -> Option<BookSnapshot> {
         self.books.get(symbol).map(|book| book.snapshot(symbol))
+    }
+
+    /// Returns book-derived analytics (spread, depth, imbalance, microprice) for symbol if available.
+    pub fn book_analytics_snapshot(&self, symbol: &SymbolId) -> Option<BookAnalyticsSnapshot> {
+        self.books
+            .get(symbol)
+            .map(|book| compute_book_analytics(&book.snapshot(symbol)))
     }
 
     /// Returns latest signal snapshot for symbol if available.
@@ -990,7 +1025,15 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                 }
 
                 let symbol = trade.symbol.clone();
-                let acc = self.analytics.entry(symbol.clone()).or_default();
+                #[cfg(feature = "tickbar")]
+                let tickbar_ns = self.tickbar_interval_ns;
+                let acc = self.analytics.entry(symbol.clone()).or_insert_with(|| {
+                    #[cfg(feature = "tickbar")]
+                    if let Some(ns) = tickbar_ns {
+                        return AnalyticsAccumulator::with_tickbar(ns);
+                    }
+                    AnalyticsAccumulator::default()
+                });
                 acc.on_trade(&trade);
                 let snap = acc.snapshot();
                 self.signal_module.on_analytics(&snap);
