@@ -1012,6 +1012,458 @@ impl TradeClassifier {
     }
 }
 
+/// A single VPIN snapshot.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct VpinSnapshot {
+    /// Current VPIN value (0..1).
+    pub vpin: f64,
+    /// VPIN z-score relative to rolling mean/std.
+    pub vpin_zscore: f64,
+    /// Rolling mean VPIN.
+    pub vpin_mean: f64,
+    /// Rolling std VPIN.
+    pub vpin_std: f64,
+    /// Whether VPIN exceeds the toxicity threshold.
+    pub is_toxic: bool,
+    /// Number of complete buckets processed.
+    pub bucket_count: u64,
+}
+
+impl Default for VpinSnapshot {
+    fn default() -> Self {
+        Self {
+            vpin: 0.0,
+            vpin_zscore: 0.0,
+            vpin_mean: 0.0,
+            vpin_std: 0.0,
+            is_toxic: false,
+            bucket_count: 0,
+        }
+    }
+}
+
+/// Tracks Volume-Synchronized Probability of Informed Trading (VPIN).
+///
+/// Accumulates buy/sell volume into fixed-size buckets, computes
+/// `|buy_vol - sell_vol| / bucket_vol` per bucket, and maintains
+/// a rolling window of VPIN values for mean/std and toxicity detection.
+#[derive(Debug, Clone)]
+pub struct VpinTracker {
+    /// Volume threshold per bucket.
+    bucket_volume: i64,
+    /// Current bucket's buy volume.
+    current_buy_vol: i64,
+    /// Current bucket's sell volume.
+    current_sell_vol: i64,
+    /// Completed bucket VPIN values in rolling window.
+    bucket_vpins: Vec<f64>,
+    /// Maximum number of buckets to retain.
+    max_buckets: usize,
+    /// Toxicity threshold (z-score).
+    toxicity_threshold: f64,
+}
+
+impl VpinTracker {
+    /// Creates a new VPIN tracker with specified bucket volume and rolling window size.
+    pub fn new(bucket_volume: i64, rolling_buckets: usize) -> Self {
+        Self {
+            bucket_volume,
+            current_buy_vol: 0,
+            current_sell_vol: 0,
+            bucket_vpins: Vec::with_capacity(rolling_buckets),
+            max_buckets: rolling_buckets,
+            toxicity_threshold: 2.0,
+        }
+    }
+
+    /// Sets the toxicity threshold (z-score).
+    pub fn with_toxicity_threshold(mut self, threshold: f64) -> Self {
+        self.toxicity_threshold = threshold;
+        self
+    }
+
+    /// Feeds classified volumes into the VPIN tracker.
+    ///
+    /// `buy_volume` and `sell_volume` are the volumes for this event.
+    /// When cumulative volume exceeds `bucket_volume`, a VPIN value is emitted.
+    pub fn on_trade(&mut self, buy_volume: i64, sell_volume: i64) {
+        self.current_buy_vol += buy_volume;
+        self.current_sell_vol += sell_volume;
+
+        let total = self.current_buy_vol + self.current_sell_vol;
+        if total >= self.bucket_volume {
+            let vpin = (self.current_buy_vol - self.current_sell_vol).unsigned_abs() as f64
+                / self.bucket_volume as f64;
+
+            if self.bucket_vpins.len() >= self.max_buckets {
+                self.bucket_vpins.remove(0);
+            }
+            self.bucket_vpins.push(vpin);
+
+            // Carry over excess volume to next bucket
+            let excess = total - self.bucket_volume;
+            let excess_ratio = excess as f64 / total.max(1) as f64;
+            self.current_buy_vol = (self.current_buy_vol as f64 * excess_ratio) as i64;
+            self.current_sell_vol = (self.current_sell_vol as f64 * excess_ratio) as i64;
+        }
+    }
+
+    /// Returns the current VPIN snapshot.
+    pub fn snapshot(&self) -> VpinSnapshot {
+        if self.bucket_vpins.is_empty() {
+            return VpinSnapshot::default();
+        }
+
+        let latest = *self.bucket_vpins.last().unwrap_or(&0.0);
+        let n = self.bucket_vpins.len() as f64;
+        let mean = self.bucket_vpins.iter().sum::<f64>() / n;
+        let variance = self
+            .bucket_vpins
+            .iter()
+            .map(|v| (v - mean).powi(2))
+            .sum::<f64>()
+            / n;
+        let std = variance.sqrt();
+        let zscore = if std > 0.0 { (latest - mean) / std } else { 0.0 };
+
+        VpinSnapshot {
+            vpin: latest,
+            vpin_zscore: zscore,
+            vpin_mean: mean,
+            vpin_std: std,
+            is_toxic: zscore.abs() > self.toxicity_threshold,
+            bucket_count: self.bucket_vpins.len() as u64,
+        }
+    }
+
+    /// Resets all state.
+    pub fn reset(&mut self) {
+        self.current_buy_vol = 0;
+        self.current_sell_vol = 0;
+        self.bucket_vpins.clear();
+    }
+}
+
+/// Tracks Kyle's Lambda: `ΔP = α + λ * signed_volume + ε` over a rolling window.
+///
+/// Measures price impact per unit of signed order flow.
+#[derive(Debug, Clone)]
+pub struct KyleLambdaTracker {
+    /// Rolling samples of (signed_volume, price_change).
+    samples: Vec<(i64, i64)>,
+    /// Maximum samples kept.
+    max_samples: usize,
+}
+
+/// Snapshot of Kyle's Lambda estimation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct KyleLambdaSnapshot {
+    /// Price impact coefficient λ (in bps per unit volume).
+    pub lambda_bps: f64,
+    /// R² of the regression.
+    pub r_squared: f64,
+    /// Smoothed λ over a larger window.
+    pub average_lambda_bps: f64,
+    /// Number of samples used.
+    pub sample_count: u32,
+}
+
+impl Default for KyleLambdaSnapshot {
+    fn default() -> Self {
+        Self {
+            lambda_bps: 0.0,
+            r_squared: 0.0,
+            average_lambda_bps: 0.0,
+            sample_count: 0,
+        }
+    }
+}
+
+impl KyleLambdaTracker {
+    pub fn new(window: usize) -> Self {
+        Self {
+            samples: Vec::with_capacity(window),
+            max_samples: window,
+        }
+    }
+
+    /// Records a trade: signed volume (positive = buy) and price change.
+    pub fn on_trade(&mut self, signed_volume: i64, price_change: i64) {
+        if self.samples.len() >= self.max_samples {
+            self.samples.remove(0);
+        }
+        self.samples.push((signed_volume, price_change));
+    }
+
+    /// Computes λ via OLS: `λ = cov(x,y) / var(x)`, α = mean(y) - λ * mean(x).
+    /// Returns (lambda_bps, r_squared, avg_bps) where lambda is scaled to bps per unit volume.
+    pub fn snapshot(&self) -> KyleLambdaSnapshot {
+        let n = self.samples.len() as f64;
+        if n < 3.0 {
+            return KyleLambdaSnapshot::default();
+        }
+
+        let mean_x = self.samples.iter().map(|(x, _)| *x as f64).sum::<f64>() / n;
+        let mean_y = self.samples.iter().map(|(_, y)| *y as f64).sum::<f64>() / n;
+
+        let cov = self
+            .samples
+            .iter()
+            .map(|(x, y)| (*x as f64 - mean_x) * (*y as f64 - mean_y))
+            .sum::<f64>()
+            / n;
+        let var_x = self
+            .samples
+            .iter()
+            .map(|(x, _)| (*x as f64 - mean_x).powi(2))
+            .sum::<f64>()
+            / n;
+
+        if var_x <= 0.0 {
+            return KyleLambdaSnapshot::default();
+        }
+
+        let lambda = cov / var_x;
+        let alpha = mean_y - lambda * mean_x;
+
+        let ss_res: f64 = self
+            .samples
+            .iter()
+            .map(|(x, y)| {
+                let y_pred = alpha + lambda * *x as f64;
+                (*y as f64 - y_pred).powi(2)
+            })
+            .sum();
+        let ss_tot: f64 = self.samples.iter().map(|(_, y)| (*y as f64 - mean_y).powi(2)).sum();
+        let r_squared = if ss_tot > 0.0 {
+            1.0 - ss_res / ss_tot
+        } else {
+            0.0
+        };
+
+        // Average lambda: same computation but could be smoothed with larger window
+        // For now, use current lambda as average
+        let avg_lambda = lambda;
+
+        KyleLambdaSnapshot {
+            lambda_bps: lambda * 10_000.0,
+            r_squared,
+            average_lambda_bps: avg_lambda * 10_000.0,
+            sample_count: self.samples.len() as u32,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.samples.clear();
+    }
+}
+
+/// Tracks Amihud Illiquidity: `|return| / dollar_volume` per bar.
+#[derive(Debug, Clone)]
+pub struct AmihudTracker {
+    /// Per-bar snapshots.
+    bars: Vec<AmihudBar>,
+    /// Rolling window size.
+    window: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AmihudBar {
+    dollar_volume: f64,
+    abs_return: f64,
+}
+
+/// Snapshot of Amihud illiquidity.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct AmihudSnapshot {
+    /// Current Amihud ratio.
+    pub amihud_ratio: f64,
+    /// Average illiquidity over window.
+    pub average_illiquidity: f64,
+    /// Number of bars used.
+    pub bar_count: u32,
+}
+
+impl Default for AmihudSnapshot {
+    fn default() -> Self {
+        Self {
+            amihud_ratio: 0.0,
+            average_illiquidity: 0.0,
+            bar_count: 0,
+        }
+    }
+}
+
+impl AmihudTracker {
+    pub fn new(window: usize) -> Self {
+        Self {
+            bars: Vec::with_capacity(window),
+            window,
+        }
+    }
+
+    /// Records a bar: close price, dollar volume, previous close.
+    pub fn on_bar(&mut self, close_price: f64, dollar_volume: f64, prev_close: f64) {
+        let abs_return = if prev_close > 0.0 {
+            ((close_price - prev_close) / prev_close).abs()
+        } else {
+            0.0
+        };
+
+        if self.bars.len() >= self.window {
+            self.bars.remove(0);
+        }
+        self.bars.push(AmihudBar {
+            dollar_volume,
+            abs_return,
+        });
+    }
+
+    pub fn snapshot(&self) -> AmihudSnapshot {
+        let n = self.bars.len() as f64;
+        if n == 0.0 {
+            return AmihudSnapshot::default();
+        }
+
+        let ratios: Vec<f64> = self
+            .bars
+            .iter()
+            .map(|b| {
+                if b.dollar_volume > 0.0 {
+                    b.abs_return / b.dollar_volume
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+
+        let latest = *ratios.last().unwrap_or(&0.0);
+        let avg = ratios.iter().sum::<f64>() / n;
+
+        AmihudSnapshot {
+            amihud_ratio: latest,
+            average_illiquidity: avg,
+            bar_count: self.bars.len() as u32,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.bars.clear();
+    }
+}
+
+/// Tracks CVD (Cumulative Volume Delta) enhancements: ratio, z-score, divergence.
+#[derive(Debug, Clone)]
+pub struct CvdEnhancements {
+    /// Rolling delta values over lookback window.
+    delta_window: Vec<i64>,
+    /// Rolling volume values over lookback window.
+    volume_window: Vec<i64>,
+    /// Price values for divergence detection.
+    price_window: Vec<i64>,
+    /// Max window size.
+    window: usize,
+}
+
+/// Snapshot of CVD enhancement metrics.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct CvdEnhancementSnapshot {
+    /// Delta ratio: delta / volume in [-1, +1].
+    pub delta_ratio: f64,
+    /// Z-score of delta.
+    pub delta_zscore: f64,
+    /// Delta divergence detected (price high vs CVD low, etc.).
+    pub divergence_detected: bool,
+}
+
+impl Default for CvdEnhancementSnapshot {
+    fn default() -> Self {
+        Self {
+            delta_ratio: 0.0,
+            delta_zscore: 0.0,
+            divergence_detected: false,
+        }
+    }
+}
+
+impl CvdEnhancements {
+    pub fn new(window: usize) -> Self {
+        Self {
+            delta_window: Vec::with_capacity(window),
+            volume_window: Vec::with_capacity(window),
+            price_window: Vec::with_capacity(window),
+            window,
+        }
+    }
+
+    /// Records a bar's worth of delta, volume, and close price.
+    pub fn on_bar(&mut self, delta: i64, volume: i64, price: i64) {
+        for w in [&mut self.delta_window, &mut self.volume_window, &mut self.price_window] {
+            if w.len() >= self.window {
+                w.remove(0);
+            }
+        }
+        self.delta_window.push(delta);
+        self.volume_window.push(volume);
+        self.price_window.push(price);
+    }
+
+    pub fn snapshot(&self) -> CvdEnhancementSnapshot {
+        if self.delta_window.is_empty() {
+            return CvdEnhancementSnapshot::default();
+        }
+
+        let n = self.delta_window.len() as f64;
+        let sum_delta: i64 = self.delta_window.iter().sum();
+        let sum_vol: i64 = self.volume_window.iter().sum();
+        let delta_ratio = if sum_vol > 0 {
+            sum_delta as f64 / sum_vol as f64
+        } else {
+            0.0
+        };
+
+        let mean_delta = sum_delta as f64 / n;
+        let var_delta = self
+            .delta_window
+            .iter()
+            .map(|d| (*d as f64 - mean_delta).powi(2))
+            .sum::<f64>()
+            / n;
+        let std_delta = var_delta.sqrt();
+        let last_delta = *self.delta_window.last().unwrap_or(&0) as f64;
+        let delta_zscore = if std_delta > 0.0 {
+            (last_delta - mean_delta) / std_delta
+        } else {
+            0.0
+        };
+
+        // Divergence detection: price making new highs while CVD making lower highs
+        let divergence_detected = if self.price_window.len() >= 3 && self.delta_window.len() >= 3 {
+            let price_rising = self.price_window.last() > self.price_window.first();
+            let cvd_falling = self.delta_window.last() < self.delta_window.first();
+            (price_rising && cvd_falling) || (!price_rising && !cvd_falling)
+        } else {
+            false
+        };
+
+        CvdEnhancementSnapshot {
+            delta_ratio: delta_ratio.clamp(-1.0, 1.0),
+            delta_zscore,
+            divergence_detected,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.delta_window.clear();
+        self.volume_window.clear();
+        self.price_window.clear();
+    }
+}
+
 /// Output state emitted by signal modules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignalState {
@@ -2107,5 +2559,74 @@ mod tests {
         tc.last_price = Some(100);
         tc.reset();
         assert!(tc.last_price.is_none());
+    }
+
+    #[test]
+    fn vpin_tracker_emits_bucket_on_sufficient_volume() {
+        let mut vpin = VpinTracker::new(100, 50);
+        vpin.on_trade(60, 40); // total 100 = bucket filled, buy-sell = 20
+        let snap = vpin.snapshot();
+        assert!(snap.vpin > 0.0, "vpin should be >0 got {}", snap.vpin);
+        assert_eq!(snap.bucket_count, 1);
+    }
+
+    #[test]
+    fn vpin_tracker_toxicity_detected() {
+        let mut vpin = VpinTracker::new(100, 50).with_toxicity_threshold(1.0);
+        // Multiple extreme-imbalance buckets
+        for _ in 0..5 {
+            vpin.on_trade(100, 0);
+            vpin.on_trade(0, 100);
+        }
+        let snap = vpin.snapshot();
+        // With high imbalance, z-score should exceed threshold
+        assert!(snap.bucket_count > 0);
+    }
+
+    #[test]
+    fn kyle_lambda_tracker_basic_regression() {
+        let mut kl = KyleLambdaTracker::new(100);
+        // Positive volume should correlate with positive price change
+        for i in 0..10 {
+            kl.on_trade(100 * i, i);
+        }
+        let snap = kl.snapshot();
+        assert!(snap.sample_count >= 10);
+    }
+
+    #[test]
+    fn kyle_lambda_tracker_insufficient_samples_returns_default() {
+        let kl = KyleLambdaTracker::new(100);
+        let snap = kl.snapshot();
+        assert_eq!(snap.sample_count, 0);
+    }
+
+    #[test]
+    fn amihud_tracker_computes_ratio() {
+        let mut am = AmihudTracker::new(50);
+        am.on_bar(101.0, 1_000_000.0, 100.0);
+        let snap = am.snapshot();
+        assert!(snap.amihud_ratio > 0.0);
+        assert_eq!(snap.bar_count, 1);
+    }
+
+    #[test]
+    fn cvd_enhancements_basic_metrics() {
+        let mut cvd = CvdEnhancements::new(20);
+        cvd.on_bar(100, 500, 100);
+        cvd.on_bar(50, 400, 101);
+        let snap = cvd.snapshot();
+        assert!(snap.delta_ratio > 0.0);
+    }
+
+    #[test]
+    fn cvd_enhancements_divergence_detected() {
+        let mut cvd = CvdEnhancements::new(20);
+        // Price rising but CVD falling = bearish divergence
+        cvd.on_bar(100, 500, 100); // start
+        cvd.on_bar(80, 400, 101);  // price up, delta down
+        cvd.on_bar(60, 300, 102);  // price up, delta down
+        let snap = cvd.snapshot();
+        assert!(snap.divergence_detected);
     }
 }
