@@ -181,6 +181,105 @@ pub struct IntervalCandleSnapshot {
     pub last_ts_exchange_ns: u64,
 }
 
+/// A completed fixed-interval OHLCV bar.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompletedBar {
+    /// Bar timestamp (start of interval) in nanoseconds.
+    pub timestamp_ns: i64,
+    /// Open price in integer price units.
+    pub open: i64,
+    /// High price in integer price units.
+    pub high: i64,
+    /// Low price in integer price units.
+    pub low: i64,
+    /// Close price in integer price units.
+    pub close: i64,
+    /// Total volume traded in the interval.
+    pub volume: i64,
+    /// Number of ticks in the interval.
+    pub tick_count: u64,
+    /// Volume-weighted average price.
+    pub vwap: i64,
+}
+
+/// Snapshot of book-derived analytics computed from an order book snapshot.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BookAnalyticsSnapshot {
+    /// Best bid price.
+    pub best_bid: i64,
+    /// Best ask price.
+    pub best_ask: i64,
+    /// Quoted spread (`best_ask - best_bid`) in price units.
+    pub quoted_spread: i64,
+    /// Relative spread in basis points of the mid-price.
+    pub relative_spread_bps: i64,
+    /// Microprice: volume-weighted price using inside bid/ask depth.
+    pub microprice: i64,
+    /// Total bid-side volume across all levels.
+    pub bid_depth: i64,
+    /// Total ask-side volume across all levels.
+    pub ask_depth: i64,
+    /// Depth imbalance in basis points (`(bid - ask) / (bid + ask) * 10000`).
+    /// Positive values indicate bid-heavy imbalance; negative indicate ask-heavy.
+    pub depth_imbalance_bps: i64,
+}
+
+/// Computes book-derived analytics from a materialized order book snapshot.
+///
+/// Returns a [`BookAnalyticsSnapshot`] with spread, depth, imbalance, and
+/// microprice metrics. When the book has no bids or asks, the relevant fields
+/// are set to zero.
+pub fn compute_book_analytics(snapshot: &BookSnapshot) -> BookAnalyticsSnapshot {
+    let best_bid = snapshot.bids.first().map(|l| l.price).unwrap_or(0);
+    let best_ask = snapshot.asks.first().map(|l| l.price).unwrap_or(0);
+    let quoted_spread = if best_bid > 0 && best_ask > 0 {
+        best_ask.saturating_sub(best_bid)
+    } else {
+        0
+    };
+    let mid = if best_bid > 0 && best_ask > 0 {
+        (best_bid.saturating_add(best_ask)) / 2
+    } else {
+        0
+    };
+    let relative_spread_bps = if mid > 0 {
+        (quoted_spread.saturating_mul(10_000)) / mid
+    } else {
+        0
+    };
+
+    let bid_vol_0 = snapshot.bids.first().map(|l| l.size).unwrap_or(0);
+    let ask_vol_0 = snapshot.asks.first().map(|l| l.size).unwrap_or(0);
+    let microprice = if bid_vol_0 > 0 && ask_vol_0 > 0 && best_bid > 0 && best_ask > 0 {
+        (best_bid.saturating_mul(ask_vol_0) + best_ask.saturating_mul(bid_vol_0))
+            / (bid_vol_0 + ask_vol_0)
+    } else if best_bid > 0 && best_ask > 0 {
+        (best_bid + best_ask) / 2
+    } else {
+        0
+    };
+
+    let bid_depth: i64 = snapshot.bids.iter().map(|l| l.size).sum();
+    let ask_depth: i64 = snapshot.asks.iter().map(|l| l.size).sum();
+    let depth_imbalance_bps = if bid_depth.saturating_add(ask_depth) > 0 {
+        (bid_depth.saturating_sub(ask_depth).saturating_mul(10_000))
+            / bid_depth.saturating_add(ask_depth)
+    } else {
+        0
+    };
+
+    BookAnalyticsSnapshot {
+        best_bid,
+        best_ask,
+        quoted_spread,
+        relative_spread_bps,
+        microprice,
+        bid_depth,
+        ask_depth,
+        depth_imbalance_bps,
+    }
+}
+
 /// Output state emitted by signal modules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignalState {
@@ -260,7 +359,6 @@ impl BitOr for DataQualityFlags {
 }
 
 /// In-memory accumulator that updates analytics state from normalized trades.
-#[derive(Debug, Default)]
 pub struct AnalyticsAccumulator {
     snapshot: AnalyticsSnapshot,
     volume_profile: HashMap<i64, i64>,
@@ -268,6 +366,39 @@ pub struct AnalyticsAccumulator {
     session_turnover: i128,
     session_candle: SessionCandleSnapshot,
     session_trades: Vec<RecentTradeSample>,
+    #[cfg(feature = "tickbar")]
+    tick_aggregator: Option<tickbar::TickAggregator>,
+    #[cfg(feature = "tickbar")]
+    tick_interval_ns: i64,
+}
+
+impl std::fmt::Debug for AnalyticsAccumulator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnalyticsAccumulator")
+            .field("snapshot", &self.snapshot)
+            .field("session_trade_count", &self.session_trade_count)
+            .field("session_turnover", &self.session_turnover)
+            .field("session_candle", &self.session_candle)
+            .field("session_trades", &self.session_trades.len())
+            .finish()
+    }
+}
+
+impl Default for AnalyticsAccumulator {
+    fn default() -> Self {
+        Self {
+            snapshot: AnalyticsSnapshot::default(),
+            volume_profile: HashMap::new(),
+            session_trade_count: 0,
+            session_turnover: 0,
+            session_candle: SessionCandleSnapshot::default(),
+            session_trades: Vec::new(),
+            #[cfg(feature = "tickbar")]
+            tick_aggregator: None,
+            #[cfg(feature = "tickbar")]
+            tick_interval_ns: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -312,6 +443,15 @@ impl AnalyticsAccumulator {
                 self.snapshot.delta += trade.size;
                 self.snapshot.cumulative_delta += trade.size;
             }
+        }
+        #[cfg(feature = "tickbar")]
+        if let Some(ref mut agg) = self.tick_aggregator {
+            let tick = tickbar::Tick::from_trade(
+                trade.ts_exchange_ns as i64,
+                trade.price as f64,
+                trade.size as f64,
+            );
+            let _ = agg.push_tick(tick);
         }
         self.recompute_profile_levels();
     }
@@ -424,6 +564,60 @@ impl AnalyticsAccumulator {
         }
 
         snap
+    }
+
+    /// Creates an accumulator with a tickbar aggregator at the given interval.
+    #[cfg(feature = "tickbar")]
+    pub fn with_tickbar(interval_ns: i64) -> Self {
+        let mut acc = Self::default();
+        let agg = tickbar::TickAggregator::builder()
+            .interval(std::time::Duration::from_nanos(interval_ns as u64))
+            .build()
+            .expect("TickAggregator build should not fail with valid interval");
+        acc.tick_aggregator = Some(agg);
+        acc.tick_interval_ns = interval_ns;
+        acc
+    }
+
+    /// Returns completed bars from the tickbar aggregator and resets for continued collection.
+    #[cfg(feature = "tickbar")]
+    pub fn bar_series(&mut self) -> Option<Vec<CompletedBar>> {
+        let agg = self.tick_aggregator.take()?;
+        let interval_ns = self.tick_interval_ns;
+        let series = agg.finalize();
+        let bars: Vec<CompletedBar> = series
+            .as_slice()
+            .iter()
+            .map(|b| CompletedBar {
+                timestamp_ns: b.timestamp_nanos,
+                open: b.open,
+                high: b.high,
+                low: b.low,
+                close: b.close,
+                volume: b.volume,
+                tick_count: b.tick_count as u64,
+                vwap: b.vwap,
+            })
+            .collect();
+
+        let new_agg = tickbar::TickAggregator::builder()
+            .interval(std::time::Duration::from_nanos(interval_ns as u64))
+            .build()
+            .expect("TickAggregator rebuild should not fail");
+        self.tick_aggregator = Some(new_agg);
+
+        if bars.is_empty() {
+            None
+        } else {
+            Some(bars)
+        }
+    }
+
+    /// Removes the tickbar aggregator, freeing associated state.
+    #[cfg(feature = "tickbar")]
+    pub fn reset_tickbar(&mut self) {
+        self.tick_aggregator = None;
+        self.tick_interval_ns = 0;
     }
 
     fn recompute_profile_levels(&mut self) {
@@ -721,6 +915,169 @@ mod tests {
         assert_eq!(snap.point_of_control, 0);
         assert_eq!(snap.value_area_low, 0);
         assert_eq!(snap.value_area_high, 0);
+    }
+
+    #[cfg(feature = "tickbar")]
+    #[test]
+    fn tickbar_aggregates_bars_from_trades() {
+        let mut acc = AnalyticsAccumulator::with_tickbar(1000);
+        let s = symbol();
+
+        acc.on_trade(&TradePrint {
+            symbol: s.clone(),
+            price: 505000,
+            size: 9,
+            aggressor_side: Side::Ask,
+            sequence: 1,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 1,
+        });
+        acc.on_trade(&TradePrint {
+            symbol: s.clone(),
+            price: 504900,
+            size: 4,
+            aggressor_side: Side::Bid,
+            sequence: 2,
+            ts_exchange_ns: 500,
+            ts_recv_ns: 501,
+        });
+        acc.on_trade(&TradePrint {
+            symbol: s.clone(),
+            price: 505100,
+            size: 8,
+            aggressor_side: Side::Ask,
+            sequence: 3,
+            ts_exchange_ns: 1500,
+            ts_recv_ns: 1501,
+        });
+
+        let bars = acc.bar_series().expect("should have bars");
+        assert_eq!(bars.len(), 2, "expected 2 bars, got {}", bars.len());
+
+        // First bar: trades at 0 and 500 ns → interval [0, 1000)
+        assert_eq!(bars[0].timestamp_ns, 0);
+        assert_eq!(bars[0].open, 505000);
+        assert_eq!(bars[0].high, 505000);
+        assert_eq!(bars[0].low, 504900);
+        assert_eq!(bars[0].close, 504900);
+        assert_eq!(bars[0].volume, 13);
+        assert_eq!(bars[0].tick_count, 2);
+
+        // Second bar: trade at 1500 ns → interval [1000, 2000)
+        assert_eq!(bars[1].timestamp_ns, 1000);
+        assert_eq!(bars[1].open, 505100);
+        assert_eq!(bars[1].high, 505100);
+        assert_eq!(bars[1].low, 505100);
+        assert_eq!(bars[1].close, 505100);
+        assert_eq!(bars[1].volume, 8);
+        assert_eq!(bars[1].tick_count, 1);
+    }
+
+    #[cfg(feature = "tickbar")]
+    #[test]
+    fn tickbar_default_accumulator_returns_none() {
+        let mut acc = AnalyticsAccumulator::default();
+        let s = symbol();
+        acc.on_trade(&TradePrint {
+            symbol: s,
+            price: 505000,
+            size: 9,
+            aggressor_side: Side::Ask,
+            sequence: 1,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 1,
+        });
+        assert!(acc.bar_series().is_none());
+    }
+
+    #[cfg(feature = "tickbar")]
+    #[test]
+    fn tickbar_reset_removes_aggregator() {
+        let mut acc = AnalyticsAccumulator::with_tickbar(1000);
+        let s = symbol();
+        acc.on_trade(&TradePrint {
+            symbol: s,
+            price: 505000,
+            size: 9,
+            aggressor_side: Side::Ask,
+            sequence: 1,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 1,
+        });
+        assert!(acc.bar_series().is_some());
+
+        // After bar_series() the aggregator is rebuilt internally, but reset_tickbar removes it fully
+        acc.reset_tickbar();
+        let s2 = symbol();
+        acc.on_trade(&TradePrint {
+            symbol: s2,
+            price: 505000,
+            size: 9,
+            aggressor_side: Side::Ask,
+            sequence: 2,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 1,
+        });
+        assert!(acc.bar_series().is_none());
+    }
+
+    #[test]
+    fn compute_book_analytics_returns_spread_and_depth_metrics() {
+        let snapshot = BookSnapshot {
+            symbol: symbol(),
+            bids: vec![
+                BookLevel {
+                    level: 0,
+                    price: 100,
+                    size: 10,
+                },
+                BookLevel {
+                    level: 1,
+                    price: 99,
+                    size: 5,
+                },
+            ],
+            asks: vec![
+                BookLevel {
+                    level: 0,
+                    price: 102,
+                    size: 8,
+                },
+                BookLevel {
+                    level: 1,
+                    price: 103,
+                    size: 3,
+                },
+            ],
+            last_sequence: 1,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+        };
+
+        let analytics = compute_book_analytics(&snapshot);
+        assert_eq!(analytics.best_bid, 100);
+        assert_eq!(analytics.best_ask, 102);
+        assert_eq!(analytics.quoted_spread, 2);
+        assert!(analytics.relative_spread_bps > 0);
+        assert!(analytics.microprice > 0);
+        assert_eq!(analytics.bid_depth, 15);
+        assert_eq!(analytics.ask_depth, 11);
+        assert!(analytics.depth_imbalance_bps > 0);
+    }
+
+    #[test]
+    fn compute_book_analytics_empty_book_returns_defaults() {
+        let snapshot = BookSnapshot {
+            symbol: symbol(),
+            bids: vec![],
+            asks: vec![],
+            last_sequence: 0,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+        };
+
+        let analytics = compute_book_analytics(&snapshot);
+        assert_eq!(analytics, BookAnalyticsSnapshot::default());
     }
 
     #[test]
