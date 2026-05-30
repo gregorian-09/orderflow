@@ -251,6 +251,57 @@ class OrderflowLib:
         ]
         lib.of_compute_depth_slope.restype = c_int32
 
+        lib.of_get_mid_price.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_get_mid_price.restype = c_int32
+
+        lib.of_get_effective_spread_bps.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_get_effective_spread_bps.restype = c_int32
+
+        lib.of_get_half_spread_cost_bps.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            ctypes.c_uint32,
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_get_half_spread_cost_bps.restype = c_int32
+
+        lib.of_get_realised_spread_bps.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            ctypes.c_uint32,
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_get_realised_spread_bps.restype = c_int32
+
+        lib.of_get_book_event_analytics.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            ctypes.c_uint64,
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_get_book_event_analytics.restype = c_int32
+
+        lib.of_get_resiliency_snapshot.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_get_resiliency_snapshot.restype = c_int32
+
         lib.of_get_analytics_snapshot.argtypes = [
             c_void_p,
             ctypes.POINTER(OfSymbol),

@@ -407,6 +407,42 @@ class Engine:
             ctypes.c_uint32(levels),
         )
 
+    def mid_price(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns mid price as dict with 'mid' key, or empty dict if no book data."""
+        return self._snapshot_call(self._ffi.lib.of_get_mid_price, symbol)
+
+    def effective_spread_bps(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns last effective spread in bps as dict with 'bps' key."""
+        return self._snapshot_call(self._ffi.lib.of_get_effective_spread_bps, symbol)
+
+    def half_spread_cost_bps(self, symbol: Symbol, window: int = 10) -> Dict[str, Any]:
+        """Returns average half-spread cost in bps over last `window` trades."""
+        return self._snapshot_call(
+            self._ffi.lib.of_get_half_spread_cost_bps,
+            symbol,
+            ctypes.c_uint32(window),
+        )
+
+    def realised_spread_bps(self, symbol: Symbol, hold_ticks: int = 5) -> Dict[str, Any]:
+        """Returns realised spread in bps for trade `hold_ticks` ago."""
+        return self._snapshot_call(
+            self._ffi.lib.of_get_realised_spread_bps,
+            symbol,
+            ctypes.c_uint32(hold_ticks),
+        )
+
+    def book_event_analytics(self, symbol: Symbol, window_ns: int = 1_000_000_000) -> Dict[str, Any]:
+        """Returns book-event analytics snapshot (rates, volumes, intensity)."""
+        return self._snapshot_call(
+            self._ffi.lib.of_get_book_event_analytics,
+            symbol,
+            ctypes.c_uint64(window_ns),
+        )
+
+    def resiliency_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns resiliency snapshot (recovery time, depth elasticity)."""
+        return self._snapshot_call(self._ffi.lib.of_get_resiliency_snapshot, symbol)
+
     def analytics_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
         """Returns current analytics snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_analytics_snapshot, symbol)
