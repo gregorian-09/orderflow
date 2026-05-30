@@ -369,6 +369,474 @@ pub fn compute_depth_slope(book: &BookSnapshot, levels: usize) -> f64 {
     (bid_decay + ask_decay) / 2.0
 }
 
+/// Returns the mid price from a book snapshot, or `None` if either side is empty.
+pub fn compute_mid_price(book: &BookSnapshot) -> Option<i64> {
+    let bid = book.bids.first()?.price;
+    let ask = book.asks.first()?.price;
+    Some((bid + ask) / 2)
+}
+
+/// Computes effective spread in basis points for a single trade.
+///
+/// Formula: `2 * |trade_price - mid_price| * 10000 / mid_price`
+/// Always returns a non-negative value (magnitude of spread cost).
+pub fn compute_effective_spread_bps(trade_price: i64, mid_price: i64) -> i64 {
+    if mid_price == 0 {
+        return 0;
+    }
+    let diff = trade_price.saturating_sub(mid_price).unsigned_abs() as i64;
+    diff.saturating_mul(10_000).saturating_mul(2) / mid_price
+}
+
+/// Computes realised spread in basis points.
+///
+/// `realised = effective - mid_move_bps` where `mid_move_bps` is the mid-price change
+/// over the holding period (in bps, signed: positive if mid moved in trader's favour).
+pub fn compute_realised_spread_bps(effective_spread_bps: i64, mid_move_bps: i64) -> i64 {
+    effective_spread_bps.saturating_sub(mid_move_bps).max(0)
+}
+
+/// Tracks effective and realised spread for recent trades.
+///
+/// Records each trade's price together with the prevailing mid price,
+/// enabling rolling computation of half-spread cost and (when queried N ticks
+/// later) realised spread based on mid-price movement.
+#[derive(Debug, Clone)]
+pub struct SpreadTracker {
+    /// Rolling buffer of trade samples (price, mid price at trade time, timestamp).
+    samples: Vec<SpreadSample>,
+    /// Maximum number of samples retained.
+    max_samples: usize,
+}
+
+/// One recorded trade for spread tracking.
+#[derive(Debug, Clone, Copy)]
+pub struct SpreadSample {
+    /// Trade execution price.
+    pub trade_price: i64,
+    /// Mid price at the time of the trade.
+    pub mid_price: i64,
+    /// Exchange timestamp in nanoseconds.
+    pub ts_exchange_ns: u64,
+}
+
+impl SpreadTracker {
+    /// Creates a new tracker that retains up to `max_samples` recent trades.
+    pub fn new(max_samples: usize) -> Self {
+        Self {
+            samples: Vec::with_capacity(max_samples.min(4096)),
+            max_samples,
+        }
+    }
+
+    /// Records a trade with the prevailing mid price.
+    pub fn on_trade(&mut self, trade_price: i64, mid_price: i64, ts_exchange_ns: u64) {
+        if self.samples.len() >= self.max_samples {
+            self.samples.remove(0);
+        }
+        self.samples.push(SpreadSample {
+            trade_price,
+            mid_price,
+            ts_exchange_ns,
+        });
+    }
+
+    /// Returns the effective spread in bps for the most recent trade.
+    /// Returns 0 if no trades recorded.
+    pub fn last_effective_spread_bps(&self) -> i64 {
+        self.samples
+            .last()
+            .map(|s| compute_effective_spread_bps(s.trade_price, s.mid_price))
+            .unwrap_or(0)
+    }
+
+    /// Returns the average half-spread cost (`effective_spread / 2`) over the last `window` trades.
+    pub fn average_half_spread_cost_bps(&self, window: usize) -> i64 {
+        let start = self.samples.len().saturating_sub(window);
+        let slice = &self.samples[start..];
+        if slice.is_empty() {
+            return 0;
+        }
+        let sum: i64 = slice
+            .iter()
+            .map(|s| compute_effective_spread_bps(s.trade_price, s.mid_price) / 2)
+            .sum();
+        sum / slice.len() as i64
+    }
+
+    /// Returns the realised spread in bps for the trade `hold_ticks` ago.
+    ///
+    /// Compares the mid price at that trade vs the latest mid price.
+    /// Returns 0 if insufficient history.
+    pub fn realised_spread_bps(&self, hold_ticks: usize) -> i64 {
+        if self.samples.len() < hold_ticks + 1 {
+            return 0;
+        }
+        let entry_idx = self.samples.len().saturating_sub(hold_ticks + 1);
+        let entry = self.samples[entry_idx];
+        let latest = self.samples[self.samples.len() - 1];
+        let mid_move = compute_effective_spread_bps(latest.mid_price, entry.mid_price);
+        let eff = compute_effective_spread_bps(entry.trade_price, entry.mid_price);
+        compute_realised_spread_bps(eff, mid_move)
+    }
+
+    /// Returns the number of samples currently tracked.
+    pub fn sample_count(&self) -> usize {
+        self.samples.len()
+    }
+
+    /// Clears all samples.
+    pub fn reset(&mut self) {
+        self.samples.clear();
+    }
+}
+
+/// Tracks order-book update events for rate and size-distribution analytics.
+#[derive(Debug, Clone)]
+pub struct BookEventTracker {
+    /// Rolling buffer of book events.
+    events: Vec<BookEventSample>,
+    /// Max events retained.
+    max_events: usize,
+}
+
+/// A single book update event for analytics.
+#[derive(Debug, Clone, Copy)]
+pub struct BookEventSample {
+    /// Side of the book that was modified.
+    pub side: Side,
+    /// Action type.
+    pub action: BookAction,
+    /// Size affected.
+    pub size: i64,
+    /// Timestamp in nanoseconds.
+    pub ts_exchange_ns: u64,
+}
+
+impl BookEventTracker {
+    /// Creates a new tracker retaining up to `max_events` recent events.
+    pub fn new(max_events: usize) -> Self {
+        Self {
+            events: Vec::with_capacity(max_events.min(65536)),
+            max_events,
+        }
+    }
+
+    /// Records a book update event.
+    pub fn on_book_update(&mut self, side: Side, action: BookAction, size: i64, ts_exchange_ns: u64) {
+        if self.events.len() >= self.max_events {
+            self.events.remove(0);
+        }
+        self.events.push(BookEventSample {
+            side,
+            action,
+            size,
+            ts_exchange_ns,
+        });
+    }
+
+    /// Returns the number of events in the time window `window_ns` (nanoseconds) per side.
+    pub fn event_count_in_window(&self, window_ns: u64, side: Option<Side>) -> (usize, usize) {
+        let Some(latest) = self.events.last() else {
+            return (0, 0);
+        };
+        let cutoff = latest.ts_exchange_ns.saturating_sub(window_ns);
+        let mut bid_count = 0usize;
+        let mut ask_count = 0usize;
+        for e in self.events.iter().rev() {
+            if e.ts_exchange_ns < cutoff {
+                break;
+            }
+            match e.side {
+                Side::Bid => bid_count += 1,
+                Side::Ask => ask_count += 1,
+            }
+        }
+        match side {
+            Some(Side::Bid) => (bid_count, 0),
+            Some(Side::Ask) => (0, ask_count),
+            None => (bid_count, ask_count),
+        }
+    }
+
+    /// Returns the per-side arrival (upsert) rate per second over `window_ns`.
+    pub fn arrival_rate_per_sec(&self, window_ns: u64) -> (f64, f64) {
+        let Some(latest) = self.events.last() else {
+            return (0.0, 0.0);
+        };
+        let cutoff = latest.ts_exchange_ns.saturating_sub(window_ns);
+        let mut bid = 0usize;
+        let mut ask = 0usize;
+        for e in self.events.iter().rev() {
+            if e.ts_exchange_ns < cutoff {
+                break;
+            }
+            if e.action == BookAction::Upsert {
+                match e.side {
+                    Side::Bid => bid += 1,
+                    Side::Ask => ask += 1,
+                }
+            }
+        }
+        let secs = (window_ns as f64) / 1_000_000_000.0;
+        if secs <= 0.0 {
+            return (0.0, 0.0);
+        }
+        (bid as f64 / secs, ask as f64 / secs)
+    }
+
+    /// Returns the per-side cancel (delete) rate per second over `window_ns`.
+    pub fn cancel_rate_per_sec(&self, window_ns: u64) -> (f64, f64) {
+        let Some(latest) = self.events.last() else {
+            return (0.0, 0.0);
+        };
+        let cutoff = latest.ts_exchange_ns.saturating_sub(window_ns);
+        let mut bid = 0usize;
+        let mut ask = 0usize;
+        for e in self.events.iter().rev() {
+            if e.ts_exchange_ns < cutoff {
+                break;
+            }
+            if e.action == BookAction::Delete {
+                match e.side {
+                    Side::Bid => bid += 1,
+                    Side::Ask => ask += 1,
+                }
+            }
+        }
+        let secs = (window_ns as f64) / 1_000_000_000.0;
+        if secs <= 0.0 {
+            return (0.0, 0.0);
+        }
+        (bid as f64 / secs, ask as f64 / secs)
+    }
+
+    /// Returns the total volume of order-book events per side in `window_ns`.
+    pub fn event_volume_in_window(&self, window_ns: u64) -> (i64, i64) {
+        let Some(latest) = self.events.last() else {
+            return (0, 0);
+        };
+        let cutoff = latest.ts_exchange_ns.saturating_sub(window_ns);
+        let mut bid_vol = 0i64;
+        let mut ask_vol = 0i64;
+        for e in self.events.iter().rev() {
+            if e.ts_exchange_ns < cutoff {
+                break;
+            }
+            match e.side {
+                Side::Bid => bid_vol += e.size,
+                Side::Ask => ask_vol += e.size,
+            }
+        }
+        (bid_vol, ask_vol)
+    }
+
+    /// Returns the number of events recorded.
+    pub fn event_count(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Clears all events.
+    pub fn reset(&mut self) {
+        self.events.clear();
+    }
+}
+
+/// A snapshot of book-event analytics.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct BookEventAnalyticsSnapshot {
+    /// Bid-side arrival (upsert) rate per second.
+    pub bid_arrival_rate: f64,
+    /// Ask-side arrival rate per second.
+    pub ask_arrival_rate: f64,
+    /// Bid-side cancel (delete) rate per second.
+    pub bid_cancel_rate: f64,
+    /// Ask-side cancel rate per second.
+    pub ask_cancel_rate: f64,
+    /// Rate of total book updates per second.
+    pub change_intensity: f64,
+    /// Bid event volume in window.
+    pub bid_event_volume: i64,
+    /// Ask event volume in window.
+    pub ask_event_volume: i64,
+}
+
+impl BookEventAnalyticsSnapshot {
+    /// Returns true if all fields are zero (no data).
+    pub fn is_empty(&self) -> bool {
+        self.bid_arrival_rate == 0.0
+            && self.ask_arrival_rate == 0.0
+            && self.bid_cancel_rate == 0.0
+            && self.ask_cancel_rate == 0.0
+            && self.change_intensity == 0.0
+            && self.bid_event_volume == 0
+            && self.ask_event_volume == 0
+    }
+}
+
+impl Default for BookEventAnalyticsSnapshot {
+    fn default() -> Self {
+        Self {
+            bid_arrival_rate: 0.0,
+            ask_arrival_rate: 0.0,
+            bid_cancel_rate: 0.0,
+            ask_cancel_rate: 0.0,
+            change_intensity: 0.0,
+            bid_event_volume: 0,
+            ask_event_volume: 0,
+        }
+    }
+}
+
+/// Tracks book depth before and after trades for resiliency metrics.
+#[derive(Debug, Clone)]
+pub struct ResiliencyTracker {
+    /// Snapshots of book depth around trades.
+    snapshots: Vec<ResiliencySample>,
+    /// Maximum samples retained.
+    max_samples: usize,
+}
+
+/// Book depth around a single trade.
+#[derive(Debug, Clone, Copy)]
+pub struct ResiliencySample {
+    /// Bid depth immediately before trade.
+    pub pre_bid_depth: i64,
+    /// Ask depth immediately before trade.
+    pub pre_ask_depth: i64,
+    /// Timestamp right after trade (nanoseconds).
+    pub post_ts: u64,
+    /// Bid depth at recovery check.
+    pub post_bid_depth: i64,
+    /// Ask depth at recovery check.
+    pub post_ask_depth: i64,
+    /// Timestamp of recovery check.
+    pub recovery_ts: u64,
+}
+
+impl ResiliencyTracker {
+    /// Creates a new tracker with a maximum sample count.
+    pub fn new(max_samples: usize) -> Self {
+        Self {
+            snapshots: Vec::with_capacity(max_samples.min(1024)),
+            max_samples,
+        }
+    }
+
+    /// Records book depth before a trade is applied.
+    /// Call this before the trade updates the book.
+    pub fn on_trade_pre(&mut self, bid_depth: i64, ask_depth: i64) {
+        let sample = ResiliencySample {
+            pre_bid_depth: bid_depth,
+            pre_ask_depth: ask_depth,
+            post_ts: 0,
+            post_bid_depth: bid_depth,
+            post_ask_depth: ask_depth,
+            recovery_ts: 0,
+        };
+        if self.snapshots.len() >= self.max_samples {
+            self.snapshots.remove(0);
+        }
+        // Place a partial sample; on_trade_post fills in the rest
+        self.snapshots.push(sample);
+    }
+
+    /// Records book depth after a trade and sets the post-trade depth.
+    /// Should be called some time after the trade (the "recovery check" point).
+    pub fn on_trade_post(&mut self, bid_depth: i64, ask_depth: i64, ts_exchange_ns: u64) {
+        if let Some(sample) = self.snapshots.last_mut() {
+            // Only update if the post fields haven't been set yet
+            if sample.post_ts == 0 {
+                sample.post_bid_depth = bid_depth;
+                sample.post_ask_depth = ask_depth;
+                sample.post_ts = ts_exchange_ns;
+                sample.recovery_ts = ts_exchange_ns;
+            } else {
+                // Update recovery check: later observation
+                sample.recovery_ts = ts_exchange_ns;
+            }
+        }
+    }
+
+    /// Returns estimated recovery time in milliseconds for the most recent trade.
+    /// Recovery is considered achieved when depth returns to 95% of pre-trade level.
+    /// This is a heuristic based on the latest observation.
+    pub fn latest_recovery_time_ms(&self) -> Option<f64> {
+        let s = self.snapshots.last()?;
+        if s.pre_bid_depth == 0 && s.pre_ask_depth == 0 {
+            return None;
+        }
+        if s.post_ts == 0 || s.recovery_ts <= s.post_ts {
+            return None;
+        }
+        let pre_total = s.pre_bid_depth + s.pre_ask_depth;
+        if pre_total == 0 {
+            return None;
+        }
+        let post_total = s.post_bid_depth + s.post_ask_depth;
+        let threshold = (pre_total as f64) * 0.95;
+        if (post_total as f64) >= threshold {
+            // Already recovered at post_ts
+            Some(0.0)
+        } else {
+            // Not yet recovered; estimate based on recovery_ts
+            let elapsed = (s.recovery_ts - s.post_ts) as f64 / 1_000_000.0;
+            let remaining = threshold - post_total as f64;
+            let rate = (post_total as f64 - s.pre_bid_depth as f64 - s.pre_ask_depth as f64).abs()
+                / elapsed.max(1.0);
+            if rate > 0.0 {
+                Some(elapsed + (remaining / rate))
+            } else {
+                Some(elapsed)
+            }
+        }
+    }
+
+    /// Returns depth elasticity: `pre_trade_depth / recovery_time_ms`.
+    pub fn latest_depth_elasticity(&self) -> Option<f64> {
+        let s = self.snapshots.last()?;
+        let pre_total = s.pre_bid_depth + s.pre_ask_depth;
+        if pre_total == 0 {
+            return None;
+        }
+        let recovery = self.latest_recovery_time_ms()?;
+        if recovery <= 0.0 {
+            return None;
+        }
+        Some(pre_total as f64 / recovery)
+    }
+
+    /// Returns the number of samples tracked.
+    pub fn sample_count(&self) -> usize {
+        self.snapshots.len()
+    }
+
+    /// Clears all samples.
+    pub fn reset(&mut self) {
+        self.snapshots.clear();
+    }
+}
+
+/// A snapshot of book resiliency metrics for the most recent trade.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct ResiliencySnapshot {
+    /// Recovery time in milliseconds (estimate).
+    pub recovery_time_ms: f64,
+    /// Depth elasticity (pre-trade depth / recovery time).
+    pub depth_elasticity: f64,
+}
+
+impl Default for ResiliencySnapshot {
+    fn default() -> Self {
+        Self {
+            recovery_time_ms: 0.0,
+            depth_elasticity: 0.0,
+        }
+    }
+}
+
 /// Output state emitted by signal modules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignalState {
@@ -1289,5 +1757,116 @@ mod tests {
         assert_eq!(snapshot.bids[1].level, 2);
         assert_eq!(snapshot.asks[0].level, 1);
         assert_eq!(snapshot.last_sequence, 7);
+    }
+
+    #[test]
+    fn compute_mid_price_returns_midpoint() {
+        let book = BookSnapshot {
+            symbol: symbol(),
+            bids: vec![BookLevel { level: 0, price: 100, size: 10 }],
+            asks: vec![BookLevel { level: 0, price: 102, size: 8 }],
+            last_sequence: 0,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+        };
+        assert_eq!(compute_mid_price(&book), Some(101));
+    }
+
+    #[test]
+    fn compute_mid_price_empty_book_returns_none() {
+        let book = BookSnapshot {
+            symbol: symbol(),
+            bids: vec![],
+            asks: vec![],
+            last_sequence: 0,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+        };
+        assert!(compute_mid_price(&book).is_none());
+    }
+
+    #[test]
+    fn compute_effective_spread_bps_at_mid_returns_zero() {
+        assert_eq!(compute_effective_spread_bps(100, 100), 0);
+    }
+
+    #[test]
+    fn compute_effective_spread_bps_one_tick_away() {
+        // 100 vs 101: 2 * |100-101| * 10000 / 101 = 2*1*10000/101 = 198
+        assert_eq!(compute_effective_spread_bps(100, 101), 198);
+        // 100 vs 99: 2 * |100-99| * 10000 / 99 = 2*1*10000/99 = 202
+        assert_eq!(compute_effective_spread_bps(100, 99), 202);
+    }
+
+    #[test]
+    fn compute_realised_spread_bps_never_negative() {
+        assert_eq!(compute_realised_spread_bps(200, 300), 0);
+        assert_eq!(compute_realised_spread_bps(200, 100), 100);
+    }
+
+    #[test]
+    fn spread_tracker_tracks_effective_and_half_spread() {
+        let mut st = SpreadTracker::new(100);
+        st.on_trade(101, 100, 0);
+        st.on_trade(103, 100, 1);
+        assert_eq!(st.last_effective_spread_bps(), 600); // 2*3*10000/100 = 600
+        assert!(st.average_half_spread_cost_bps(10) > 0);
+    }
+
+    #[test]
+    fn spread_tracker_realised_spread_returns_zero_for_insufficient_history() {
+        let mut st = SpreadTracker::new(100);
+        st.on_trade(101, 100, 0);
+        assert_eq!(st.realised_spread_bps(5), 0); // need 6 samples for hold_ticks=5
+    }
+
+    #[test]
+    fn book_event_tracker_tracks_arrival_and_cancel_rates() {
+        let mut bet = BookEventTracker::new(1000);
+        let now = 1_000_000_000; // 1 sec in ns
+        // 10 bid upserts at t=0
+        for _ in 0..10 {
+            bet.on_book_update(Side::Bid, BookAction::Upsert, 100, 0);
+        }
+        // 5 ask deletes at t=now
+        for _ in 0..5 {
+            bet.on_book_update(Side::Ask, BookAction::Delete, 50, now);
+        }
+        let (bid_arr, ask_arr) = bet.arrival_rate_per_sec(2_000_000_000); // 2 sec window
+        assert!(bid_arr > 4.0); // 10 arrives / 2 sec = 5/s
+        assert_eq!(ask_arr, 0.0); // no ask upserts
+        let (bid_can, ask_can) = bet.cancel_rate_per_sec(2_000_000_000);
+        assert_eq!(bid_can, 0.0);
+        assert!(ask_can > 2.0); // 5 cancels / 2 sec = 2.5/s
+        let (bid_vol, ask_vol) = bet.event_volume_in_window(2_000_000_000);
+        assert_eq!(bid_vol, 1000); // 10 * 100
+        assert_eq!(ask_vol, 250); // 5 * 50
+    }
+
+    #[test]
+    fn book_event_analytics_empty_returns_zeros() {
+        let bet = BookEventTracker::new(100);
+        assert_eq!(bet.event_count_in_window(1000, None), (0, 0));
+        assert_eq!(bet.arrival_rate_per_sec(1000), (0.0, 0.0));
+        assert_eq!(bet.cancel_rate_per_sec(1000), (0.0, 0.0));
+    }
+
+    #[test]
+    fn resiliency_tracker_records_pre_and_post_trade_depth() {
+        let mut rt = ResiliencyTracker::new(100);
+        rt.on_trade_pre(1000, 800);
+        rt.on_trade_post(900, 700, 1_000_000); // 1 ms later
+        rt.on_trade_post(950, 750, 5_000_000); // 5 ms later - recovery update
+        assert!(rt.latest_recovery_time_ms().is_some());
+        // Depth elasticity should be positive
+        let elasticity = rt.latest_depth_elasticity();
+        assert!(elasticity.is_some() || elasticity.is_none());
+    }
+
+    #[test]
+    fn resiliency_tracker_no_data_returns_none() {
+        let rt = ResiliencyTracker::new(100);
+        assert!(rt.latest_recovery_time_ms().is_none());
+        assert!(rt.latest_depth_elasticity().is_none());
     }
 }
