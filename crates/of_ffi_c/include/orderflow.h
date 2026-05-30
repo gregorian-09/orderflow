@@ -275,6 +275,30 @@ int32_t of_get_book_snapshot(of_engine_t* engine, const of_symbol_t* symbol, voi
  * and sets `*inout_len` to the required byte length.
  */
 int32_t of_get_book_analytics_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+
+/**
+ * Computes weighted average price for an order of `qty` by walking the book.
+ * Positive qty = buy (walks asks), negative qty = sell (walks bids).
+ *
+ * Payload: `{"price": N}` on success, `{}` if insufficient liquidity.
+ *
+ * On success, `*inout_len` is set to the bytes written.
+ * If `out_buf` is too small, returns `OF_ERR_INVALID_ARG`
+ * and sets `*inout_len` to the required byte length.
+ */
+int32_t of_compute_weighted_average_price(of_engine_t* engine, const of_symbol_t* symbol, int64_t qty, void* out_buf, uint32_t* inout_len);
+
+/**
+ * Computes depth slope (average volume decay per level) over first `levels` levels.
+ *
+ * Payload: `{"slope": N.N}`. Returns `{"slope":0.0}` if book has fewer than 2 levels.
+ *
+ * On success, `*inout_len` is set to the bytes written.
+ * If `out_buf` is too small, returns `OF_ERR_INVALID_ARG`
+ * and sets `*inout_len` to the required byte length.
+ */
+int32_t of_compute_depth_slope(of_engine_t* engine, const of_symbol_t* symbol, uint32_t levels, void* out_buf, uint32_t* inout_len);
+
 /** Returns current analytics snapshot JSON for `symbol`. */
 int32_t of_get_analytics_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
 /** Returns current derived analytics snapshot JSON for `symbol`. */
