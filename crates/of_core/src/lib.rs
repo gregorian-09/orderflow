@@ -276,8 +276,97 @@ pub fn compute_book_analytics(snapshot: &BookSnapshot) -> BookAnalyticsSnapshot 
         microprice,
         bid_depth,
         ask_depth,
-        depth_imbalance_bps,
+    depth_imbalance_bps,
+        }
+}
+
+/// Computes the weighted average price for an order of `qty` shares walking the book.
+///
+/// Walks the ask side for a buy order (qty > 0) and the bid side for a sell order (qty < 0).
+/// Returns `None` if the book does not have enough volume to fill the order.
+///
+/// # Example
+/// ```
+/// # use of_core::*;
+/// let sym = SymbolId { venue: "X".to_string(), symbol: "BTC/USD".to_string() };
+/// let book = BookSnapshot { symbol: sym, bids: vec![BookLevel { level: 0, price: 100, size: 10 }], asks: vec![BookLevel { level: 0, price: 102, size: 8 }], last_sequence: 0, ts_exchange_ns: 0, ts_recv_ns: 0 };
+/// assert_eq!(compute_weighted_average_price(&book, 5), Some(102));
+/// assert_eq!(compute_weighted_average_price(&book, 10), None);
+/// ```
+pub fn compute_weighted_average_price(book: &BookSnapshot, qty: i64) -> Option<i64> {
+    if qty == 0 {
+        return None;
     }
+
+    let (levels, remaining) = if qty > 0 {
+        // Buy: walk asks
+        (&book.asks, qty)
+    } else {
+        // Sell: walk bids
+        (&book.bids, -qty)
+    };
+
+    let mut filled = 0i64;
+    let mut cost = 0i64;
+
+    for level in levels {
+        let take = remaining.saturating_sub(filled).min(level.size);
+        if take <= 0 {
+            break;
+        }
+        cost = cost.saturating_add(level.price.saturating_mul(take));
+        filled = filled.saturating_add(take);
+    }
+
+    if filled < remaining {
+        return None;
+    }
+
+    Some(cost / filled)
+}
+
+/// Computes the depth slope — average volume decay per level away from the top of book.
+///
+/// Measures how quickly liquidity drops off: `(vol_at_level_0 - vol_at_level_{N-1}) / N`.
+/// Returns a positive value if volume decreases with depth, negative if it increases,
+/// or `0.0` if the book has fewer than 2 levels.
+///
+/// # Example
+/// ```
+/// # use of_core::*;
+/// let sym = SymbolId { venue: "X".to_string(), symbol: "BTC/USD".to_string() };
+/// let book = BookSnapshot { symbol: sym, bids: vec![BookLevel { level: 0, price: 100, size: 10 }, BookLevel { level: 1, price: 99, size: 4 }], asks: vec![BookLevel { level: 0, price: 102, size: 10 }, BookLevel { level: 1, price: 103, size: 6 }], last_sequence: 0, ts_exchange_ns: 0, ts_recv_ns: 0 };
+/// let slope = compute_depth_slope(&book, 2);
+/// assert!(slope > 0.0);
+/// ```
+pub fn compute_depth_slope(book: &BookSnapshot, levels: usize) -> f64 {
+    if book.bids.is_empty() && book.asks.is_empty() {
+        return 0.0;
+    }
+
+    let count = book.bids.len().min(book.asks.len()).min(levels);
+    if count < 2 {
+        return 0.0;
+    }
+
+    let first_bid_vol = book.bids.first().map(|l| l.size as f64).unwrap_or(0.0);
+    let first_ask_vol = book.asks.first().map(|l| l.size as f64).unwrap_or(0.0);
+    let last_bid_vol = book
+        .bids
+        .get(count - 1)
+        .map(|l| l.size as f64)
+        .unwrap_or(0.0);
+    let last_ask_vol = book
+        .asks
+        .get(count - 1)
+        .map(|l| l.size as f64)
+        .unwrap_or(0.0);
+
+    // Average of bid-side decay and ask-side decay
+    let bid_decay = (first_bid_vol - last_bid_vol) / count as f64;
+    let ask_decay = (first_ask_vol - last_ask_vol) / count as f64;
+
+    (bid_decay + ask_decay) / 2.0
 }
 
 /// Output state emitted by signal modules.
@@ -1078,6 +1167,96 @@ mod tests {
 
         let analytics = compute_book_analytics(&snapshot);
         assert_eq!(analytics, BookAnalyticsSnapshot::default());
+    }
+
+    #[test]
+    fn compute_weighted_average_price_buy_walks_asks() {
+        let book = BookSnapshot {
+            symbol: symbol(),
+            bids: vec![BookLevel { level: 0, price: 100, size: 10 }],
+            asks: vec![
+                BookLevel { level: 0, price: 102, size: 5 },
+                BookLevel { level: 1, price: 103, size: 5 },
+            ],
+            last_sequence: 0,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+        };
+        // Buy 5 @ 102 = 102 avg
+        assert_eq!(compute_weighted_average_price(&book, 5), Some(102));
+        // Buy 7: 5@102 + 2@103 = (510+206)/7 = 716/7 = 102.285 -> 102
+        assert_eq!(compute_weighted_average_price(&book, 7), Some(102));
+        // Buy 10: 5@102 + 5@103 = (510+515)/10 = 1025/10 = 102.5 -> 102 (i64 truncation)
+        assert_eq!(compute_weighted_average_price(&book, 10), Some(102));
+    }
+
+    #[test]
+    fn compute_weighted_average_price_sell_walks_bids() {
+        let book = BookSnapshot {
+            symbol: symbol(),
+            bids: vec![
+                BookLevel { level: 0, price: 100, size: 8 },
+                BookLevel { level: 1, price: 99, size: 4 },
+            ],
+            asks: vec![BookLevel { level: 0, price: 102, size: 5 }],
+            last_sequence: 0,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+        };
+        // Sell 6 @ 100: 6*100/6 = 100
+        assert_eq!(compute_weighted_average_price(&book, -6), Some(100));
+        // Sell 10: 8@100 + 2@99 = (800+198)/10 = 998/10 = 99.8 -> 99
+        assert_eq!(compute_weighted_average_price(&book, -10), Some(99));
+    }
+
+    #[test]
+    fn compute_weighted_average_price_insufficient_liquidity_returns_none() {
+        let book = BookSnapshot {
+            symbol: symbol(),
+            bids: vec![BookLevel { level: 0, price: 100, size: 5 }],
+            asks: vec![BookLevel { level: 0, price: 102, size: 3 }],
+            last_sequence: 0,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+        };
+        assert_eq!(compute_weighted_average_price(&book, 10), None);
+        assert_eq!(compute_weighted_average_price(&book, -10), None);
+        assert_eq!(compute_weighted_average_price(&book, 0), None);
+    }
+
+    #[test]
+    fn compute_depth_slope_positive_decay() {
+        let book = BookSnapshot {
+            symbol: symbol(),
+            bids: vec![
+                BookLevel { level: 0, price: 100, size: 100 },
+                BookLevel { level: 1, price: 99, size: 60 },
+                BookLevel { level: 2, price: 98, size: 20 },
+            ],
+            asks: vec![
+                BookLevel { level: 0, price: 102, size: 80 },
+                BookLevel { level: 1, price: 103, size: 50 },
+                BookLevel { level: 2, price: 104, size: 10 },
+            ],
+            last_sequence: 0,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+        };
+        let slope = compute_depth_slope(&book, 3);
+        assert!(slope > 0.0, "expected positive decay slope, got {}", slope);
+    }
+
+    #[test]
+    fn compute_depth_slope_few_levels_returns_zero() {
+        let book = BookSnapshot {
+            symbol: symbol(),
+            bids: vec![BookLevel { level: 0, price: 100, size: 10 }],
+            asks: vec![BookLevel { level: 0, price: 102, size: 8 }],
+            last_sequence: 0,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+        };
+        assert_eq!(compute_depth_slope(&book, 5), 0.0);
     }
 
     #[test]
