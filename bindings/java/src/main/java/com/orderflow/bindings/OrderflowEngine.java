@@ -493,6 +493,9 @@ public final class OrderflowEngine implements AutoCloseable {
                 case INTERVAL_CANDLE -> rc = nativeLib.of_get_interval_candle_snapshot(engine, sym, windowNs, buffer, length);
                 case SIGNAL -> rc = nativeLib.of_get_signal_snapshot(engine, sym, buffer, length);
                 case BAR_SERIES -> rc = nativeLib.of_get_bar_series(engine, sym, buffer, length);
+                case MID_PRICE -> rc = nativeLib.of_get_mid_price(engine, sym, buffer, length);
+                case EFFECTIVE_SPREAD -> rc = nativeLib.of_get_effective_spread_bps(engine, sym, buffer, length);
+                case RESILIENCY -> rc = nativeLib.of_get_resiliency_snapshot(engine, sym, buffer, length);
                 default -> throw new OrderflowException("unknown snapshot kind");
             }
 
@@ -564,6 +567,9 @@ public final class OrderflowEngine implements AutoCloseable {
             switch (kind) {
                 case WEIGHTED_AVERAGE_PRICE -> rc = nativeLib.of_compute_weighted_average_price(engine, sym, param, buffer, length);
                 case DEPTH_SLOPE -> rc = nativeLib.of_compute_depth_slope(engine, sym, (int) param, buffer, length);
+                case HALF_SPREAD_COST -> rc = nativeLib.of_get_half_spread_cost_bps(engine, sym, (int) param, buffer, length);
+                case REALISED_SPREAD -> rc = nativeLib.of_get_realised_spread_bps(engine, sym, (int) param, buffer, length);
+                case BOOK_EVENT_ANALYTICS -> rc = nativeLib.of_get_book_event_analytics(engine, sym, param, buffer, length);
                 default -> throw new OrderflowException("unknown query kind");
             }
 
@@ -586,6 +592,32 @@ public final class OrderflowEngine implements AutoCloseable {
         return "{}";
     }
 
+    // Convenience methods for new T0 analytics
+
+    /** Returns mid price JSON. */
+    public String midPrice(Symbol symbol) { return snapshot(symbol, SnapshotKind.MID_PRICE); }
+
+    /** Returns last effective spread in bps JSON. */
+    public String effectiveSpreadBps(Symbol symbol) { return snapshot(symbol, SnapshotKind.EFFECTIVE_SPREAD); }
+
+    /** Returns average half-spread cost in bps over `window` trades. */
+    public String halfSpreadCostBps(Symbol symbol, int window) {
+        return parameterizedQuery(symbol, QueryKind.HALF_SPREAD_COST, window);
+    }
+
+    /** Returns realised spread in bps for trade `holdTicks` ago. */
+    public String realisedSpreadBps(Symbol symbol, int holdTicks) {
+        return parameterizedQuery(symbol, QueryKind.REALISED_SPREAD, holdTicks);
+    }
+
+    /** Returns book-event analytics snapshot JSON over `windowNs` window. */
+    public String bookEventAnalytics(Symbol symbol, long windowNs) {
+        return parameterizedQuery(symbol, QueryKind.BOOK_EVENT_ANALYTICS, windowNs);
+    }
+
+    /** Returns resiliency snapshot JSON. */
+    public String resiliencySnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.RESILIENCY); }
+
     private enum SnapshotKind {
         BOOK,
         BOOK_ANALYTICS,
@@ -595,10 +627,16 @@ public final class OrderflowEngine implements AutoCloseable {
         INTERVAL_CANDLE,
         SIGNAL,
         BAR_SERIES,
+        MID_PRICE,
+        EFFECTIVE_SPREAD,
+        RESILIENCY,
     }
 
     private enum QueryKind {
         WEIGHTED_AVERAGE_PRICE,
         DEPTH_SLOPE,
+        HALF_SPREAD_COST,
+        REALISED_SPREAD,
+        BOOK_EVENT_ANALYTICS,
     }
 }

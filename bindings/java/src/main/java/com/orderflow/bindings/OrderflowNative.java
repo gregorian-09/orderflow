@@ -59,6 +59,18 @@ public interface OrderflowNative extends Library {
     int of_compute_weighted_average_price(Pointer engine, OfSymbol symbol, long qty, Memory outBuf, IntByReference inoutLen);
     /** Computes depth slope over first `levels` price levels. */
     int of_compute_depth_slope(Pointer engine, OfSymbol symbol, int levels, Memory outBuf, IntByReference inoutLen);
+    /** Reads mid price JSON. */
+    int of_get_mid_price(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    /** Reads effective spread in bps. */
+    int of_get_effective_spread_bps(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    /** Reads half-spread cost in bps over `window` trades. */
+    int of_get_half_spread_cost_bps(Pointer engine, OfSymbol symbol, int window, Memory outBuf, IntByReference inoutLen);
+    /** Reads realised spread in bps for trade `holdTicks` ago. */
+    int of_get_realised_spread_bps(Pointer engine, OfSymbol symbol, int holdTicks, Memory outBuf, IntByReference inoutLen);
+    /** Reads book-event analytics snapshot JSON. */
+    int of_get_book_event_analytics(Pointer engine, OfSymbol symbol, long windowNs, Memory outBuf, IntByReference inoutLen);
+    /** Reads resiliency snapshot JSON. */
+    int of_get_resiliency_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
     /** Reads analytics snapshot JSON into caller buffer. */
     int of_get_analytics_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
     /** Reads derived analytics snapshot JSON into caller buffer. */
