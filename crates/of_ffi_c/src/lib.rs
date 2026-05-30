@@ -627,6 +627,69 @@ pub extern "C" fn of_get_book_analytics_snapshot(
     }
 }
 
+/// Computes weighted average price for an order of `qty` and writes JSON result.
+///
+/// Payload: `{"price": N}` on success, `{}` if insufficient liquidity.
+/// Positive qty = buy (walks asks), negative qty = sell (walks bids).
+#[no_mangle]
+pub extern "C" fn of_compute_weighted_average_price(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    qty: i64,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+
+    let engine = unsafe { &mut *engine };
+    let payload = match engine.inner.weighted_average_price(&symbol, qty) {
+        Some(price) => format!("{{\"price\":{}}}", price),
+        None => "{}".to_string(),
+    };
+
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Computes depth slope for the first `levels` price levels and writes JSON result.
+///
+/// Payload: `{"slope": N.N}`. Returns `{"slope":0.0}` if book has fewer than 2 levels.
+#[no_mangle]
+pub extern "C" fn of_compute_depth_slope(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    levels: u32,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+
+    let engine = unsafe { &mut *engine };
+    let slope = engine.inner.depth_slope(&symbol, levels as usize);
+    let payload = format!("{{\"slope\":{:.4}}}", slope);
+
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
 /// Writes current analytics snapshot JSON into caller buffer.
 #[no_mangle]
 pub extern "C" fn of_get_analytics_snapshot(
