@@ -19,10 +19,13 @@ use of_runtime::{
 };
 use support::{
     action_from_ffi, dispatch_callbacks, dispatch_health_callbacks, escape_json,
-    format_analytics_snapshot, format_book_snapshot, format_derived_analytics_snapshot,
-    format_interval_candle_snapshot, format_session_candle_snapshot, non_empty_string, parse_csv,
-    side_from_ffi, symbol_from_ffi, symbol_from_ffi_ref, write_json_to_c_buffer,
+    format_analytics_snapshot, format_book_analytics_snapshot, format_book_snapshot,
+    format_derived_analytics_snapshot, format_interval_candle_snapshot,
+    format_session_candle_snapshot, non_empty_string, parse_csv, side_from_ffi, symbol_from_ffi,
+    symbol_from_ffi_ref, write_json_to_c_buffer,
 };
+#[cfg(feature = "tickbar")]
+use support::format_bar_series;
 
 
 const API_VERSION: u32 = 0x0001_0000;
@@ -589,6 +592,41 @@ pub extern "C" fn of_get_book_snapshot(
     }
 }
 
+/// Writes current book analytics snapshot JSON into caller buffer.
+///
+/// Payload shape:
+/// ```json
+/// {"best_bid":...,"best_ask":...,"quoted_spread":...,"relative_spread_bps":...,
+///  "microprice":...,"bid_depth":...,"ask_depth":...,"depth_imbalance_bps":...}
+/// ```
+#[no_mangle]
+pub extern "C" fn of_get_book_analytics_snapshot(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+
+    let engine = unsafe { &mut *engine };
+    let payload = match engine.inner.book_analytics_snapshot(&symbol) {
+        Some(snap) => format_book_analytics_snapshot(&snap),
+        None => "{}".to_string(),
+    };
+
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
 /// Writes current analytics snapshot JSON into caller buffer.
 #[no_mangle]
 pub extern "C" fn of_get_analytics_snapshot(
@@ -698,6 +736,65 @@ pub extern "C" fn of_get_interval_candle_snapshot(
     let payload = match engine.inner.interval_candle_snapshot(&symbol, window_ns) {
         Some(snap) => format_interval_candle_snapshot(&snap),
         None => "{}".to_string(),
+    };
+
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Sets the tickbar aggregation interval for new per-symbol accumulators.
+///
+/// A positive `interval_ns` enables tickbar aggregation at the given interval for
+/// symbols whose accumulators are created after this call. Zero or negative values
+/// disable tickbar aggregation for future accumulators. Existing accumulators
+/// are not affected.
+///
+/// Requires the `tickbar` feature to be enabled at build time.
+#[cfg(feature = "tickbar")]
+#[no_mangle]
+pub extern "C" fn of_engine_set_tickbar_interval(
+    engine: *mut of_engine,
+    interval_ns: i64,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    if interval_ns > 0 {
+        engine.inner.set_tickbar_interval(Some(interval_ns));
+    } else {
+        engine.inner.set_tickbar_interval(None);
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Writes completed bar series JSON array into caller buffer.
+///
+/// Requires the `tickbar` feature to be enabled at build time.
+/// Returns `OF_ERR_STATE` when tickbar aggregation is not configured for the symbol.
+#[cfg(feature = "tickbar")]
+#[no_mangle]
+pub extern "C" fn of_get_bar_series(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+
+    let engine = unsafe { &mut *engine };
+    let payload = match engine.inner.bar_series(&symbol) {
+        Some(bars) => format_bar_series(&bars),
+        None => "[]".to_string(),
     };
 
     match write_json_to_c_buffer(&payload, out_buf, inout_len) {

@@ -3,7 +3,12 @@ use std::ptr;
 use std::sync::atomic::Ordering;
 
 use of_adapters::RawEvent;
-use of_core::{BookAction, BookSnapshot, DerivedAnalyticsSnapshot, IntervalCandleSnapshot, SessionCandleSnapshot, Side, SignalState, SymbolId};
+use of_core::{
+    BookAction, BookAnalyticsSnapshot, BookSnapshot, DerivedAnalyticsSnapshot,
+    IntervalCandleSnapshot, SessionCandleSnapshot, Side, SignalState, SymbolId,
+};
+#[cfg(feature = "tickbar")]
+use of_core::CompletedBar;
 
 use crate::{of_engine, of_error_t, of_event_t, of_symbol_t};
 
@@ -340,6 +345,20 @@ pub(crate) fn format_book_snapshot(snapshot: &BookSnapshot) -> String {
     )
 }
 
+pub(crate) fn format_book_analytics_snapshot(snap: &BookAnalyticsSnapshot) -> String {
+    format!(
+        "{{\"best_bid\":{},\"best_ask\":{},\"quoted_spread\":{},\"relative_spread_bps\":{},\"microprice\":{},\"bid_depth\":{},\"ask_depth\":{},\"depth_imbalance_bps\":{}}}",
+        snap.best_bid,
+        snap.best_ask,
+        snap.quoted_spread,
+        snap.relative_spread_bps,
+        snap.microprice,
+        snap.bid_depth,
+        snap.ask_depth,
+        snap.depth_imbalance_bps
+    )
+}
+
 pub(crate) fn format_analytics_snapshot(snap: &of_core::AnalyticsSnapshot) -> String {
     format!(
         "{{\"delta\":{},\"cumulative_delta\":{},\"buy_volume\":{},\"sell_volume\":{},\"last_price\":{},\"point_of_control\":{},\"value_area_low\":{},\"value_area_high\":{}}}",
@@ -376,6 +395,27 @@ pub(crate) fn format_session_candle_snapshot(snap: &SessionCandleSnapshot) -> St
         snap.first_ts_exchange_ns,
         snap.last_ts_exchange_ns
     )
+}
+
+#[cfg(feature = "tickbar")]
+pub(crate) fn format_bar_series(bars: &[CompletedBar]) -> String {
+    let items: Vec<String> = bars
+        .iter()
+        .map(|b| {
+            format!(
+                "{{\"timestamp_ns\":{},\"open\":{},\"high\":{},\"low\":{},\"close\":{},\"volume\":{},\"tick_count\":{},\"vwap\":{}}}",
+                b.timestamp_ns,
+                b.open,
+                b.high,
+                b.low,
+                b.close,
+                b.volume,
+                b.tick_count,
+                b.vwap
+            )
+        })
+        .collect();
+    format!("[{}]", items.join(","))
 }
 
 pub(crate) fn format_interval_candle_snapshot(snap: &IntervalCandleSnapshot) -> String {
