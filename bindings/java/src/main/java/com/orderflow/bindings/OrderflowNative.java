@@ -55,6 +55,10 @@ public interface OrderflowNative extends Library {
     int of_get_book_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
     /** Reads book analytics snapshot JSON into caller buffer. */
     int of_get_book_analytics_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    /** Computes weighted average price for order of qty walking the book. */
+    int of_compute_weighted_average_price(Pointer engine, OfSymbol symbol, long qty, Memory outBuf, IntByReference inoutLen);
+    /** Computes depth slope over first `levels` price levels. */
+    int of_compute_depth_slope(Pointer engine, OfSymbol symbol, int levels, Memory outBuf, IntByReference inoutLen);
     /** Reads analytics snapshot JSON into caller buffer. */
     int of_get_analytics_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
     /** Reads derived analytics snapshot JSON into caller buffer. */

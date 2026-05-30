@@ -550,6 +550,42 @@ public final class OrderflowEngine implements AutoCloseable {
         return "target/debug/" + mapped;
     }
 
+    private String parameterizedQuery(Symbol symbol, QueryKind kind, long param) {
+        requireEngine();
+        OfSymbol sym = toNativeSymbol(symbol);
+        sym.write();
+
+        int capacity = 4096;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            Memory buffer = new Memory(capacity);
+            IntByReference length = new IntByReference(capacity);
+
+            int rc;
+            switch (kind) {
+                case WEIGHTED_AVERAGE_PRICE -> rc = nativeLib.of_compute_weighted_average_price(engine, sym, param, buffer, length);
+                case DEPTH_SLOPE -> rc = nativeLib.of_compute_depth_slope(engine, sym, (int) param, buffer, length);
+                default -> throw new OrderflowException("unknown query kind");
+            }
+
+            if (rc == 0) {
+                int outLen = length.getValue();
+                if (outLen <= 0) {
+                    return "{}";
+                }
+                return new String(buffer.getByteArray(0, outLen), StandardCharsets.UTF_8);
+            }
+
+            int required = length.getValue();
+            if (rc != 1 || required <= capacity) {
+                check(rc, "parameterizedQuery");
+            }
+            capacity = required;
+        }
+
+        check(1, "parameterizedQuery");
+        return "{}";
+    }
+
     private enum SnapshotKind {
         BOOK,
         BOOK_ANALYTICS,
@@ -559,5 +595,10 @@ public final class OrderflowEngine implements AutoCloseable {
         INTERVAL_CANDLE,
         SIGNAL,
         BAR_SERIES,
+    }
+
+    private enum QueryKind {
+        WEIGHTED_AVERAGE_PRICE,
+        DEPTH_SLOPE,
     }
 }
