@@ -214,6 +214,9 @@ class OrderflowLib:
         lib.of_engine_poll_once.argtypes = [c_void_p, c_uint32]
         lib.of_engine_poll_once.restype = c_int32
 
+        lib.of_engine_set_tickbar_interval.argtypes = [c_void_p, c_int64]
+        lib.of_engine_set_tickbar_interval.restype = c_int32
+
         lib.of_get_book_snapshot.argtypes = [
             c_void_p,
             ctypes.POINTER(OfSymbol),
@@ -221,6 +224,14 @@ class OrderflowLib:
             ctypes.POINTER(c_uint32),
         ]
         lib.of_get_book_snapshot.restype = c_int32
+
+        lib.of_get_book_analytics_snapshot.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_get_book_analytics_snapshot.restype = c_int32
 
         lib.of_get_analytics_snapshot.argtypes = [
             c_void_p,
@@ -262,6 +273,14 @@ class OrderflowLib:
             ctypes.POINTER(c_uint32),
         ]
         lib.of_get_signal_snapshot.restype = c_int32
+
+        lib.of_get_bar_series.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_get_bar_series.restype = c_int32
 
         lib.of_get_metrics_json.argtypes = [
             c_void_p,

@@ -299,6 +299,21 @@ class Engine:
         rc = self._ffi.lib.of_external_health_tick(self._engine)
         self._check(rc, "of_external_health_tick")
 
+    def set_tickbar_interval(self, interval_ns: int) -> None:
+        """Configures tickbar aggregation interval for new per-symbol accumulators.
+
+        Args:
+            interval_ns: Aggregation interval in nanoseconds. Pass 0 or negative
+                to disable tickbar for future accumulators.
+
+        Requires the native library to be built with the ``tickbar`` feature.
+        """
+        self._require_handle()
+        rc = self._ffi.lib.of_engine_set_tickbar_interval(
+            self._engine, ctypes.c_int64(interval_ns)
+        )
+        self._check(rc, "of_engine_set_tickbar_interval")
+
     def ingest_trade(
         self,
         symbol: Symbol,
@@ -365,6 +380,10 @@ class Engine:
         """Returns current book snapshot decoded as a dict with bids/asks and timestamps."""
         return self._snapshot_call(self._ffi.lib.of_get_book_snapshot, symbol)
 
+    def book_analytics_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns current book analytics snapshot with spread, depth, imbalance, microprice."""
+        return self._snapshot_call(self._ffi.lib.of_get_book_analytics_snapshot, symbol)
+
     def analytics_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
         """Returns current analytics snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_analytics_snapshot, symbol)
@@ -388,6 +407,14 @@ class Engine:
     def signal_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
         """Returns current signal snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_signal_snapshot, symbol)
+
+    def bar_series(self, symbol: Symbol) -> Any:
+        """Returns completed bar series JSON decoded as list of dicts.
+
+        Requires the native library to be built with the ``tickbar`` feature.
+        Returns an empty list when tickbar aggregation is not configured for the symbol.
+        """
+        return self._snapshot_call(self._ffi.lib.of_get_bar_series, symbol)
 
     def metrics(self) -> Dict[str, Any]:
         """Returns engine metrics JSON decoded as dict."""
