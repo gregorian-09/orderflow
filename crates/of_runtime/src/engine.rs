@@ -7,10 +7,12 @@ use std::path::{Path, PathBuf};
 
 use of_adapters::{create_adapter, AdapterConfig, MarketDataAdapter, RawEvent, SubscribeReq};
 use of_core::{
-    AnalyticsAccumulator, AnalyticsSnapshot, BookAnalyticsSnapshot, BookLevel, BookSnapshot,
-    BookUpdate, DataQualityFlags, DerivedAnalyticsSnapshot, IntervalCandleSnapshot,
-    SessionCandleSnapshot, SignalSnapshot, SignalState, SymbolId, TradePrint,
-    compute_book_analytics, compute_depth_slope, compute_weighted_average_price,
+    AnalyticsAccumulator, AnalyticsSnapshot, BookAnalyticsSnapshot, BookEventAnalyticsSnapshot,
+    BookEventTracker, BookLevel, BookSnapshot, BookUpdate, DataQualityFlags,
+    DerivedAnalyticsSnapshot, IntervalCandleSnapshot, ResiliencySnapshot, ResiliencyTracker,
+    SessionCandleSnapshot, SignalSnapshot, SignalState, SpreadTracker, SymbolId, TradePrint,
+    compute_book_analytics, compute_depth_slope, compute_mid_price,
+    compute_weighted_average_price,
 };
 #[cfg(feature = "tickbar")]
 use of_core::CompletedBar;
@@ -410,6 +412,12 @@ pub struct Engine<A: MarketDataAdapter, S: SignalModule> {
     circuit_breaker: CircuitBreakerState,
     #[cfg(feature = "tickbar")]
     tickbar_interval_ns: Option<i64>,
+    /// Per-symbol spread trackers for effective/realised spread.
+    spread_trackers: HashMap<SymbolId, SpreadTracker>,
+    /// Per-symbol book event trackers for arrival/cancel rates.
+    event_trackers: HashMap<SymbolId, BookEventTracker>,
+    /// Per-symbol resiliency trackers for depth recovery.
+    resiliency_trackers: HashMap<SymbolId, ResiliencyTracker>,
 }
 
 /// Default engine type used by C ABI and high-level bindings.
@@ -439,6 +447,9 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             circuit_breaker: CircuitBreakerState::from_env(),
             #[cfg(feature = "tickbar")]
             tickbar_interval_ns: None,
+            spread_trackers: HashMap::new(),
+            event_trackers: HashMap::new(),
+            resiliency_trackers: HashMap::new(),
         }
     }
 
@@ -803,6 +814,73 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             .unwrap_or(0.0)
     }
 
+    /// Returns mid price for symbol if the book has both sides.
+    pub fn mid_price(&self, symbol: &SymbolId) -> Option<i64> {
+        self.books
+            .get(symbol)
+            .and_then(|book| compute_mid_price(&book.snapshot(symbol)))
+    }
+
+    /// Returns the effective spread in bps for the most recent trade.
+    pub fn effective_spread_bps(&self, symbol: &SymbolId) -> i64 {
+        self.spread_trackers
+            .get(symbol)
+            .map(|st| st.last_effective_spread_bps())
+            .unwrap_or(0)
+    }
+
+    /// Returns average half-spread cost in bps over the last `window` trades.
+    pub fn half_spread_cost_bps(&self, symbol: &SymbolId, window: usize) -> i64 {
+        self.spread_trackers
+            .get(symbol)
+            .map(|st| st.average_half_spread_cost_bps(window))
+            .unwrap_or(0)
+    }
+
+    /// Returns realised spread in bps for the trade `hold_ticks` ago.
+    pub fn realised_spread_bps(&self, symbol: &SymbolId, hold_ticks: usize) -> i64 {
+        self.spread_trackers
+            .get(symbol)
+            .map(|st| st.realised_spread_bps(hold_ticks))
+            .unwrap_or(0)
+    }
+
+    /// Returns book-event analytics snapshot for symbol over `window_ns`.
+    pub fn book_event_analytics(&self, symbol: &SymbolId, window_ns: u64) -> BookEventAnalyticsSnapshot {
+        self.event_trackers.get(symbol).map(|bet| {
+            let (bid_arr, ask_arr) = bet.arrival_rate_per_sec(window_ns);
+            let (bid_can, ask_can) = bet.cancel_rate_per_sec(window_ns);
+            let (bid_vol, ask_vol) = bet.event_volume_in_window(window_ns);
+            let (bid_count, ask_count) = bet.event_count_in_window(window_ns, None);
+            let total_count = bid_count + ask_count;
+            let secs = (window_ns as f64) / 1_000_000_000.0;
+            let change_intensity = if secs > 0.0 {
+                total_count as f64 / secs
+            } else {
+                0.0
+            };
+            BookEventAnalyticsSnapshot {
+                bid_arrival_rate: bid_arr,
+                ask_arrival_rate: ask_arr,
+                bid_cancel_rate: bid_can,
+                ask_cancel_rate: ask_can,
+                change_intensity,
+                bid_event_volume: bid_vol,
+                ask_event_volume: ask_vol,
+            }
+        }).unwrap_or_default()
+    }
+
+    /// Returns resiliency snapshot for symbol.
+    pub fn resiliency_snapshot(&self, symbol: &SymbolId) -> ResiliencySnapshot {
+        self.resiliency_trackers.get(symbol).map(|rt| {
+            ResiliencySnapshot {
+                recovery_time_ms: rt.latest_recovery_time_ms().unwrap_or(0.0),
+                depth_elasticity: rt.latest_depth_elasticity().unwrap_or(0.0),
+            }
+        }).unwrap_or_default()
+    }
+
     /// Returns latest signal snapshot for symbol if available.
     pub fn signal_snapshot(&self, symbol: &SymbolId) -> Option<SignalSnapshot> {
         self.latest_signals.get(symbol).cloned()
@@ -1038,6 +1116,18 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                 if let Some(store) = &self.persistence {
                     let _ = store.append_book(&book);
                 }
+                self.event_trackers
+                    .entry(book.symbol.clone())
+                    .or_insert_with(|| BookEventTracker::new(65536))
+                    .on_book_update(book.side, book.action, book.size, book.ts_exchange_ns);
+                if let Some(rt) = self.resiliency_trackers.get_mut(&book.symbol) {
+                    let snapshot = self.books.get(&book.symbol).map(|b| b.snapshot(&book.symbol));
+                    if let Some(snap) = snapshot {
+                        let bid_depth: i64 = snap.bids.iter().map(|l| l.size).sum();
+                        let ask_depth: i64 = snap.asks.iter().map(|l| l.size).sum();
+                        rt.on_trade_post(bid_depth, ask_depth, book.ts_exchange_ns);
+                    }
+                }
                 self.processed_events += 1;
             }
             RawEvent::Trade(trade) => {
@@ -1046,6 +1136,24 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                 }
 
                 let symbol = trade.symbol.clone();
+
+                // Feed spread tracker with mid price at trade time
+                if let Some(book_state) = self.books.get(&symbol) {
+                    let snapshot = book_state.snapshot(&symbol);
+                    if let Some(mid) = compute_mid_price(&snapshot) {
+                        self.spread_trackers
+                            .entry(symbol.clone())
+                            .or_insert_with(|| SpreadTracker::new(1024))
+                            .on_trade(trade.price, mid, trade.ts_exchange_ns);
+                    }
+                    // Feed resiliency tracker with pre-trade depth
+                    let bid_depth: i64 = snapshot.bids.iter().map(|l| l.size).sum();
+                    let ask_depth: i64 = snapshot.asks.iter().map(|l| l.size).sum();
+                    self.resiliency_trackers
+                        .entry(symbol.clone())
+                        .or_insert_with(|| ResiliencyTracker::new(1024))
+                        .on_trade_pre(bid_depth, ask_depth);
+                }
                 #[cfg(feature = "tickbar")]
                 let tickbar_ns = self.tickbar_interval_ns;
                 let acc = self.analytics.entry(symbol.clone()).or_insert_with(|| {
