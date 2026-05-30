@@ -837,6 +837,181 @@ impl Default for ResiliencySnapshot {
     }
 }
 
+/// Result of a single trade classification method.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClassificationVote {
+    /// Buy / aggressive buy.
+    Buy,
+    /// Sell / aggressive sell.
+    Sell,
+    /// Unable to classify (e.g., mid-price print).
+    Neutral,
+}
+
+/// Classifies trades using multiple methods: tick rule, quote rule, Lee-Ready, and consensus.
+///
+/// Maintains last price for tick rule and requires book access for quote-based methods.
+/// The Engine feeds this tracker with `on_trade(mid_price)` and queries via `classify()`.
+#[derive(Debug, Clone)]
+pub struct TradeClassifier {
+    /// Last observed trade price (for tick rule).
+    last_price: Option<i64>,
+    /// Configurable voting weights.
+    weights: ClassifierWeights,
+    /// Remote. of classifications for debugging.
+    last_votes: [ClassificationVote; 3],
+}
+
+/// Weights for the consensus voting classifier.
+#[derive(Debug, Clone, Copy)]
+pub struct ClassifierWeights {
+    /// Weight for tick rule vote.
+    pub tick_weight: f64,
+    /// Weight for quote rule vote.
+    pub quote_weight: f64,
+    /// Weight for Lee-Ready vote (0 if not used).
+    pub lee_ready_weight: f64,
+}
+
+impl Default for ClassifierWeights {
+    fn default() -> Self {
+        Self {
+            tick_weight: 0.3,
+            quote_weight: 0.4,
+            lee_ready_weight: 0.3,
+        }
+    }
+}
+
+impl TradeClassifier {
+    /// Creates a new classifier with default weights.
+    pub fn new() -> Self {
+        Self {
+            last_price: None,
+            weights: ClassifierWeights::default(),
+            last_votes: [ClassificationVote::Neutral; 3],
+        }
+    }
+
+    /// Creates a classifier with custom weights.
+    pub fn with_weights(weights: ClassifierWeights) -> Self {
+        Self {
+            last_price: None,
+            weights,
+            last_votes: [ClassificationVote::Neutral; 3],
+        }
+    }
+
+    /// Classifies a trade by tick rule based on price vs last price.
+    ///
+    /// Tick rule: price > last_price → buy, price < last_price → sell,
+    /// price == last_price → check volume vs last volume (zero-tick).
+    pub fn tick_rule(&self, price: i64, volume: i64, last_volume: i64) -> ClassificationVote {
+        match self.last_price {
+            Some(last) if price > last => ClassificationVote::Buy,
+            Some(last) if price < last => ClassificationVote::Sell,
+            Some(_) => {
+                // Zero-tick: classify by comparing to last volume
+                if volume > last_volume {
+                    // Assume aggressive if larger volume at same price
+                    ClassificationVote::Buy // conservative: default to buy for volume increase
+                } else {
+                    ClassificationVote::Sell
+                }
+            }
+            None => ClassificationVote::Neutral,
+        }
+    }
+
+    /// Classifies a trade by quote rule (compare to bid/ask).
+    pub fn quote_rule(price: i64, best_bid: i64, best_ask: i64) -> ClassificationVote {
+        if best_bid > 0 && price <= best_bid {
+            ClassificationVote::Sell
+        } else if best_ask > 0 && price >= best_ask {
+            ClassificationVote::Buy
+        } else {
+            ClassificationVote::Neutral
+        }
+    }
+
+    /// Classifies using Lee-Ready: quote rule at bid/ask, tick rule at mid.
+    pub fn lee_ready(
+        price: i64,
+        best_bid: i64,
+        best_ask: i64,
+        last_price: Option<i64>,
+        volume: i64,
+        last_volume: i64,
+    ) -> ClassificationVote {
+        let quote = Self::quote_rule(price, best_bid, best_ask);
+        if quote != ClassificationVote::Neutral {
+            return quote;
+        }
+        // At mid price, fall back to tick rule
+        let classifier = TradeClassifier { last_price, weights: ClassifierWeights::default(), last_votes: [ClassificationVote::Neutral; 3] };
+        classifier.tick_rule(price, volume, last_volume)
+    }
+
+    /// Returns the consensus classification by weighted majority vote across all methods.
+    ///
+    /// Requires the current and last trade data plus book snapshot.
+    pub fn classify(
+        &mut self,
+        price: i64,
+        volume: i64,
+        best_bid: i64,
+        best_ask: i64,
+    ) -> ClassificationVote {
+        let last_vol = 0; // Simplified: tracker doesn't track per-trade volume
+        let tick = self.tick_rule(price, volume, last_vol);
+        let quote = Self::quote_rule(price, best_bid, best_ask);
+        let lr = Self::lee_ready(price, best_bid, best_ask, self.last_price, volume, last_vol);
+
+        self.last_votes = [tick, quote, lr];
+        self.last_price = Some(price);
+
+        // Weighted consensus
+        let mut buy_score = 0.0f64;
+        let mut sell_score = 0.0f64;
+
+        match tick {
+            ClassificationVote::Buy => buy_score += self.weights.tick_weight,
+            ClassificationVote::Sell => sell_score += self.weights.tick_weight,
+            _ => {}
+        }
+        match quote {
+            ClassificationVote::Buy => buy_score += self.weights.quote_weight,
+            ClassificationVote::Sell => sell_score += self.weights.quote_weight,
+            _ => {}
+        }
+        match lr {
+            ClassificationVote::Buy => buy_score += self.weights.lee_ready_weight,
+            ClassificationVote::Sell => sell_score += self.weights.lee_ready_weight,
+            _ => {}
+        }
+
+        if buy_score > sell_score {
+            ClassificationVote::Buy
+        } else if sell_score > buy_score {
+            ClassificationVote::Sell
+        } else {
+            // Tie: prefer quote rule (most reliable)
+            quote
+        }
+    }
+
+    /// Returns the last votes for debug/diagnostics.
+    pub fn last_votes(&self) -> [ClassificationVote; 3] {
+        self.last_votes
+    }
+
+    /// Resets the classifier state.
+    pub fn reset(&mut self) {
+        self.last_price = None;
+        self.last_votes = [ClassificationVote::Neutral; 3];
+    }
+}
+
 /// Output state emitted by signal modules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignalState {
@@ -1868,5 +2043,69 @@ mod tests {
         let rt = ResiliencyTracker::new(100);
         assert!(rt.latest_recovery_time_ms().is_none());
         assert!(rt.latest_depth_elasticity().is_none());
+    }
+
+    #[test]
+    fn trade_classifier_tick_rule_up_tick_is_buy() {
+        let mut tc = TradeClassifier::new();
+        tc.last_price = Some(100);
+        assert_eq!(tc.tick_rule(101, 10, 5), ClassificationVote::Buy);
+    }
+
+    #[test]
+    fn trade_classifier_tick_rule_down_tick_is_sell() {
+        let mut tc = TradeClassifier::new();
+        tc.last_price = Some(100);
+        assert_eq!(tc.tick_rule(99, 10, 5), ClassificationVote::Sell);
+    }
+
+    #[test]
+    fn trade_classifier_tick_rule_no_last_price_is_neutral() {
+        let tc = TradeClassifier::new();
+        assert_eq!(tc.tick_rule(100, 10, 5), ClassificationVote::Neutral);
+    }
+
+    #[test]
+    fn trade_classifier_quote_rule_at_ask_is_buy() {
+        assert_eq!(TradeClassifier::quote_rule(102, 100, 102), ClassificationVote::Buy);
+    }
+
+    #[test]
+    fn trade_classifier_quote_rule_at_bid_is_sell() {
+        assert_eq!(TradeClassifier::quote_rule(100, 100, 102), ClassificationVote::Sell);
+    }
+
+    #[test]
+    fn trade_classifier_quote_rule_at_mid_is_neutral() {
+        assert_eq!(TradeClassifier::quote_rule(101, 100, 102), ClassificationVote::Neutral);
+    }
+
+    #[test]
+    fn trade_classifier_lee_ready_uses_quote_when_available() {
+        let vote = TradeClassifier::lee_ready(102, 100, 102, Some(100), 10, 5);
+        assert_eq!(vote, ClassificationVote::Buy);
+    }
+
+    #[test]
+    fn trade_classifier_lee_ready_falls_back_to_tick_at_mid() {
+        let vote = TradeClassifier::lee_ready(101, 100, 102, Some(100), 10, 5);
+        assert_eq!(vote, ClassificationVote::Buy); // up-tick → buy
+    }
+
+    #[test]
+    fn trade_classifier_consensus_vote() {
+        let mut tc = TradeClassifier::new();
+        // Buy: quote says buy (at ask), tick says neutral (no last), LR falls back to neutral
+        let vote = tc.classify(102, 10, 100, 102);
+        // quote_weight=0.4 for buy, tick=0, LR=0 → buy
+        assert_eq!(vote, ClassificationVote::Buy);
+    }
+
+    #[test]
+    fn trade_classifier_reset_clears_state() {
+        let mut tc = TradeClassifier::new();
+        tc.last_price = Some(100);
+        tc.reset();
+        assert!(tc.last_price.is_none());
     }
 }
