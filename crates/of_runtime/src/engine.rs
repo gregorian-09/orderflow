@@ -7,12 +7,13 @@ use std::path::{Path, PathBuf};
 
 use of_adapters::{create_adapter, AdapterConfig, MarketDataAdapter, RawEvent, SubscribeReq};
 use of_core::{
-    AnalyticsAccumulator, AnalyticsSnapshot, BookAnalyticsSnapshot, BookEventAnalyticsSnapshot,
-    BookEventTracker, BookLevel, BookSnapshot, BookUpdate, DataQualityFlags,
-    DerivedAnalyticsSnapshot, IntervalCandleSnapshot, ResiliencySnapshot, ResiliencyTracker,
-    SessionCandleSnapshot, SignalSnapshot, SignalState, SpreadTracker, SymbolId, TradePrint,
-    compute_book_analytics, compute_depth_slope, compute_mid_price,
-    compute_weighted_average_price,
+    AmihudSnapshot, AmihudTracker, AnalyticsAccumulator, AnalyticsSnapshot, BookAnalyticsSnapshot,
+    BookEventAnalyticsSnapshot, BookEventTracker, BookLevel, BookSnapshot, BookUpdate,
+    ClassificationVote, CvdEnhancementSnapshot, CvdEnhancements, DataQualityFlags,
+    DerivedAnalyticsSnapshot, IntervalCandleSnapshot, KyleLambdaSnapshot, KyleLambdaTracker,
+    ResiliencySnapshot, ResiliencyTracker, SessionCandleSnapshot, SignalSnapshot, SignalState,
+    SpreadTracker, SymbolId, TradeClassifier, TradePrint, VpinSnapshot, VpinTracker,
+    compute_book_analytics, compute_depth_slope, compute_mid_price, compute_weighted_average_price,
 };
 #[cfg(feature = "tickbar")]
 use of_core::CompletedBar;
@@ -418,6 +419,16 @@ pub struct Engine<A: MarketDataAdapter, S: SignalModule> {
     event_trackers: HashMap<SymbolId, BookEventTracker>,
     /// Per-symbol resiliency trackers for depth recovery.
     resiliency_trackers: HashMap<SymbolId, ResiliencyTracker>,
+    /// Per-symbol trade classifiers.
+    classifiers: HashMap<SymbolId, TradeClassifier>,
+    /// Per-symbol VPIN trackers.
+    vpin_trackers: HashMap<SymbolId, VpinTracker>,
+    /// Per-symbol Kyle's Lambda trackers.
+    kyle_lambda_trackers: HashMap<SymbolId, KyleLambdaTracker>,
+    /// Per-symbol Amihud trackers.
+    amihud_trackers: HashMap<SymbolId, AmihudTracker>,
+    /// Per-symbol CVD enhancement trackers.
+    cvd_enhancements: HashMap<SymbolId, CvdEnhancements>,
 }
 
 /// Default engine type used by C ABI and high-level bindings.
@@ -450,6 +461,11 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             spread_trackers: HashMap::new(),
             event_trackers: HashMap::new(),
             resiliency_trackers: HashMap::new(),
+            classifiers: HashMap::new(),
+            vpin_trackers: HashMap::new(),
+            kyle_lambda_trackers: HashMap::new(),
+            amihud_trackers: HashMap::new(),
+            cvd_enhancements: HashMap::new(),
         }
     }
 
@@ -881,6 +897,46 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         }).unwrap_or_default()
     }
 
+    /// Returns the VPIN snapshot for symbol.
+    pub fn vpin_snapshot(&self, symbol: &SymbolId) -> VpinSnapshot {
+        self.vpin_trackers
+            .get(symbol)
+            .map(|v| v.snapshot())
+            .unwrap_or_default()
+    }
+
+    /// Returns the Kyle's Lambda snapshot for symbol.
+    pub fn kyle_lambda_snapshot(&self, symbol: &SymbolId) -> KyleLambdaSnapshot {
+        self.kyle_lambda_trackers
+            .get(symbol)
+            .map(|k| k.snapshot())
+            .unwrap_or_default()
+    }
+
+    /// Returns the Amihud illiquidity snapshot for symbol.
+    pub fn amihud_snapshot(&self, symbol: &SymbolId) -> AmihudSnapshot {
+        self.amihud_trackers
+            .get(symbol)
+            .map(|a| a.snapshot())
+            .unwrap_or_default()
+    }
+
+    /// Returns the CVD enhancement snapshot for symbol.
+    pub fn cvd_enhancement_snapshot(&self, symbol: &SymbolId) -> CvdEnhancementSnapshot {
+        self.cvd_enhancements
+            .get(symbol)
+            .map(|c| c.snapshot())
+            .unwrap_or_default()
+    }
+
+    /// Returns the last classification vote for symbol.
+    pub fn last_classification(&self, symbol: &SymbolId) -> Option<ClassificationVote> {
+        self.classifiers.get(symbol).map(|c| {
+            let votes = c.last_votes();
+            votes[0] // Return consensus (first element after classify())
+        })
+    }
+
     /// Returns latest signal snapshot for symbol if available.
     pub fn signal_snapshot(&self, symbol: &SymbolId) -> Option<SignalSnapshot> {
         self.latest_signals.get(symbol).cloned()
@@ -1140,12 +1196,56 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                 // Feed spread tracker with mid price at trade time
                 if let Some(book_state) = self.books.get(&symbol) {
                     let snapshot = book_state.snapshot(&symbol);
-                    if let Some(mid) = compute_mid_price(&snapshot) {
+                    let bid = snapshot.bids.first().map(|l| l.price).unwrap_or(0);
+                    let ask = snapshot.asks.first().map(|l| l.price).unwrap_or(0);
+                    let mid = if bid > 0 && ask > 0 { Some((bid + ask) / 2) } else { None };
+                    if let Some(mid) = mid {
                         self.spread_trackers
                             .entry(symbol.clone())
                             .or_insert_with(|| SpreadTracker::new(1024))
                             .on_trade(trade.price, mid, trade.ts_exchange_ns);
                     }
+
+                    // Classify trade and feed VPIN, Kyle's Lambda, CVD
+                    let classifier = self.classifiers
+                        .entry(symbol.clone())
+                        .or_insert_with(TradeClassifier::new);
+                    let classification = classifier.classify(trade.price, trade.size, bid, ask);
+
+                    // Determine classified buy/sell volume
+                    let (buy_vol, sell_vol) = match classification {
+                        ClassificationVote::Buy => (trade.size, 0),
+                        ClassificationVote::Sell => (0, trade.size),
+                        ClassificationVote::Neutral => {
+                            // Split evenly at mid
+                            (trade.size / 2, trade.size / 2)
+                        }
+                    };
+
+                    // Feed VPIN
+                    self.vpin_trackers
+                        .entry(symbol.clone())
+                        .or_insert_with(|| VpinTracker::new(5000, 50))
+                        .on_trade(buy_vol, sell_vol);
+
+                    // Feed Kyle's Lambda with signed volume and price change
+                    let prev_price = self.analytics.get(&symbol)
+                        .map(|a| a.snapshot().last_price)
+                        .unwrap_or(trade.price);
+                    let signed_vol = if buy_vol > 0 { trade.size } else { -trade.size };
+                    let price_change = trade.price - prev_price;
+                    self.kyle_lambda_trackers
+                        .entry(symbol.clone())
+                        .or_insert_with(|| KyleLambdaTracker::new(100))
+                        .on_trade(signed_vol, price_change);
+
+                    // Feed CVD enhancements with per-trade delta
+                    let net_delta = buy_vol - sell_vol;
+                    self.cvd_enhancements
+                        .entry(symbol.clone())
+                        .or_insert_with(|| CvdEnhancements::new(50))
+                        .on_bar(net_delta, trade.size, trade.price);
+
                     // Feed resiliency tracker with pre-trade depth
                     let bid_depth: i64 = snapshot.bids.iter().map(|l| l.size).sum();
                     let ask_depth: i64 = snapshot.asks.iter().map(|l| l.size).sum();
