@@ -443,6 +443,22 @@ class Engine:
         """Returns resiliency snapshot (recovery time, depth elasticity)."""
         return self._snapshot_call(self._ffi.lib.of_get_resiliency_snapshot, symbol)
 
+    def vpin_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns VPIN snapshot (vpin, z-score, mean, std, toxicity)."""
+        return self._snapshot_call(self._ffi.lib.of_get_vpin_snapshot, symbol)
+
+    def kyle_lambda_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns Kyle's Lambda snapshot (lambda, R², avg lambda)."""
+        return self._snapshot_call(self._ffi.lib.of_get_kyle_lambda_snapshot, symbol)
+
+    def amihud_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns Amihud illiquidity snapshot."""
+        return self._snapshot_call(self._ffi.lib.of_get_amihud_snapshot, symbol)
+
+    def cvd_enhancement_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns CVD enhancement snapshot (delta ratio, z-score, divergence)."""
+        return self._snapshot_call(self._ffi.lib.of_get_cvd_enhancement_snapshot, symbol)
+
     def analytics_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
         """Returns current analytics snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_analytics_snapshot, symbol)

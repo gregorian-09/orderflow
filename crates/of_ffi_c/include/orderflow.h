@@ -331,6 +331,15 @@ int32_t of_get_book_event_analytics(of_engine_t* engine, const of_symbol_t* symb
  */
 int32_t of_get_resiliency_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
 
+/** Returns VPIN snapshot JSON (vpin, z-score, mean, std, toxicity). */
+int32_t of_get_vpin_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns Kyle's Lambda snapshot JSON (lambda, R², avg lambda). */
+int32_t of_get_kyle_lambda_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns Amihud illiquidity snapshot JSON. */
+int32_t of_get_amihud_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+/** Returns CVD enhancement snapshot JSON (delta ratio, z-score, divergence). */
+int32_t of_get_cvd_enhancement_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+
 /** Returns current analytics snapshot JSON for `symbol`. */
 int32_t of_get_analytics_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
 /** Returns current derived analytics snapshot JSON for `symbol`. */

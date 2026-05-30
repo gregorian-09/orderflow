@@ -19,9 +19,11 @@ use of_runtime::{
 };
 use support::{
     action_from_ffi, dispatch_callbacks, dispatch_health_callbacks, escape_json,
-    format_analytics_snapshot, format_book_analytics_snapshot, format_book_event_analytics_snapshot,
-    format_book_snapshot, format_derived_analytics_snapshot, format_interval_candle_snapshot,
-    format_resiliency_snapshot, format_session_candle_snapshot, non_empty_string, parse_csv,
+    format_amihud_snapshot, format_analytics_snapshot, format_book_analytics_snapshot,
+    format_book_event_analytics_snapshot, format_book_snapshot,
+    format_cvd_enhancement_snapshot, format_derived_analytics_snapshot,
+    format_interval_candle_snapshot, format_kyle_lambda_snapshot, format_resiliency_snapshot,
+    format_session_candle_snapshot, format_vpin_snapshot, non_empty_string, parse_csv,
     side_from_ffi, symbol_from_ffi, symbol_from_ffi_ref, write_json_to_c_buffer,
 };
 #[cfg(feature = "tickbar")]
@@ -836,6 +838,74 @@ pub extern "C" fn of_get_resiliency_snapshot(
     match write_json_to_c_buffer(&payload, out_buf, inout_len) {
         Ok(_) => of_error_t::OF_OK as i32,
         Err(e) => e as i32,
+    }
+}
+
+/// Writes VPIN snapshot JSON.
+#[no_mangle]
+pub extern "C" fn of_get_vpin_snapshot(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() { return of_error_t::OF_ERR_INVALID_ARG as i32; }
+    let (symbol, _) = match symbol_from_ffi(symbol) { Ok(v) => v, Err(e) => return e as i32 };
+    let engine = unsafe { &mut *engine };
+    let payload = format_vpin_snapshot(&engine.inner.vpin_snapshot(&symbol));
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32, Err(e) => e as i32,
+    }
+}
+
+/// Writes Kyle's Lambda snapshot JSON.
+#[no_mangle]
+pub extern "C" fn of_get_kyle_lambda_snapshot(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() { return of_error_t::OF_ERR_INVALID_ARG as i32; }
+    let (symbol, _) = match symbol_from_ffi(symbol) { Ok(v) => v, Err(e) => return e as i32 };
+    let engine = unsafe { &mut *engine };
+    let payload = format_kyle_lambda_snapshot(&engine.inner.kyle_lambda_snapshot(&symbol));
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32, Err(e) => e as i32,
+    }
+}
+
+/// Writes Amihud illiquidity snapshot JSON.
+#[no_mangle]
+pub extern "C" fn of_get_amihud_snapshot(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() { return of_error_t::OF_ERR_INVALID_ARG as i32; }
+    let (symbol, _) = match symbol_from_ffi(symbol) { Ok(v) => v, Err(e) => return e as i32 };
+    let engine = unsafe { &mut *engine };
+    let payload = format_amihud_snapshot(&engine.inner.amihud_snapshot(&symbol));
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32, Err(e) => e as i32,
+    }
+}
+
+/// Writes CVD enhancement snapshot JSON.
+#[no_mangle]
+pub extern "C" fn of_get_cvd_enhancement_snapshot(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() { return of_error_t::OF_ERR_INVALID_ARG as i32; }
+    let (symbol, _) = match symbol_from_ffi(symbol) { Ok(v) => v, Err(e) => return e as i32 };
+    let engine = unsafe { &mut *engine };
+    let payload = format_cvd_enhancement_snapshot(&engine.inner.cvd_enhancement_snapshot(&symbol));
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32, Err(e) => e as i32,
     }
 }
 

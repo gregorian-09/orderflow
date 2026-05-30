@@ -302,6 +302,38 @@ class OrderflowLib:
         ]
         lib.of_get_resiliency_snapshot.restype = c_int32
 
+        lib.of_get_vpin_snapshot.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_get_vpin_snapshot.restype = c_int32
+
+        lib.of_get_kyle_lambda_snapshot.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_get_kyle_lambda_snapshot.restype = c_int32
+
+        lib.of_get_amihud_snapshot.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_get_amihud_snapshot.restype = c_int32
+
+        lib.of_get_cvd_enhancement_snapshot.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfSymbol),
+            c_void_p,
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_get_cvd_enhancement_snapshot.restype = c_int32
+
         lib.of_get_analytics_snapshot.argtypes = [
             c_void_p,
             ctypes.POINTER(OfSymbol),

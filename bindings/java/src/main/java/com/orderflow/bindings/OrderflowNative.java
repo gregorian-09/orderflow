@@ -71,6 +71,10 @@ public interface OrderflowNative extends Library {
     int of_get_book_event_analytics(Pointer engine, OfSymbol symbol, long windowNs, Memory outBuf, IntByReference inoutLen);
     /** Reads resiliency snapshot JSON. */
     int of_get_resiliency_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_vpin_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_kyle_lambda_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_amihud_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
+    int of_get_cvd_enhancement_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
     /** Reads analytics snapshot JSON into caller buffer. */
     int of_get_analytics_snapshot(Pointer engine, OfSymbol symbol, Memory outBuf, IntByReference inoutLen);
     /** Reads derived analytics snapshot JSON into caller buffer. */

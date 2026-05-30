@@ -5,8 +5,9 @@ use std::sync::atomic::Ordering;
 use of_adapters::RawEvent;
 use of_core::{
     BookAction, BookAnalyticsSnapshot, BookEventAnalyticsSnapshot, BookSnapshot,
-    DerivedAnalyticsSnapshot, IntervalCandleSnapshot, ResiliencySnapshot, SessionCandleSnapshot,
-    Side, SignalState, SymbolId,
+    CvdEnhancementSnapshot, DerivedAnalyticsSnapshot, IntervalCandleSnapshot,
+    KyleLambdaSnapshot, ResiliencySnapshot, SessionCandleSnapshot, Side, SignalState, SymbolId,
+    VpinSnapshot,
 };
 #[cfg(feature = "tickbar")]
 use of_core::CompletedBar;
@@ -377,6 +378,41 @@ pub(crate) fn format_resiliency_snapshot(snap: &ResiliencySnapshot) -> String {
     format!(
         "{{\"recovery_time_ms\":{:.4},\"depth_elasticity\":{:.4}}}",
         snap.recovery_time_ms, snap.depth_elasticity,
+    )
+}
+
+pub(crate) fn format_vpin_snapshot(snap: &VpinSnapshot) -> String {
+    format!(
+        "{{\"vpin\":{:.6},\"vpin_zscore\":{:.4},\"vpin_mean\":{:.6},\"vpin_std\":{:.6},\"is_toxic\":{},\"bucket_count\":{}}}",
+        snap.vpin,
+        snap.vpin_zscore,
+        snap.vpin_mean,
+        snap.vpin_std,
+        if snap.is_toxic { "true" } else { "false" },
+        snap.bucket_count,
+    )
+}
+
+pub(crate) fn format_kyle_lambda_snapshot(snap: &KyleLambdaSnapshot) -> String {
+    format!(
+        "{{\"lambda_bps\":{:.4},\"r_squared\":{:.4},\"average_lambda_bps\":{:.4},\"sample_count\":{}}}",
+        snap.lambda_bps, snap.r_squared, snap.average_lambda_bps, snap.sample_count,
+    )
+}
+
+pub(crate) fn format_amihud_snapshot(snap: &of_core::AmihudSnapshot) -> String {
+    format!(
+        "{{\"amihud_ratio\":{:.10},\"average_illiquidity\":{:.10},\"bar_count\":{}}}",
+        snap.amihud_ratio, snap.average_illiquidity, snap.bar_count,
+    )
+}
+
+pub(crate) fn format_cvd_enhancement_snapshot(snap: &CvdEnhancementSnapshot) -> String {
+    format!(
+        "{{\"delta_ratio\":{:.4},\"delta_zscore\":{:.4},\"divergence_detected\":{}}}",
+        snap.delta_ratio,
+        snap.delta_zscore,
+        if snap.divergence_detected { "true" } else { "false" },
     )
 }
 

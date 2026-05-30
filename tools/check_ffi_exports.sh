@@ -47,6 +47,10 @@ of_get_half_spread_cost_bps
 of_get_realised_spread_bps
 of_get_book_event_analytics
 of_get_resiliency_snapshot
+of_get_vpin_snapshot
+of_get_kyle_lambda_snapshot
+of_get_amihud_snapshot
+of_get_cvd_enhancement_snapshot
 of_get_analytics_snapshot
   of_get_bar_series          # requires feature "tickbar"
   of_get_derived_analytics_snapshot

@@ -496,6 +496,10 @@ public final class OrderflowEngine implements AutoCloseable {
                 case MID_PRICE -> rc = nativeLib.of_get_mid_price(engine, sym, buffer, length);
                 case EFFECTIVE_SPREAD -> rc = nativeLib.of_get_effective_spread_bps(engine, sym, buffer, length);
                 case RESILIENCY -> rc = nativeLib.of_get_resiliency_snapshot(engine, sym, buffer, length);
+                case VPIN -> rc = nativeLib.of_get_vpin_snapshot(engine, sym, buffer, length);
+                case KYLE_LAMBDA -> rc = nativeLib.of_get_kyle_lambda_snapshot(engine, sym, buffer, length);
+                case AMIHUD -> rc = nativeLib.of_get_amihud_snapshot(engine, sym, buffer, length);
+                case CVD_ENHANCEMENT -> rc = nativeLib.of_get_cvd_enhancement_snapshot(engine, sym, buffer, length);
                 default -> throw new OrderflowException("unknown snapshot kind");
             }
 
@@ -617,6 +621,14 @@ public final class OrderflowEngine implements AutoCloseable {
 
     /** Returns resiliency snapshot JSON. */
     public String resiliencySnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.RESILIENCY); }
+    /** Returns VPIN snapshot JSON. */
+    public String vpinSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.VPIN); }
+    /** Returns Kyle's Lambda snapshot JSON. */
+    public String kyleLambdaSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.KYLE_LAMBDA); }
+    /** Returns Amihud illiquidity snapshot JSON. */
+    public String amihudSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.AMIHUD); }
+    /** Returns CVD enhancement snapshot JSON. */
+    public String cvdEnhancementSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.CVD_ENHANCEMENT); }
 
     private enum SnapshotKind {
         BOOK,
@@ -630,6 +642,10 @@ public final class OrderflowEngine implements AutoCloseable {
         MID_PRICE,
         EFFECTIVE_SPREAD,
         RESILIENCY,
+        VPIN,
+        KYLE_LAMBDA,
+        AMIHUD,
+        CVD_ENHANCEMENT,
     }
 
     private enum QueryKind {
