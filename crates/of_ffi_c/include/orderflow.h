@@ -228,6 +228,18 @@ int32_t of_external_health_tick(of_engine_t* engine);
 int32_t of_engine_poll_once(of_engine_t* engine, uint32_t quality_flags);
 
 /**
+ * Sets tickbar aggregation interval for new per-symbol accumulators.
+ *
+ * A positive `interval_ns` enables tickbar aggregation at the given interval
+ * for symbols whose accumulators are created after this call. Zero or negative
+ * values disable tickbar aggregation for future accumulators. Existing
+ * accumulators are not affected.
+ *
+ * Requires the `tickbar` feature to be enabled at build time.
+ */
+int32_t of_engine_set_tickbar_interval(of_engine_t* engine, int64_t interval_ns);
+
+/**
  * Returns current book snapshot JSON for `symbol`.
  *
  * Payload shape:
@@ -246,6 +258,23 @@ int32_t of_engine_poll_once(of_engine_t* engine, uint32_t quality_flags);
  * and sets `*inout_len` to the required byte length.
  */
 int32_t of_get_book_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
+
+/**
+ * Returns current book analytics snapshot JSON for `symbol`.
+ *
+ * Payload shape:
+ * {
+ *   "best_bid": ..., "best_ask": ...,
+ *   "quoted_spread": ..., "relative_spread_bps": ...,
+ *   "microprice": ..., "bid_depth": ..., "ask_depth": ...,
+ *   "depth_imbalance_bps": ...
+ * }
+ *
+ * On success, `*inout_len` is set to the bytes written.
+ * If `out_buf` is too small, returns `OF_ERR_INVALID_ARG`
+ * and sets `*inout_len` to the required byte length.
+ */
+int32_t of_get_book_analytics_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
 /** Returns current analytics snapshot JSON for `symbol`. */
 int32_t of_get_analytics_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
 /** Returns current derived analytics snapshot JSON for `symbol`. */
@@ -254,6 +283,20 @@ int32_t of_get_derived_analytics_snapshot(of_engine_t* engine, const of_symbol_t
 int32_t of_get_session_candle_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
 /** Returns rolling interval candle snapshot JSON for `symbol` over `window_ns`. */
 int32_t of_get_interval_candle_snapshot(of_engine_t* engine, const of_symbol_t* symbol, uint64_t window_ns, void* out_buf, uint32_t* inout_len);
+/**
+ * Returns completed bar series JSON array for `symbol`.
+ *
+ * Requires the `tickbar` feature to be enabled at build time.
+ * Returns an empty array `[]` when tickbar aggregation is not configured for the symbol.
+ *
+ * Each bar object:
+ *   {"timestamp_ns":...,"open":...,"high":...,"low":...,"close":...,"volume":...,"tick_count":...,"vwap":...}
+ *
+ * On success, `*inout_len` is set to the bytes written.
+ * If `out_buf` is too small, the function returns `OF_ERR_INVALID_ARG`
+ * and sets `*inout_len` to the required byte length.
+ */
+int32_t of_get_bar_series(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
 /** Returns current signal snapshot JSON for `symbol`. */
 int32_t of_get_signal_snapshot(of_engine_t* engine, const of_symbol_t* symbol, void* out_buf, uint32_t* inout_len);
 
