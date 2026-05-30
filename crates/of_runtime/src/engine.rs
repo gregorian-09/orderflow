@@ -10,7 +10,7 @@ use of_core::{
     AnalyticsAccumulator, AnalyticsSnapshot, BookAnalyticsSnapshot, BookLevel, BookSnapshot,
     BookUpdate, DataQualityFlags, DerivedAnalyticsSnapshot, IntervalCandleSnapshot,
     SessionCandleSnapshot, SignalSnapshot, SignalState, SymbolId, TradePrint,
-    compute_book_analytics,
+    compute_book_analytics, compute_depth_slope, compute_weighted_average_price,
 };
 #[cfg(feature = "tickbar")]
 use of_core::CompletedBar;
@@ -779,7 +779,28 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
     pub fn book_analytics_snapshot(&self, symbol: &SymbolId) -> Option<BookAnalyticsSnapshot> {
         self.books
             .get(symbol)
-            .map(|book| compute_book_analytics(&book.snapshot(symbol)))
+                .map(|book| compute_book_analytics(&book.snapshot(symbol)))
+    }
+
+    /// Returns the weighted average price for an order of `qty` shares by walking the book.
+    ///
+    /// Positive `qty` walks asks (buy), negative walks bids (sell).
+    /// Returns `None` if the symbol has no book or liquidity is insufficient.
+    pub fn weighted_average_price(&self, symbol: &SymbolId, qty: i64) -> Option<i64> {
+        self.books
+            .get(symbol)
+            .and_then(|book| compute_weighted_average_price(&book.snapshot(symbol), qty))
+    }
+
+    /// Returns average volume decay per level for this symbol's book.
+    ///
+    /// Positive value indicates liquidity decreases with depth (typical).
+    /// Returns `0.0` if the book has fewer than 2 levels or no data.
+    pub fn depth_slope(&self, symbol: &SymbolId, levels: usize) -> f64 {
+        self.books
+            .get(symbol)
+            .map(|book| compute_depth_slope(&book.snapshot(symbol), levels))
+            .unwrap_or(0.0)
     }
 
     /// Returns latest signal snapshot for symbol if available.
