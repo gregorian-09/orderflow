@@ -37,8 +37,10 @@ expected_symbols=(
   of_configure_external_feed
   of_external_set_reconnecting
   of_external_health_tick
-  of_get_book_snapshot
-  of_get_analytics_snapshot
+of_get_book_snapshot
+of_get_book_analytics_snapshot
+of_get_analytics_snapshot
+  of_get_bar_series          # requires feature "tickbar"
   of_get_derived_analytics_snapshot
   of_get_session_candle_snapshot
   of_get_interval_candle_snapshot
@@ -46,6 +48,7 @@ expected_symbols=(
   of_get_metrics_json
   of_string_free
   of_engine_poll_once
+  of_engine_set_tickbar_interval   # requires feature "tickbar"
 )
 
 mapfile -t exported_symbols < <(nm "${nm_args[@]}" "$lib_path" | awk '{print $NF}' | sort -u)
