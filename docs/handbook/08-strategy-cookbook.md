@@ -38,6 +38,7 @@
 27. [LOB Feature ML Inference Pipeline](#27-lob-feature-ml-inference-pipeline)
 28. [Futures Basis Calendar Spread Arbitrage](#28-futures-basis-calendar-spread-arbitrage)
 29. [AnalyticsConfig Tuning Workflow](#29-analyticsconfig-tuning-workflow)
+30. [Tickbar OHLCV Momentum Confirmation](#30-tickbar-ohlcv-momentum-confirmation)
 
 ---
 
@@ -48,38 +49,45 @@ market makers are competing aggressively — a signal that the market is liquid
 and ready for a quick mean-reversion scalp.
 
 **Analytics used.** `effective_spread_bps`, `realised_spread_bps`,
-`quoted_spread_bps`, `half_spread_cost_bps`.
+`quoted_spread`, `half_spread_cost_bps`.
 
 **Rust (of_core).**
 ```rust
-use of_core::{SpreadTracker, AnalyticsAccumulator, TradePrint, Side, BookUpdate, BookAction};
+use of_core::{AnalyticsAccumulator, Side, SpreadTracker, SymbolId, TradePrint};
 
 let mut spread_tracker = SpreadTracker::new(100);
 let mut acc = AnalyticsAccumulator::default();
 
-// Feed a trade
-let trade = TradePrint { price: 500_050, size: 100, aggressor_side: Side::Bid, .. };
+let trade = TradePrint {
+    symbol: SymbolId { venue: "CME".into(), symbol: "ESM6".into() },
+    price: 500_050,
+    size: 100,
+    aggressor_side: Side::Bid,
+    sequence: 1,
+    ts_exchange_ns: 1_000_000,
+    ts_recv_ns: 1_000_100,
+};
 let mid = 500_000;
 spread_tracker.on_trade(trade.price, mid, trade.ts_exchange_ns);
 acc.on_trade(&trade);
 
-let eff = spread_tracker.last_effective_spread_bps();   // f64
-let real = spread_tracker.realised_spread_bps(10);      // f64 over 10 trades
+let eff = spread_tracker.last_effective_spread_bps();
+let real = spread_tracker.realised_spread_bps(10);
 dbg!(eff, real);
 ```
 
 **Python.**
 ```python
-from orderflow import Engine, Symbol
+from orderflow import Engine, EngineConfig, Symbol
 
-engine = Engine()
+engine = Engine(EngineConfig())
 engine.start()
 engine.subscribe(Symbol("CME", "ESM6", 10))
-engine.poll()
+engine.poll_once()
 
-eff = engine.effective_spread_bps(Symbol("CME", "ESM6", 10))
-real = engine.realised_spread_bps(Symbol("CME", "ESM6", 10))
-print(f"Effective: {eff:.2f} bps | Realised: {real:.2f} bps")
+eff = engine.effective_spread_bps(Symbol("CME", "ESM6", 10))["bps"]
+real = engine.realised_spread_bps(Symbol("CME", "ESM6", 10))["bps"]
+print(f"Effective: {eff} bps | Realised: {real} bps")
 ```
 
 **Java.**
@@ -87,15 +95,16 @@ print(f"Effective: {eff:.2f} bps | Realised: {real:.2f} bps")
 OrderflowEngine engine = new OrderflowEngine();
 engine.start();
 Symbol sym = new Symbol("CME", "ESM6", (short)10);
+engine.subscribe(sym, StreamKind.ANALYTICS);
 
-String eff = engine.effectiveSpreadBps(sym);
-String real = engine.realisedSpreadBps(sym);
+JSONObject eff = new JSONObject(engine.effectiveSpreadBps(sym));
+JSONObject real = new JSONObject(engine.realisedSpreadBps(sym, 5));
 ```
 
 **Strategy rule.**
 ```text
 IF effective_spread_bps < 0.5 * EMA(effective, 20)
-   AND quoted_spread_bps > effective_spread_bps   # not crossed
+   AND quoted_spread > effective_spread_bps       # not crossed
    AND half_spread_cost_bps < 0.3
 THEN enter mean-reversion scalp
      target = opposite value-area edge
@@ -109,38 +118,44 @@ THEN enter mean-reversion scalp
 the other, the price is biased toward the thinner side as liquidity gets
 tested.
 
-**Analytics used.** `depth_imbalance`, `mid_price`, `book_bid_volume`,
-`book_ask_volume`, `book_level` snapshots.
+**Analytics used.** `depth_imbalance_bps`, `mid_price`, `bid_depth`,
+`ask_depth`, `book_level` snapshots.
 
 **Rust.**
 ```rust
-use of_core::{compute_book_analytics, BookAnalyticsSnapshot, BookLevel, BookSnapshot};
+use of_core::{compute_book_analytics, BookLevel, BookSnapshot, SymbolId};
 
 let book = BookSnapshot {
-    bids: vec![BookLevel { price: 100, size: 5000, .. }],
-    asks: vec![BookLevel { price: 101, size: 2000, .. }],
-    ..default()
+    symbol: SymbolId { venue: "CME".into(), symbol: "ESM6".into() },
+    bids: vec![BookLevel { level: 0, price: 100, size: 5000 }],
+    asks: vec![BookLevel { level: 0, price: 101, size: 2000 }],
+    last_sequence: 1,
+    ts_exchange_ns: 1_000_000,
+    ts_recv_ns: 1_000_100,
 };
 let ba = compute_book_analytics(&book);
-// ba.depth_imbalance => (5000-2000)/(7000) ≈ 0.43 (bid-heavy)
-if ba.depth_imbalance.abs() > 0.3 {
-    println!("Imbalance signal: {}", ba.depth_imbalance);
+// ba.depth_imbalance_bps => roughly 4285 bps bid-heavy.
+if ba.depth_imbalance_bps.abs() > 3_000 {
+    println!("Imbalance signal: {} bps", ba.depth_imbalance_bps);
 }
 ```
 
 **Python.**
 ```python
 snap = engine.book_analytics_snapshot(Symbol("CME", "ES", 10))
-if abs(snap["depth_imbalance"]) > 0.3:
-    direction = "SHORT" if snap["depth_imbalance"] > 0 else "LONG"
-    print(f"Enter {direction} — imbalance {snap['depth_imbalance']:.2f}")
+if abs(snap["depth_imbalance_bps"]) > 3_000:
+    direction = "SHORT" if snap["depth_imbalance_bps"] > 0 else "LONG"
+    print(f"Enter {direction} — imbalance {snap['depth_imbalance_bps']} bps")
 ```
 
 **C.**
 ```c
-of_book_analytics_t ba;
-of_get_book_analytics(engine, &sym, &ba);
-if (fabs(ba.depth_imbalance) > 0.3) { /* trade */ }
+char json[512];
+uint32_t len = sizeof json;
+int32_t rc = of_get_book_analytics_snapshot(engine, &sym, json, &len);
+if (rc == OF_OK) {
+    /* Parse JSON field "depth_imbalance_bps". */
+}
 ```
 
 ---
@@ -157,23 +172,27 @@ building.
 
 **Rust (engine level).**
 ```rust
+use of_core::{DataQualityFlags, SymbolId};
+
 engine.start();
 let symbol = SymbolId { venue: "CME".into(), symbol: "ESM6".into() };
 let _ = engine.subscribe(symbol.clone(), 10);
-let _ = engine.poll();
+let _ = engine.poll_once(DataQualityFlags::NONE);
 
-let et = engine.event_trackers.get(&symbol).unwrap();
-let (arrive, _) = et.arrival_rate_per_sec(1_000_000_000);
-let (cancel, _) = et.cancel_rate_per_sec(1_000_000_000);
-if arrive > cancel * 1.5 && arrive > 10.0 {
-    println!("Momentum building — arrivals {:.1}/s > cancels {:.1}/s", arrive, cancel);
+let event = engine.book_event_analytics(&symbol, 1_000_000_000);
+let arrivals = event.bid_arrival_rate + event.ask_arrival_rate;
+let cancels = event.bid_cancel_rate + event.ask_cancel_rate;
+if arrivals > cancels * 1.5 && arrivals > 10.0 {
+    println!("Momentum building — arrivals {:.1}/s > cancels {:.1}/s", arrivals, cancels);
 }
 ```
 
 **Python.**
 ```python
 event = engine.book_event_analytics(Symbol("BINANCE", "BTCUSDT", 10))
-if event["arrival_rate"] > event["cancel_rate"] * 1.5:
+arrivals = event["bid_arrival_rate"] + event["ask_arrival_rate"]
+cancels = event["bid_cancel_rate"] + event["ask_cancel_rate"]
+if arrivals > cancels * 1.5:
     print("Momentum influx detected")
 ```
 
@@ -185,15 +204,15 @@ if event["arrival_rate"] > event["cancel_rate"] * 1.5:
 resiliency), the market absorbed the flow — the move is likely to reverse.
 If depth stays depressed (low resiliency), the move has conviction.
 
-**Analytics used.** `resiliency_recovery_time_ns`, `resiliency_depth_ratio`,
+**Analytics used.** `recovery_time_ms`, `depth_elasticity`,
 `resiliency_snapshot`.
 
 **Rust.**
 ```rust
 let resil = engine.resiliency_snapshot(&symbol);
-if resil.recovery_time_ns < 500_000_000 && resil.depth_ratio > 0.8 {
+if resil.recovery_time_ms < 500.0 && resil.depth_elasticity > 0.8 {
     println!("High resiliency — reversal candidate");
-} else if resil.recovery_time_ns > 2_000_000_000 {
+} else if resil.recovery_time_ms > 2_000.0 {
     println!("Low resiliency — trend continuation likely");
 }
 ```
@@ -201,7 +220,7 @@ if resil.recovery_time_ns < 500_000_000 && resil.depth_ratio > 0.8 {
 **Python.**
 ```python
 r = engine.resiliency_snapshot(Symbol("CME", "ESM6", 10))
-if r["recovery_time_ns"] < 500_000_000 and r["depth_ratio"] > 0.8:
+if r["recovery_time_ms"] < 500.0 and r["depth_elasticity"] > 0.8:
     print("High resiliency — fade the move")
 ```
 
@@ -212,7 +231,7 @@ if r["recovery_time_ns"] < 500_000_000 and r["depth_ratio"] > 0.8:
 **Hypothesis.** When VPIN is above its toxicity threshold, order-flow is
 toxic and mean-reversion strategies should be disabled.
 
-**Analytics used.** `vpin`, `vpin_z_score`, `vpin_is_toxic`, `vpin_bucket`,
+**Analytics used.** `vpin`, `vpin_zscore`, `is_toxic`, `bucket_count`,
 `vpin_rolling_buckets`, `VpinSnapshot`.
 
 **Python.**
@@ -220,7 +239,7 @@ toxic and mean-reversion strategies should be disabled.
 v = engine.vpin_snapshot(Symbol("CME", "ESM6", 10))
 if v["is_toxic"]:
     engine.disable_trading("vpin_toxic")
-    print(f"Toxic VPIN: z={v['z_score']:.1f}")
+    print(f"Toxic VPIN: z={v['vpin_zscore']:.1f}")
 ```
 
 **Java.**
@@ -238,14 +257,15 @@ if (v.getBoolean("is_toxic")) {
 **Hypothesis.** Low lambda means a trade moves price less — the market is
 deep. High lambda means you pay more to get size. Scale bids/asks accordingly.
 
-**Analytics used.** `kyle_lambda`, `kyle_r_squared`, `KyleLambdaSnapshot`.
+**Analytics used.** `lambda_bps`, `r_squared`, `average_lambda_bps`,
+`KyleLambdaSnapshot`.
 
 **Rust.**
 ```rust
 let kl = engine.kyle_lambda_snapshot(&symbol);
-if kl.lambda < 0.01 {
+if kl.lambda_bps < 1.0 {
     println!("Deep market — can enter full size");
-} else if kl.lambda > 0.05 {
+} else if kl.lambda_bps > 5.0 {
     println!("Thin market — reduce size, use limit orders");
 }
 ```
@@ -274,13 +294,13 @@ print(f"Scale size to {size_pct:.0%} of max")
 **Hypothesis.** Price makes a higher high, but cumulative delta does not
 confirm — buyers are exhausting and a reversal is imminent.
 
-**Analytics used.** `cvd_delta_ratio`, `cvd_z_score`, `cvd_diverging`,
+**Analytics used.** `delta_ratio`, `delta_zscore`, `divergence_detected`,
 `cvd_enhancement_snapshot`.
 
 **Rust.**
 ```rust
 let cvd = engine.cvd_enhancement_snapshot(&symbol);
-if cvd.diverging() {
+if cvd.divergence_detected {
     println!("CVD divergence detected — prepare for reversal");
 }
 ```
@@ -288,9 +308,9 @@ if cvd.diverging() {
 **Python.**
 ```python
 cvd = engine.cvd_enhancement_snapshot(Symbol("CME", "ESM6", 10))
-if cvd.get("diverging"):
+if cvd.get("divergence_detected"):
     direction = "SHORT" if cvd["delta_ratio"] < 0 else "LONG"
-    print(f"{direction} divergence signal | z={cvd['z_score']:.2f}")
+    print(f"{direction} divergence signal | z={cvd['delta_zscore']:.2f}")
 ```
 
 ---
@@ -302,38 +322,38 @@ absorption pattern is active, the absorption is breaking — enter in the
 imbalance direction.
 
 **Analytics used.** `PatternDetector`, `PatternSnapshot` with flags:
-`footprint_stacked_imbalance`, `footprint_absorption`,
-`footprint_exhaustion`, `footprint_initiation`.
+`stacked_imbalance_detected`, `absorption_detected`,
+`exhaustion_detected`, `initiation_detected`.
 
 **Python.**
 ```python
 p = engine.pattern_snapshot(Symbol("CME", "ESM6", 10))
-if p["pct"]["footprint_stacked_imbalance"] and p["pct"]["footprint_absorption"]:
+if p["stacked_imbalance_detected"] and p["absorption_detected"]:
     print("Breakout from absorption — enter in imbalance direction")
-if p["pct"]["footprint_exhaustion"]:
+if p["exhaustion_detected"]:
     print("Exhaustion pattern — fade extreme")
 ```
 
-**All 19 pattern flags exposed.**
+**All pattern fields exposed.**
 ```python
-p["pct"]["footprint_imbalance"]        # 2.1
-p["pct"]["footprint_stacked_imbalance"]
-p["pct"]["footprint_absorption"]
-p["pct"]["footprint_exhaustion"]
-p["pct"]["footprint_initiation"]
-p["pct"]["footprint_tailing"]
-p["pct"]["dom_iceberg"]                # 2.2
-p["pct"]["dom_spoofing"]
-p["pct"]["dom_flip"]
-p["pct"]["dom_liquidity_gap"]
-p["pct"]["dom_stop_hunt"]
-p["pct"]["delta_hidden_accumulation"]  # 2.3
-p["pct"]["delta_hidden_distribution"]
-p["pct"]["delta_trapped_traders"]
-p["pct"]["delta_clock"]
-p["pct"]["session_trend_day"]          # 2.4
-p["pct"]["session_range_day"]
-p["pct"]["session_reversal_day"]
+p["imbalance_detected"]        # 2.1
+p["stacked_imbalance_detected"]
+p["absorption_detected"]
+p["exhaustion_detected"]
+p["initiation_detected"]
+p["tailing_detected"]
+p["iceberg_detected"]          # 2.2
+p["spoofing_detected"]
+p["flip_detected"]
+p["liquidity_gap_detected"]
+p["stop_hunt_detected"]
+p["hidden_accumulation"]       # 2.3
+p["hidden_distribution"]
+p["trapped_traders_detected"]
+p["delta_clock_ns"]
+p["trend_day"]                 # 2.4
+p["range_day"]
+p["reversal_day"]
 p["session_type_score"]                # 0.0 (range) to 1.0 (trend)
 ```
 
@@ -344,13 +364,13 @@ p["session_type_score"]                # 0.0 (range) to 1.0 (trend)
 **Hypothesis.** Three or more consecutive bars with buy-initiated imbalance
 above 1.5× average size — buyers are in control and continuation is likely.
 
-**Analytics used.** `footprint_imbalance`, `footprint_initiation`,
-`footprint_stacked_imbalance`.
+**Analytics used.** `imbalance_detected`, `initiation_detected`,
+`stacked_imbalance_detected`.
 
 **Python.**
 ```python
 p = engine.pattern_snapshot(Symbol("CME", "ESM6", 10))
-if p["pct"]["footprint_stacked_imbalance"] and p["pct"]["footprint_initiation"]:
+if p["stacked_imbalance_detected"] and p["initiation_detected"]:
     print("Strong initiation + stacked buys — continuation long")
 ```
 
@@ -362,14 +382,14 @@ if p["pct"]["footprint_stacked_imbalance"] and p["pct"]["footprint_initiation"]:
 level after being filled, an iceberg is present. Stop hunting usually
 follows.
 
-**Analytics used.** `dom_iceberg`, `dom_stop_hunt`.
+**Analytics used.** `iceberg_detected`, `stop_hunt_detected`.
 
 **Python.**
 ```python
 p = engine.pattern_snapshot(Symbol("CME", "ESM6", 10))
-if p["pct"]["dom_iceberg"]:
+if p["iceberg_detected"]:
     print("Iceberg detected — expect stop hunt")
-if p["pct"]["dom_stop_hunt"]:
+if p["stop_hunt_detected"]:
     print("Stop hunt active — fade wick")
 ```
 
@@ -380,8 +400,8 @@ if p["pct"]["dom_stop_hunt"]:
 **Hypothesis.** Classify the session type to determine the right strategy:
 trend days get trend-following, range days get mean-reversion.
 
-**Analytics used.** `session_trend_day`, `session_range_day`,
-`session_reversal_day`, `session_type_score`.
+**Analytics used.** `trend_day`, `range_day`, `reversal_day`,
+`session_type_score`.
 
 **Rust.**
 ```rust
@@ -421,13 +441,13 @@ if p["lvn_count"] > 2:
 **Hypothesis.** Scale position size inversely to volatility. Use Parkinson
 (Garman-Klass / Yang-Zhang) for a more robust estimate than simple RV.
 
-**Analytics used.** `VolatilitySnapshot` with `classic_rv`, `parkinson_rv`,
-`garman_klass_rv`, `yang_zhang_rv`.
+**Analytics used.** `VolatilitySnapshot` with `classic_rv`, `parkinson`,
+`garman_klass`, `yang_zhang`.
 
 **Rust.**
 ```rust
 let v = engine.volatility_snapshot(&symbol);
-let vol = v.yang_zhang_rv;
+let vol = v.yang_zhang;
 let size = if vol < 0.01 {
     1.0       // full size
 } else if vol < 0.02 {
@@ -440,7 +460,7 @@ let size = if vol < 0.01 {
 **Python.**
 ```python
 v = engine.volatility_snapshot(Symbol("CME", "ESM6", 10))
-vol = v["yang_zhang_rv"]  # or parkinson_rv, garman_klass_rv, classic_rv
+vol = v["yang_zhang"]  # or parkinson, garman_klass, classic_rv
 size = max(0.1, 1.0 - vol * 100)
 print(f"Position size: {size:.0%}")
 ```
@@ -452,15 +472,15 @@ print(f"Position size: {size:.0%}")
 **Hypothesis.** When microstructure noise variance is high relative to signal,
 price moves are noise-dominated. Avoid trading until SNR improves.
 
-**Analytics used.** `NoiseSnapshot` with `noise_variance`, `signal_noise_ratio`.
+**Analytics used.** `NoiseSnapshot` with `noise_variance`, `signal_to_noise`.
 
 **Python.**
 ```python
 n = engine.noise_snapshot(Symbol("CME", "ESM6", 10))
-if n["signal_noise_ratio"] < 0.5:
+if n["signal_to_noise"] < 0.5:
     print("Noise-dominated market — stay flat")
 else:
-    print(f"Tradable SNR: {n['signal_noise_ratio']:.2f}")
+    print(f"Tradable SNR: {n['signal_to_noise']:.2f}")
 ```
 
 ---
@@ -588,7 +608,7 @@ else:
 change) is genuine. A breakout with low energy is a false move.
 
 **Analytics used.** `KineticEnergySnapshot` with `kinetic_energy`,
-`orderflow_momentum`, `energy_change`.
+`order_flow_momentum`, `energy_change`.
 
 **Rust.**
 ```rust
@@ -720,28 +740,28 @@ trained offline. The model predicts 1-minute-award price direction.
 **Python (full pipeline).**
 ```python
 import xgboost as xgb
-from orderflow import Engine, Symbol, OfAnalyticsConfig
+from orderflow import Engine, EngineConfig, Symbol, OfAnalyticsConfig
 
 cfg = OfAnalyticsConfig.defaults()
 cfg.spread_tracker_max_len = 500   # longer lookback for stable features
 
-with Engine() as engine:
+with Engine(EngineConfig()) as engine:
     engine.set_analytics_config(cfg)
     engine.start()
     sym = Symbol("CME", "ESM6", 10)
-    engine.subscribe(sym, 10)
+    engine.subscribe(sym)
 
     model = xgb.Booster()
     model.load_model("lob_model.json")
 
     while True:
-        engine.poll()
+        engine.poll_once()
         # Grab flow metrics from existing snapshots
         cvd = engine.cvd_enhancement_snapshot(sym)
         event = engine.book_event_analytics(sym)
         ti = cvd.get("delta_ratio", 0.0)
-        cr = event.get("cancel_rate", 0.0)
-        ar = event.get("arrival_rate", 0.0)
+        cr = event.get("bid_cancel_rate", 0.0) + event.get("ask_cancel_rate", 0.0)
+        ar = event.get("bid_arrival_rate", 0.0) + event.get("ask_arrival_rate", 0.0)
 
         # Compute features
         f = engine.lob_features(sym, trade_imbalance=ti, cancel_rate=cr, arrival_rate=ar)
@@ -762,9 +782,13 @@ JSONObject f = new JSONObject(engine.lobFeatures(sym, ti, cr, ar));
 
 **C.**
 ```c
-of_lob_feature_snapshot_t lob;
-of_compute_lob_features(engine, &sym, trade_imb, cancel_rate, arrival_rate, &lob);
-// lob.spread_bps, lob.depth_imbalance, ... 16 fields
+char json[1024];
+uint32_t len = sizeof json;
+int32_t rc = of_compute_lob_features(
+    engine, &sym, trade_imb, cancel_rate, arrival_rate, json, &len);
+if (rc == OF_OK) {
+    /* Parse JSON fields: spread_bps, depth_imbalance, microprice, ... */
+}
 ```
 
 ---
@@ -821,11 +845,141 @@ engine.set_analytics_config(cfg);
 **C.**
 ```c
 of_analytics_config_t cfg = {
-    .kyle_lambda_max_len = 200,
-    .vol_signature_max_len = 500,
+    .agent_small_trade_threshold = 100.0,
     .institutional_trade_threshold = 10000,
+    .cancel_arrival_window_ns = 1000000000ULL,
+    .vpin_volume_bucket = 5000,
+    .vpin_max_buckets = 50,
+    .kyle_lambda_max_len = 200,
+    .cvd_max_len = 50,
+    .vol_estimator_max_len = 100,
+    .noise_max_len = 100,
+    .hasbrouck_max_len = 100,
+    .almgren_chriss_max_len = 100,
+    .acd_max_len = 100,
+    .vol_signature_max_len = 500,
+    .agent_max_len = 100,
+    .agent_min_samples = 5,
+    .institutional_max_len = 100,
+    .resiliency_max_len = 1024,
+    .spread_decomp_max_len = 100,
+    .regime_max_len = 100,
+    .event_tracker_max_len = 65536,
+    .spread_tracker_max_len = 1024,
+    .default_max_len = 100,
 };
 of_engine_set_analytics_config(engine, &cfg);
+```
+
+C callers should either pass `NULL` to reset defaults or populate every field
+explicitly. A partially-zeroed `of_analytics_config_t` intentionally disables
+the corresponding rolling windows.
+
+---
+
+## 30. Tickbar OHLCV Momentum Confirmation
+
+**Hypothesis.** Fixed-interval OHLCV bars provide a stable decision cadence
+above raw prints. Confirm orderflow entries only when completed bars agree
+with the trade-driven analytics direction.
+
+**Analytics used.** `CompletedBar`, `AnalyticsAccumulator::with_tickbar`,
+`of_engine_set_tickbar_interval`, `of_get_bar_series`, `bar_series`.
+
+Tickbar aggregation is optional and requires the native library to be built
+with the `tickbar` feature. Configure the interval before the first trade for
+the symbol, because existing per-symbol accumulators are intentionally not
+retrofitted.
+
+**Rust.**
+```rust
+use of_core::{AnalyticsAccumulator, Side, SymbolId, TradePrint};
+
+let mut acc = AnalyticsAccumulator::with_tickbar(1_000_000_000); // 1s bars
+let symbol = SymbolId { venue: "CME".into(), symbol: "ESM6".into() };
+
+for (i, price) in [500_000, 500_025, 500_050].into_iter().enumerate() {
+    acc.on_trade(&TradePrint {
+        symbol: symbol.clone(),
+        price,
+        size: 10,
+        aggressor_side: Side::Ask,
+        sequence: i as u64 + 1,
+        ts_exchange_ns: i as u64 * 1_000_000_000,
+        ts_recv_ns: i as u64 * 1_000_000_000 + 100,
+    });
+}
+
+if let Some(bars) = acc.bar_series() {
+    let latest = bars.last().unwrap();
+    if latest.close > latest.open && latest.volume > 0.0 {
+        println!("Completed bullish tickbar confirms long bias");
+    }
+}
+```
+
+**Python.**
+```python
+from orderflow import Engine, EngineConfig, Symbol
+
+sym = Symbol("CME", "ESM6", 10)
+
+with Engine(EngineConfig()) as engine:
+    engine.start()
+    engine.set_tickbar_interval(1_000_000_000)  # 1s bars; call before first trade
+    engine.subscribe(sym)
+
+    for _ in range(10):
+        engine.poll_once()
+
+    bars = engine.bar_series(sym)
+    if bars:
+        last = bars[-1]
+        if last["close"] > last["open"] and last["volume"] > 0:
+            print("Bullish completed bar confirms long bias")
+```
+
+**Java.**
+```java
+try (OrderflowEngine engine = new OrderflowEngine()) {
+    Symbol sym = new Symbol("CME", "ESM6", (short) 10);
+    engine.start();
+    engine.setTickbarInterval(1_000_000_000L);
+    engine.subscribe(sym, StreamKind.ANALYTICS);
+    engine.pollOnce(DataQualityFlags.NONE);
+
+    JSONArray bars = new JSONArray(engine.barSeries(sym));
+    if (bars.length() > 0) {
+        JSONObject last = bars.getJSONObject(bars.length() - 1);
+        if (last.getDouble("close") > last.getDouble("open")) {
+            System.out.println("Bullish tickbar confirmation");
+        }
+    }
+}
+```
+
+**C.**
+```c
+of_engine_set_tickbar_interval(engine, 1000000000LL);
+/* Subscribe or ingest trades after setting the interval. */
+
+char json[4096];
+uint32_t len = sizeof json;
+int32_t rc = of_get_bar_series(engine, &sym, json, &len);
+if (rc == OF_OK) {
+    /* Parse JSON array of bars:
+       [{"timestamp_ns":...,"open":...,"high":...,"low":...,
+         "close":...,"volume":...,"tick_count":...,"vwap":...}] */
+}
+```
+
+**Strategy rule.**
+```text
+IF latest_completed_bar.close > latest_completed_bar.open
+   AND latest_completed_bar.volume > rolling_bar_volume_mean
+   AND cumulative_delta > 0
+THEN allow long continuation entries
+ELSE block momentum entries until the next completed bar
 ```
 
 ---
@@ -869,35 +1023,34 @@ def strategy_loop(engine, sym):
         return {"action": "HOLD", "reason": f"regime_{r_['regime']}"}
 
     # ── 2. Noise gate ──
-    if n_.get("signal_noise_ratio", 0) < 0.5:
+    if n_.get("signal_to_noise", 0) < 0.5:
         return {"action": "HOLD", "reason": "noise_dominated"}
 
     # ── 3. VPIN toxicity gate (from pattern detector's regime context) ──
     # (already reflected in regime_detector via vpin_z)
 
     # ── 4. CVD divergence check ──
-    if cvd_.get("diverging"):
+    if cvd_.get("divergence_detected"):
         direction = "SHORT" if cvd_["delta_ratio"] < 0 else "LONG"
         return {"action": "ENTER", "direction": direction,
                 "reason": "cvd_divergence", "confidence": 0.7}
 
     # ── 5. Absorption + stacked imbalance (footprint combo) ──
-    pct = p_.get("pct", {})
-    if pct.get("footprint_absorption") and pct.get("footprint_stacked_imbalance"):
+    if p_.get("absorption_detected") and p_.get("stacked_imbalance_detected"):
         return {"action": "ENTER", "direction": "LONG",
                 "reason": "absorption_breakout", "confidence": 0.8}
 
     # ── 6. Hidden accumulation / distribution ──
-    if pct.get("delta_hidden_accumulation"):
+    if p_.get("hidden_accumulation"):
         return {"action": "ENTER", "direction": "LONG",
                 "reason": "hidden_accumulation", "confidence": 0.6}
-    if pct.get("delta_hidden_distribution"):
+    if p_.get("hidden_distribution"):
         return {"action": "ENTER", "direction": "SHORT",
                 "reason": "hidden_distribution", "confidence": 0.6}
 
     # ── 7. High-energy breakout ──
     if k_["energy_change"] > 0.5 and k_["kinetic_energy"] > 1000:
-        return {"action": "ENTER", "direction": "LONG" if k_["orderflow_momentum"] > 0 else "SHORT",
+        return {"action": "ENTER", "direction": "LONG" if k_["order_flow_momentum"] > 0 else "SHORT",
                 "reason": "kinetic_breakout", "confidence": 0.65}
 
     # ── 8. HFT reflexivity fade ──
@@ -926,10 +1079,10 @@ if __name__ == "__main__":
         engine.set_analytics_config(cfg)
         engine.start()
         sym = Symbol("CME", "ESM6", 10)
-        engine.subscribe(sym, 10)
+        engine.subscribe(sym)
 
         for _ in range(100):
-            engine.poll()
+            engine.poll_once()
             decision = strategy_loop(engine, sym)
             if decision and decision["action"] != "HOLD":
                 print(f"[{decision['reason']}] {decision['action']} "

@@ -10,7 +10,7 @@ basis, dark pool siphon detection, and machine-learning-ready LOB features.
 
 Start here:
 
-- **[Strategy Cookbook](./docs/handbook/08-strategy-cookbook.md)** — 29
+- **[Strategy Cookbook](./docs/handbook/08-strategy-cookbook.md)** — 30
   exhaustive strategy examples covering every analytics concept across all
   four API layers (Rust, C, Python, Java), plus a full multi-concept live
   trading loop, an API compatibility map, and the `AnalyticsConfig` tuning
@@ -39,7 +39,7 @@ and queryable through the same buffer-negotiation C ABI pattern.
 
 ```bash
 cargo build --all-features
-cargo test --all-features     # 148 tests, zero warnings
+cargo test --all-features
 ```
 
 Build C ABI for bindings, then test FFI exports:
@@ -53,12 +53,12 @@ tools/check_ffi_exports.sh
 
 ### Python
 ```python
-from orderflow import Engine, Symbol
+from orderflow import Engine, EngineConfig, Symbol
 
-with Engine() as engine:
+with Engine(EngineConfig()) as engine:
     engine.start()
     engine.subscribe(Symbol("CME", "ESM6", 10))
-    engine.poll()
+    engine.poll_once()
 
     # Read any of the 29 analytics
     print(engine.analytics_snapshot(Symbol("CME", "ESM6", 10)))
@@ -71,7 +71,7 @@ with Engine() as engine:
 try (OrderflowEngine engine = new OrderflowEngine()) {
     engine.start();
     Symbol sym = new Symbol("CME", "ESM6", (short) 10);
-    engine.subscribe(sym, 10);
+    engine.subscribe(sym, StreamKind.ANALYTICS);
 
     System.out.println(engine.analyticsSnapshot(sym));
     System.out.println(engine.volatilitySnapshot(sym));
