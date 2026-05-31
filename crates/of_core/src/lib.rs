@@ -1252,6 +1252,7 @@ impl Default for KyleLambdaSnapshot {
 }
 
 impl KyleLambdaTracker {
+    /// Creates a tracker that retains up to `window` samples.
     pub fn new(window: usize) -> Self {
         Self {
             samples: Vec::with_capacity(window),
@@ -1330,6 +1331,7 @@ impl KyleLambdaTracker {
         }
     }
 
+    /// Clears all recorded samples.
     pub fn reset(&mut self) {
         self.samples.clear();
     }
@@ -1373,6 +1375,7 @@ impl Default for AmihudSnapshot {
 }
 
 impl AmihudTracker {
+    /// Creates a tracker with a rolling `window` of bars.
     pub fn new(window: usize) -> Self {
         Self {
             bars: Vec::with_capacity(window),
@@ -1398,6 +1401,7 @@ impl AmihudTracker {
         );
     }
 
+    /// Returns the current Amihud illiquidity snapshot.
     pub fn snapshot(&self) -> AmihudSnapshot {
         let n = self.bars.len() as f64;
         if n == 0.0 {
@@ -1426,6 +1430,7 @@ impl AmihudTracker {
         }
     }
 
+    /// Clears all recorded bars.
     pub fn reset(&mut self) {
         self.bars.clear();
     }
@@ -1467,6 +1472,7 @@ impl Default for CvdEnhancementSnapshot {
 }
 
 impl CvdEnhancements {
+    /// Creates a CVD enhancement tracker with the given rolling `window`.
     pub fn new(window: usize) -> Self {
         Self {
             delta_window: Vec::with_capacity(window),
@@ -1491,6 +1497,7 @@ impl CvdEnhancements {
         self.price_window.push(price);
     }
 
+    /// Returns current CVD enhancement metrics.
     pub fn snapshot(&self) -> CvdEnhancementSnapshot {
         if self.delta_window.is_empty() {
             return CvdEnhancementSnapshot::default();
@@ -1536,6 +1543,7 @@ impl CvdEnhancements {
         }
     }
 
+    /// Clears all rolling CVD, volume, and price samples.
     pub fn reset(&mut self) {
         self.delta_window.clear();
         self.volume_window.clear();
@@ -1603,6 +1611,7 @@ pub struct PatternSnapshot {
     pub vwap_per_bin_json: [u8; 512],
     /// Composite profile: multi-session merged HVN/LVN count.
     pub composite_hvn: u32,
+    /// Composite profile: multi-session merged LVN count.
     pub composite_lvn: u32,
 }
 
@@ -1706,6 +1715,7 @@ impl Default for PatternDetector {
 }
 
 impl PatternDetector {
+    /// Creates an empty pattern detector.
     pub fn new() -> Self {
         Self {
             bid_level_sizes: HashMap::new(),
@@ -2323,6 +2333,7 @@ impl PatternDetector {
         snap
     }
 
+    /// Clears all detector state and rolling pattern history.
     pub fn reset(&mut self) {
         self.bid_level_sizes.clear();
         self.ask_level_sizes.clear();
@@ -2749,9 +2760,13 @@ impl AnalyticsAccumulator {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VolatilitySnapshot {
+    /// Close-to-close realised volatility.
     pub classic_rv: f64,
+    /// Parkinson high-low volatility estimate.
     pub parkinson: f64,
+    /// Garman-Klass OHLC volatility estimate.
     pub garman_klass: f64,
+    /// Yang-Zhang OHLC volatility estimate.
     pub yang_zhang: f64,
 }
 
@@ -2774,15 +2789,18 @@ pub struct VolatilityEstimator {
 }
 
 impl VolatilityEstimator {
+    /// Creates an estimator retaining up to `max_bars` OHLC bars.
     pub fn new(max_bars: usize) -> Self {
         Self {
             bars: Vec::with_capacity(max_bars),
             max_bars,
         }
     }
+    /// Records one OHLC bar for volatility estimation.
     pub fn on_bar(&mut self, open: f64, high: f64, low: f64, close: f64) {
         bounded_push(&mut self.bars, self.max_bars, (open, high, low, close));
     }
+    /// Returns current realised-volatility estimates.
     pub fn snapshot(&self) -> VolatilitySnapshot {
         let n = self.bars.len() as f64;
         if n < 2.0 {
@@ -2821,7 +2839,9 @@ impl VolatilityEstimator {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NoiseSnapshot {
+    /// Estimated microstructure noise variance.
     pub noise_variance: f64,
+    /// Inverse-noise signal-to-noise proxy.
     pub signal_to_noise: f64,
 }
 
@@ -2843,6 +2863,7 @@ pub struct MicrostructureNoise {
 }
 
 impl MicrostructureNoise {
+    /// Creates a noise estimator retaining up to `max_len` returns.
     pub fn new(max_len: usize) -> Self {
         Self {
             returns: Vec::with_capacity(max_len),
@@ -2850,6 +2871,7 @@ impl MicrostructureNoise {
             last_price: None,
         }
     }
+    /// Records a trade price for return/noise estimation.
     pub fn on_trade(&mut self, price: i64, _size: i64) {
         let prev = self.last_price.replace(price).unwrap_or(price);
         if prev <= 0 || price <= 0 {
@@ -2858,6 +2880,7 @@ impl MicrostructureNoise {
         let r = (price as f64 / prev as f64).ln();
         bounded_push(&mut self.returns, self.max_len, r);
     }
+    /// Returns the current microstructure-noise snapshot.
     pub fn snapshot(&self) -> NoiseSnapshot {
         let n = self.returns.len();
         if n < 4 {
@@ -2891,8 +2914,11 @@ impl MicrostructureNoise {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HasbrouckSnapshot {
+    /// Permanent price-impact component estimate.
     pub permanent_impact: f64,
+    /// Temporary price-impact component estimate.
     pub temporary_impact: f64,
+    /// Permanent-impact share of total impact.
     pub information_share: f64,
 }
 
@@ -2915,6 +2941,7 @@ pub struct HasbrouckVAR {
 }
 
 impl HasbrouckVAR {
+    /// Creates a VAR estimator retaining up to `max_len` samples.
     pub fn new(max_len: usize) -> Self {
         Self {
             returns: Vec::with_capacity(max_len),
@@ -2922,6 +2949,7 @@ impl HasbrouckVAR {
             max_len,
         }
     }
+    /// Records one return and signed-volume sample.
     pub fn on_trade(&mut self, ret: f64, signed_vol: f64) {
         bounded_push_pair(
             &mut self.returns,
@@ -2931,6 +2959,7 @@ impl HasbrouckVAR {
             signed_vol,
         );
     }
+    /// Returns current Hasbrouck impact estimates.
     pub fn snapshot(&self) -> HasbrouckSnapshot {
         let n = self.returns.len();
         if n < 10 {
@@ -2983,7 +3012,9 @@ impl HasbrouckVAR {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AlmgrenChrissSnapshot {
+    /// Permanent impact coefficient estimate.
     pub permanent_impact_coef: f64,
+    /// Temporary impact coefficient estimate.
     pub temporary_impact_coef: f64,
 }
 
@@ -3005,6 +3036,7 @@ pub struct AlmgrenChriss {
 }
 
 impl AlmgrenChriss {
+    /// Creates an impact estimator retaining up to `max_len` samples.
     pub fn new(max_len: usize) -> Self {
         Self {
             price_changes: Vec::with_capacity(max_len),
@@ -3012,6 +3044,7 @@ impl AlmgrenChriss {
             max_len,
         }
     }
+    /// Records one price-change and signed-volume sample.
     pub fn on_trade(&mut self, price_change: f64, signed_vol: f64) {
         bounded_push_pair(
             &mut self.price_changes,
@@ -3021,6 +3054,7 @@ impl AlmgrenChriss {
             signed_vol,
         );
     }
+    /// Returns current Almgren-Chriss impact estimates.
     pub fn snapshot(&self) -> AlmgrenChrissSnapshot {
         let n = self.price_changes.len();
         if n < 10 {
@@ -3049,9 +3083,13 @@ impl AlmgrenChriss {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpreadDecompositionSnapshot {
+    /// Adverse-selection component estimate.
     pub adverse_selection: f64,
+    /// Order-processing-cost component estimate.
     pub order_processing_cost: f64,
+    /// Inventory component estimate.
     pub inventory_component: f64,
+    /// Probability-of-informed-trading style proxy.
     pub pin: f64,
 }
 
@@ -3076,6 +3114,7 @@ pub struct SpreadDecomposition {
 }
 
 impl SpreadDecomposition {
+    /// Creates a spread decomposition tracker retaining up to `max_len` samples.
     pub fn new(max_len: usize) -> Self {
         Self {
             effective_spreads: Vec::with_capacity(max_len),
@@ -3084,6 +3123,7 @@ impl SpreadDecomposition {
             max_len,
         }
     }
+    /// Records effective, realised, and quoted spread observations.
     pub fn on_spread(&mut self, effective: f64, realised: f64, quoted: f64) {
         if self.max_len == 0 {
             return;
@@ -3097,6 +3137,7 @@ impl SpreadDecomposition {
         self.realised_spreads.push(realised);
         self.quoted_spreads.push(quoted);
     }
+    /// Returns current spread decomposition metrics.
     pub fn snapshot(&self) -> SpreadDecompositionSnapshot {
         let n = self.effective_spreads.len();
         if n == 0 {
@@ -3122,9 +3163,13 @@ impl SpreadDecomposition {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ACDSnapshot {
+    /// Mean observed trade duration in nanoseconds.
     pub mean_duration_ns: f64,
+    /// Trade-arrival intensity proxy.
     pub intensity: f64,
+    /// Estimated ACD alpha parameter.
     pub alpha: f64,
+    /// Estimated ACD beta parameter.
     pub beta: f64,
 }
 
@@ -3147,18 +3192,21 @@ pub struct ACDModel {
 }
 
 impl ACDModel {
+    /// Creates an ACD estimator retaining up to `max_len` durations.
     pub fn new(max_len: usize) -> Self {
         Self {
             durations: Vec::with_capacity(max_len),
             max_len,
         }
     }
+    /// Records a trade timestamp and previous trade timestamp.
     pub fn on_trade(&mut self, ts_ns: u64, prev_ts_ns: u64) {
         if prev_ts_ns > 0 {
             let d = (ts_ns.saturating_sub(prev_ts_ns)) as f64;
             bounded_push(&mut self.durations, self.max_len, d);
         }
     }
+    /// Returns current ACD model estimates.
     pub fn snapshot(&self) -> ACDSnapshot {
         let n = self.durations.len();
         if n < 5 {
@@ -3205,18 +3253,27 @@ impl ACDModel {
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Regime {
+    /// Normal trading regime.
     Normal = 0,
+    /// Stressed but not crash-like regime.
     Stressed = 1,
+    /// Flash-crash style spread and volatility shock.
     FlashCrash = 2,
+    /// Quiet low-spread and low-volatility regime.
     Quiet = 3,
 }
 
+/// Snapshot of market-regime classification metrics.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RegimeSnapshot {
+    /// Regime discriminant matching [`Regime`].
     pub regime: u32,
+    /// Spread z-score.
     pub spread_z: f64,
+    /// Volatility z-score.
     pub vol_z: f64,
+    /// VPIN z-score.
     pub vpin_z: f64,
 }
 
@@ -3241,6 +3298,7 @@ pub struct RegimeDetector {
 }
 
 impl RegimeDetector {
+    /// Creates a regime detector retaining up to `max_len` samples.
     pub fn new(max_len: usize) -> Self {
         Self {
             spreads: Vec::with_capacity(max_len),
@@ -3249,6 +3307,7 @@ impl RegimeDetector {
             max_len,
         }
     }
+    /// Records spread, volatility, and VPIN metrics.
     pub fn on_metrics(&mut self, spread: f64, vol: f64, vpin: f64) {
         if self.max_len == 0 {
             return;
@@ -3262,6 +3321,7 @@ impl RegimeDetector {
         self.vols.push(vol);
         self.vpins.push(vpin);
     }
+    /// Returns the current regime classification.
     pub fn snapshot(&self) -> RegimeSnapshot {
         let z = |vals: &[f64], current: f64| -> f64 {
             let n = vals.len();
@@ -3301,8 +3361,11 @@ impl RegimeDetector {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct KineticEnergySnapshot {
+    /// Sum of recent order-book kinetic-energy proxy values.
     pub kinetic_energy: f64,
+    /// Latest order-flow momentum proxy.
     pub order_flow_momentum: f64,
+    /// Change between the two most recent energy observations.
     pub energy_change: f64,
 }
 
@@ -3324,6 +3387,7 @@ pub struct KineticEnergyTracker {
 }
 
 impl KineticEnergyTracker {
+    /// Creates a kinetic-energy tracker retaining up to `max_len` observations.
     pub fn new(max_len: usize) -> Self {
         Self {
             prev_energies: Vec::with_capacity(max_len),
@@ -3340,6 +3404,7 @@ impl KineticEnergyTracker {
         let energy = 0.5 * velocity * velocity;
         bounded_push(&mut self.prev_energies, self.max_len, energy);
     }
+    /// Returns current kinetic-energy metrics.
     pub fn snapshot(&self) -> KineticEnergySnapshot {
         let n = self.prev_energies.len();
         if n < 2 {
@@ -3366,8 +3431,11 @@ impl KineticEnergyTracker {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DarkPoolSnapshot {
+    /// Dark-pool volume as a percentage of observed total volume.
     pub dark_volume_pct: f64,
+    /// Z-score of recent dark-pool volume.
     pub dark_zscore: f64,
+    /// Whether dark and lit flow appear divergent.
     pub dark_lit_divergence: bool,
 }
 
@@ -3390,6 +3458,7 @@ pub struct DarkPoolTracker {
 }
 
 impl DarkPoolTracker {
+    /// Creates a dark-pool tracker retaining up to `max_days` observations.
     pub fn new(max_days: usize) -> Self {
         Self {
             dark_volumes: Vec::with_capacity(max_days),
@@ -3397,6 +3466,7 @@ impl DarkPoolTracker {
             max_days,
         }
     }
+    /// Records daily dark and lit volume.
     pub fn on_day(&mut self, dark_vol: f64, lit_vol: f64) {
         bounded_push_pair(
             &mut self.dark_volumes,
@@ -3406,6 +3476,7 @@ impl DarkPoolTracker {
             lit_vol,
         );
     }
+    /// Returns current dark-pool analytics.
     pub fn snapshot(&self) -> DarkPoolSnapshot {
         let n = self.dark_volumes.len();
         if n == 0 {
@@ -3447,9 +3518,13 @@ impl DarkPoolTracker {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OptionsFlowSnapshot {
+    /// Whether a sweep has been observed in the rolling window.
     pub sweep_detected: bool,
+    /// Put volume divided by call volume.
     pub put_call_ratio: f64,
+    /// Absolute call-minus-put notional proxy.
     pub delta_notional: f64,
+    /// Simplified gamma-positioning proxy.
     pub gamma_positioning: f64,
 }
 
@@ -3479,12 +3554,14 @@ struct OptionsTradeSample {
 }
 
 impl OptionsFlowTracker {
+    /// Creates an options-flow tracker retaining up to `max_len` trades.
     pub fn new(max_len: usize) -> Self {
         Self {
             trades: Vec::with_capacity(max_len),
             max_len,
         }
     }
+    /// Records an options trade observation.
     pub fn on_trade(&mut self, is_call: bool, volume: f64, _premium: f64, is_sweep: bool) {
         bounded_push(
             &mut self.trades,
@@ -3496,6 +3573,7 @@ impl OptionsFlowTracker {
             },
         );
     }
+    /// Returns current options-flow metrics.
     pub fn snapshot(&self) -> OptionsFlowSnapshot {
         let put_vol: f64 = self
             .trades
@@ -3528,9 +3606,13 @@ impl OptionsFlowTracker {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FuturesSnapshot {
+    /// Front-to-deferred basis in basis points.
     pub basis_bps: f64,
+    /// Deferred minus front contract price.
     pub calendar_spread: f64,
+    /// Settlement-volume pressure relative to daily average volume.
     pub settlement_pressure: f64,
+    /// Contract roll progress estimate.
     pub roll_progress: f64,
 }
 
@@ -3553,7 +3635,9 @@ impl Default for FuturesSnapshot {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VolatilitySignaturePoint {
+    /// Lag used for the volatility estimate.
     pub lag: u32,
+    /// Realised variance at this lag.
     pub rv: f64,
 }
 
@@ -3561,8 +3645,11 @@ pub struct VolatilitySignaturePoint {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VolatilitySignatureSnapshot {
+    /// Fixed-size array of volatility-signature points.
     pub points: [VolatilitySignaturePoint; 10],
+    /// Number of valid entries in `points`.
     pub point_count: u32,
+    /// First lag where realised variance materially improves.
     pub optimal_lag: u32,
 }
 
@@ -3584,15 +3671,18 @@ pub struct VolatilitySignature {
 }
 
 impl VolatilitySignature {
+    /// Creates a volatility-signature tracker retaining up to `max_len` returns.
     pub fn new(max_len: usize) -> Self {
         Self {
             returns: Vec::with_capacity(max_len),
             max_len,
         }
     }
+    /// Records a return sample.
     pub fn on_return(&mut self, r: f64) {
         bounded_push(&mut self.returns, self.max_len, r);
     }
+    /// Returns the current volatility-signature snapshot.
     pub fn snapshot(&self) -> VolatilitySignatureSnapshot {
         let n = self.returns.len();
         let mut snap = VolatilitySignatureSnapshot::default();
@@ -3628,9 +3718,13 @@ impl VolatilitySignature {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AgentTypeSnapshot {
+    /// Intensity-based relative proportion proxy.
     pub irp: f64,
+    /// Informed-participation proxy.
     pub ipin: f64,
+    /// Volume-synchronised informed-participation proxy.
     pub ivpin: f64,
+    /// HFT reflexivity proxy based on cancel and arrival rates.
     pub hft_reflexivity: f64,
 }
 
@@ -3655,6 +3749,7 @@ pub struct AgentTypeDetector {
 }
 
 impl AgentTypeDetector {
+    /// Creates an agent-type detector retaining up to `max_len` observations.
     pub fn new(max_len: usize) -> Self {
         Self {
             trade_sizes_f: Vec::with_capacity(max_len),
@@ -3663,6 +3758,7 @@ impl AgentTypeDetector {
             max_len,
         }
     }
+    /// Records trade size and book-event rates for agent inference.
     pub fn on_event(&mut self, trade_size: i64, cancel_rate: f64, arrival_rate: f64) {
         let val = trade_size as f64;
         if self.max_len == 0 {
@@ -3677,6 +3773,7 @@ impl AgentTypeDetector {
         self.cancel_rates.push(cancel_rate);
         self.arrivals.push(arrival_rate);
     }
+    /// Returns current agent-type metrics.
     pub fn snapshot(&self) -> AgentTypeSnapshot {
         let n = self.trade_sizes_f.len();
         if n < 5 {
@@ -3705,21 +3802,37 @@ impl AgentTypeDetector {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LOBFeatureSnapshot {
+    /// Best-ask minus best-bid spread in basis points.
     pub spread_bps: f64,
+    /// Total bid-depth minus ask-depth divided by total depth.
     pub depth_imbalance: f64,
+    /// Size-weighted microprice estimate.
     pub microprice: f64,
+    /// Average depth slope across the top levels.
     pub depth_slope: f64,
+    /// Aggregate order-event intensity.
     pub order_intensity: f64,
+    /// Level-1 price-pressure feature.
     pub price_pressure_1: f64,
+    /// Top-5-level price-pressure feature.
     pub price_pressure_5: f64,
+    /// Top-10-level price-pressure feature.
     pub price_pressure_10: f64,
+    /// Level-1 bid/ask volume ratio.
     pub bid_ask_ratio_1: f64,
+    /// Top-5 bid/ask volume ratio.
     pub bid_ask_ratio_5: f64,
+    /// Top-10 bid/ask volume ratio.
     pub bid_ask_ratio_10: f64,
+    /// Spread adjusted by absolute depth imbalance.
     pub weighted_spread: f64,
+    /// Top-of-book volume concentration.
     pub volume_concentration: f64,
+    /// Cancel-rate input feature.
     pub cancel_intensity: f64,
+    /// Arrival-rate input feature.
     pub arrival_intensity: f64,
+    /// Trade-flow imbalance input feature.
     pub trade_flow_imbalance: f64,
 }
 
@@ -3826,10 +3939,13 @@ pub fn compute_lob_features(
 // T5.2: Dark-Lit Correlation
 // ============================================================================
 
+/// Snapshot of dark-lit imbalance correlation.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DarkLitCorrelationSnapshot {
+    /// Rolling correlation between dark and lit imbalances.
     pub correlation: f64,
+    /// Whether negative dark-lit correlation suggests liquidity siphoning.
     pub siphon_active: bool,
 }
 
@@ -3842,6 +3958,7 @@ impl Default for DarkLitCorrelationSnapshot {
     }
 }
 
+/// Tracks rolling dark-lit imbalance correlation.
 #[derive(Debug, Clone)]
 pub struct DarkLitCorrelator {
     dark_imbalances: Vec<f64>,
@@ -3850,6 +3967,7 @@ pub struct DarkLitCorrelator {
 }
 
 impl DarkLitCorrelator {
+    /// Creates a correlator retaining up to `max_len` imbalance pairs.
     pub fn new(max_len: usize) -> Self {
         Self {
             dark_imbalances: Vec::with_capacity(max_len),
@@ -3857,6 +3975,7 @@ impl DarkLitCorrelator {
             max_len,
         }
     }
+    /// Records one dark and lit imbalance pair.
     pub fn on_imbalance(&mut self, dark_imb: f64, lit_imb: f64) {
         bounded_push_pair(
             &mut self.dark_imbalances,
@@ -3866,6 +3985,7 @@ impl DarkLitCorrelator {
             lit_imb,
         );
     }
+    /// Returns current dark-lit correlation metrics.
     pub fn snapshot(&self) -> DarkLitCorrelationSnapshot {
         let n = self.dark_imbalances.len();
         if n < 5 {
@@ -3896,10 +4016,13 @@ impl DarkLitCorrelator {
 // T5.3: Institutional Flow Classification
 // ============================================================================
 
+/// Snapshot of institutional-flow classification.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InstitutionalFlowSnapshot {
+    /// Ratio of large buy volume to total large-trade volume.
     pub institutional_buy_ratio: f64,
+    /// Concentration of large-flow directionality.
     pub crowding_score: f64,
 }
 
@@ -3912,6 +4035,7 @@ impl Default for InstitutionalFlowSnapshot {
     }
 }
 
+/// Tracks large trades for institutional-flow classification.
 #[derive(Debug, Clone)]
 pub struct InstitutionalFlowTracker {
     large_trades: Vec<(i64, i64)>, // (size, side: +1 buy, -1 sell)
@@ -3920,6 +4044,7 @@ pub struct InstitutionalFlowTracker {
 }
 
 impl InstitutionalFlowTracker {
+    /// Creates a tracker retaining up to `max_len` large trades.
     pub fn new(max_len: usize) -> Self {
         Self {
             large_trades: Vec::with_capacity(max_len),
@@ -3927,6 +4052,7 @@ impl InstitutionalFlowTracker {
             max_len,
         }
     }
+    /// Records one large trade and its inferred side.
     pub fn on_trade(&mut self, size: i64, is_buy: bool) {
         if self.max_len == 0 {
             return;
@@ -3938,6 +4064,7 @@ impl InstitutionalFlowTracker {
         self.large_trades.push((size, if is_buy { 1 } else { -1 }));
         self.total_volume += size;
     }
+    /// Returns current institutional-flow metrics.
     pub fn snapshot(&self) -> InstitutionalFlowSnapshot {
         let n = self.large_trades.len();
         if n == 0 {
@@ -3973,11 +4100,15 @@ impl InstitutionalFlowTracker {
 // T6.2: Open Interest Analysis
 // ============================================================================
 
+/// Snapshot of open-interest analysis.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OIAnalysisSnapshot {
+    /// Whether price and open interest are diverging.
     pub oi_divergence: bool,
+    /// Average open-interest build rate.
     pub oi_build_rate: f64,
+    /// Distance to max-pain proxy in basis points.
     pub max_pain_distance_bps: f64,
 }
 
@@ -3991,6 +4122,7 @@ impl Default for OIAnalysisSnapshot {
     }
 }
 
+/// Tracks open interest and price for divergence analysis.
 #[derive(Debug, Clone)]
 pub struct OIAnalyzer {
     oi_values: Vec<f64>,
@@ -3999,6 +4131,7 @@ pub struct OIAnalyzer {
 }
 
 impl OIAnalyzer {
+    /// Creates an analyzer retaining up to `max_len` observations.
     pub fn new(max_len: usize) -> Self {
         Self {
             oi_values: Vec::with_capacity(max_len),
@@ -4006,6 +4139,7 @@ impl OIAnalyzer {
             max_len,
         }
     }
+    /// Records one open-interest and price observation.
     pub fn on_update(&mut self, oi: f64, price: f64) {
         if self.max_len == 0 {
             return;
@@ -4017,6 +4151,7 @@ impl OIAnalyzer {
         self.oi_values.push(oi);
         self.price_values.push(price);
     }
+    /// Returns current open-interest analysis metrics.
     pub fn snapshot(&self) -> OIAnalysisSnapshot {
         let n = self.oi_values.len();
         if n < 3 {
@@ -4043,9 +4178,11 @@ impl OIAnalyzer {
 // T7.2–7.4: Market Specializations
 // ============================================================================
 
+/// Snapshot of FX-specific flow analytics.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FXSnapshot {
+    /// Cross-currency correlation proxy.
     pub cross_currency_correlation: f64,
 }
 
@@ -4057,10 +4194,13 @@ impl Default for FXSnapshot {
     }
 }
 
+/// Snapshot of fixed-income flow analytics.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FixedIncomeSnapshot {
+    /// Yield-curve positioning proxy.
     pub yield_curve_positioning: f64,
+    /// Duration-weighted flow proxy.
     pub duration_weighted_flow: f64,
 }
 
@@ -4073,11 +4213,15 @@ impl Default for FixedIncomeSnapshot {
     }
 }
 
+/// Snapshot of crypto-market flow analytics.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CryptoSnapshot {
+    /// Exchange inflow/outflow balance proxy.
     pub exchange_flow_balance: f64,
+    /// Funding-rate basis proxy.
     pub funding_rate_basis: f64,
+    /// Wash-trading score proxy.
     pub wash_trading_score: f64,
 }
 
@@ -4095,13 +4239,19 @@ impl Default for CryptoSnapshot {
 // T8.2: Real-Time Alerts
 // ============================================================================
 
+/// Configurable real-time alert switches.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct AlertRule {
+    /// Enables absorption alerts.
     pub absorption_alert: bool,
+    /// Enables delta-divergence alerts.
     pub delta_divergence_alert: bool,
+    /// Enables stacked-imbalance alerts.
     pub stacked_imbalance_alert: bool,
+    /// Enables iceberg alerts.
     pub iceberg_alert: bool,
+    /// Enables VPIN toxicity alerts.
     pub vpin_toxic_alert: bool,
 }
 
@@ -4111,7 +4261,9 @@ pub struct AlertRule {
 
 /// Trait for state serialization.
 pub trait StateCheckpoint: Send + 'static {
+    /// Serializes current state into an opaque checkpoint payload.
     fn checkpoint(&self) -> Result<Vec<u8>, String>;
+    /// Restores state from an opaque checkpoint payload.
     fn restore(&mut self, data: &[u8]) -> Result<(), String>;
 }
 
@@ -4126,6 +4278,7 @@ pub struct FuturesTracker {
 }
 
 impl FuturesTracker {
+    /// Creates a futures tracker retaining up to `max_len` ticks.
     pub fn new(max_len: usize) -> Self {
         Self {
             front_prices: Vec::with_capacity(max_len),
@@ -4135,6 +4288,7 @@ impl FuturesTracker {
             max_len,
         }
     }
+    /// Records front/deferred prices and settlement volume context.
     pub fn on_tick(
         &mut self,
         front_price: f64,
@@ -4156,6 +4310,7 @@ impl FuturesTracker {
         self.settle_volumes.push(volume);
         self.daily_avg_volumes.push(daily_avg_vol);
     }
+    /// Returns current futures roll and basis metrics.
     pub fn snapshot(&self) -> FuturesSnapshot {
         let n = self.front_prices.len();
         if n == 0 {
@@ -4183,7 +4338,7 @@ impl FuturesTracker {
 
 /// Configurable analytics thresholds and buffer sizes.
 /// All fields have sensible defaults suitable for typical US equity/crypto markets.
-/// Pass an instance to [`Engine::set_analytics_config`] or the C ABI setter to override.
+/// Pass an instance to the runtime engine config setter or the C ABI setter to override.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AnalyticsConfig {

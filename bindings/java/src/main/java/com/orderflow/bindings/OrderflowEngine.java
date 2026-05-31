@@ -647,27 +647,45 @@ public final class OrderflowEngine implements AutoCloseable {
     /** Returns CVD enhancement snapshot JSON. */
     public String cvdEnhancementSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.CVD_ENHANCEMENT); }
 
+    /** Returns pattern detection snapshot JSON. */
     public String patternSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.PATTERN); }
 
+    /** Returns realised volatility estimator snapshot JSON. */
     public String volatilitySnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.VOLATILITY); }
+    /** Returns microstructure noise snapshot JSON. */
     public String noiseSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.NOISE); }
+    /** Returns Hasbrouck impact snapshot JSON. */
     public String hasbrouckSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.HASBROUCK); }
+    /** Returns Almgren-Chriss impact snapshot JSON. */
     public String almgrenChrissSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.ALMGREN_CHRISS); }
+    /** Returns spread decomposition snapshot JSON. */
     public String spreadDecompSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.SPREAD_DECOMP); }
+    /** Returns ACD duration-model snapshot JSON. */
     public String acdSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.ACD); }
+    /** Returns regime detection snapshot JSON. */
     public String regimeSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.REGIME); }
 
+    /** Returns order-book kinetic-energy snapshot JSON. */
     public String kineticEnergySnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.KINETIC_ENERGY); }
+    /** Returns dark-pool analytics snapshot JSON. */
     public String darkPoolSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.DARK_POOL); }
+    /** Returns options-flow analytics snapshot JSON. */
     public String optionsFlowSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.OPTIONS_FLOW); }
+    /** Returns futures basis and roll snapshot JSON. */
     public String futuresSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.FUTURES); }
 
+    /** Returns volatility-signature snapshot JSON. */
     public String volSignatureSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.VOL_SIGNATURE); }
+    /** Returns agent-type identification snapshot JSON. */
     public String agentTypeSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.AGENT_TYPE); }
+    /** Returns dark-lit correlation snapshot JSON. */
     public String darkLitCorrelationSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.DARK_LIT_CORRELATION); }
+    /** Returns institutional-flow snapshot JSON. */
     public String institutionalFlowSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.INSTITUTIONAL_FLOW); }
+    /** Returns open-interest analysis snapshot JSON. */
     public String oiAnalysisSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.OI_ANALYSIS); }
 
+    /** Computes LOB feature snapshot JSON from book state and supplied flow metrics. */
     public String lobFeatures(Symbol symbol, double tradeImbalance, double cancelRate, double arrivalRate) {
         requireEngine();
         OfSymbol sym = toNativeSymbol(symbol);
@@ -680,6 +698,7 @@ public final class OrderflowEngine implements AutoCloseable {
         throw new OrderflowArgException("lobFeatures failed");
     }
 
+    /** Applies a native analytics configuration pointer, or null to reset defaults. */
     public void setAnalyticsConfig(Pointer config) {
         requireEngine();
         int rc = nativeLib.of_engine_set_analytics_config(engine, config);

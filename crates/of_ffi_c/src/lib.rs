@@ -1044,6 +1044,7 @@ pub extern "C" fn of_get_pattern_snapshot(
 
 macro_rules! snapshot_c_abi {
     ($name:ident, $format:ident, $method:ident) => {
+        /// Writes an analytics snapshot JSON payload into the caller-provided buffer.
         #[no_mangle]
         pub extern "C" fn $name(
             engine: *mut of_engine,
@@ -1312,6 +1313,16 @@ pub extern "C" fn of_engine_set_tickbar_interval(engine: *mut of_engine, interva
     of_error_t::OF_OK as i32
 }
 
+/// Reports unsupported tickbar configuration when the native library is built without `tickbar`.
+#[cfg(not(feature = "tickbar"))]
+#[no_mangle]
+pub extern "C" fn of_engine_set_tickbar_interval(engine: *mut of_engine, _interval_ns: i64) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    of_error_t::OF_ERR_STATE as i32
+}
+
 /// Writes completed bar series JSON array into caller buffer.
 ///
 /// Requires the `tickbar` feature to be enabled at build time.
@@ -1343,6 +1354,21 @@ pub extern "C" fn of_get_bar_series(
         Ok(_) => of_error_t::OF_OK as i32,
         Err(e) => e as i32,
     }
+}
+
+/// Reports unsupported tickbar bar retrieval when the native library is built without `tickbar`.
+#[cfg(not(feature = "tickbar"))]
+#[no_mangle]
+pub extern "C" fn of_get_bar_series(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() || symbol.is_null() || out_buf.is_null() || inout_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    of_error_t::OF_ERR_STATE as i32
 }
 
 /// Writes current signal snapshot JSON into caller buffer.
@@ -1451,7 +1477,7 @@ pub extern "C" fn of_engine_poll_once(engine: *mut of_engine, quality_flags: u32
 }
 
 /// Override analytics thresholds and buffer sizes at runtime.
-/// Pass a pointer to a populated [`OfAnalyticsConfig`]. Passing NULL resets to defaults.
+/// Pass a pointer to a populated analytics config. Passing NULL resets to defaults.
 #[no_mangle]
 pub extern "C" fn of_engine_set_analytics_config(
     engine: *mut of_engine,

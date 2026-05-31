@@ -65,6 +65,7 @@ class OfAnalyticsConfig(ctypes.Structure):
 
     @staticmethod
     def defaults() -> "OfAnalyticsConfig":
+        """Return native analytics configuration defaults."""
         return OfAnalyticsConfig(
             agent_small_trade_threshold=100.0,
             institutional_trade_threshold=5000,

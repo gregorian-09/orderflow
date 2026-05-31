@@ -465,36 +465,47 @@ class Engine:
         return self._snapshot_call(self._ffi.lib.of_get_pattern_snapshot, symbol)
 
     def volatility_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns realised volatility estimator snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_volatility_snapshot, symbol)
 
     def noise_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns microstructure noise snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_noise_snapshot, symbol)
 
     def hasbrouck_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns Hasbrouck impact snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_hasbrouck_snapshot, symbol)
 
     def almgren_chriss_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns Almgren-Chriss impact snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_almgren_chriss_snapshot, symbol)
 
     def spread_decomp_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns spread decomposition snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_spread_decomp_snapshot, symbol)
 
     def acd_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns ACD duration-model snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_acd_snapshot, symbol)
 
     def regime_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns regime detection snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_regime_snapshot, symbol)
 
     def kinetic_energy_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns order-book kinetic-energy snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_kinetic_energy_snapshot, symbol)
 
     def dark_pool_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns dark-pool analytics snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_dark_pool_snapshot, symbol)
 
     def options_flow_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns options-flow analytics snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_options_flow_snapshot, symbol)
 
     def futures_snapshot(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns futures basis and roll snapshot JSON decoded as dict."""
         return self._snapshot_call(self._ffi.lib.of_get_futures_snapshot, symbol)
 
     def vol_signature_snapshot(self, symbol: Symbol) -> Dict[str, Any]:

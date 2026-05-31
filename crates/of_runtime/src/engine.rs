@@ -1114,6 +1114,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             .unwrap_or_default()
     }
 
+    /// Returns kinetic-energy snapshot for symbol.
     pub fn kinetic_energy_snapshot(&self, symbol: &SymbolId) -> KineticEnergySnapshot {
         self.kinetic_trackers
             .get(symbol)
@@ -1121,6 +1122,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             .unwrap_or_default()
     }
 
+    /// Returns dark-pool analytics snapshot for symbol.
     pub fn dark_pool_snapshot(&self, symbol: &SymbolId) -> DarkPoolSnapshot {
         self.dark_pool_trackers
             .get(symbol)
@@ -1128,6 +1130,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             .unwrap_or_default()
     }
 
+    /// Returns options-flow analytics snapshot for symbol.
     pub fn options_flow_snapshot(&self, symbol: &SymbolId) -> OptionsFlowSnapshot {
         self.options_trackers
             .get(symbol)
@@ -1135,6 +1138,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             .unwrap_or_default()
     }
 
+    /// Returns futures basis and roll snapshot for symbol.
     pub fn futures_snapshot(&self, symbol: &SymbolId) -> FuturesSnapshot {
         self.futures_trackers
             .get(symbol)
