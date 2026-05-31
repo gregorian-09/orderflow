@@ -36,6 +36,8 @@ It is written for three audiences:
    Build/test/extend instructions and implementation notes.
 7. [References](./07-references.md)  
    Standards, platform docs, market microstructure references, and risk disclosures.
+8. [Strategy Cookbook](./08-strategy-cookbook.md)  
+   Exhaustive strategy examples covering every analytics concept across Rust, C, Python, and Java.
 
 ## Scope and Guardrails
 

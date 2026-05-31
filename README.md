@@ -1,60 +1,89 @@
 # Orderflow Engine and Bindings
 
-Orderflow is a multi-language market data and analytics engine with:
-
-- Rust core/runtime crates
-- C ABI
-- Python binding (`ctypes`)
-- Java binding (JNA)
-- Dashboard and tooling for live/replay workflows
+Orderflow is a multi-language market data and analytics engine that computes
+**29 categories of microstructural analytics** across Rust, C, Python, and
+Java — from spread metrics and VPIN toxicity through fingerprint patterns,
+volatility signatures, Almgren-Chriss impact models, options flow, futures
+basis, dark pool siphon detection, and machine-learning-ready LOB features.
 
 ## Documentation
 
-Start with:
+Start here:
 
-- [Release 0.3.0 notes](./docs/ops/release-0.3.0.md)
-- [docs/README.md](./docs/README.md)
-- [docs/handbook/README.md](./docs/handbook/README.md)
-- [docs/bindings/README.md](./docs/bindings/README.md)
+- **[Strategy Cookbook](./docs/handbook/08-strategy-cookbook.md)** — 29
+  exhaustive strategy examples covering every analytics concept across all
+  four API layers (Rust, C, Python, Java), plus a full multi-concept live
+  trading loop, an API compatibility map, and the `AnalyticsConfig` tuning
+  guide.
+- [Handbook Home](./docs/handbook/README.md) — primer, architecture, API reference.
+- [docs/README.md](./docs/README.md) — full navigation.
+- [docs/bindings/README.md](./docs/bindings/README.md) — Python (ctypes) and Java (JNA) setup.
 
-## What's New In 0.3.0
+## Analytics at a Glance
 
-`0.3.0` is a non-breaking operational hardening release:
+| Tier | Concepts | Exposed |
+|------|----------|---------|
+| T0   | Spread, depth, book events, resiliency | Rust, C, Python, Java |
+| T1   | Trade classification, VPIN, Kyle's λ, Amihud, CVD | Rust, C, Python, Java |
+| T2   | 19 pattern flags (footprint, DOM, delta, session, volume profile) | Rust, C, Python, Java |
+| T3   | Volatility (Parkinson/GK/YZ, signature), noise, Hasbrouck, Almgren-Chriss, spread decomp, ACD, regime | Rust, C, Python, Java |
+| T4   | Kinetic energy, agent-type ID, LOB features (16 fields) | Rust, C, Python, Java |
+| T5   | Dark pool, dark-lit correlation, institutional flow | Rust, C, Python, Java |
+| T6   | Options flow, OI analysis | Rust, C, Python, Java |
+| T7   | Futures basis, calendar spread, settlement | Rust, C, Python, Java |
 
-- optional dashboard auth with `OF_DASH_TOKEN`
-- Prometheus `/metrics` for dashboard/runtime monitoring
-- opt-in runtime backpressure and adapter circuit breaker policy
-- additive aggregate health fields in runtime JSON
-- versioned JSONL persistence records with event timestamps
-- persist -> replay -> signal/book parity regression coverage
-- Python `py.typed` marker and bundled native-wheel loading support
+Every analytics type is configurable via the 22-field `AnalyticsConfig` struct
+and queryable through the same buffer-negotiation C ABI pattern.
 
 ## Quick Build
 
 ```bash
-cargo build
-cargo test
+cargo build --all-features
+cargo test --all-features     # 148 tests, zero warnings
 ```
 
-Build C ABI for bindings:
+Build C ABI for bindings, then test FFI exports:
 
 ```bash
-cargo build -p of_ffi_c
+cargo build -p of_ffi_c --features tickbar
+tools/check_ffi_exports.sh
+```
+
+## Bindings Quickstart
+
+### Python
+```python
+from orderflow import Engine, Symbol
+
+with Engine() as engine:
+    engine.start()
+    engine.subscribe(Symbol("CME", "ESM6", 10))
+    engine.poll()
+
+    # Read any of the 29 analytics
+    print(engine.analytics_snapshot(Symbol("CME", "ESM6", 10)))
+    print(engine.pattern_snapshot(Symbol("CME", "ESM6", 10)))
+    print(engine.lob_features(Symbol("CME", "ESM6", 10), 0.0, 0.0, 0.0))
+```
+
+### Java
+```java
+try (OrderflowEngine engine = new OrderflowEngine()) {
+    engine.start();
+    Symbol sym = new Symbol("CME", "ESM6", (short) 10);
+    engine.subscribe(sym, 10);
+
+    System.out.println(engine.analyticsSnapshot(sym));
+    System.out.println(engine.volatilitySnapshot(sym));
+}
 ```
 
 ## Tooling
 
-Replay utility example:
+Replay utility:
 
 ```bash
-cargo run -p replay_cli -- data
-cargo run -p replay_cli -- data CME
-cargo run -p replay_cli -- data CME ESM6 100 200
+cargo run -p replay_cli -- data              # list venues
+cargo run -p replay_cli -- data CME          # list symbols
+cargo run -p replay_cli -- data CME ESM6 100 200  # replay range
 ```
-
-The replay CLI now supports discovery-first workflows:
-
-- list venues under a persistence root
-- list symbols for a venue
-- inspect available streams for a symbol
-- print merged replay events with optional inclusive sequence bounds
