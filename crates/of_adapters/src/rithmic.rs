@@ -64,7 +64,9 @@ fn read_env(name: &str) -> AdapterResult<String> {
     let v = std::env::var(name)
         .map_err(|_| AdapterError::NotConfigured("required rithmic env var missing"))?;
     if v.trim().is_empty() {
-        return Err(AdapterError::NotConfigured("required rithmic env var empty"));
+        return Err(AdapterError::NotConfigured(
+            "required rithmic env var empty",
+        ));
     }
     Ok(v)
 }
@@ -148,10 +150,9 @@ impl WsProbeTransport {
                     .stdin
                     .take()
                     .ok_or(AdapterError::Other("openssl stdin unavailable".to_string()))?;
-                let mut stdout = child
-                    .stdout
-                    .take()
-                    .ok_or(AdapterError::Other("openssl stdout unavailable".to_string()))?;
+                let mut stdout = child.stdout.take().ok_or(AdapterError::Other(
+                    "openssl stdout unavailable".to_string(),
+                ))?;
 
                 websocket_handshake_rw(
                     &mut stdin,
@@ -183,7 +184,10 @@ impl WsProbeTransport {
         if !self.connected {
             return Err(AdapterError::Disconnected);
         }
-        let tx = self.outbound_tx.as_ref().ok_or(AdapterError::Disconnected)?;
+        let tx = self
+            .outbound_tx
+            .as_ref()
+            .ok_or(AdapterError::Disconnected)?;
         tx.send(Outbound::Text(text))
             .map_err(|_| AdapterError::Other("rithmic transport send failed".to_string()))
     }
@@ -285,7 +289,7 @@ impl RithmicAdapter {
     }
 
     fn synth_book_and_trade(&mut self, symbol: &SymbolId, depth_levels: u16) {
-        let depth = depth_levels.max(1).min(10);
+        let depth = depth_levels.clamp(1, 10);
         let ts_recv_ns = Self::now_ns();
         let ts_exchange_ns = ts_recv_ns.saturating_sub(500_000);
         let base_price = if symbol.symbol.to_ascii_uppercase().contains("NQ") {
@@ -328,7 +332,11 @@ impl RithmicAdapter {
             symbol: symbol.clone(),
             price: base_price + (seq % 4) as i64 * 25,
             size: 1 + (seq % 4) as i64,
-            aggressor_side: if seq % 2 == 0 { Side::Ask } else { Side::Bid },
+            aggressor_side: if seq.is_multiple_of(2) {
+                Side::Ask
+            } else {
+                Side::Bid
+            },
             sequence: seq,
             ts_exchange_ns,
             ts_recv_ns,
@@ -493,13 +501,15 @@ impl RithmicAdapter {
                 }
             }
             Some("book") => {
-                let sequence = extract_u64_field(msg, "sequence").unwrap_or_else(|| self.next_sequence());
+                let sequence =
+                    extract_u64_field(msg, "sequence").unwrap_or_else(|| self.next_sequence());
                 let ts_exchange_ns =
                     extract_u64_field(msg, "ts_exchange_ns").unwrap_or_else(Self::now_ns);
-                let ts_recv_ns =
-                    extract_u64_field(msg, "ts_recv_ns").unwrap_or_else(Self::now_ns);
+                let ts_recv_ns = extract_u64_field(msg, "ts_recv_ns").unwrap_or_else(Self::now_ns);
                 let symbol = SymbolId {
-                    venue: extract_string_field(msg, "venue").unwrap_or("RITHMIC").to_string(),
+                    venue: extract_string_field(msg, "venue")
+                        .unwrap_or("RITHMIC")
+                        .to_string(),
                     symbol: match extract_string_field(msg, "symbol") {
                         Some(v) => v.to_string(),
                         None => return,
@@ -531,23 +541,25 @@ impl RithmicAdapter {
                 self.healthy_since.get_or_insert_with(Instant::now);
             }
             Some("trade") => {
-                let sequence = extract_u64_field(msg, "sequence").unwrap_or_else(|| self.next_sequence());
+                let sequence =
+                    extract_u64_field(msg, "sequence").unwrap_or_else(|| self.next_sequence());
                 let ts_exchange_ns =
                     extract_u64_field(msg, "ts_exchange_ns").unwrap_or_else(Self::now_ns);
-                let ts_recv_ns =
-                    extract_u64_field(msg, "ts_recv_ns").unwrap_or_else(Self::now_ns);
+                let ts_recv_ns = extract_u64_field(msg, "ts_recv_ns").unwrap_or_else(Self::now_ns);
                 let symbol = SymbolId {
-                    venue: extract_string_field(msg, "venue").unwrap_or("RITHMIC").to_string(),
+                    venue: extract_string_field(msg, "venue")
+                        .unwrap_or("RITHMIC")
+                        .to_string(),
                     symbol: match extract_string_field(msg, "symbol") {
                         Some(v) => v.to_string(),
                         None => return,
                     },
                 };
-                let aggressor_side = match extract_string_field(msg, "aggressor_side").unwrap_or("bid")
-                {
-                    "ask" | "ASK" => Side::Ask,
-                    _ => Side::Bid,
-                };
+                let aggressor_side =
+                    match extract_string_field(msg, "aggressor_side").unwrap_or("bid") {
+                        "ask" | "ASK" => Side::Ask,
+                        _ => Side::Bid,
+                    };
                 self.queue.push_back(RawEvent::Trade(TradePrint {
                     symbol,
                     price: match extract_i64_field(msg, "price") {
@@ -694,7 +706,11 @@ impl MarketDataAdapter for RithmicAdapter {
     }
 
     fn health(&self) -> AdapterHealth {
-        let mode = if self.is_mock_mode() { "mock" } else { "live_ws" };
+        let mode = if self.is_mock_mode() {
+            "mock"
+        } else {
+            "live_ws"
+        };
         let connected = self.connected
             && match &self.transport {
                 RithmicTransport::Mock => true,
@@ -1073,8 +1089,8 @@ mod tests {
 
     #[test]
     fn live_connect_attempt_returns_error_for_unreachable_endpoint() {
-        let mut adapter = RithmicAdapter::from_config(&cfg("ws://127.0.0.1:1/rithmic"))
-            .expect("cfg");
+        let mut adapter =
+            RithmicAdapter::from_config(&cfg("ws://127.0.0.1:1/rithmic")).expect("cfg");
         let err = adapter.connect().expect_err("connect should fail");
         assert!(format!("{err}").contains("connect failed"));
         let health = adapter.health();
@@ -1109,7 +1125,11 @@ mod tests {
         assert_eq!(n, 2);
         assert!(out.iter().any(|ev| matches!(ev, RawEvent::Book(_))));
         assert!(out.iter().any(|ev| matches!(ev, RawEvent::Trade(_))));
-        assert!(adapter.health().protocol_info.unwrap_or_default().contains("subscribed=1"));
+        assert!(adapter
+            .health()
+            .protocol_info
+            .unwrap_or_default()
+            .contains("subscribed=1"));
     }
 
     #[test]
@@ -1120,7 +1140,9 @@ mod tests {
         adapter.last_message_at = adapter.last_heartbeat_at;
 
         let mut out = Vec::new();
-        let err = adapter.poll(&mut out).expect_err("timeout should disconnect");
+        let err = adapter
+            .poll(&mut out)
+            .expect_err("timeout should disconnect");
         assert!(matches!(err, AdapterError::Disconnected));
         assert!(adapter.health().degraded);
         assert!(adapter.next_reconnect_at.is_some());
@@ -1145,7 +1167,9 @@ mod tests {
             ws.force_disconnect();
         }
         let mut out = Vec::new();
-        let err = adapter.poll(&mut out).expect_err("disconnect should surface");
+        let err = adapter
+            .poll(&mut out)
+            .expect_err("disconnect should surface");
         assert!(matches!(err, AdapterError::Disconnected));
         assert!(adapter.next_reconnect_at.is_some());
 

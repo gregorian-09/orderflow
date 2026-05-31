@@ -1,10 +1,10 @@
 #![doc = include_str!("../README.md")]
 
+use std::collections::BTreeSet;
 use std::fs::{self, create_dir_all, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use std::collections::BTreeSet;
 
 use of_core::{BookAction, BookUpdate, Side, TradePrint};
 use serde::Deserialize;
@@ -202,7 +202,11 @@ impl RollingStore {
             .read_books(venue, symbol)?
             .into_iter()
             .map(StoredEvent::Book)
-            .chain(self.read_trades(venue, symbol)?.into_iter().map(StoredEvent::Trade))
+            .chain(
+                self.read_trades(venue, symbol)?
+                    .into_iter()
+                    .map(StoredEvent::Trade),
+            )
             .collect::<Vec<_>>();
         events.sort_by(|left, right| {
             left.sequence()
@@ -383,9 +387,7 @@ fn collect_files(root: &Path, out: &mut Vec<FileMeta>) -> PersistResult<()> {
 
 fn read_dir_if_exists(path: &Path) -> PersistResult<Vec<fs::DirEntry>> {
     match fs::read_dir(path) {
-        Ok(dir) => dir
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(PersistError::Io),
+        Ok(dir) => dir.collect::<Result<Vec<_>, _>>().map_err(PersistError::Io),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(err) => Err(PersistError::Io(err)),
     }
@@ -526,8 +528,7 @@ where
         .into_iter()
         .filter(|event| {
             let seq = event.sequence();
-            from_sequence.is_none_or(|from| seq >= from)
-                && to_sequence.is_none_or(|to| seq <= to)
+            from_sequence.is_none_or(|from| seq >= from) && to_sequence.is_none_or(|to| seq <= to)
         })
         .collect()
 }
@@ -647,7 +648,9 @@ mod tests {
             })
             .expect("append trade");
 
-        let books = store.read_books(&symbol.venue, &symbol.symbol).expect("read books");
+        let books = store
+            .read_books(&symbol.venue, &symbol.symbol)
+            .expect("read books");
         let trades = store
             .read_trades(&symbol.venue, &symbol.symbol)
             .expect("read trades");
@@ -720,7 +723,9 @@ mod tests {
         .expect("write legacy trade");
 
         let store = RollingStore::new(&root).expect("store");
-        let trades = store.read_trades("CME", "ESM6").expect("read legacy trades");
+        let trades = store
+            .read_trades("CME", "ESM6")
+            .expect("read legacy trades");
 
         assert_eq!(
             trades,
@@ -811,7 +816,9 @@ mod tests {
             })
             .expect("append book");
 
-        let events = store.read_events(&symbol.venue, &symbol.symbol).expect("read events");
+        let events = store
+            .read_events(&symbol.venue, &symbol.symbol)
+            .expect("read events");
         assert_eq!(events.len(), 3);
         assert_eq!(events[0].sequence(), 10);
         assert_eq!(events[1].sequence(), 12);

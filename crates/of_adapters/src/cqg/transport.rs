@@ -97,11 +97,7 @@ impl WsProtobufTransport {
                 let mut stream = TcpStream::connect((parsed.host.as_str(), parsed.port))
                     .map_err(|e| AdapterError::Other(format!("ws tcp connect failed: {e}")))?;
                 let _ = stream.set_nodelay(true);
-                websocket_handshake(
-                    &mut stream,
-                    &parsed.host,
-                    &parsed.path,
-                )?;
+                websocket_handshake(&mut stream, &parsed.host, &parsed.path)?;
 
                 let writer = stream
                     .try_clone()
@@ -130,10 +126,9 @@ impl WsProtobufTransport {
                     .stdin
                     .take()
                     .ok_or(AdapterError::Other("openssl stdin unavailable".to_string()))?;
-                let stdout = child
-                    .stdout
-                    .take()
-                    .ok_or(AdapterError::Other("openssl stdout unavailable".to_string()))?;
+                let stdout = child.stdout.take().ok_or(AdapterError::Other(
+                    "openssl stdout unavailable".to_string(),
+                ))?;
 
                 let mut hs_w = stdin;
                 let mut hs_r = stdout;
@@ -234,15 +229,11 @@ where
         }
     });
 
-    let _ = thread::spawn(move || loop {
-        match read_ws_frame(&mut reader_owned) {
-            Ok(payload) => {
-                let _ = in_tx.send(payload);
-            }
-            Err(_) => break,
+    let _ = thread::spawn(move || {
+        while let Ok(payload) = read_ws_frame(&mut reader_owned) {
+            let _ = in_tx.send(payload);
         }
     });
-
 }
 
 #[derive(Debug)]

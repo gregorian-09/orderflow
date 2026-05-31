@@ -161,7 +161,7 @@ fn create_rithmic_adapter(cfg: &AdapterConfig) -> AdapterResult<Box<dyn MarketDa
     #[cfg(feature = "rithmic")]
     {
         let adapter = rithmic::RithmicAdapter::from_config(cfg)?;
-        return Ok(Box::new(adapter));
+        Ok(Box::new(adapter))
     }
 
     #[cfg(not(feature = "rithmic"))]
@@ -177,7 +177,7 @@ fn create_cqg_adapter(cfg: &AdapterConfig) -> AdapterResult<Box<dyn MarketDataAd
     #[cfg(feature = "cqg")]
     {
         let adapter = cqg::CqgAdapter::from_config(cfg)?;
-        return Ok(Box::new(adapter));
+        Ok(Box::new(adapter))
     }
 
     #[cfg(not(feature = "cqg"))]
@@ -193,7 +193,7 @@ fn create_binance_adapter(cfg: &AdapterConfig) -> AdapterResult<Box<dyn MarketDa
     #[cfg(feature = "binance")]
     {
         let adapter = binance::BinanceAdapter::from_config(cfg)?;
-        return Ok(Box::new(adapter));
+        Ok(Box::new(adapter))
     }
 
     #[cfg(not(feature = "binance"))]

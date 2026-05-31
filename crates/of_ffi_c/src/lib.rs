@@ -11,35 +11,110 @@ use std::sync::{
 };
 
 use of_adapters::{AdapterConfig, ProviderKind};
-use of_core::{
-    AnalyticsConfig, BookUpdate, DataQualityFlags, SignalState, SymbolId, TradePrint,
-};
+use of_core::{AnalyticsConfig, BookUpdate, DataQualityFlags, SignalState, SymbolId, TradePrint};
 use of_runtime::{
     build_default_engine, load_engine_config_from_path, DefaultEngine, EngineConfig,
     ExternalFeedPolicy, RuntimeError,
 };
+#[cfg(feature = "tickbar")]
+use support::format_bar_series;
 use support::{
     action_from_ffi, dispatch_callbacks, dispatch_health_callbacks, escape_json,
     format_acd_snapshot, format_agent_type_snapshot, format_almgren_chriss_snapshot,
     format_amihud_snapshot, format_analytics_snapshot, format_book_analytics_snapshot,
-    format_book_event_analytics_snapshot, format_book_snapshot,
-    format_cvd_enhancement_snapshot, format_dark_lit_correlation_snapshot,
-    format_dark_pool_snapshot, format_derived_analytics_snapshot, format_futures_snapshot,
-    format_hasbrouck_snapshot, format_institutional_flow_snapshot,
-    format_interval_candle_snapshot, format_kinetic_energy_snapshot, format_kyle_lambda_snapshot,
+    format_book_event_analytics_snapshot, format_book_snapshot, format_cvd_enhancement_snapshot,
+    format_dark_lit_correlation_snapshot, format_dark_pool_snapshot,
+    format_derived_analytics_snapshot, format_futures_snapshot, format_hasbrouck_snapshot,
+    format_institutional_flow_snapshot, format_interval_candle_snapshot,
+    format_kinetic_energy_snapshot, format_kyle_lambda_snapshot, format_lob_feature_snapshot,
     format_noise_snapshot, format_oi_analysis_snapshot, format_options_flow_snapshot,
-    format_pattern_snapshot,     format_lob_feature_snapshot, format_regime_snapshot, format_resiliency_snapshot,
+    format_pattern_snapshot, format_regime_snapshot, format_resiliency_snapshot,
     format_session_candle_snapshot, format_spread_decomp_snapshot, format_vol_signature_snapshot,
-    format_volatility_snapshot, format_vpin_snapshot,
-    non_empty_string, parse_csv, side_from_ffi, symbol_from_ffi, symbol_from_ffi_ref,
-    write_json_to_c_buffer,
+    format_volatility_snapshot, format_vpin_snapshot, non_empty_string, parse_csv, side_from_ffi,
+    symbol_from_ffi, symbol_from_ffi_ref, write_json_to_c_buffer,
 };
-#[cfg(feature = "tickbar")]
-use support::format_bar_series;
-
 
 const API_VERSION: u32 = 0x0001_0000;
 const BUILD_INFO: &[u8] = concat!("of_ffi_c/", env!("CARGO_PKG_VERSION"), "\0").as_bytes();
+
+/// Analytics configuration passed to [`of_engine_set_analytics_config`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct of_analytics_config_t {
+    /// Trade-size threshold for agent classification.
+    pub agent_small_trade_threshold: f64,
+    /// Large-trade threshold for institutional-flow classification.
+    pub institutional_trade_threshold: i64,
+    /// Window for cancel/arrival-rate computation.
+    pub cancel_arrival_window_ns: u64,
+    /// Volume per VPIN bucket.
+    pub vpin_volume_bucket: u32,
+    /// Max VPIN buckets.
+    pub vpin_max_buckets: u32,
+    /// Kyle's Lambda rolling window.
+    pub kyle_lambda_max_len: u32,
+    /// CVD enhancement rolling window.
+    pub cvd_max_len: u32,
+    /// Volatility estimator rolling window.
+    pub vol_estimator_max_len: u32,
+    /// Microstructure noise rolling window.
+    pub noise_max_len: u32,
+    /// Hasbrouck VAR rolling window.
+    pub hasbrouck_max_len: u32,
+    /// Almgren-Chriss rolling window.
+    pub almgren_chriss_max_len: u32,
+    /// ACD model rolling window.
+    pub acd_max_len: u32,
+    /// Volatility signature rolling window.
+    pub vol_signature_max_len: u32,
+    /// Agent detector rolling window.
+    pub agent_max_len: u32,
+    /// Minimum samples for agent classification.
+    pub agent_min_samples: u32,
+    /// Institutional-flow rolling window.
+    pub institutional_max_len: u32,
+    /// Resiliency tracker rolling window.
+    pub resiliency_max_len: u32,
+    /// Spread-decomposition rolling window.
+    pub spread_decomp_max_len: u32,
+    /// Regime detector rolling window.
+    pub regime_max_len: u32,
+    /// Book-event tracker capacity.
+    pub event_tracker_max_len: u32,
+    /// Spread tracker capacity.
+    pub spread_tracker_max_len: u32,
+    /// Default rolling window for trackers not otherwise specified.
+    pub default_max_len: u32,
+}
+
+impl From<of_analytics_config_t> for AnalyticsConfig {
+    fn from(value: of_analytics_config_t) -> Self {
+        Self {
+            vpin_volume_bucket: i64::from(value.vpin_volume_bucket),
+            vpin_max_buckets: value.vpin_max_buckets,
+            kyle_lambda_max_len: value.kyle_lambda_max_len,
+            cvd_max_len: value.cvd_max_len,
+            vol_estimator_max_len: value.vol_estimator_max_len,
+            noise_max_len: value.noise_max_len,
+            hasbrouck_max_len: value.hasbrouck_max_len,
+            almgren_chriss_max_len: value.almgren_chriss_max_len,
+            acd_max_len: value.acd_max_len,
+            vol_signature_max_len: value.vol_signature_max_len,
+            agent_max_len: value.agent_max_len,
+            agent_min_samples: value.agent_min_samples,
+            agent_small_trade_threshold: value.agent_small_trade_threshold,
+            institutional_trade_threshold: value.institutional_trade_threshold,
+            institutional_max_len: value.institutional_max_len,
+            resiliency_max_len: value.resiliency_max_len,
+            spread_decomp_max_len: value.spread_decomp_max_len,
+            regime_max_len: value.regime_max_len,
+            cancel_arrival_window_ns: value.cancel_arrival_window_ns,
+            event_tracker_max_len: value.event_tracker_max_len,
+            spread_tracker_max_len: value.spread_tracker_max_len,
+            default_max_len: value.default_max_len,
+        }
+    }
+}
 
 /// Engine configuration passed to [`of_engine_create`].
 #[repr(C)]
@@ -336,7 +411,11 @@ pub extern "C" fn of_subscribe(
     };
 
     let engine = unsafe { &mut *engine };
-    if engine.inner.subscribe(symbol.clone(), depth_levels).is_err() {
+    if engine
+        .inner
+        .subscribe(symbol.clone(), depth_levels)
+        .is_err()
+    {
         return of_error_t::OF_ERR_STATE as i32;
     }
 
@@ -380,10 +459,7 @@ pub extern "C" fn of_unsubscribe(sub: *mut of_subscription) -> i32 {
 
 /// Unsubscribes all active streams for a symbol on this engine.
 #[no_mangle]
-pub extern "C" fn of_unsubscribe_symbol(
-    engine: *mut of_engine,
-    symbol: *const of_symbol_t,
-) -> i32 {
+pub extern "C" fn of_unsubscribe_symbol(engine: *mut of_engine, symbol: *const of_symbol_t) -> i32 {
     if engine.is_null() || symbol.is_null() {
         return of_error_t::OF_ERR_INVALID_ARG as i32;
     }
@@ -792,7 +868,9 @@ pub extern "C" fn of_get_realised_spread_bps(
         Err(e) => return e as i32,
     };
     let engine = unsafe { &mut *engine };
-    let bps = engine.inner.realised_spread_bps(&symbol, hold_ticks as usize);
+    let bps = engine
+        .inner
+        .realised_spread_bps(&symbol, hold_ticks as usize);
     let payload = format!("{{\"bps\":{}}}", bps);
     match write_json_to_c_buffer(&payload, out_buf, inout_len) {
         Ok(_) => of_error_t::OF_OK as i32,
@@ -857,12 +935,18 @@ pub extern "C" fn of_get_vpin_snapshot(
     out_buf: *mut c_void,
     inout_len: *mut u32,
 ) -> i32 {
-    if engine.is_null() { return of_error_t::OF_ERR_INVALID_ARG as i32; }
-    let (symbol, _) = match symbol_from_ffi(symbol) { Ok(v) => v, Err(e) => return e as i32 };
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
     let engine = unsafe { &mut *engine };
     let payload = format_vpin_snapshot(&engine.inner.vpin_snapshot(&symbol));
     match write_json_to_c_buffer(&payload, out_buf, inout_len) {
-        Ok(_) => of_error_t::OF_OK as i32, Err(e) => e as i32,
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
     }
 }
 
@@ -874,12 +958,18 @@ pub extern "C" fn of_get_kyle_lambda_snapshot(
     out_buf: *mut c_void,
     inout_len: *mut u32,
 ) -> i32 {
-    if engine.is_null() { return of_error_t::OF_ERR_INVALID_ARG as i32; }
-    let (symbol, _) = match symbol_from_ffi(symbol) { Ok(v) => v, Err(e) => return e as i32 };
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
     let engine = unsafe { &mut *engine };
     let payload = format_kyle_lambda_snapshot(&engine.inner.kyle_lambda_snapshot(&symbol));
     match write_json_to_c_buffer(&payload, out_buf, inout_len) {
-        Ok(_) => of_error_t::OF_OK as i32, Err(e) => e as i32,
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
     }
 }
 
@@ -891,12 +981,18 @@ pub extern "C" fn of_get_amihud_snapshot(
     out_buf: *mut c_void,
     inout_len: *mut u32,
 ) -> i32 {
-    if engine.is_null() { return of_error_t::OF_ERR_INVALID_ARG as i32; }
-    let (symbol, _) = match symbol_from_ffi(symbol) { Ok(v) => v, Err(e) => return e as i32 };
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
     let engine = unsafe { &mut *engine };
     let payload = format_amihud_snapshot(&engine.inner.amihud_snapshot(&symbol));
     match write_json_to_c_buffer(&payload, out_buf, inout_len) {
-        Ok(_) => of_error_t::OF_OK as i32, Err(e) => e as i32,
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
     }
 }
 
@@ -908,12 +1004,18 @@ pub extern "C" fn of_get_cvd_enhancement_snapshot(
     out_buf: *mut c_void,
     inout_len: *mut u32,
 ) -> i32 {
-    if engine.is_null() { return of_error_t::OF_ERR_INVALID_ARG as i32; }
-    let (symbol, _) = match symbol_from_ffi(symbol) { Ok(v) => v, Err(e) => return e as i32 };
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
     let engine = unsafe { &mut *engine };
     let payload = format_cvd_enhancement_snapshot(&engine.inner.cvd_enhancement_snapshot(&symbol));
     match write_json_to_c_buffer(&payload, out_buf, inout_len) {
-        Ok(_) => of_error_t::OF_OK as i32, Err(e) => e as i32,
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
     }
 }
 
@@ -925,12 +1027,18 @@ pub extern "C" fn of_get_pattern_snapshot(
     out_buf: *mut c_void,
     inout_len: *mut u32,
 ) -> i32 {
-    if engine.is_null() { return of_error_t::OF_ERR_INVALID_ARG as i32; }
-    let (symbol, _) = match symbol_from_ffi(symbol) { Ok(v) => v, Err(e) => return e as i32 };
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
     let engine = unsafe { &mut *engine };
     let payload = format_pattern_snapshot(&engine.inner.pattern_snapshot(&symbol));
     match write_json_to_c_buffer(&payload, out_buf, inout_len) {
-        Ok(_) => of_error_t::OF_OK as i32, Err(e) => e as i32,
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
     }
 }
 
@@ -943,33 +1051,95 @@ macro_rules! snapshot_c_abi {
             out_buf: *mut c_void,
             inout_len: *mut u32,
         ) -> i32 {
-            if engine.is_null() { return of_error_t::OF_ERR_INVALID_ARG as i32; }
-            let (symbol, _) = match symbol_from_ffi(symbol) { Ok(v) => v, Err(e) => return e as i32 };
+            if engine.is_null() {
+                return of_error_t::OF_ERR_INVALID_ARG as i32;
+            }
+            let (symbol, _) = match symbol_from_ffi(symbol) {
+                Ok(v) => v,
+                Err(e) => return e as i32,
+            };
             let engine = unsafe { &mut *engine };
             let payload = $format(&engine.inner.$method(&symbol));
             match write_json_to_c_buffer(&payload, out_buf, inout_len) {
-                Ok(_) => of_error_t::OF_OK as i32, Err(e) => e as i32,
+                Ok(_) => of_error_t::OF_OK as i32,
+                Err(e) => e as i32,
             }
         }
     };
 }
 
-snapshot_c_abi!(of_get_volatility_snapshot, format_volatility_snapshot, volatility_snapshot);
+snapshot_c_abi!(
+    of_get_volatility_snapshot,
+    format_volatility_snapshot,
+    volatility_snapshot
+);
 snapshot_c_abi!(of_get_noise_snapshot, format_noise_snapshot, noise_snapshot);
-snapshot_c_abi!(of_get_hasbrouck_snapshot, format_hasbrouck_snapshot, hasbrouck_snapshot);
-snapshot_c_abi!(of_get_almgren_chriss_snapshot, format_almgren_chriss_snapshot, almgren_chriss_snapshot);
-snapshot_c_abi!(of_get_spread_decomp_snapshot, format_spread_decomp_snapshot, spread_decomp_snapshot);
+snapshot_c_abi!(
+    of_get_hasbrouck_snapshot,
+    format_hasbrouck_snapshot,
+    hasbrouck_snapshot
+);
+snapshot_c_abi!(
+    of_get_almgren_chriss_snapshot,
+    format_almgren_chriss_snapshot,
+    almgren_chriss_snapshot
+);
+snapshot_c_abi!(
+    of_get_spread_decomp_snapshot,
+    format_spread_decomp_snapshot,
+    spread_decomp_snapshot
+);
 snapshot_c_abi!(of_get_acd_snapshot, format_acd_snapshot, acd_snapshot);
-snapshot_c_abi!(of_get_regime_snapshot, format_regime_snapshot, regime_snapshot);
-snapshot_c_abi!(of_get_kinetic_energy_snapshot, format_kinetic_energy_snapshot, kinetic_energy_snapshot);
-snapshot_c_abi!(of_get_dark_pool_snapshot, format_dark_pool_snapshot, dark_pool_snapshot);
-snapshot_c_abi!(of_get_options_flow_snapshot, format_options_flow_snapshot, options_flow_snapshot);
-snapshot_c_abi!(of_get_futures_snapshot, format_futures_snapshot, futures_snapshot);
-snapshot_c_abi!(of_get_vol_signature_snapshot, format_vol_signature_snapshot, vol_signature_snapshot);
-snapshot_c_abi!(of_get_agent_type_snapshot, format_agent_type_snapshot, agent_type_snapshot);
-snapshot_c_abi!(of_get_dark_lit_correlation_snapshot, format_dark_lit_correlation_snapshot, dark_lit_correlation_snapshot);
-snapshot_c_abi!(of_get_institutional_flow_snapshot, format_institutional_flow_snapshot, institutional_flow_snapshot);
-snapshot_c_abi!(of_get_oi_analysis_snapshot, format_oi_analysis_snapshot, oi_analysis_snapshot);
+snapshot_c_abi!(
+    of_get_regime_snapshot,
+    format_regime_snapshot,
+    regime_snapshot
+);
+snapshot_c_abi!(
+    of_get_kinetic_energy_snapshot,
+    format_kinetic_energy_snapshot,
+    kinetic_energy_snapshot
+);
+snapshot_c_abi!(
+    of_get_dark_pool_snapshot,
+    format_dark_pool_snapshot,
+    dark_pool_snapshot
+);
+snapshot_c_abi!(
+    of_get_options_flow_snapshot,
+    format_options_flow_snapshot,
+    options_flow_snapshot
+);
+snapshot_c_abi!(
+    of_get_futures_snapshot,
+    format_futures_snapshot,
+    futures_snapshot
+);
+snapshot_c_abi!(
+    of_get_vol_signature_snapshot,
+    format_vol_signature_snapshot,
+    vol_signature_snapshot
+);
+snapshot_c_abi!(
+    of_get_agent_type_snapshot,
+    format_agent_type_snapshot,
+    agent_type_snapshot
+);
+snapshot_c_abi!(
+    of_get_dark_lit_correlation_snapshot,
+    format_dark_lit_correlation_snapshot,
+    dark_lit_correlation_snapshot
+);
+snapshot_c_abi!(
+    of_get_institutional_flow_snapshot,
+    format_institutional_flow_snapshot,
+    institutional_flow_snapshot
+);
+snapshot_c_abi!(
+    of_get_oi_analysis_snapshot,
+    format_oi_analysis_snapshot,
+    oi_analysis_snapshot
+);
 
 /// Computes LOB feature snapshot from engine book state and caller-provided flow metrics.
 #[no_mangle]
@@ -982,12 +1152,23 @@ pub extern "C" fn of_compute_lob_features(
     out_buf: *mut c_void,
     inout_len: *mut u32,
 ) -> i32 {
-    if engine.is_null() { return of_error_t::OF_ERR_INVALID_ARG as i32; }
-    let (symbol, _) = match symbol_from_ffi(symbol) { Ok(v) => v, Err(e) => return e as i32 };
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
     let engine = unsafe { &*engine };
-    let payload = format_lob_feature_snapshot(&engine.inner.lob_features(&symbol, trade_imbalance, cancel_rate, arrival_rate));
+    let payload = format_lob_feature_snapshot(&engine.inner.lob_features(
+        &symbol,
+        trade_imbalance,
+        cancel_rate,
+        arrival_rate,
+    ));
     match write_json_to_c_buffer(&payload, out_buf, inout_len) {
-        Ok(_) => of_error_t::OF_OK as i32, Err(e) => e as i32,
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
     }
 }
 
@@ -1118,10 +1299,7 @@ pub extern "C" fn of_get_interval_candle_snapshot(
 /// Requires the `tickbar` feature to be enabled at build time.
 #[cfg(feature = "tickbar")]
 #[no_mangle]
-pub extern "C" fn of_engine_set_tickbar_interval(
-    engine: *mut of_engine,
-    interval_ns: i64,
-) -> i32 {
+pub extern "C" fn of_engine_set_tickbar_interval(engine: *mut of_engine, interval_ns: i64) -> i32 {
     if engine.is_null() {
         return of_error_t::OF_ERR_INVALID_ARG as i32;
     }
@@ -1277,17 +1455,19 @@ pub extern "C" fn of_engine_poll_once(engine: *mut of_engine, quality_flags: u32
 #[no_mangle]
 pub extern "C" fn of_engine_set_analytics_config(
     engine: *mut of_engine,
-    config: *const AnalyticsConfig,
+    config: *const of_analytics_config_t,
 ) -> i32 {
     if engine.is_null() {
         return of_error_t::OF_ERR_INVALID_ARG as i32;
     }
     let engine = unsafe { &mut *engine };
     if config.is_null() {
-        engine.inner.set_analytics_config(AnalyticsConfig::default());
+        engine
+            .inner
+            .set_analytics_config(AnalyticsConfig::default());
     } else {
         let cfg = unsafe { *config };
-        engine.inner.set_analytics_config(cfg);
+        engine.inner.set_analytics_config(cfg.into());
     }
     of_error_t::OF_OK as i32
 }
@@ -1299,7 +1479,6 @@ fn map_runtime_error(err: &RuntimeError) -> i32 {
         of_error_t::OF_ERR_STATE as i32
     }
 }
-
 
 #[cfg(test)]
 include!("tests.rs");

@@ -2,7 +2,58 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::hash::Hash;
 use std::ops::BitOr;
+
+const DEFAULT_PATTERN_HISTORY_CAP: usize = 4096;
+const DEFAULT_PATTERN_PRICE_LEVEL_CAP: usize = 8192;
+const MAX_SESSION_TRADES: usize = 100_000;
+
+fn bounded_push<T>(items: &mut Vec<T>, max_len: usize, item: T) {
+    if max_len == 0 {
+        return;
+    }
+    if items.len() >= max_len {
+        items.remove(0);
+    }
+    items.push(item);
+}
+
+fn bounded_push_pair<T, U>(
+    left: &mut Vec<T>,
+    right: &mut Vec<U>,
+    max_len: usize,
+    left_item: T,
+    right_item: U,
+) {
+    if max_len == 0 {
+        return;
+    }
+    if left.len() >= max_len {
+        left.remove(0);
+        if !right.is_empty() {
+            right.remove(0);
+        }
+    }
+    left.push(left_item);
+    right.push(right_item);
+}
+
+fn prune_hash_map<K, V>(items: &mut HashMap<K, V>, max_len: usize)
+where
+    K: Eq + Hash + Clone,
+{
+    if max_len == 0 {
+        items.clear();
+        return;
+    }
+    while items.len() > max_len {
+        let Some(key) = items.keys().next().cloned() else {
+            break;
+        };
+        items.remove(&key);
+    }
+}
 
 /// Canonical market symbol identifier used across venues.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -276,8 +327,8 @@ pub fn compute_book_analytics(snapshot: &BookSnapshot) -> BookAnalyticsSnapshot 
         microprice,
         bid_depth,
         ask_depth,
-    depth_imbalance_bps,
-        }
+        depth_imbalance_bps,
+    }
 }
 
 /// Computes the weighted average price for an order of `qty` shares walking the book.
@@ -431,14 +482,15 @@ impl SpreadTracker {
 
     /// Records a trade with the prevailing mid price.
     pub fn on_trade(&mut self, trade_price: i64, mid_price: i64, ts_exchange_ns: u64) {
-        if self.samples.len() >= self.max_samples {
-            self.samples.remove(0);
-        }
-        self.samples.push(SpreadSample {
-            trade_price,
-            mid_price,
-            ts_exchange_ns,
-        });
+        bounded_push(
+            &mut self.samples,
+            self.max_samples,
+            SpreadSample {
+                trade_price,
+                mid_price,
+                ts_exchange_ns,
+            },
+        );
     }
 
     /// Returns the effective spread in bps for the most recent trade.
@@ -523,16 +575,23 @@ impl BookEventTracker {
     }
 
     /// Records a book update event.
-    pub fn on_book_update(&mut self, side: Side, action: BookAction, size: i64, ts_exchange_ns: u64) {
-        if self.events.len() >= self.max_events {
-            self.events.remove(0);
-        }
-        self.events.push(BookEventSample {
-            side,
-            action,
-            size,
-            ts_exchange_ns,
-        });
+    pub fn on_book_update(
+        &mut self,
+        side: Side,
+        action: BookAction,
+        size: i64,
+        ts_exchange_ns: u64,
+    ) {
+        bounded_push(
+            &mut self.events,
+            self.max_events,
+            BookEventSample {
+                side,
+                action,
+                size,
+                ts_exchange_ns,
+            },
+        );
     }
 
     /// Returns the number of events in the time window `window_ns` (nanoseconds) per side.
@@ -735,11 +794,8 @@ impl ResiliencyTracker {
             post_ask_depth: ask_depth,
             recovery_ts: 0,
         };
-        if self.snapshots.len() >= self.max_samples {
-            self.snapshots.remove(0);
-        }
         // Place a partial sample; on_trade_post fills in the rest
-        self.snapshots.push(sample);
+        bounded_push(&mut self.snapshots, self.max_samples, sample);
     }
 
     /// Records book depth after a trade and sets the post-trade depth.
@@ -884,7 +940,9 @@ impl Default for ClassifierWeights {
 }
 
 impl Default for TradeClassifier {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TradeClassifier {
@@ -952,7 +1010,11 @@ impl TradeClassifier {
             return quote;
         }
         // At mid price, fall back to tick rule
-        let classifier = TradeClassifier { last_price, weights: ClassifierWeights::default(), last_votes: [ClassificationVote::Neutral; 3] };
+        let classifier = TradeClassifier {
+            last_price,
+            weights: ClassifierWeights::default(),
+            last_votes: [ClassificationVote::Neutral; 3],
+        };
         classifier.tick_rule(price, volume, last_volume)
     }
 
@@ -1092,6 +1154,9 @@ impl VpinTracker {
     /// `buy_volume` and `sell_volume` are the volumes for this event.
     /// When cumulative volume exceeds `bucket_volume`, a VPIN value is emitted.
     pub fn on_trade(&mut self, buy_volume: i64, sell_volume: i64) {
+        if self.bucket_volume <= 0 || self.max_buckets == 0 {
+            return;
+        }
         self.current_buy_vol += buy_volume;
         self.current_sell_vol += sell_volume;
 
@@ -1100,10 +1165,7 @@ impl VpinTracker {
             let vpin = (self.current_buy_vol - self.current_sell_vol).unsigned_abs() as f64
                 / self.bucket_volume as f64;
 
-            if self.bucket_vpins.len() >= self.max_buckets {
-                self.bucket_vpins.remove(0);
-            }
-            self.bucket_vpins.push(vpin);
+            bounded_push(&mut self.bucket_vpins, self.max_buckets, vpin);
 
             // Carry over excess volume to next bucket
             let excess = total - self.bucket_volume;
@@ -1129,7 +1191,11 @@ impl VpinTracker {
             .sum::<f64>()
             / n;
         let std = variance.sqrt();
-        let zscore = if std > 0.0 { (latest - mean) / std } else { 0.0 };
+        let zscore = if std > 0.0 {
+            (latest - mean) / std
+        } else {
+            0.0
+        };
 
         VpinSnapshot {
             vpin: latest,
@@ -1195,10 +1261,11 @@ impl KyleLambdaTracker {
 
     /// Records a trade: signed volume (positive = buy) and price change.
     pub fn on_trade(&mut self, signed_volume: i64, price_change: i64) {
-        if self.samples.len() >= self.max_samples {
-            self.samples.remove(0);
-        }
-        self.samples.push((signed_volume, price_change));
+        bounded_push(
+            &mut self.samples,
+            self.max_samples,
+            (signed_volume, price_change),
+        );
     }
 
     /// Computes λ via OLS: `λ = cov(x,y) / var(x)`, α = mean(y) - λ * mean(x).
@@ -1240,7 +1307,11 @@ impl KyleLambdaTracker {
                 (*y as f64 - y_pred).powi(2)
             })
             .sum();
-        let ss_tot: f64 = self.samples.iter().map(|(_, y)| (*y as f64 - mean_y).powi(2)).sum();
+        let ss_tot: f64 = self
+            .samples
+            .iter()
+            .map(|(_, y)| (*y as f64 - mean_y).powi(2))
+            .sum();
         let r_squared = if ss_tot > 0.0 {
             1.0 - ss_res / ss_tot
         } else {
@@ -1317,13 +1388,14 @@ impl AmihudTracker {
             0.0
         };
 
-        if self.bars.len() >= self.window {
-            self.bars.remove(0);
-        }
-        self.bars.push(AmihudBar {
-            dollar_volume,
-            abs_return,
-        });
+        bounded_push(
+            &mut self.bars,
+            self.window,
+            AmihudBar {
+                dollar_volume,
+                abs_return,
+            },
+        );
     }
 
     pub fn snapshot(&self) -> AmihudSnapshot {
@@ -1406,10 +1478,13 @@ impl CvdEnhancements {
 
     /// Records a bar's worth of delta, volume, and close price.
     pub fn on_bar(&mut self, delta: i64, volume: i64, price: i64) {
-        for w in [&mut self.delta_window, &mut self.volume_window, &mut self.price_window] {
-            if w.len() >= self.window {
-                w.remove(0);
-            }
+        if self.window == 0 {
+            return;
+        }
+        if self.delta_window.len() >= self.window {
+            self.delta_window.remove(0);
+            self.volume_window.remove(0);
+            self.price_window.remove(0);
         }
         self.delta_window.push(delta);
         self.volume_window.push(volume);
@@ -1683,19 +1758,32 @@ impl PatternDetector {
         }
 
         // Track session high/low
-        if price > self.session_high { self.session_high = price; }
-        if price < self.session_low { self.session_low = price; }
+        if price > self.session_high {
+            self.session_high = price;
+        }
+        if price < self.session_low {
+            self.session_low = price;
+        }
 
         // Track initial balance (first 30 min)
         let ib_window_ns = 30 * 60 * 1_000_000_000u64;
         if ts_exchange_ns.saturating_sub(self.session_start_ns) <= ib_window_ns {
-            self.ib_trades.push((price, size));
+            bounded_push(
+                &mut self.ib_trades,
+                DEFAULT_PATTERN_HISTORY_CAP,
+                (price, size),
+            );
         }
 
         // Accumulate level volume for absorption detection
         *self.level_volume.entry(price).or_insert(0) += size;
         // Accumulate composite (multi-session) volume profile
         *self.composite_level_volume.entry(price).or_insert(0) += size;
+        prune_hash_map(&mut self.level_volume, DEFAULT_PATTERN_PRICE_LEVEL_CAP);
+        prune_hash_map(
+            &mut self.composite_level_volume,
+            DEFAULT_PATTERN_PRICE_LEVEL_CAP,
+        );
 
         // Delta-clock: track last significant delta change
         let delta_change = (cumulative_delta - self.last_significant_delta_value).abs();
@@ -1717,16 +1805,16 @@ impl PatternDetector {
         };
 
         if is_new_push {
-            self.push_highs.push(price);
-            self.push_lows.push(price);
-            self.push_deltas.push(cumulative_delta);
-            self.push_volumes.push(size);
-            if self.push_highs.len() > 20 {
+            if self.push_highs.len() >= 20 {
                 self.push_highs.remove(0);
                 self.push_lows.remove(0);
                 self.push_deltas.remove(0);
                 self.push_volumes.remove(0);
             }
+            self.push_highs.push(price);
+            self.push_lows.push(price);
+            self.push_deltas.push(cumulative_delta);
+            self.push_volumes.push(size);
         }
 
         // Track price stall (for absorption): mid price hasn't moved
@@ -1785,13 +1873,25 @@ impl PatternDetector {
             let avg_size = 5000;
             if size > avg_size * 10 {
                 match side {
-                    Side::Bid => self.large_bid_prices.push((ts, price, size)),
-                    Side::Ask => self.large_ask_prices.push((ts, price, size)),
+                    Side::Bid => bounded_push(
+                        &mut self.large_bid_prices,
+                        DEFAULT_PATTERN_HISTORY_CAP,
+                        (ts, price, size),
+                    ),
+                    Side::Ask => bounded_push(
+                        &mut self.large_ask_prices,
+                        DEFAULT_PATTERN_HISTORY_CAP,
+                        (ts, price, size),
+                    ),
                 }
             }
 
             // --- Recent levels for stop hunt / trapped ---
-            self.recent_levels.push((ts, price, size));
+            bounded_push(
+                &mut self.recent_levels,
+                DEFAULT_PATTERN_HISTORY_CAP,
+                (ts, price, size),
+            );
         } else {
             // Level removed
             match side {
@@ -1823,6 +1923,30 @@ impl PatternDetector {
         self.large_bid_prices.retain(|(t, _, _)| *t > cutoff);
         self.large_ask_prices.retain(|(t, _, _)| *t > cutoff);
         self.recent_levels.retain(|(t, _, _)| *t > cutoff);
+        prune_hash_map(&mut self.bid_level_sizes, DEFAULT_PATTERN_PRICE_LEVEL_CAP);
+        prune_hash_map(&mut self.ask_level_sizes, DEFAULT_PATTERN_PRICE_LEVEL_CAP);
+        prune_hash_map(
+            &mut self.bid_level_timestamps,
+            DEFAULT_PATTERN_PRICE_LEVEL_CAP,
+        );
+        prune_hash_map(
+            &mut self.ask_level_timestamps,
+            DEFAULT_PATTERN_PRICE_LEVEL_CAP,
+        );
+        prune_hash_map(&mut self.bid_prev_sizes, DEFAULT_PATTERN_PRICE_LEVEL_CAP);
+        prune_hash_map(&mut self.ask_prev_sizes, DEFAULT_PATTERN_PRICE_LEVEL_CAP);
+        prune_hash_map(
+            &mut self.level_first_seen,
+            DEFAULT_PATTERN_PRICE_LEVEL_CAP * 2,
+        );
+        prune_hash_map(
+            &mut self.level_last_seen,
+            DEFAULT_PATTERN_PRICE_LEVEL_CAP * 2,
+        );
+        prune_hash_map(
+            &mut self.level_max_size,
+            DEFAULT_PATTERN_PRICE_LEVEL_CAP * 2,
+        );
     }
 
     /// Computes the current pattern snapshot.
@@ -1908,7 +2032,8 @@ impl PatternDetector {
 
         // Tailing: price rejects a level with large one-sided volume
         if self.recent_levels.len() >= 2 {
-            let last_two: Vec<(u64, i64, i64)> = self.recent_levels.iter().rev().take(2).copied().collect();
+            let last_two: Vec<(u64, i64, i64)> =
+                self.recent_levels.iter().rev().take(2).copied().collect();
             if last_two.len() == 2 {
                 let (_, px1, sz1) = last_two[0];
                 let (_, px2, sz2) = last_two[1];
@@ -1964,7 +2089,9 @@ impl PatternDetector {
                     break;
                 }
             }
-            if snap.flip_detected { break; }
+            if snap.flip_detected {
+                break;
+            }
         }
 
         // Liquidity gap: price zone with zero/minimal orders between two dense zones
@@ -1983,15 +2110,16 @@ impl PatternDetector {
 
         // Stop hunt: price pierced a known level then immediately reversed
         if self.recent_levels.len() >= 4 {
-            let recent: Vec<(u64, i64, i64)> = self.recent_levels.iter().rev().take(4).copied().collect();
+            let recent: Vec<(u64, i64, i64)> =
+                self.recent_levels.iter().rev().take(4).copied().collect();
             if recent.len() == 4 {
                 let (_, px0, _) = recent[0];
                 let (_, px1, _) = recent[1];
                 let (_, px2, _) = recent[2];
                 let (_, px3, _) = recent[3];
                 // Price moved through a level then back
-                let pierced = (px0 > px1 && px2 < px1 && px3 > px2)
-                    || (px0 < px1 && px2 > px1 && px3 < px2);
+                let pierced =
+                    (px0 > px1 && px2 < px1 && px3 > px2) || (px0 < px1 && px2 > px1 && px3 < px2);
                 if pierced {
                     snap.stop_hunt_detected = true;
                 }
@@ -2004,10 +2132,10 @@ impl PatternDetector {
         if self.push_deltas.len() >= 3 {
             let last = self.push_deltas.last().copied().unwrap_or(0);
             let first = self.push_deltas.first().copied().unwrap_or(0);
-            let price_rising = self.push_highs.len() >= 2
-                && self.push_highs.last() > self.push_highs.first();
-            let price_falling = self.push_lows.len() >= 2
-                && self.push_lows.last() < self.push_lows.first();
+            let price_rising =
+                self.push_highs.len() >= 2 && self.push_highs.last() > self.push_highs.first();
+            let price_falling =
+                self.push_lows.len() >= 2 && self.push_lows.last() < self.push_lows.first();
             let cvd_rising = last > first;
             let cvd_falling = last < first;
 
@@ -2017,7 +2145,8 @@ impl PatternDetector {
 
         // Trapped traders: aggressive push through level, immediate rejection
         if self.recent_levels.len() >= 6 {
-            let recent: Vec<(u64, i64, i64)> = self.recent_levels.iter().rev().take(6).copied().collect();
+            let recent: Vec<(u64, i64, i64)> =
+                self.recent_levels.iter().rev().take(6).copied().collect();
             if recent.len() == 6 {
                 let px = |i: usize| recent[i].1;
                 let spread = (px(0) - px(5)).abs();
@@ -2044,8 +2173,20 @@ impl PatternDetector {
         // ---- 2.4 Session Classification ----
 
         if !self.ib_trades.is_empty() {
-            let ib_high = self.ib_trades.iter().map(|(p, _)| p).max().copied().unwrap_or(0);
-            let ib_low = self.ib_trades.iter().map(|(p, _)| p).min().copied().unwrap_or(0);
+            let ib_high = self
+                .ib_trades
+                .iter()
+                .map(|(p, _)| p)
+                .max()
+                .copied()
+                .unwrap_or(0);
+            let ib_low = self
+                .ib_trades
+                .iter()
+                .map(|(p, _)| p)
+                .min()
+                .copied()
+                .unwrap_or(0);
             let current_price = self.prior_price;
             let ib_range = ib_high.saturating_sub(ib_low);
             let session_range = self.session_high.saturating_sub(self.session_low);
@@ -2101,20 +2242,28 @@ impl PatternDetector {
             let mut lvn = 0u32;
 
             for &vol in self.level_volume.values() {
-                if vol <= 0 { continue; }
+                if vol <= 0 {
+                    continue;
+                }
                 let p_k = vol as f64 / total_vol as f64;
                 entropy_sum += p_k * p_k.ln();
                 let dev = vol as f64 - mean_vol_f;
                 skew_num += dev.powi(3);
                 skew_den += dev.powi(2);
-                if vol as f64 > mean_vol_f * 1.2 { hvn += 1; }
-                if (vol as f64) < mean_vol_f * 0.5 { lvn += 1; }
+                if vol as f64 > mean_vol_f * 1.2 {
+                    hvn += 1;
+                }
+                if (vol as f64) < mean_vol_f * 0.5 {
+                    lvn += 1;
+                }
             }
 
             snap.volume_entropy = -(1.0 / n_bins.ln()) * entropy_sum;
             snap.volume_skew = if skew_den > 0.0 {
                 skew_num / (skew_den.powf(1.5)).max(f64::EPSILON)
-            } else { 0.0 };
+            } else {
+                0.0
+            };
             snap.hvn_count = hvn;
             snap.lvn_count = lvn;
 
@@ -2126,7 +2275,9 @@ impl PatternDetector {
             let bin_count = sorted_prices.len().min(10);
             for (i, px) in sorted_prices.iter().rev().take(bin_count).enumerate() {
                 let vol = self.level_volume.get(px).copied().unwrap_or(1);
-                if i > 0 { vwap_buf.push(','); }
+                if i > 0 {
+                    vwap_buf.push(',');
+                }
                 vwap_buf.push_str(&format!("\"{}\":{}", px, vol));
             }
             vwap_buf.push('}');
@@ -2142,15 +2293,31 @@ impl PatternDetector {
             let mean_c = composite_total as f64 / n_bins_c;
             for &vol in self.composite_level_volume.values() {
                 let vf = vol as f64;
-                if vf > mean_c * 1.2 { snap.composite_hvn += 1; }
-                if vf < mean_c * 0.5 { snap.composite_lvn += 1; }
+                if vf > mean_c * 1.2 {
+                    snap.composite_hvn += 1;
+                }
+                if vf < mean_c * 0.5 {
+                    snap.composite_lvn += 1;
+                }
             }
         }
 
         // Initial balance high/low
         if !self.ib_trades.is_empty() {
-            snap.initial_balance_high = self.ib_trades.iter().map(|(p, _)| p).max().copied().unwrap_or(0);
-            snap.initial_balance_low = self.ib_trades.iter().map(|(p, _)| p).min().copied().unwrap_or(0);
+            snap.initial_balance_high = self
+                .ib_trades
+                .iter()
+                .map(|(p, _)| p)
+                .max()
+                .copied()
+                .unwrap_or(0);
+            snap.initial_balance_low = self
+                .ib_trades
+                .iter()
+                .map(|(p, _)| p)
+                .min()
+                .copied()
+                .unwrap_or(0);
         }
 
         snap
@@ -2294,7 +2461,6 @@ impl std::fmt::Debug for AnalyticsAccumulator {
     }
 }
 
-
 #[derive(Debug, Clone, Copy)]
 struct RecentTradeSample {
     price: i64,
@@ -2325,6 +2491,9 @@ impl AnalyticsAccumulator {
             size: trade.size,
             ts_exchange_ns: trade.ts_exchange_ns,
         });
+        if self.session_trades.len() > MAX_SESSION_TRADES {
+            self.session_trades.remove(0);
+        }
         *self.volume_profile.entry(trade.price).or_insert(0) += trade.size;
         match trade.aggressor_side {
             Side::Bid => {
@@ -2464,12 +2633,15 @@ impl AnalyticsAccumulator {
     #[cfg(feature = "tickbar")]
     pub fn with_tickbar(interval_ns: i64) -> Self {
         let mut acc = Self::default();
-        let agg = tickbar::TickAggregator::builder()
-            .interval(std::time::Duration::from_nanos(interval_ns as u64))
-            .build()
-            .expect("TickAggregator build should not fail with valid interval");
-        acc.tick_aggregator = Some(agg);
-        acc.tick_interval_ns = interval_ns;
+        if interval_ns > 0 {
+            if let Ok(agg) = tickbar::TickAggregator::builder()
+                .interval(std::time::Duration::from_nanos(interval_ns as u64))
+                .build()
+            {
+                acc.tick_aggregator = Some(agg);
+                acc.tick_interval_ns = interval_ns;
+            }
+        }
         acc
     }
 
@@ -2494,11 +2666,10 @@ impl AnalyticsAccumulator {
             })
             .collect();
 
-        let new_agg = tickbar::TickAggregator::builder()
+        self.tick_aggregator = tickbar::TickAggregator::builder()
             .interval(std::time::Duration::from_nanos(interval_ns as u64))
             .build()
-            .expect("TickAggregator rebuild should not fail");
-        self.tick_aggregator = Some(new_agg);
+            .ok();
 
         if bars.is_empty() {
             None
@@ -2585,7 +2756,14 @@ pub struct VolatilitySnapshot {
 }
 
 impl Default for VolatilitySnapshot {
-    fn default() -> Self { Self { classic_rv: 0.0, parkinson: 0.0, garman_klass: 0.0, yang_zhang: 0.0 } }
+    fn default() -> Self {
+        Self {
+            classic_rv: 0.0,
+            parkinson: 0.0,
+            garman_klass: 0.0,
+            yang_zhang: 0.0,
+        }
+    }
 }
 
 /// Tracks OHLC prices per bar for volatility estimation.
@@ -2596,14 +2774,20 @@ pub struct VolatilityEstimator {
 }
 
 impl VolatilityEstimator {
-    pub fn new(max_bars: usize) -> Self { Self { bars: Vec::with_capacity(max_bars), max_bars } }
+    pub fn new(max_bars: usize) -> Self {
+        Self {
+            bars: Vec::with_capacity(max_bars),
+            max_bars,
+        }
+    }
     pub fn on_bar(&mut self, open: f64, high: f64, low: f64, close: f64) {
-        if self.bars.len() >= self.max_bars { self.bars.remove(0); }
-        self.bars.push((open, high, low, close));
+        bounded_push(&mut self.bars, self.max_bars, (open, high, low, close));
     }
     pub fn snapshot(&self) -> VolatilitySnapshot {
         let n = self.bars.len() as f64;
-        if n < 2.0 { return VolatilitySnapshot::default(); }
+        if n < 2.0 {
+            return VolatilitySnapshot::default();
+        }
         let mut classic_sum = 0.0;
         let mut park_sum = 0.0;
         let mut gk_sum = 0.0;
@@ -2614,7 +2798,8 @@ impl VolatilityEstimator {
             let r = (close / open).ln();
             classic_sum += r * r;
             park_sum += ((high / low).ln()).powi(2);
-            gk_sum += 0.5 * ((high / low).ln()).powi(2) - (2.0 * (2.0_f64).ln() - 1.0) * ((close / open).ln()).powi(2);
+            gk_sum += 0.5 * ((high / low).ln()).powi(2)
+                - (2.0 * (2.0_f64).ln() - 1.0) * ((close / open).ln()).powi(2);
             if i > 0 {
                 let o_c = (open / prev_close).ln();
                 let c_c = (close / open).ln();
@@ -2641,7 +2826,12 @@ pub struct NoiseSnapshot {
 }
 
 impl Default for NoiseSnapshot {
-    fn default() -> Self { Self { noise_variance: 0.0, signal_to_noise: 0.0 } }
+    fn default() -> Self {
+        Self {
+            noise_variance: 0.0,
+            signal_to_noise: 0.0,
+        }
+    }
 }
 
 /// Tracks price returns for noise estimation.
@@ -2649,26 +2839,51 @@ impl Default for NoiseSnapshot {
 pub struct MicrostructureNoise {
     returns: Vec<f64>,
     max_len: usize,
+    last_price: Option<i64>,
 }
 
 impl MicrostructureNoise {
-    pub fn new(max_len: usize) -> Self { Self { returns: Vec::with_capacity(max_len), max_len } }
+    pub fn new(max_len: usize) -> Self {
+        Self {
+            returns: Vec::with_capacity(max_len),
+            max_len,
+            last_price: None,
+        }
+    }
     pub fn on_trade(&mut self, price: i64, _size: i64) {
-        let prev = self.returns.last().copied().unwrap_or(price as f64);
-        let r = (price as f64 / prev).ln();
-        if self.returns.len() >= self.max_len { self.returns.remove(0); }
-        self.returns.push(r);
+        let prev = self.last_price.replace(price).unwrap_or(price);
+        if prev <= 0 || price <= 0 {
+            return;
+        }
+        let r = (price as f64 / prev as f64).ln();
+        bounded_push(&mut self.returns, self.max_len, r);
     }
     pub fn snapshot(&self) -> NoiseSnapshot {
         let n = self.returns.len();
-        if n < 4 { return NoiseSnapshot::default(); }
-        let rv_lag1: f64 = self.returns.windows(2).map(|w| (w[1] - w[0]).powi(2)).sum::<f64>() / (n - 1) as f64;
+        if n < 4 {
+            return NoiseSnapshot::default();
+        }
+        let rv_lag1: f64 = self
+            .returns
+            .windows(2)
+            .map(|w| (w[1] - w[0]).powi(2))
+            .sum::<f64>()
+            / (n - 1) as f64;
         let rv_lag2: f64 = if n >= 4 {
-            self.returns.windows(3).map(|w| (w[2] - w[0]).powi(2)).sum::<f64>() / (n - 2) as f64
-        } else { rv_lag1 };
+            self.returns
+                .windows(3)
+                .map(|w| (w[2] - w[0]).powi(2))
+                .sum::<f64>()
+                / (n - 2) as f64
+        } else {
+            rv_lag1
+        };
         let noise = (rv_lag1 - rv_lag2 / 2.0) / 2.0;
         let noise = noise.max(0.0);
-        NoiseSnapshot { noise_variance: noise, signal_to_noise: if noise > 0.0 { 1.0 / noise } else { 0.0 } }
+        NoiseSnapshot {
+            noise_variance: noise,
+            signal_to_noise: if noise > 0.0 { 1.0 / noise } else { 0.0 },
+        }
     }
 }
 
@@ -2682,7 +2897,13 @@ pub struct HasbrouckSnapshot {
 }
 
 impl Default for HasbrouckSnapshot {
-    fn default() -> Self { Self { permanent_impact: 0.0, temporary_impact: 0.0, information_share: 0.0 } }
+    fn default() -> Self {
+        Self {
+            permanent_impact: 0.0,
+            temporary_impact: 0.0,
+            information_share: 0.0,
+        }
+    }
 }
 
 /// Tracks returns and signed volume for Hasbrouck VAR.
@@ -2694,33 +2915,56 @@ pub struct HasbrouckVAR {
 }
 
 impl HasbrouckVAR {
-    pub fn new(max_len: usize) -> Self { Self { returns: Vec::with_capacity(max_len), signed_volumes: Vec::with_capacity(max_len), max_len } }
+    pub fn new(max_len: usize) -> Self {
+        Self {
+            returns: Vec::with_capacity(max_len),
+            signed_volumes: Vec::with_capacity(max_len),
+            max_len,
+        }
+    }
     pub fn on_trade(&mut self, ret: f64, signed_vol: f64) {
-        if self.returns.len() >= self.max_len { self.returns.remove(0); self.signed_volumes.remove(0); }
-        self.returns.push(ret);
-        self.signed_volumes.push(signed_vol);
+        bounded_push_pair(
+            &mut self.returns,
+            &mut self.signed_volumes,
+            self.max_len,
+            ret,
+            signed_vol,
+        );
     }
     pub fn snapshot(&self) -> HasbrouckSnapshot {
         let n = self.returns.len();
-        if n < 10 { return HasbrouckSnapshot::default(); }
+        if n < 10 {
+            return HasbrouckSnapshot::default();
+        }
         // Simple OLS for VAR(1): r_t = a1*r_{t-1} + b1*x_{t-1}, x_t = a2*r_{t-1} + b2*x_{t-1}
-        let mut sum_r1 = 0.0; let mut sum_x1 = 0.0;
-        let mut sum_r2 = 0.0; let mut sum_x2 = 0.0;
+        let mut sum_r1 = 0.0;
+        let mut sum_x1 = 0.0;
+        let mut sum_r2 = 0.0;
+        let mut sum_x2 = 0.0;
         let mut sum_x1r2 = 0.0;
         let mut sum_x1x2 = 0.0;
-        let mut sum_r1sq = 0.0; let mut sum_x1sq = 0.0;
+        let mut sum_r1sq = 0.0;
+        let mut sum_x1sq = 0.0;
         for i in 1..n {
-            let r1 = self.returns[i-1]; let x1 = self.signed_volumes[i-1];
-            let r2 = self.returns[i]; let x2 = self.signed_volumes[i];
-            sum_r1 += r1; sum_x1 += x1; sum_r2 += r2; sum_x2 += x2;
+            let r1 = self.returns[i - 1];
+            let x1 = self.signed_volumes[i - 1];
+            let r2 = self.returns[i];
+            let x2 = self.signed_volumes[i];
+            sum_r1 += r1;
+            sum_x1 += x1;
+            sum_r2 += r2;
+            sum_x2 += x2;
             sum_x1r2 += x1 * r2;
             sum_x1x2 += x1 * x2;
-            sum_r1sq += r1 * r1; sum_x1sq += x1 * x1;
+            sum_r1sq += r1 * r1;
+            sum_x1sq += x1 * x1;
         }
         let m = (n - 1) as f64;
         let denom_r = m * sum_r1sq - sum_r1 * sum_r1;
         let denom_x = m * sum_x1sq - sum_x1 * sum_x1;
-        if denom_r.abs() < 1e-10 || denom_x.abs() < 1e-10 { return HasbrouckSnapshot::default(); }
+        if denom_r.abs() < 1e-10 || denom_x.abs() < 1e-10 {
+            return HasbrouckSnapshot::default();
+        }
         let b1 = (m * sum_x1r2 - sum_x1 * sum_r2) / denom_x;
         let b2 = (m * sum_x1x2 - sum_x1 * sum_x2) / denom_x;
         // Permanent impact = IRF sum: b1 / (1 - a1) simplified
@@ -2744,7 +2988,12 @@ pub struct AlmgrenChrissSnapshot {
 }
 
 impl Default for AlmgrenChrissSnapshot {
-    fn default() -> Self { Self { permanent_impact_coef: 0.0, temporary_impact_coef: 0.0 } }
+    fn default() -> Self {
+        Self {
+            permanent_impact_coef: 0.0,
+            temporary_impact_coef: 0.0,
+        }
+    }
 }
 
 /// Tracks volume and price changes for impact estimation.
@@ -2756,19 +3005,32 @@ pub struct AlmgrenChriss {
 }
 
 impl AlmgrenChriss {
-    pub fn new(max_len: usize) -> Self { Self { price_changes: Vec::with_capacity(max_len), signed_volumes: Vec::with_capacity(max_len), max_len } }
+    pub fn new(max_len: usize) -> Self {
+        Self {
+            price_changes: Vec::with_capacity(max_len),
+            signed_volumes: Vec::with_capacity(max_len),
+            max_len,
+        }
+    }
     pub fn on_trade(&mut self, price_change: f64, signed_vol: f64) {
-        if self.price_changes.len() >= self.max_len { self.price_changes.remove(0); self.signed_volumes.remove(0); }
-        self.price_changes.push(price_change);
-        self.signed_volumes.push(signed_vol);
+        bounded_push_pair(
+            &mut self.price_changes,
+            &mut self.signed_volumes,
+            self.max_len,
+            price_change,
+            signed_vol,
+        );
     }
     pub fn snapshot(&self) -> AlmgrenChrissSnapshot {
         let n = self.price_changes.len();
-        if n < 10 { return AlmgrenChrissSnapshot::default(); }
+        if n < 10 {
+            return AlmgrenChrissSnapshot::default();
+        }
         // Regress price_change ~ signed_vol (simplified power law with alpha=1)
         let mean_pc: f64 = self.price_changes.iter().sum::<f64>() / n as f64;
         let mean_sv: f64 = self.signed_volumes.iter().sum::<f64>() / n as f64;
-        let mut num = 0.0; let mut den = 0.0;
+        let mut num = 0.0;
+        let mut den = 0.0;
         for i in 0..n {
             let dpc = self.price_changes[i] - mean_pc;
             let dsv = self.signed_volumes[i] - mean_sv;
@@ -2794,7 +3056,14 @@ pub struct SpreadDecompositionSnapshot {
 }
 
 impl Default for SpreadDecompositionSnapshot {
-    fn default() -> Self { Self { adverse_selection: 0.0, order_processing_cost: 0.0, inventory_component: 0.0, pin: 0.0 } }
+    fn default() -> Self {
+        Self {
+            adverse_selection: 0.0,
+            order_processing_cost: 0.0,
+            inventory_component: 0.0,
+            pin: 0.0,
+        }
+    }
 }
 
 /// Tracks spreads for Huang-Stoll decomposition.
@@ -2807,16 +3076,32 @@ pub struct SpreadDecomposition {
 }
 
 impl SpreadDecomposition {
-    pub fn new(max_len: usize) -> Self { Self { effective_spreads: Vec::with_capacity(max_len), realised_spreads: Vec::with_capacity(max_len), quoted_spreads: Vec::with_capacity(max_len), max_len } }
+    pub fn new(max_len: usize) -> Self {
+        Self {
+            effective_spreads: Vec::with_capacity(max_len),
+            realised_spreads: Vec::with_capacity(max_len),
+            quoted_spreads: Vec::with_capacity(max_len),
+            max_len,
+        }
+    }
     pub fn on_spread(&mut self, effective: f64, realised: f64, quoted: f64) {
-        if self.effective_spreads.len() >= self.max_len { self.effective_spreads.remove(0); self.realised_spreads.remove(0); self.quoted_spreads.remove(0); }
+        if self.max_len == 0 {
+            return;
+        }
+        if self.effective_spreads.len() >= self.max_len {
+            self.effective_spreads.remove(0);
+            self.realised_spreads.remove(0);
+            self.quoted_spreads.remove(0);
+        }
         self.effective_spreads.push(effective);
         self.realised_spreads.push(realised);
         self.quoted_spreads.push(quoted);
     }
     pub fn snapshot(&self) -> SpreadDecompositionSnapshot {
         let n = self.effective_spreads.len();
-        if n == 0 { return SpreadDecompositionSnapshot::default(); }
+        if n == 0 {
+            return SpreadDecompositionSnapshot::default();
+        }
         let mean_eff: f64 = self.effective_spreads.iter().sum::<f64>() / n as f64;
         let mean_real: f64 = self.realised_spreads.iter().sum::<f64>() / n as f64;
         let mean_quot: f64 = self.quoted_spreads.iter().sum::<f64>() / n as f64;
@@ -2844,7 +3129,14 @@ pub struct ACDSnapshot {
 }
 
 impl Default for ACDSnapshot {
-    fn default() -> Self { Self { mean_duration_ns: 0.0, intensity: 0.0, alpha: 0.0, beta: 0.0 } }
+    fn default() -> Self {
+        Self {
+            mean_duration_ns: 0.0,
+            intensity: 0.0,
+            alpha: 0.0,
+            beta: 0.0,
+        }
+    }
 }
 
 /// Tracks trade durations and estimates ACD(1,1).
@@ -2855,33 +3147,49 @@ pub struct ACDModel {
 }
 
 impl ACDModel {
-    pub fn new(max_len: usize) -> Self { Self { durations: Vec::with_capacity(max_len), max_len } }
+    pub fn new(max_len: usize) -> Self {
+        Self {
+            durations: Vec::with_capacity(max_len),
+            max_len,
+        }
+    }
     pub fn on_trade(&mut self, ts_ns: u64, prev_ts_ns: u64) {
         if prev_ts_ns > 0 {
             let d = (ts_ns.saturating_sub(prev_ts_ns)) as f64;
-            if self.durations.len() >= self.max_len { self.durations.remove(0); }
-            self.durations.push(d);
+            bounded_push(&mut self.durations, self.max_len, d);
         }
     }
     pub fn snapshot(&self) -> ACDSnapshot {
         let n = self.durations.len();
-        if n < 5 { return ACDSnapshot::default(); }
+        if n < 5 {
+            return ACDSnapshot::default();
+        }
         let mean_d: f64 = self.durations.iter().sum::<f64>() / n as f64;
         // Grid search for ACD(1,1): psi_i = omega + alpha * d_{i-1} + beta * psi_{i-1}
         let mut best_ll = f64::NEG_INFINITY;
-        let mut best_a = 0.3; let mut best_b = 0.3;
+        let mut best_a = 0.3;
+        let mut best_b = 0.3;
         for a in [0.1, 0.2, 0.3, 0.4, 0.5] {
             for b in [0.1, 0.2, 0.3, 0.4, 0.5] {
-                if a + b >= 1.0 { continue; }
+                if a + b >= 1.0 {
+                    continue;
+                }
                 let omega = mean_d * (1.0 - a - b);
                 let mut psi = mean_d;
                 let mut ll = 0.0;
                 for &d in &self.durations {
                     psi = omega + a * d + b * psi;
-                    if psi <= 0.0 { ll = f64::NEG_INFINITY; break; }
+                    if psi <= 0.0 {
+                        ll = f64::NEG_INFINITY;
+                        break;
+                    }
                     ll += -(d / psi).ln() - d / psi;
                 }
-                if ll > best_ll { best_ll = ll; best_a = a; best_b = b; }
+                if ll > best_ll {
+                    best_ll = ll;
+                    best_a = a;
+                    best_b = b;
+                }
             }
         }
         ACDSnapshot {
@@ -2913,7 +3221,14 @@ pub struct RegimeSnapshot {
 }
 
 impl Default for RegimeSnapshot {
-    fn default() -> Self { Self { regime: 0, spread_z: 0.0, vol_z: 0.0, vpin_z: 0.0 } }
+    fn default() -> Self {
+        Self {
+            regime: 0,
+            spread_z: 0.0,
+            vol_z: 0.0,
+            vpin_z: 0.0,
+        }
+    }
 }
 
 /// Classifies market regime from spread, volatility, and VPIN.
@@ -2926,30 +3241,58 @@ pub struct RegimeDetector {
 }
 
 impl RegimeDetector {
-    pub fn new(max_len: usize) -> Self { Self { spreads: Vec::with_capacity(max_len), vols: Vec::with_capacity(max_len), vpins: Vec::with_capacity(max_len), max_len } }
-    pub fn on_metrics(&mut self, spread: f64, vol: f64, vpin: f64) {
-        for (v, val) in [(&mut self.spreads, spread), (&mut self.vols, vol), (&mut self.vpins, vpin)] {
-            if v.len() >= self.max_len { v.remove(0); }
-            v.push(val);
+    pub fn new(max_len: usize) -> Self {
+        Self {
+            spreads: Vec::with_capacity(max_len),
+            vols: Vec::with_capacity(max_len),
+            vpins: Vec::with_capacity(max_len),
+            max_len,
         }
+    }
+    pub fn on_metrics(&mut self, spread: f64, vol: f64, vpin: f64) {
+        if self.max_len == 0 {
+            return;
+        }
+        if self.spreads.len() >= self.max_len {
+            self.spreads.remove(0);
+            self.vols.remove(0);
+            self.vpins.remove(0);
+        }
+        self.spreads.push(spread);
+        self.vols.push(vol);
+        self.vpins.push(vpin);
     }
     pub fn snapshot(&self) -> RegimeSnapshot {
         let z = |vals: &[f64], current: f64| -> f64 {
             let n = vals.len();
-            if n < 2 { return 0.0; }
+            if n < 2 {
+                return 0.0;
+            }
             let mean: f64 = vals.iter().sum::<f64>() / n as f64;
             let var: f64 = vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1) as f64;
-            if var <= 0.0 { return 0.0; }
+            if var <= 0.0 {
+                return 0.0;
+            }
             (current - mean) / var.sqrt()
         };
         let spread_z = z(&self.spreads, *self.spreads.last().unwrap_or(&0.0));
         let vol_z = z(&self.vols, *self.vols.last().unwrap_or(&0.0));
         let vpin_z = z(&self.vpins, *self.vpins.last().unwrap_or(&0.0));
-        let regime = if spread_z > 3.0 && vol_z > 3.0 { Regime::FlashCrash }
-            else if spread_z > 2.0 && vol_z > 2.0 && vpin_z > 0.8 { Regime::Stressed }
-            else if spread_z < -0.5 && vol_z < -0.5 && vpin_z < -0.5 { Regime::Quiet }
-            else { Regime::Normal };
-        RegimeSnapshot { regime: regime as u32, spread_z, vol_z, vpin_z }
+        let regime = if spread_z > 3.0 && vol_z > 3.0 {
+            Regime::FlashCrash
+        } else if spread_z > 2.0 && vol_z > 2.0 && vpin_z > 0.8 {
+            Regime::Stressed
+        } else if spread_z < -0.5 && vol_z < -0.5 && vpin_z < -0.5 {
+            Regime::Quiet
+        } else {
+            Regime::Normal
+        };
+        RegimeSnapshot {
+            regime: regime as u32,
+            spread_z,
+            vol_z,
+            vpin_z,
+        }
     }
 }
 
@@ -2964,7 +3307,13 @@ pub struct KineticEnergySnapshot {
 }
 
 impl Default for KineticEnergySnapshot {
-    fn default() -> Self { Self { kinetic_energy: 0.0, order_flow_momentum: 0.0, energy_change: 0.0 } }
+    fn default() -> Self {
+        Self {
+            kinetic_energy: 0.0,
+            order_flow_momentum: 0.0,
+            energy_change: 0.0,
+        }
+    }
 }
 
 /// Tracks book changes to compute kinetic energy analogues.
@@ -2975,24 +3324,40 @@ pub struct KineticEnergyTracker {
 }
 
 impl KineticEnergyTracker {
-    pub fn new(max_len: usize) -> Self { Self { prev_energies: Vec::with_capacity(max_len), max_len } }
+    pub fn new(max_len: usize) -> Self {
+        Self {
+            prev_energies: Vec::with_capacity(max_len),
+            max_len,
+        }
+    }
     /// Feeds a book update with relative level and velocity (size change).
     pub fn on_book_event(&mut self, _level: i32, size_delta: i64, ts_delta_ns: u64) {
-        let velocity = if ts_delta_ns > 0 { size_delta as f64 / ts_delta_ns as f64 } else { 0.0 };
+        let velocity = if ts_delta_ns > 0 {
+            size_delta as f64 / ts_delta_ns as f64
+        } else {
+            0.0
+        };
         let energy = 0.5 * velocity * velocity;
-        if self.prev_energies.len() >= self.max_len { self.prev_energies.remove(0); }
-        self.prev_energies.push(energy);
+        bounded_push(&mut self.prev_energies, self.max_len, energy);
     }
     pub fn snapshot(&self) -> KineticEnergySnapshot {
         let n = self.prev_energies.len();
-        if n < 2 { return KineticEnergySnapshot::default(); }
+        if n < 2 {
+            return KineticEnergySnapshot::default();
+        }
         let total_ke: f64 = self.prev_energies.iter().sum();
         let _mean_ke = total_ke / n as f64;
         let momentum = self.prev_energies.last().copied().unwrap_or(0.0) * n as f64;
         let energy_change = if n >= 2 {
             self.prev_energies[n - 1] - self.prev_energies[n - 2]
-        } else { 0.0 };
-        KineticEnergySnapshot { kinetic_energy: total_ke, order_flow_momentum: momentum, energy_change }
+        } else {
+            0.0
+        };
+        KineticEnergySnapshot {
+            kinetic_energy: total_ke,
+            order_flow_momentum: momentum,
+            energy_change,
+        }
     }
 }
 
@@ -3007,7 +3372,13 @@ pub struct DarkPoolSnapshot {
 }
 
 impl Default for DarkPoolSnapshot {
-    fn default() -> Self { Self { dark_volume_pct: 0.0, dark_zscore: 0.0, dark_lit_divergence: false } }
+    fn default() -> Self {
+        Self {
+            dark_volume_pct: 0.0,
+            dark_zscore: 0.0,
+            dark_lit_divergence: false,
+        }
+    }
 }
 
 /// Tracks dark pool volume alongside lit volume.
@@ -3019,23 +3390,55 @@ pub struct DarkPoolTracker {
 }
 
 impl DarkPoolTracker {
-    pub fn new(max_days: usize) -> Self { Self { dark_volumes: Vec::with_capacity(max_days), lit_volumes: Vec::with_capacity(max_days), max_days } }
+    pub fn new(max_days: usize) -> Self {
+        Self {
+            dark_volumes: Vec::with_capacity(max_days),
+            lit_volumes: Vec::with_capacity(max_days),
+            max_days,
+        }
+    }
     pub fn on_day(&mut self, dark_vol: f64, lit_vol: f64) {
-        if self.dark_volumes.len() >= self.max_days { self.dark_volumes.remove(0); self.lit_volumes.remove(0); }
-        self.dark_volumes.push(dark_vol);
-        self.lit_volumes.push(lit_vol);
+        bounded_push_pair(
+            &mut self.dark_volumes,
+            &mut self.lit_volumes,
+            self.max_days,
+            dark_vol,
+            lit_vol,
+        );
     }
     pub fn snapshot(&self) -> DarkPoolSnapshot {
         let n = self.dark_volumes.len();
-        if n == 0 { return DarkPoolSnapshot::default(); }
+        if n == 0 {
+            return DarkPoolSnapshot::default();
+        }
         let total_lit: f64 = self.lit_volumes.iter().sum();
         let total_dark: f64 = self.dark_volumes.iter().sum();
         let total = total_lit + total_dark;
-        let pct = if total > 0.0 { total_dark / total * 100.0 } else { 0.0 };
+        let pct = if total > 0.0 {
+            total_dark / total * 100.0
+        } else {
+            0.0
+        };
         let mean_dark: f64 = self.dark_volumes.iter().sum::<f64>() / n as f64;
-        let var_dark: f64 = if n > 1 { self.dark_volumes.iter().map(|v| (v - mean_dark).powi(2)).sum::<f64>() / (n - 1) as f64 } else { 0.0 };
-        let z = if var_dark > 0.0 { (self.dark_volumes[n - 1] - mean_dark) / var_dark.sqrt() } else { 0.0 };
-        DarkPoolSnapshot { dark_volume_pct: pct, dark_zscore: z, dark_lit_divergence: z.abs() > 2.0 }
+        let var_dark: f64 = if n > 1 {
+            self.dark_volumes
+                .iter()
+                .map(|v| (v - mean_dark).powi(2))
+                .sum::<f64>()
+                / (n - 1) as f64
+        } else {
+            0.0
+        };
+        let z = if var_dark > 0.0 {
+            (self.dark_volumes[n - 1] - mean_dark) / var_dark.sqrt()
+        } else {
+            0.0
+        };
+        DarkPoolSnapshot {
+            dark_volume_pct: pct,
+            dark_zscore: z,
+            dark_lit_divergence: z.abs() > 2.0,
+        }
     }
 }
 
@@ -3051,33 +3454,68 @@ pub struct OptionsFlowSnapshot {
 }
 
 impl Default for OptionsFlowSnapshot {
-    fn default() -> Self { Self { sweep_detected: false, put_call_ratio: 0.0, delta_notional: 0.0, gamma_positioning: 0.0 } }
+    fn default() -> Self {
+        Self {
+            sweep_detected: false,
+            put_call_ratio: 0.0,
+            delta_notional: 0.0,
+            gamma_positioning: 0.0,
+        }
+    }
 }
 
 /// Tracks options trade flow.
 #[derive(Debug, Clone)]
 pub struct OptionsFlowTracker {
-    put_volumes: Vec<f64>,
-    call_volumes: Vec<f64>,
-    sweeps: u32,
+    trades: Vec<OptionsTradeSample>,
     max_len: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct OptionsTradeSample {
+    is_call: bool,
+    volume: f64,
+    is_sweep: bool,
+}
+
 impl OptionsFlowTracker {
-    pub fn new(max_len: usize) -> Self { Self { put_volumes: Vec::with_capacity(max_len), call_volumes: Vec::with_capacity(max_len), sweeps: 0, max_len } }
-    pub fn on_trade(&mut self, is_call: bool, volume: f64, _premium: f64, is_sweep: bool) {
-        if is_call { self.call_volumes.push(volume); } else { self.put_volumes.push(volume); }
-        for v in [&mut self.call_volumes, &mut self.put_volumes] {
-            if v.len() > self.max_len { v.remove(0); }
+    pub fn new(max_len: usize) -> Self {
+        Self {
+            trades: Vec::with_capacity(max_len),
+            max_len,
         }
-        if is_sweep { self.sweeps += 1; }
+    }
+    pub fn on_trade(&mut self, is_call: bool, volume: f64, _premium: f64, is_sweep: bool) {
+        bounded_push(
+            &mut self.trades,
+            self.max_len,
+            OptionsTradeSample {
+                is_call,
+                volume,
+                is_sweep,
+            },
+        );
     }
     pub fn snapshot(&self) -> OptionsFlowSnapshot {
-        let put_vol: f64 = self.put_volumes.iter().sum();
-        let call_vol: f64 = self.call_volumes.iter().sum();
-        let ratio = if call_vol > 0.0 { put_vol / call_vol } else { put_vol.max(0.0) };
+        let put_vol: f64 = self
+            .trades
+            .iter()
+            .filter(|sample| !sample.is_call)
+            .map(|sample| sample.volume)
+            .sum();
+        let call_vol: f64 = self
+            .trades
+            .iter()
+            .filter(|sample| sample.is_call)
+            .map(|sample| sample.volume)
+            .sum();
+        let ratio = if call_vol > 0.0 {
+            put_vol / call_vol
+        } else {
+            put_vol.max(0.0)
+        };
         OptionsFlowSnapshot {
-            sweep_detected: self.sweeps > 0,
+            sweep_detected: self.trades.iter().any(|sample| sample.is_sweep),
             put_call_ratio: ratio,
             delta_notional: (call_vol - put_vol).abs(),
             gamma_positioning: (call_vol + put_vol).max(1.0).recip(),
@@ -3097,7 +3535,14 @@ pub struct FuturesSnapshot {
 }
 
 impl Default for FuturesSnapshot {
-    fn default() -> Self { Self { basis_bps: 0.0, calendar_spread: 0.0, settlement_pressure: 0.0, roll_progress: 0.0 } }
+    fn default() -> Self {
+        Self {
+            basis_bps: 0.0,
+            calendar_spread: 0.0,
+            settlement_pressure: 0.0,
+            roll_progress: 0.0,
+        }
+    }
 }
 
 // ============================================================================
@@ -3122,7 +3567,13 @@ pub struct VolatilitySignatureSnapshot {
 }
 
 impl Default for VolatilitySignatureSnapshot {
-    fn default() -> Self { Self { points: [VolatilitySignaturePoint { lag: 0, rv: 0.0 }; 10], point_count: 0, optimal_lag: 0 } }
+    fn default() -> Self {
+        Self {
+            points: [VolatilitySignaturePoint { lag: 0, rv: 0.0 }; 10],
+            point_count: 0,
+            optimal_lag: 0,
+        }
+    }
 }
 
 /// Computes volatility signature from return series.
@@ -3133,25 +3584,36 @@ pub struct VolatilitySignature {
 }
 
 impl VolatilitySignature {
-    pub fn new(max_len: usize) -> Self { Self { returns: Vec::with_capacity(max_len), max_len } }
+    pub fn new(max_len: usize) -> Self {
+        Self {
+            returns: Vec::with_capacity(max_len),
+            max_len,
+        }
+    }
     pub fn on_return(&mut self, r: f64) {
-        if self.returns.len() >= self.max_len { self.returns.remove(0); }
-        self.returns.push(r);
+        bounded_push(&mut self.returns, self.max_len, r);
     }
     pub fn snapshot(&self) -> VolatilitySignatureSnapshot {
         let n = self.returns.len();
         let mut snap = VolatilitySignatureSnapshot::default();
-        if n < 4 { return snap; }
+        if n < 4 {
+            return snap;
+        }
         let lags = [1u32, 2, 3, 5, 10, 20, 30, 50, 75, 100];
         let mut prev_rv = f64::MAX;
         for (i, &lag) in lags.iter().enumerate().take(10) {
-            if lag as usize >= n { break; }
+            if lag as usize >= n {
+                break;
+            }
             let rv: f64 = (0..n - lag as usize)
                 .map(|j| (self.returns[j + lag as usize] - self.returns[j]).powi(2))
-                .sum::<f64>() / (n - lag as usize) as f64;
+                .sum::<f64>()
+                / (n - lag as usize) as f64;
             snap.points[i] = VolatilitySignaturePoint { lag, rv };
             snap.point_count = (i + 1) as u32;
-            if rv < prev_rv * 0.95 && snap.optimal_lag == 0 { snap.optimal_lag = lag; }
+            if rv < prev_rv * 0.95 && snap.optimal_lag == 0 {
+                snap.optimal_lag = lag;
+            }
             prev_rv = rv;
         }
         snap
@@ -3173,7 +3635,14 @@ pub struct AgentTypeSnapshot {
 }
 
 impl Default for AgentTypeSnapshot {
-    fn default() -> Self { Self { irp: 0.0, ipin: 0.0, ivpin: 0.0, hft_reflexivity: 0.0 } }
+    fn default() -> Self {
+        Self {
+            irp: 0.0,
+            ipin: 0.0,
+            ivpin: 0.0,
+            hft_reflexivity: 0.0,
+        }
+    }
 }
 
 /// Infers agent types from trade and book patterns.
@@ -3186,28 +3655,48 @@ pub struct AgentTypeDetector {
 }
 
 impl AgentTypeDetector {
-    pub fn new(max_len: usize) -> Self { Self { trade_sizes_f: Vec::with_capacity(max_len), cancel_rates: Vec::with_capacity(max_len), arrivals: Vec::with_capacity(max_len), max_len } }
+    pub fn new(max_len: usize) -> Self {
+        Self {
+            trade_sizes_f: Vec::with_capacity(max_len),
+            cancel_rates: Vec::with_capacity(max_len),
+            arrivals: Vec::with_capacity(max_len),
+            max_len,
+        }
+    }
     pub fn on_event(&mut self, trade_size: i64, cancel_rate: f64, arrival_rate: f64) {
         let val = trade_size as f64;
-        if self.trade_sizes_f.len() >= self.max_len { self.trade_sizes_f.remove(0); }
+        if self.max_len == 0 {
+            return;
+        }
+        if self.trade_sizes_f.len() >= self.max_len {
+            self.trade_sizes_f.remove(0);
+            self.cancel_rates.remove(0);
+            self.arrivals.remove(0);
+        }
         self.trade_sizes_f.push(val);
-        if self.cancel_rates.len() >= self.max_len { self.cancel_rates.remove(0); }
         self.cancel_rates.push(cancel_rate);
-        if self.arrivals.len() >= self.max_len { self.arrivals.remove(0); }
         self.arrivals.push(arrival_rate);
     }
     pub fn snapshot(&self) -> AgentTypeSnapshot {
         let n = self.trade_sizes_f.len();
-        if n < 5 { return AgentTypeSnapshot::default(); }
+        if n < 5 {
+            return AgentTypeSnapshot::default();
+        }
         let mean_ts: f64 = self.trade_sizes_f.iter().sum::<f64>() / n as f64;
         let mean_cr: f64 = self.cancel_rates.iter().sum::<f64>() / n as f64;
         let mean_ar: f64 = self.arrivals.iter().sum::<f64>() / n as f64;
-        let small_trade_ratio = self.trade_sizes_f.iter().filter(|&&s| s < 100.0).count() as f64 / n as f64;
+        let small_trade_ratio =
+            self.trade_sizes_f.iter().filter(|&&s| s < 100.0).count() as f64 / n as f64;
         let irp = small_trade_ratio; // Intensity-based relative proportion of retail
         let ipin = (mean_cr / (mean_cr + mean_ar + 1.0)).clamp(0.0, 1.0);
         let ivpin = (1.0 - mean_ts / (mean_ts + 1000.0)).clamp(0.0, 1.0);
         let hft_reflexivity = (mean_cr / mean_ar.max(0.01)).clamp(0.0, 10.0);
-        AgentTypeSnapshot { irp, ipin, ivpin, hft_reflexivity }
+        AgentTypeSnapshot {
+            irp,
+            ipin,
+            ivpin,
+            hft_reflexivity,
+        }
     }
 }
 
@@ -3236,15 +3725,34 @@ pub struct LOBFeatureSnapshot {
 
 impl Default for LOBFeatureSnapshot {
     fn default() -> Self {
-        Self { spread_bps: 0.0, depth_imbalance: 0.0, microprice: 0.0, depth_slope: 0.0,
-            order_intensity: 0.0, price_pressure_1: 0.0, price_pressure_5: 0.0, price_pressure_10: 0.0,
-            bid_ask_ratio_1: 0.0, bid_ask_ratio_5: 0.0, bid_ask_ratio_10: 0.0, weighted_spread: 0.0,
-            volume_concentration: 0.0, cancel_intensity: 0.0, arrival_intensity: 0.0, trade_flow_imbalance: 0.0 }
+        Self {
+            spread_bps: 0.0,
+            depth_imbalance: 0.0,
+            microprice: 0.0,
+            depth_slope: 0.0,
+            order_intensity: 0.0,
+            price_pressure_1: 0.0,
+            price_pressure_5: 0.0,
+            price_pressure_10: 0.0,
+            bid_ask_ratio_1: 0.0,
+            bid_ask_ratio_5: 0.0,
+            bid_ask_ratio_10: 0.0,
+            weighted_spread: 0.0,
+            volume_concentration: 0.0,
+            cancel_intensity: 0.0,
+            arrival_intensity: 0.0,
+            trade_flow_imbalance: 0.0,
+        }
     }
 }
 
 /// Computes LOB features from book snapshot and trade flow.
-pub fn compute_lob_features(book: &BookSnapshot, trade_imbalance: f64, cancel_rate: f64, arrival_rate: f64) -> LOBFeatureSnapshot {
+pub fn compute_lob_features(
+    book: &BookSnapshot,
+    trade_imbalance: f64,
+    cancel_rate: f64,
+    arrival_rate: f64,
+) -> LOBFeatureSnapshot {
     let mut f = LOBFeatureSnapshot::default();
     let best_bid = book.bids.first().map(|l| l.price).unwrap_or(0);
     let best_ask = book.asks.first().map(|l| l.price).unwrap_or(0);
@@ -3254,25 +3762,46 @@ pub fn compute_lob_features(book: &BookSnapshot, trade_imbalance: f64, cancel_ra
         let bid_vol: i64 = book.bids.iter().map(|l| l.size).sum();
         let ask_vol: i64 = book.asks.iter().map(|l| l.size).sum();
         let total = (bid_vol + ask_vol) as f64;
-        f.depth_imbalance = if total > 0.0 { (bid_vol - ask_vol) as f64 / total } else { 0.0 };
+        f.depth_imbalance = if total > 0.0 {
+            (bid_vol - ask_vol) as f64 / total
+        } else {
+            0.0
+        };
         f.microprice = if bid_vol > 0 && ask_vol > 0 {
-            (best_bid as f64 * ask_vol as f64 + best_ask as f64 * bid_vol as f64) / (bid_vol + ask_vol) as f64
-        } else { mid };
+            (best_bid as f64 * ask_vol as f64 + best_ask as f64 * bid_vol as f64)
+                / (bid_vol + ask_vol) as f64
+        } else {
+            mid
+        };
         if book.bids.len() >= 2 && book.asks.len() >= 2 {
-            let b1 = book.bids[0].size as f64; let b2 = book.bids[1].size.max(1) as f64;
-            let a1 = book.asks[0].size as f64; let a2 = book.asks[1].size.max(1) as f64;
+            let b1 = book.bids[0].size as f64;
+            let b2 = book.bids[1].size.max(1) as f64;
+            let a1 = book.asks[0].size as f64;
+            let a2 = book.asks[1].size.max(1) as f64;
             f.depth_slope = ((b1 / b2) + (a1 / a2)) / 2.0;
         }
         // Price pressure: cumulative bid-ask imbalance at levels 1, 5, 10
         for (i, l) in book.bids.iter().enumerate() {
-            if i == 0 { f.price_pressure_1 -= l.size as f64; }
-            if i < 5 { f.price_pressure_5 -= l.size as f64; }
-            if i < 10 { f.price_pressure_10 -= l.size as f64; }
+            if i == 0 {
+                f.price_pressure_1 -= l.size as f64;
+            }
+            if i < 5 {
+                f.price_pressure_5 -= l.size as f64;
+            }
+            if i < 10 {
+                f.price_pressure_10 -= l.size as f64;
+            }
         }
         for (i, l) in book.asks.iter().enumerate() {
-            if i == 0 { f.price_pressure_1 += l.size as f64; }
-            if i < 5 { f.price_pressure_5 += l.size as f64; }
-            if i < 10 { f.price_pressure_10 += l.size as f64; }
+            if i == 0 {
+                f.price_pressure_1 += l.size as f64;
+            }
+            if i < 5 {
+                f.price_pressure_5 += l.size as f64;
+            }
+            if i < 10 {
+                f.price_pressure_10 += l.size as f64;
+            }
         }
         // Bid-ask volume ratios at levels 1, 5, 10
         let bid1 = book.bids.first().map(|l| l.size).unwrap_or(1).max(1) as f64;
@@ -3305,7 +3834,12 @@ pub struct DarkLitCorrelationSnapshot {
 }
 
 impl Default for DarkLitCorrelationSnapshot {
-    fn default() -> Self { Self { correlation: 0.0, siphon_active: false } }
+    fn default() -> Self {
+        Self {
+            correlation: 0.0,
+            siphon_active: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -3316,26 +3850,45 @@ pub struct DarkLitCorrelator {
 }
 
 impl DarkLitCorrelator {
-    pub fn new(max_len: usize) -> Self { Self { dark_imbalances: Vec::with_capacity(max_len), lit_imbalances: Vec::with_capacity(max_len), max_len } }
+    pub fn new(max_len: usize) -> Self {
+        Self {
+            dark_imbalances: Vec::with_capacity(max_len),
+            lit_imbalances: Vec::with_capacity(max_len),
+            max_len,
+        }
+    }
     pub fn on_imbalance(&mut self, dark_imb: f64, lit_imb: f64) {
-        if self.dark_imbalances.len() >= self.max_len { self.dark_imbalances.remove(0); self.lit_imbalances.remove(0); }
-        self.dark_imbalances.push(dark_imb);
-        self.lit_imbalances.push(lit_imb);
+        bounded_push_pair(
+            &mut self.dark_imbalances,
+            &mut self.lit_imbalances,
+            self.max_len,
+            dark_imb,
+            lit_imb,
+        );
     }
     pub fn snapshot(&self) -> DarkLitCorrelationSnapshot {
         let n = self.dark_imbalances.len();
-        if n < 5 { return DarkLitCorrelationSnapshot::default(); }
+        if n < 5 {
+            return DarkLitCorrelationSnapshot::default();
+        }
         let mean_d: f64 = self.dark_imbalances.iter().sum::<f64>() / n as f64;
         let mean_l: f64 = self.lit_imbalances.iter().sum::<f64>() / n as f64;
-        let mut cov = 0.0; let mut var_d = 0.0; let mut var_l = 0.0;
+        let mut cov = 0.0;
+        let mut var_d = 0.0;
+        let mut var_l = 0.0;
         for i in 0..n {
             let dd = self.dark_imbalances[i] - mean_d;
             let dl = self.lit_imbalances[i] - mean_l;
-            cov += dd * dl; var_d += dd * dd; var_l += dl * dl;
+            cov += dd * dl;
+            var_d += dd * dd;
+            var_l += dl * dl;
         }
         let denom = (var_d * var_l).sqrt().max(f64::EPSILON);
         let corr = (cov / n as f64) / denom;
-        DarkLitCorrelationSnapshot { correlation: corr.clamp(-1.0, 1.0), siphon_active: corr < -0.5 }
+        DarkLitCorrelationSnapshot {
+            correlation: corr.clamp(-1.0, 1.0),
+            siphon_active: corr < -0.5,
+        }
     }
 }
 
@@ -3351,32 +3904,68 @@ pub struct InstitutionalFlowSnapshot {
 }
 
 impl Default for InstitutionalFlowSnapshot {
-    fn default() -> Self { Self { institutional_buy_ratio: 0.0, crowding_score: 0.0 } }
+    fn default() -> Self {
+        Self {
+            institutional_buy_ratio: 0.0,
+            crowding_score: 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct InstitutionalFlowTracker {
-    large_trades: Vec<(i64, i64)>,  // (size, side: +1 buy, -1 sell)
+    large_trades: Vec<(i64, i64)>, // (size, side: +1 buy, -1 sell)
     total_volume: i64,
     max_len: usize,
 }
 
 impl InstitutionalFlowTracker {
-    pub fn new(max_len: usize) -> Self { Self { large_trades: Vec::with_capacity(max_len), total_volume: 0, max_len } }
+    pub fn new(max_len: usize) -> Self {
+        Self {
+            large_trades: Vec::with_capacity(max_len),
+            total_volume: 0,
+            max_len,
+        }
+    }
     pub fn on_trade(&mut self, size: i64, is_buy: bool) {
-        if self.large_trades.len() >= self.max_len { self.large_trades.remove(0); }
+        if self.max_len == 0 {
+            return;
+        }
+        if self.large_trades.len() >= self.max_len {
+            let (evicted_size, _) = self.large_trades.remove(0);
+            self.total_volume = self.total_volume.saturating_sub(evicted_size);
+        }
         self.large_trades.push((size, if is_buy { 1 } else { -1 }));
         self.total_volume += size;
     }
     pub fn snapshot(&self) -> InstitutionalFlowSnapshot {
         let n = self.large_trades.len();
-        if n == 0 { return InstitutionalFlowSnapshot::default(); }
-        let inst_buy: i64 = self.large_trades.iter().filter(|(_, s)| *s > 0).map(|(sz, _)| sz).sum();
-        let inst_sell: i64 = self.large_trades.iter().filter(|(_, s)| *s < 0).map(|(sz, _)| sz).sum();
+        if n == 0 {
+            return InstitutionalFlowSnapshot::default();
+        }
+        let inst_buy: i64 = self
+            .large_trades
+            .iter()
+            .filter(|(_, s)| *s > 0)
+            .map(|(sz, _)| sz)
+            .sum();
+        let inst_sell: i64 = self
+            .large_trades
+            .iter()
+            .filter(|(_, s)| *s < 0)
+            .map(|(sz, _)| sz)
+            .sum();
         let total = inst_buy + inst_sell;
-        let ratio = if total > 0 { inst_buy as f64 / total as f64 } else { 0.5 };
+        let ratio = if total > 0 {
+            inst_buy as f64 / total as f64
+        } else {
+            0.5
+        };
         let crowding = (inst_buy as f64 - inst_sell as f64).abs() / self.total_volume.max(1) as f64;
-        InstitutionalFlowSnapshot { institutional_buy_ratio: ratio, crowding_score: crowding }
+        InstitutionalFlowSnapshot {
+            institutional_buy_ratio: ratio,
+            crowding_score: crowding,
+        }
     }
 }
 
@@ -3393,7 +3982,13 @@ pub struct OIAnalysisSnapshot {
 }
 
 impl Default for OIAnalysisSnapshot {
-    fn default() -> Self { Self { oi_divergence: false, oi_build_rate: 0.0, max_pain_distance_bps: 0.0 } }
+    fn default() -> Self {
+        Self {
+            oi_divergence: false,
+            oi_build_rate: 0.0,
+            max_pain_distance_bps: 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -3404,18 +3999,33 @@ pub struct OIAnalyzer {
 }
 
 impl OIAnalyzer {
-    pub fn new(max_len: usize) -> Self { Self { oi_values: Vec::with_capacity(max_len), price_values: Vec::with_capacity(max_len), max_len } }
-    pub fn on_update(&mut self, oi: f64, price: f64) {
-        for (v, val) in [(&mut self.oi_values, oi), (&mut self.price_values, price)] {
-            if v.len() >= self.max_len { v.remove(0); }
-            v.push(val);
+    pub fn new(max_len: usize) -> Self {
+        Self {
+            oi_values: Vec::with_capacity(max_len),
+            price_values: Vec::with_capacity(max_len),
+            max_len,
         }
+    }
+    pub fn on_update(&mut self, oi: f64, price: f64) {
+        if self.max_len == 0 {
+            return;
+        }
+        if self.oi_values.len() >= self.max_len {
+            self.oi_values.remove(0);
+            self.price_values.remove(0);
+        }
+        self.oi_values.push(oi);
+        self.price_values.push(price);
     }
     pub fn snapshot(&self) -> OIAnalysisSnapshot {
         let n = self.oi_values.len();
-        if n < 3 { return OIAnalysisSnapshot::default(); }
-        let oi_start = self.oi_values[0]; let oi_end = self.oi_values[n-1];
-        let price_start = self.price_values[0]; let price_end = self.price_values[n-1];
+        if n < 3 {
+            return OIAnalysisSnapshot::default();
+        }
+        let oi_start = self.oi_values[0];
+        let oi_end = self.oi_values[n - 1];
+        let price_start = self.price_values[0];
+        let price_end = self.price_values[n - 1];
         let oi_rising = oi_end > oi_start * 1.01;
         let price_rising = price_end > price_start;
         let divergence = (oi_rising && !price_rising) || (!oi_rising && price_rising);
@@ -3440,7 +4050,11 @@ pub struct FXSnapshot {
 }
 
 impl Default for FXSnapshot {
-    fn default() -> Self { Self { cross_currency_correlation: 0.0 } }
+    fn default() -> Self {
+        Self {
+            cross_currency_correlation: 0.0,
+        }
+    }
 }
 
 #[repr(C)]
@@ -3451,7 +4065,12 @@ pub struct FixedIncomeSnapshot {
 }
 
 impl Default for FixedIncomeSnapshot {
-    fn default() -> Self { Self { yield_curve_positioning: 0.0, duration_weighted_flow: 0.0 } }
+    fn default() -> Self {
+        Self {
+            yield_curve_positioning: 0.0,
+            duration_weighted_flow: 0.0,
+        }
+    }
 }
 
 #[repr(C)]
@@ -3463,7 +4082,13 @@ pub struct CryptoSnapshot {
 }
 
 impl Default for CryptoSnapshot {
-    fn default() -> Self { Self { exchange_flow_balance: 0.0, funding_rate_basis: 0.0, wash_trading_score: 0.0 } }
+    fn default() -> Self {
+        Self {
+            exchange_flow_balance: 0.0,
+            funding_rate_basis: 0.0,
+            wash_trading_score: 0.0,
+        }
+    }
 }
 
 // ============================================================================
@@ -3471,8 +4096,7 @@ impl Default for CryptoSnapshot {
 // ============================================================================
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct AlertRule {
     pub absorption_alert: bool,
     pub delta_divergence_alert: bool,
@@ -3480,7 +4104,6 @@ pub struct AlertRule {
     pub iceberg_alert: bool,
     pub vpin_toxic_alert: bool,
 }
-
 
 // ============================================================================
 // T9: State Checkpoint
@@ -3503,24 +4126,58 @@ pub struct FuturesTracker {
 }
 
 impl FuturesTracker {
-    pub fn new(max_len: usize) -> Self { Self { front_prices: Vec::with_capacity(max_len), deferred_prices: Vec::with_capacity(max_len), settle_volumes: Vec::with_capacity(max_len), daily_avg_volumes: Vec::with_capacity(max_len), max_len } }
-    pub fn on_tick(&mut self, front_price: f64, deferred_price: f64, volume: f64, daily_avg_vol: f64) {
-        for (v, val) in [(&mut self.front_prices, front_price), (&mut self.deferred_prices, deferred_price), (&mut self.settle_volumes, volume), (&mut self.daily_avg_volumes, daily_avg_vol)] {
-            if v.len() >= self.max_len { v.remove(0); }
-            v.push(val);
+    pub fn new(max_len: usize) -> Self {
+        Self {
+            front_prices: Vec::with_capacity(max_len),
+            deferred_prices: Vec::with_capacity(max_len),
+            settle_volumes: Vec::with_capacity(max_len),
+            daily_avg_volumes: Vec::with_capacity(max_len),
+            max_len,
         }
+    }
+    pub fn on_tick(
+        &mut self,
+        front_price: f64,
+        deferred_price: f64,
+        volume: f64,
+        daily_avg_vol: f64,
+    ) {
+        if self.max_len == 0 {
+            return;
+        }
+        if self.front_prices.len() >= self.max_len {
+            self.front_prices.remove(0);
+            self.deferred_prices.remove(0);
+            self.settle_volumes.remove(0);
+            self.daily_avg_volumes.remove(0);
+        }
+        self.front_prices.push(front_price);
+        self.deferred_prices.push(deferred_price);
+        self.settle_volumes.push(volume);
+        self.daily_avg_volumes.push(daily_avg_vol);
     }
     pub fn snapshot(&self) -> FuturesSnapshot {
         let n = self.front_prices.len();
-        if n == 0 { return FuturesSnapshot::default(); }
+        if n == 0 {
+            return FuturesSnapshot::default();
+        }
         let front = self.front_prices[n - 1];
         let deferred = self.deferred_prices[n - 1];
-        let basis = if front > 0.0 { (deferred - front) / front * 10000.0 } else { 0.0 };
+        let basis = if front > 0.0 {
+            (deferred - front) / front * 10000.0
+        } else {
+            0.0
+        };
         let spread = deferred - front;
         let settle: f64 = self.settle_volumes.iter().sum();
         let avg_vol: f64 = self.daily_avg_volumes.iter().copied().last().unwrap_or(1.0);
         let pressure = settle / avg_vol.max(1.0);
-        FuturesSnapshot { basis_bps: basis, calendar_spread: spread, settlement_pressure: pressure, roll_progress: 0.0 }
+        FuturesSnapshot {
+            basis_bps: basis,
+            calendar_spread: spread,
+            settlement_pressure: pressure,
+            roll_progress: 0.0,
+        }
     }
 }
 
@@ -4009,10 +4666,22 @@ mod tests {
     fn compute_weighted_average_price_buy_walks_asks() {
         let book = BookSnapshot {
             symbol: symbol(),
-            bids: vec![BookLevel { level: 0, price: 100, size: 10 }],
+            bids: vec![BookLevel {
+                level: 0,
+                price: 100,
+                size: 10,
+            }],
             asks: vec![
-                BookLevel { level: 0, price: 102, size: 5 },
-                BookLevel { level: 1, price: 103, size: 5 },
+                BookLevel {
+                    level: 0,
+                    price: 102,
+                    size: 5,
+                },
+                BookLevel {
+                    level: 1,
+                    price: 103,
+                    size: 5,
+                },
             ],
             last_sequence: 0,
             ts_exchange_ns: 0,
@@ -4031,10 +4700,22 @@ mod tests {
         let book = BookSnapshot {
             symbol: symbol(),
             bids: vec![
-                BookLevel { level: 0, price: 100, size: 8 },
-                BookLevel { level: 1, price: 99, size: 4 },
+                BookLevel {
+                    level: 0,
+                    price: 100,
+                    size: 8,
+                },
+                BookLevel {
+                    level: 1,
+                    price: 99,
+                    size: 4,
+                },
             ],
-            asks: vec![BookLevel { level: 0, price: 102, size: 5 }],
+            asks: vec![BookLevel {
+                level: 0,
+                price: 102,
+                size: 5,
+            }],
             last_sequence: 0,
             ts_exchange_ns: 0,
             ts_recv_ns: 0,
@@ -4049,8 +4730,16 @@ mod tests {
     fn compute_weighted_average_price_insufficient_liquidity_returns_none() {
         let book = BookSnapshot {
             symbol: symbol(),
-            bids: vec![BookLevel { level: 0, price: 100, size: 5 }],
-            asks: vec![BookLevel { level: 0, price: 102, size: 3 }],
+            bids: vec![BookLevel {
+                level: 0,
+                price: 100,
+                size: 5,
+            }],
+            asks: vec![BookLevel {
+                level: 0,
+                price: 102,
+                size: 3,
+            }],
             last_sequence: 0,
             ts_exchange_ns: 0,
             ts_recv_ns: 0,
@@ -4065,14 +4754,38 @@ mod tests {
         let book = BookSnapshot {
             symbol: symbol(),
             bids: vec![
-                BookLevel { level: 0, price: 100, size: 100 },
-                BookLevel { level: 1, price: 99, size: 60 },
-                BookLevel { level: 2, price: 98, size: 20 },
+                BookLevel {
+                    level: 0,
+                    price: 100,
+                    size: 100,
+                },
+                BookLevel {
+                    level: 1,
+                    price: 99,
+                    size: 60,
+                },
+                BookLevel {
+                    level: 2,
+                    price: 98,
+                    size: 20,
+                },
             ],
             asks: vec![
-                BookLevel { level: 0, price: 102, size: 80 },
-                BookLevel { level: 1, price: 103, size: 50 },
-                BookLevel { level: 2, price: 104, size: 10 },
+                BookLevel {
+                    level: 0,
+                    price: 102,
+                    size: 80,
+                },
+                BookLevel {
+                    level: 1,
+                    price: 103,
+                    size: 50,
+                },
+                BookLevel {
+                    level: 2,
+                    price: 104,
+                    size: 10,
+                },
             ],
             last_sequence: 0,
             ts_exchange_ns: 0,
@@ -4086,8 +4799,16 @@ mod tests {
     fn compute_depth_slope_few_levels_returns_zero() {
         let book = BookSnapshot {
             symbol: symbol(),
-            bids: vec![BookLevel { level: 0, price: 100, size: 10 }],
-            asks: vec![BookLevel { level: 0, price: 102, size: 8 }],
+            bids: vec![BookLevel {
+                level: 0,
+                price: 100,
+                size: 10,
+            }],
+            asks: vec![BookLevel {
+                level: 0,
+                price: 102,
+                size: 8,
+            }],
             last_sequence: 0,
             ts_exchange_ns: 0,
             ts_recv_ns: 0,
@@ -4131,8 +4852,16 @@ mod tests {
     fn compute_mid_price_returns_midpoint() {
         let book = BookSnapshot {
             symbol: symbol(),
-            bids: vec![BookLevel { level: 0, price: 100, size: 10 }],
-            asks: vec![BookLevel { level: 0, price: 102, size: 8 }],
+            bids: vec![BookLevel {
+                level: 0,
+                price: 100,
+                size: 10,
+            }],
+            asks: vec![BookLevel {
+                level: 0,
+                price: 102,
+                size: 8,
+            }],
             last_sequence: 0,
             ts_exchange_ns: 0,
             ts_recv_ns: 0,
@@ -4192,7 +4921,7 @@ mod tests {
     fn book_event_tracker_tracks_arrival_and_cancel_rates() {
         let mut bet = BookEventTracker::new(1000);
         let now = 1_000_000_000; // 1 sec in ns
-        // 10 bid upserts at t=0
+                                 // 10 bid upserts at t=0
         for _ in 0..10 {
             bet.on_book_update(Side::Bid, BookAction::Upsert, 100, 0);
         }
@@ -4260,17 +4989,26 @@ mod tests {
 
     #[test]
     fn trade_classifier_quote_rule_at_ask_is_buy() {
-        assert_eq!(TradeClassifier::quote_rule(102, 100, 102), ClassificationVote::Buy);
+        assert_eq!(
+            TradeClassifier::quote_rule(102, 100, 102),
+            ClassificationVote::Buy
+        );
     }
 
     #[test]
     fn trade_classifier_quote_rule_at_bid_is_sell() {
-        assert_eq!(TradeClassifier::quote_rule(100, 100, 102), ClassificationVote::Sell);
+        assert_eq!(
+            TradeClassifier::quote_rule(100, 100, 102),
+            ClassificationVote::Sell
+        );
     }
 
     #[test]
     fn trade_classifier_quote_rule_at_mid_is_neutral() {
-        assert_eq!(TradeClassifier::quote_rule(101, 100, 102), ClassificationVote::Neutral);
+        assert_eq!(
+            TradeClassifier::quote_rule(101, 100, 102),
+            ClassificationVote::Neutral
+        );
     }
 
     #[test]
@@ -4365,8 +5103,8 @@ mod tests {
         let mut cvd = CvdEnhancements::new(20);
         // Price rising but CVD falling = bearish divergence
         cvd.on_bar(100, 500, 100); // start
-        cvd.on_bar(80, 400, 101);  // price up, delta down
-        cvd.on_bar(60, 300, 102);  // price up, delta down
+        cvd.on_bar(80, 400, 101); // price up, delta down
+        cvd.on_bar(60, 300, 102); // price up, delta down
         let snap = cvd.snapshot();
         assert!(snap.divergence_detected);
     }
@@ -4374,7 +5112,14 @@ mod tests {
     #[test]
     fn pattern_detector_initial_balance_defaults() {
         let pd = PatternDetector::new();
-        let book = BookSnapshot { symbol: symbol(), bids: vec![], asks: vec![], last_sequence: 0, ts_exchange_ns: 0, ts_recv_ns: 0 };
+        let book = BookSnapshot {
+            symbol: symbol(),
+            bids: vec![],
+            asks: vec![],
+            last_sequence: 0,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+        };
         let snap = pd.snapshot(&book, 0, 0.0, 0.0);
         assert!(!snap.trend_day);
         assert!(!snap.range_day);
@@ -4459,12 +5204,22 @@ mod tests {
 
     #[test]
     fn pattern_detector_imbalance_detected() {
-        let mut pd = PatternDetector::new();
+        let pd = PatternDetector::new();
         let book = BookSnapshot {
             symbol: symbol(),
-            bids: vec![BookLevel { level: 0, price: 100, size: 10 }],
-            asks: vec![BookLevel { level: 0, price: 102, size: 50 }],
-            last_sequence: 0, ts_exchange_ns: 0, ts_recv_ns: 0,
+            bids: vec![BookLevel {
+                level: 0,
+                price: 100,
+                size: 10,
+            }],
+            asks: vec![BookLevel {
+                level: 0,
+                price: 102,
+                size: 50,
+            }],
+            last_sequence: 0,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
         };
         let snap = pd.snapshot(&book, 0, 0.0, 0.0);
         assert!(snap.imbalance_detected);

@@ -52,12 +52,17 @@ impl CqgSession {
 
     pub fn queue_symbol_resolution(&mut self, symbol: SymbolId, depth: u16) -> u64 {
         let req_id = self.next_request_id();
-        self.pending_symbol_resolution.insert(req_id, symbol.clone());
+        self.pending_symbol_resolution
+            .insert(req_id, symbol.clone());
         self.requested_depth.insert(symbol, depth);
         req_id
     }
 
-    pub fn on_symbol_resolved(&mut self, request_id: u64, contract_id: i64) -> Option<(SymbolId, u16)> {
+    pub fn on_symbol_resolved(
+        &mut self,
+        request_id: u64,
+        contract_id: i64,
+    ) -> Option<(SymbolId, u16)> {
         let symbol = self.pending_symbol_resolution.remove(&request_id)?;
         let depth = self.requested_depth.get(&symbol).copied().unwrap_or(1);
         self.symbol_to_contract.insert(symbol.clone(), contract_id);

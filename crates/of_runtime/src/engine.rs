@@ -6,26 +6,26 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use of_adapters::{create_adapter, AdapterConfig, MarketDataAdapter, RawEvent, SubscribeReq};
+#[cfg(feature = "tickbar")]
+use of_core::CompletedBar;
 use of_core::{
-    ACDModel, ACDSnapshot, AgentTypeDetector, AgentTypeSnapshot, AlmgrenChriss,
-    AlmgrenChrissSnapshot, AmihudSnapshot, AmihudTracker, AnalyticsAccumulator, AnalyticsSnapshot,
-    BookAnalyticsSnapshot, BookEventAnalyticsSnapshot, BookEventTracker, BookLevel, BookSnapshot,
-    BookUpdate, ClassificationVote, CvdEnhancementSnapshot, CvdEnhancements, DarkLitCorrelator,
-    DarkLitCorrelationSnapshot, DarkPoolSnapshot, DarkPoolTracker, DataQualityFlags,
+    compute_book_analytics, compute_depth_slope, compute_effective_spread_bps,
+    compute_lob_features, compute_mid_price, compute_weighted_average_price, ACDModel, ACDSnapshot,
+    AgentTypeDetector, AgentTypeSnapshot, AlmgrenChriss, AlmgrenChrissSnapshot, AmihudSnapshot,
+    AmihudTracker, AnalyticsAccumulator, AnalyticsConfig, AnalyticsSnapshot, BookAnalyticsSnapshot,
+    BookEventAnalyticsSnapshot, BookEventTracker, BookLevel, BookSnapshot, BookUpdate,
+    ClassificationVote, CvdEnhancementSnapshot, CvdEnhancements, DarkLitCorrelationSnapshot,
+    DarkLitCorrelator, DarkPoolSnapshot, DarkPoolTracker, DataQualityFlags,
     DerivedAnalyticsSnapshot, FuturesSnapshot, FuturesTracker, HasbrouckSnapshot, HasbrouckVAR,
     InstitutionalFlowSnapshot, InstitutionalFlowTracker, IntervalCandleSnapshot,
     KineticEnergySnapshot, KineticEnergyTracker, KyleLambdaSnapshot, KyleLambdaTracker,
-    MicrostructureNoise, NoiseSnapshot, OIAnalysisSnapshot, OIAnalyzer, OptionsFlowSnapshot,
-    OptionsFlowTracker, PatternDetector, PatternSnapshot, RegimeDetector, RegimeSnapshot,
-    ResiliencySnapshot, ResiliencyTracker, SessionCandleSnapshot, SignalSnapshot, SignalState,
-    LOBFeatureSnapshot, SpreadDecomposition, SpreadDecompositionSnapshot, SpreadTracker, SymbolId,
+    LOBFeatureSnapshot, MicrostructureNoise, NoiseSnapshot, OIAnalysisSnapshot, OIAnalyzer,
+    OptionsFlowSnapshot, OptionsFlowTracker, PatternDetector, PatternSnapshot, RegimeDetector,
+    RegimeSnapshot, ResiliencySnapshot, ResiliencyTracker, SessionCandleSnapshot, SignalSnapshot,
+    SignalState, SpreadDecomposition, SpreadDecompositionSnapshot, SpreadTracker, SymbolId,
     TradeClassifier, TradePrint, VolatilityEstimator, VolatilitySignature,
-    VolatilitySignatureSnapshot, VolatilitySnapshot, VpinSnapshot, VpinTracker, AnalyticsConfig,
-    compute_book_analytics, compute_depth_slope, compute_effective_spread_bps, compute_lob_features,
-    compute_mid_price, compute_weighted_average_price,
+    VolatilitySignatureSnapshot, VolatilitySnapshot, VpinSnapshot, VpinTracker,
 };
-#[cfg(feature = "tickbar")]
-use of_core::CompletedBar;
 use of_persist::{RetentionPolicy, RollingStore};
 use of_signals::{SignalGateDecision, SignalModule};
 
@@ -36,6 +36,8 @@ const MAX_EVENTS_PER_POLL_ENV: &str = "OF_RUNTIME_MAX_EVENTS_PER_POLL";
 const CIRCUIT_BREAKER_FAILURES_ENV: &str = "OF_RUNTIME_CIRCUIT_BREAKER_FAILURES";
 const CIRCUIT_BREAKER_COOLDOWN_MS_ENV: &str = "OF_RUNTIME_CIRCUIT_BREAKER_COOLDOWN_MS";
 const DEFAULT_CIRCUIT_BREAKER_COOLDOWN_MS: u64 = 1_000;
+const MAX_ANALYTICS_WINDOW_LEN: u32 = 1_000_000;
+const MAX_EVENT_TRACKER_LEN: u32 = 1_000_000;
 
 /// Runtime engine configuration.
 #[derive(Debug, Clone)]
@@ -213,9 +215,8 @@ impl CircuitBreakerState {
         }
         self.consecutive_failures = self.consecutive_failures.saturating_add(1);
         if self.consecutive_failures >= self.failure_threshold {
-            self.open_until_ns = Some(
-                now_ns.saturating_add(self.cooldown_ms.saturating_mul(1_000_000)),
-            );
+            self.open_until_ns =
+                Some(now_ns.saturating_add(self.cooldown_ms.saturating_mul(1_000_000)));
             self.opened_count = self.opened_count.saturating_add(1);
         }
     }
@@ -531,13 +532,13 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             dark_lit_correlators: HashMap::new(),
             institutional_flow: HashMap::new(),
             oi_analyzers: HashMap::new(),
-            analytics_config: AnalyticsConfig::default(),
+            analytics_config: sanitize_analytics_config(AnalyticsConfig::default()),
         }
     }
 
     /// Override analytics thresholds and buffer sizes.
     pub fn set_analytics_config(&mut self, config: AnalyticsConfig) {
-        self.analytics_config = config;
+        self.analytics_config = sanitize_analytics_config(config);
     }
 
     /// Injects optional persistence backend.
@@ -660,7 +661,8 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             acc.reset_session();
             let snap = acc.snapshot();
             self.signal_module.on_analytics(&snap);
-            self.latest_signals.insert(symbol.clone(), self.signal_module.snapshot());
+            self.latest_signals
+                .insert(symbol.clone(), self.signal_module.snapshot());
         }
         self.audit_event(
             "session_reset",
@@ -674,7 +676,10 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
     }
 
     /// Configures external-feed quality supervisor policy.
-    pub fn configure_external_feed(&mut self, policy: ExternalFeedPolicy) -> Result<(), RuntimeError> {
+    pub fn configure_external_feed(
+        &mut self,
+        policy: ExternalFeedPolicy,
+    ) -> Result<(), RuntimeError> {
         if !self.started {
             return Err(RuntimeError::NotStarted);
         }
@@ -726,7 +731,8 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             return Err(RuntimeError::NotStarted);
         }
         self.external.enabled = true;
-        let mut effective_quality = combine_quality_flags(quality_flags, self.external_quality_flags());
+        let mut effective_quality =
+            combine_quality_flags(quality_flags, self.external_quality_flags());
         let seq_flags = self.external_sequence_flags(&trade.symbol, trade.sequence, true);
         effective_quality = combine_quality_flags(effective_quality, seq_flags);
         self.external.last_ingest_ns = Some(unix_ts_nanos());
@@ -747,7 +753,8 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             return Err(RuntimeError::NotStarted);
         }
         self.external.enabled = true;
-        let mut effective_quality = combine_quality_flags(quality_flags, self.external_quality_flags());
+        let mut effective_quality =
+            combine_quality_flags(quality_flags, self.external_quality_flags());
         let seq_flags = self.external_sequence_flags(&book.symbol, book.sequence, false);
         effective_quality = combine_quality_flags(effective_quality, seq_flags);
         self.external.last_ingest_ns = Some(unix_ts_nanos());
@@ -771,8 +778,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             self.update_health_state(effective_quality);
             return Err(RuntimeError::Adapter(format!(
                 "circuit_open: cooldown_ms={} consecutive_failures={}",
-                self.circuit_breaker.cooldown_ms,
-                self.circuit_breaker.consecutive_failures
+                self.circuit_breaker.cooldown_ms, self.circuit_breaker.consecutive_failures
             )));
         }
 
@@ -801,7 +807,8 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             });
 
         if backpressure.is_some() {
-            effective_quality = combine_quality_flags(effective_quality, DataQualityFlags::ADAPTER_DEGRADED);
+            effective_quality =
+                combine_quality_flags(effective_quality, DataQualityFlags::ADAPTER_DEGRADED);
         }
 
         self.last_events = events.clone();
@@ -834,7 +841,9 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
 
     /// Returns analytics snapshot for symbol if available.
     pub fn analytics_snapshot(&self, symbol: &SymbolId) -> Option<AnalyticsSnapshot> {
-        self.analytics.get(symbol).map(AnalyticsAccumulator::snapshot)
+        self.analytics
+            .get(symbol)
+            .map(AnalyticsAccumulator::snapshot)
     }
 
     /// Returns additive derived analytics snapshot for symbol if available.
@@ -895,7 +904,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
     pub fn book_analytics_snapshot(&self, symbol: &SymbolId) -> Option<BookAnalyticsSnapshot> {
         self.books
             .get(symbol)
-                .map(|book| compute_book_analytics(&book.snapshot(symbol)))
+            .map(|book| compute_book_analytics(&book.snapshot(symbol)))
     }
 
     /// Returns the weighted average price for an order of `qty` shares by walking the book.
@@ -951,39 +960,47 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
     }
 
     /// Returns book-event analytics snapshot for symbol over `window_ns`.
-    pub fn book_event_analytics(&self, symbol: &SymbolId, window_ns: u64) -> BookEventAnalyticsSnapshot {
-        self.event_trackers.get(symbol).map(|bet| {
-            let (bid_arr, ask_arr) = bet.arrival_rate_per_sec(window_ns);
-            let (bid_can, ask_can) = bet.cancel_rate_per_sec(window_ns);
-            let (bid_vol, ask_vol) = bet.event_volume_in_window(window_ns);
-            let (bid_count, ask_count) = bet.event_count_in_window(window_ns, None);
-            let total_count = bid_count + ask_count;
-            let secs = (window_ns as f64) / 1_000_000_000.0;
-            let change_intensity = if secs > 0.0 {
-                total_count as f64 / secs
-            } else {
-                0.0
-            };
-            BookEventAnalyticsSnapshot {
-                bid_arrival_rate: bid_arr,
-                ask_arrival_rate: ask_arr,
-                bid_cancel_rate: bid_can,
-                ask_cancel_rate: ask_can,
-                change_intensity,
-                bid_event_volume: bid_vol,
-                ask_event_volume: ask_vol,
-            }
-        }).unwrap_or_default()
+    pub fn book_event_analytics(
+        &self,
+        symbol: &SymbolId,
+        window_ns: u64,
+    ) -> BookEventAnalyticsSnapshot {
+        self.event_trackers
+            .get(symbol)
+            .map(|bet| {
+                let (bid_arr, ask_arr) = bet.arrival_rate_per_sec(window_ns);
+                let (bid_can, ask_can) = bet.cancel_rate_per_sec(window_ns);
+                let (bid_vol, ask_vol) = bet.event_volume_in_window(window_ns);
+                let (bid_count, ask_count) = bet.event_count_in_window(window_ns, None);
+                let total_count = bid_count + ask_count;
+                let secs = (window_ns as f64) / 1_000_000_000.0;
+                let change_intensity = if secs > 0.0 {
+                    total_count as f64 / secs
+                } else {
+                    0.0
+                };
+                BookEventAnalyticsSnapshot {
+                    bid_arrival_rate: bid_arr,
+                    ask_arrival_rate: ask_arr,
+                    bid_cancel_rate: bid_can,
+                    ask_cancel_rate: ask_can,
+                    change_intensity,
+                    bid_event_volume: bid_vol,
+                    ask_event_volume: ask_vol,
+                }
+            })
+            .unwrap_or_default()
     }
 
     /// Returns resiliency snapshot for symbol.
     pub fn resiliency_snapshot(&self, symbol: &SymbolId) -> ResiliencySnapshot {
-        self.resiliency_trackers.get(symbol).map(|rt| {
-            ResiliencySnapshot {
+        self.resiliency_trackers
+            .get(symbol)
+            .map(|rt| ResiliencySnapshot {
                 recovery_time_ms: rt.latest_recovery_time_ms().unwrap_or(0.0),
                 depth_elasticity: rt.latest_depth_elasticity().unwrap_or(0.0),
-            }
-        }).unwrap_or_default()
+            })
+            .unwrap_or_default()
     }
 
     /// Returns the VPIN snapshot for symbol.
@@ -1020,98 +1037,159 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
 
     /// Returns the pattern detection snapshot for symbol.
     pub fn pattern_snapshot(&self, symbol: &SymbolId) -> PatternSnapshot {
-        self.pattern_detectors.get(symbol).map(|pd| {
-            let empty_book = BookSnapshot {
-                symbol: symbol.clone(),
-                bids: vec![],
-                asks: vec![],
-                last_sequence: 0,
-                ts_exchange_ns: 0,
-                ts_recv_ns: 0,
-            };
-            let book = self.books.get(symbol).map(|b| b.snapshot(symbol)).unwrap_or(empty_book);
-            pd.snapshot(&book, 0, 0.0, 0.0)
-        }).unwrap_or_default()
+        self.pattern_detectors
+            .get(symbol)
+            .map(|pd| {
+                let empty_book = BookSnapshot {
+                    symbol: symbol.clone(),
+                    bids: vec![],
+                    asks: vec![],
+                    last_sequence: 0,
+                    ts_exchange_ns: 0,
+                    ts_recv_ns: 0,
+                };
+                let book = self
+                    .books
+                    .get(symbol)
+                    .map(|b| b.snapshot(symbol))
+                    .unwrap_or(empty_book);
+                pd.snapshot(&book, 0, 0.0, 0.0)
+            })
+            .unwrap_or_default()
     }
 
     /// Returns volatility snapshot for symbol.
     pub fn volatility_snapshot(&self, symbol: &SymbolId) -> VolatilitySnapshot {
-        self.volatility_estimators.get(symbol).map(|v| v.snapshot()).unwrap_or_default()
+        self.volatility_estimators
+            .get(symbol)
+            .map(|v| v.snapshot())
+            .unwrap_or_default()
     }
 
     /// Returns microstructure noise snapshot for symbol.
     pub fn noise_snapshot(&self, symbol: &SymbolId) -> NoiseSnapshot {
-        self.noise_trackers.get(symbol).map(|n| n.snapshot()).unwrap_or_default()
+        self.noise_trackers
+            .get(symbol)
+            .map(|n| n.snapshot())
+            .unwrap_or_default()
     }
 
     /// Returns Hasbrouck VAR snapshot for symbol.
     pub fn hasbrouck_snapshot(&self, symbol: &SymbolId) -> HasbrouckSnapshot {
-        self.hasbrouck_vars.get(symbol).map(|h| h.snapshot()).unwrap_or_default()
+        self.hasbrouck_vars
+            .get(symbol)
+            .map(|h| h.snapshot())
+            .unwrap_or_default()
     }
 
     /// Returns Almgren-Chriss snapshot for symbol.
     pub fn almgren_chriss_snapshot(&self, symbol: &SymbolId) -> AlmgrenChrissSnapshot {
-        self.almgren_chriss.get(symbol).map(|a| a.snapshot()).unwrap_or_default()
+        self.almgren_chriss
+            .get(symbol)
+            .map(|a| a.snapshot())
+            .unwrap_or_default()
     }
 
     /// Returns spread decomposition snapshot for symbol.
     pub fn spread_decomp_snapshot(&self, symbol: &SymbolId) -> SpreadDecompositionSnapshot {
-        self.spread_decomps.get(symbol).map(|s| s.snapshot()).unwrap_or_default()
+        self.spread_decomps
+            .get(symbol)
+            .map(|s| s.snapshot())
+            .unwrap_or_default()
     }
 
     /// Returns ACD snapshot for symbol.
     pub fn acd_snapshot(&self, symbol: &SymbolId) -> ACDSnapshot {
-        self.acd_models.get(symbol).map(|a| a.snapshot()).unwrap_or_default()
+        self.acd_models
+            .get(symbol)
+            .map(|a| a.snapshot())
+            .unwrap_or_default()
     }
 
     /// Returns regime snapshot for symbol.
     pub fn regime_snapshot(&self, symbol: &SymbolId) -> RegimeSnapshot {
-        self.regime_detectors.get(symbol).map(|r| r.snapshot()).unwrap_or_default()
+        self.regime_detectors
+            .get(symbol)
+            .map(|r| r.snapshot())
+            .unwrap_or_default()
     }
 
     pub fn kinetic_energy_snapshot(&self, symbol: &SymbolId) -> KineticEnergySnapshot {
-        self.kinetic_trackers.get(symbol).map(|k| k.snapshot()).unwrap_or_default()
+        self.kinetic_trackers
+            .get(symbol)
+            .map(|k| k.snapshot())
+            .unwrap_or_default()
     }
 
     pub fn dark_pool_snapshot(&self, symbol: &SymbolId) -> DarkPoolSnapshot {
-        self.dark_pool_trackers.get(symbol).map(|d| d.snapshot()).unwrap_or_default()
+        self.dark_pool_trackers
+            .get(symbol)
+            .map(|d| d.snapshot())
+            .unwrap_or_default()
     }
 
     pub fn options_flow_snapshot(&self, symbol: &SymbolId) -> OptionsFlowSnapshot {
-        self.options_trackers.get(symbol).map(|o| o.snapshot()).unwrap_or_default()
+        self.options_trackers
+            .get(symbol)
+            .map(|o| o.snapshot())
+            .unwrap_or_default()
     }
 
     pub fn futures_snapshot(&self, symbol: &SymbolId) -> FuturesSnapshot {
-        self.futures_trackers.get(symbol).map(|f| f.snapshot()).unwrap_or_default()
+        self.futures_trackers
+            .get(symbol)
+            .map(|f| f.snapshot())
+            .unwrap_or_default()
     }
 
     /// Returns volatility signature snapshot for symbol.
     pub fn vol_signature_snapshot(&self, symbol: &SymbolId) -> VolatilitySignatureSnapshot {
-        self.vol_signature_trackers.get(symbol).map(|v| v.snapshot()).unwrap_or_default()
+        self.vol_signature_trackers
+            .get(symbol)
+            .map(|v| v.snapshot())
+            .unwrap_or_default()
     }
 
     /// Returns agent-type snapshot for symbol.
     pub fn agent_type_snapshot(&self, symbol: &SymbolId) -> AgentTypeSnapshot {
-        self.agent_type_detectors.get(symbol).map(|a| a.snapshot()).unwrap_or_default()
+        self.agent_type_detectors
+            .get(symbol)
+            .map(|a| a.snapshot())
+            .unwrap_or_default()
     }
 
     /// Returns dark-lit correlation snapshot for symbol.
     pub fn dark_lit_correlation_snapshot(&self, symbol: &SymbolId) -> DarkLitCorrelationSnapshot {
-        self.dark_lit_correlators.get(symbol).map(|d| d.snapshot()).unwrap_or_default()
+        self.dark_lit_correlators
+            .get(symbol)
+            .map(|d| d.snapshot())
+            .unwrap_or_default()
     }
 
     /// Returns institutional flow snapshot for symbol.
     pub fn institutional_flow_snapshot(&self, symbol: &SymbolId) -> InstitutionalFlowSnapshot {
-        self.institutional_flow.get(symbol).map(|i| i.snapshot()).unwrap_or_default()
+        self.institutional_flow
+            .get(symbol)
+            .map(|i| i.snapshot())
+            .unwrap_or_default()
     }
 
     /// Returns OI analysis snapshot for symbol.
     pub fn oi_analysis_snapshot(&self, symbol: &SymbolId) -> OIAnalysisSnapshot {
-        self.oi_analyzers.get(symbol).map(|o| o.snapshot()).unwrap_or_default()
+        self.oi_analyzers
+            .get(symbol)
+            .map(|o| o.snapshot())
+            .unwrap_or_default()
     }
 
     /// Computes LOB feature snapshot from internal book state for a symbol.
-    pub fn lob_features(&self, symbol: &SymbolId, trade_imbalance: f64, cancel_rate: f64, arrival_rate: f64) -> LOBFeatureSnapshot {
+    pub fn lob_features(
+        &self,
+        symbol: &SymbolId,
+        trade_imbalance: f64,
+        cancel_rate: f64,
+        arrival_rate: f64,
+    ) -> LOBFeatureSnapshot {
         match self.books.get(symbol) {
             Some(book) => {
                 let snap = book.snapshot(symbol);
@@ -1151,10 +1229,8 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         let external_last_ingest = optional_u64_json(self.external.last_ingest_ns);
         let max_events_per_poll = optional_usize_json(self.max_events_per_poll);
         let circuit_open = self.circuit_breaker.is_open_at(unix_ts_nanos());
-        let adapter_healthy = self.started
-            && adapter_health.connected
-            && !adapter_health.degraded
-            && !circuit_open;
+        let adapter_healthy =
+            self.started && adapter_health.connected && !adapter_health.degraded && !circuit_open;
         let runtime_health_status = if !self.started || !adapter_health.connected {
             "disconnected"
         } else if adapter_health.degraded
@@ -1232,10 +1308,8 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         let quality_flags_detail = quality_flags_detail_json(self.last_quality_flags_bits);
         let external_last_ingest = optional_u64_json(self.external.last_ingest_ns);
         let max_events_per_poll = optional_usize_json(self.max_events_per_poll);
-        let adapter_healthy = self.started
-            && adapter_health.connected
-            && !adapter_health.degraded
-            && !circuit_open;
+        let adapter_healthy =
+            self.started && adapter_health.connected && !adapter_health.degraded && !circuit_open;
         let runtime_health_status = if !self.started || !adapter_health.connected {
             "disconnected"
         } else if adapter_health.degraded
@@ -1306,7 +1380,11 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
 
         if self.external.policy.stale_after_ms > 0 {
             if let Some(last_ingest) = self.external.last_ingest_ns {
-                let stale_after_ns = self.external.policy.stale_after_ms.saturating_mul(1_000_000);
+                let stale_after_ns = self
+                    .external
+                    .policy
+                    .stale_after_ms
+                    .saturating_mul(1_000_000);
                 let age_ns = unix_ts_nanos().saturating_sub(last_ingest);
                 if age_ns > stale_after_ns {
                     flags = combine_quality_flags(flags, DataQualityFlags::STALE_FEED);
@@ -1366,10 +1444,15 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                 }
                 self.event_trackers
                     .entry(book.symbol.clone())
-                    .or_insert_with(|| BookEventTracker::new(self.analytics_config.event_tracker_max_len as usize))
+                    .or_insert_with(|| {
+                        BookEventTracker::new(self.analytics_config.event_tracker_max_len as usize)
+                    })
                     .on_book_update(book.side, book.action, book.size, book.ts_exchange_ns);
                 if let Some(rt) = self.resiliency_trackers.get_mut(&book.symbol) {
-                    let snapshot = self.books.get(&book.symbol).map(|b| b.snapshot(&book.symbol));
+                    let snapshot = self
+                        .books
+                        .get(&book.symbol)
+                        .map(|b| b.snapshot(&book.symbol));
                     if let Some(snap) = snapshot {
                         let bid_depth: i64 = snap.bids.iter().map(|l| l.size).sum();
                         let ask_depth: i64 = snap.asks.iter().map(|l| l.size).sum();
@@ -1393,18 +1476,24 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                     let snapshot = book_state.snapshot(&symbol);
                     let bid = snapshot.bids.first().map(|l| l.price).unwrap_or(0);
                     let ask = snapshot.asks.first().map(|l| l.price).unwrap_or(0);
-                    let mid = if bid > 0 && ask > 0 { Some((bid + ask) / 2) } else { None };
+                    let mid = if bid > 0 && ask > 0 {
+                        Some((bid + ask) / 2)
+                    } else {
+                        None
+                    };
                     if let Some(mid) = mid {
                         self.spread_trackers
                             .entry(symbol.clone())
-                            .or_insert_with(|| SpreadTracker::new(self.analytics_config.spread_tracker_max_len as usize))
+                            .or_insert_with(|| {
+                                SpreadTracker::new(
+                                    self.analytics_config.spread_tracker_max_len as usize,
+                                )
+                            })
                             .on_trade(trade.price, mid, trade.ts_exchange_ns);
                     }
 
                     // Classify trade and feed VPIN, Kyle's Lambda, CVD
-                    let classifier = self.classifiers
-                        .entry(symbol.clone())
-                        .or_default();
+                    let classifier = self.classifiers.entry(symbol.clone()).or_default();
                     let classification = classifier.classify(trade.price, trade.size, bid, ask);
 
                     // Determine classified buy/sell volume
@@ -1420,42 +1509,74 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                     // Feed VPIN
                     self.vpin_trackers
                         .entry(symbol.clone())
-                        .or_insert_with(|| VpinTracker::new(self.analytics_config.vpin_volume_bucket, self.analytics_config.vpin_max_buckets as usize))
+                        .or_insert_with(|| {
+                            VpinTracker::new(
+                                self.analytics_config.vpin_volume_bucket,
+                                self.analytics_config.vpin_max_buckets as usize,
+                            )
+                        })
                         .on_trade(buy_vol, sell_vol);
 
                     // Feed Kyle's Lambda with signed volume and price change
-                    let prev_price = self.analytics.get(&symbol)
+                    let prev_price = self
+                        .analytics
+                        .get(&symbol)
                         .map(|a| a.snapshot().last_price)
                         .unwrap_or(trade.price);
                     let signed_vol = if buy_vol > 0 { trade.size } else { -trade.size };
                     let price_change = trade.price - prev_price;
                     self.kyle_lambda_trackers
                         .entry(symbol.clone())
-                        .or_insert_with(|| KyleLambdaTracker::new(self.analytics_config.kyle_lambda_max_len as usize))
+                        .or_insert_with(|| {
+                            KyleLambdaTracker::new(
+                                self.analytics_config.kyle_lambda_max_len as usize,
+                            )
+                        })
                         .on_trade(signed_vol, price_change);
 
                     // Feed CVD enhancements with per-trade delta
                     let net_delta = buy_vol - sell_vol;
                     self.cvd_enhancements
                         .entry(symbol.clone())
-                        .or_insert_with(|| CvdEnhancements::new(self.analytics_config.cvd_max_len as usize))
+                        .or_insert_with(|| {
+                            CvdEnhancements::new(self.analytics_config.cvd_max_len as usize)
+                        })
                         .on_bar(net_delta, trade.size, trade.price);
 
                     // Feed pattern detector (compute cumulative delta from prior state)
-                    let prior_cumulative_delta = self.analytics.get(&symbol)
+                    let prior_cumulative_delta = self
+                        .analytics
+                        .get(&symbol)
                         .map(|a| a.snapshot().cumulative_delta)
                         .unwrap_or(0);
                     let new_cumulative_delta = prior_cumulative_delta + net_delta;
                     self.pattern_detectors
                         .entry(symbol.clone())
                         .or_default()
-                        .on_trade(trade.price, trade.size, trade.aggressor_side, trade.ts_exchange_ns, new_cumulative_delta, buy_vol, sell_vol);
+                        .on_trade(
+                            trade.price,
+                            trade.size,
+                            trade.aggressor_side,
+                            trade.ts_exchange_ns,
+                            new_cumulative_delta,
+                            buy_vol,
+                            sell_vol,
+                        );
 
                     // Volatility estimator: per-trade OHLC
-                    let prev_price_vol = self.analytics.get(&symbol)
+                    let prev_price_vol = self
+                        .analytics
+                        .get(&symbol)
                         .map(|a| a.snapshot().last_price)
                         .unwrap_or(trade.price);
-                    let vol_est = self.volatility_estimators.entry(symbol.clone()).or_insert_with(|| VolatilityEstimator::new(self.analytics_config.vol_estimator_max_len as usize));
+                    let vol_est = self
+                        .volatility_estimators
+                        .entry(symbol.clone())
+                        .or_insert_with(|| {
+                            VolatilityEstimator::new(
+                                self.analytics_config.vol_estimator_max_len as usize,
+                            )
+                        });
                     let high = trade.price.max(prev_price_vol) as f64;
                     let low = trade.price.min(prev_price_vol) as f64;
                     let close = trade.price as f64;
@@ -1465,46 +1586,79 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                     // Microstructure noise
                     self.noise_trackers
                         .entry(symbol.clone())
-                        .or_insert_with(|| MicrostructureNoise::new(self.analytics_config.noise_max_len as usize))
+                        .or_insert_with(|| {
+                            MicrostructureNoise::new(self.analytics_config.noise_max_len as usize)
+                        })
                         .on_trade(trade.price, trade.size);
 
                     // Hasbrouck VAR
                     let ret = (trade.price as f64 / prev_price_vol.max(1) as f64).ln();
-                    let signed_vol_f = if buy_vol > 0 { trade.size as f64 } else { -(trade.size as f64) };
+                    let signed_vol_f = if buy_vol > 0 {
+                        trade.size as f64
+                    } else {
+                        -(trade.size as f64)
+                    };
                     self.hasbrouck_vars
                         .entry(symbol.clone())
-                        .or_insert_with(|| HasbrouckVAR::new(self.analytics_config.hasbrouck_max_len as usize))
+                        .or_insert_with(|| {
+                            HasbrouckVAR::new(self.analytics_config.hasbrouck_max_len as usize)
+                        })
                         .on_trade(ret, signed_vol_f);
 
                     // Almgren-Chriss
                     let pc = (trade.price - prev_price_vol) as f64;
                     self.almgren_chriss
                         .entry(symbol.clone())
-                        .or_insert_with(|| AlmgrenChriss::new(self.analytics_config.almgren_chriss_max_len as usize))
+                        .or_insert_with(|| {
+                            AlmgrenChriss::new(
+                                self.analytics_config.almgren_chriss_max_len as usize,
+                            )
+                        })
                         .on_trade(pc, signed_vol_f);
 
                     // ACD model (trade duration)
                     let prev_ts_acd = self.prev_trade_ts.get(&symbol).copied().unwrap_or(0);
                     self.acd_models
                         .entry(symbol.clone())
-                        .or_insert_with(|| ACDModel::new(self.analytics_config.acd_max_len as usize))
+                        .or_insert_with(|| {
+                            ACDModel::new(self.analytics_config.acd_max_len as usize)
+                        })
                         .on_trade(trade.ts_exchange_ns, prev_ts_acd);
-                    self.prev_trade_ts.insert(symbol.clone(), trade.ts_exchange_ns);
+                    self.prev_trade_ts
+                        .insert(symbol.clone(), trade.ts_exchange_ns);
 
                     // Volatility signature
                     self.vol_signature_trackers
                         .entry(symbol.clone())
-                        .or_insert_with(|| VolatilitySignature::new(self.analytics_config.vol_signature_max_len as usize))
+                        .or_insert_with(|| {
+                            VolatilitySignature::new(
+                                self.analytics_config.vol_signature_max_len as usize,
+                            )
+                        })
                         .on_return(ret);
 
                     // Agent-type identification
-                    let cr = self.event_trackers.get(&symbol)
-                        .map(|et| et.cancel_rate_per_sec(self.analytics_config.cancel_arrival_window_ns).0).unwrap_or(0.0);
-                        let ar = self.event_trackers.get(&symbol)
-                        .map(|et| et.arrival_rate_per_sec(self.analytics_config.cancel_arrival_window_ns).0).unwrap_or(0.0);
+                    let cr = self
+                        .event_trackers
+                        .get(&symbol)
+                        .map(|et| {
+                            et.cancel_rate_per_sec(self.analytics_config.cancel_arrival_window_ns)
+                                .0
+                        })
+                        .unwrap_or(0.0);
+                    let ar = self
+                        .event_trackers
+                        .get(&symbol)
+                        .map(|et| {
+                            et.arrival_rate_per_sec(self.analytics_config.cancel_arrival_window_ns)
+                                .0
+                        })
+                        .unwrap_or(0.0);
                     self.agent_type_detectors
                         .entry(symbol.clone())
-                        .or_insert_with(|| AgentTypeDetector::new(self.analytics_config.agent_max_len as usize))
+                        .or_insert_with(|| {
+                            AgentTypeDetector::new(self.analytics_config.agent_max_len as usize)
+                        })
                         .on_event(trade.size, cr, ar);
 
                     // Institutional flow (large trades only)
@@ -1512,7 +1666,11 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                         let is_buy = buy_vol > sell_vol;
                         self.institutional_flow
                             .entry(symbol.clone())
-                            .or_insert_with(|| InstitutionalFlowTracker::new(self.analytics_config.institutional_max_len as usize))
+                            .or_insert_with(|| {
+                                InstitutionalFlowTracker::new(
+                                    self.analytics_config.institutional_max_len as usize,
+                                )
+                            })
                             .on_trade(trade.size, is_buy);
                     }
 
@@ -1521,7 +1679,11 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                     let ask_depth: i64 = snapshot.asks.iter().map(|l| l.size).sum();
                     self.resiliency_trackers
                         .entry(symbol.clone())
-                        .or_insert_with(|| ResiliencyTracker::new(self.analytics_config.resiliency_max_len as usize))
+                        .or_insert_with(|| {
+                            ResiliencyTracker::new(
+                                self.analytics_config.resiliency_max_len as usize,
+                            )
+                        })
                         .on_trade_pre(bid_depth, ask_depth);
                 }
                 #[cfg(feature = "tickbar")]
@@ -1565,26 +1727,41 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                             let ask = bs.asks.first().map(|l| l.price).unwrap_or(0);
                             if bid > 0 && ask > 0 {
                                 compute_effective_spread_bps(ask, bid) as f64
-                            } else { 0.0 }
-                        } else { 0.0 };
+                            } else {
+                                0.0
+                            }
+                        } else {
+                            0.0
+                        };
                         self.spread_decomps
                             .entry(symbol.clone())
-                            .or_insert_with(|| SpreadDecomposition::new(self.analytics_config.spread_decomp_max_len as usize))
+                            .or_insert_with(|| {
+                                SpreadDecomposition::new(
+                                    self.analytics_config.spread_decomp_max_len as usize,
+                                )
+                            })
                             .on_spread(eff, real, quoted);
                     }
                 }
 
                 // Regime detector
                 let vpin_s = self.vpin_trackers.get(&symbol).map(|v| v.snapshot());
-                let vol_s = self.volatility_estimators.get(&symbol).map(|v| v.snapshot());
-                let spread_val = self.spread_trackers.get(&symbol)
+                let vol_s = self
+                    .volatility_estimators
+                    .get(&symbol)
+                    .map(|v| v.snapshot());
+                let spread_val = self
+                    .spread_trackers
+                    .get(&symbol)
                     .map(|s| s.last_effective_spread_bps() as f64)
                     .unwrap_or(0.0);
                 let vol_val = vol_s.map(|v| v.classic_rv).unwrap_or(0.0);
                 let vpin_val = vpin_s.map(|v| v.vpin).unwrap_or(0.0);
                 self.regime_detectors
                     .entry(symbol.clone())
-                    .or_insert_with(|| RegimeDetector::new(self.analytics_config.regime_max_len as usize))
+                    .or_insert_with(|| {
+                        RegimeDetector::new(self.analytics_config.regime_max_len as usize)
+                    })
                     .on_metrics(spread_val, vol_val, vpin_val);
 
                 self.processed_events += 1;
@@ -1682,6 +1859,28 @@ fn quality_flags_detail_json(bits: u32) -> String {
     format!("[{items}]")
 }
 
+fn sanitize_analytics_config(mut config: AnalyticsConfig) -> AnalyticsConfig {
+    config.vpin_volume_bucket = config.vpin_volume_bucket.max(1);
+    config.vpin_max_buckets = config.vpin_max_buckets.min(MAX_ANALYTICS_WINDOW_LEN);
+    config.kyle_lambda_max_len = config.kyle_lambda_max_len.min(MAX_ANALYTICS_WINDOW_LEN);
+    config.cvd_max_len = config.cvd_max_len.min(MAX_ANALYTICS_WINDOW_LEN);
+    config.vol_estimator_max_len = config.vol_estimator_max_len.min(MAX_ANALYTICS_WINDOW_LEN);
+    config.noise_max_len = config.noise_max_len.min(MAX_ANALYTICS_WINDOW_LEN);
+    config.hasbrouck_max_len = config.hasbrouck_max_len.min(MAX_ANALYTICS_WINDOW_LEN);
+    config.almgren_chriss_max_len = config.almgren_chriss_max_len.min(MAX_ANALYTICS_WINDOW_LEN);
+    config.acd_max_len = config.acd_max_len.min(MAX_ANALYTICS_WINDOW_LEN);
+    config.vol_signature_max_len = config.vol_signature_max_len.min(MAX_ANALYTICS_WINDOW_LEN);
+    config.agent_max_len = config.agent_max_len.min(MAX_ANALYTICS_WINDOW_LEN);
+    config.institutional_max_len = config.institutional_max_len.min(MAX_ANALYTICS_WINDOW_LEN);
+    config.resiliency_max_len = config.resiliency_max_len.min(MAX_ANALYTICS_WINDOW_LEN);
+    config.spread_decomp_max_len = config.spread_decomp_max_len.min(MAX_ANALYTICS_WINDOW_LEN);
+    config.regime_max_len = config.regime_max_len.min(MAX_ANALYTICS_WINDOW_LEN);
+    config.event_tracker_max_len = config.event_tracker_max_len.min(MAX_EVENT_TRACKER_LEN);
+    config.spread_tracker_max_len = config.spread_tracker_max_len.min(MAX_ANALYTICS_WINDOW_LEN);
+    config.default_max_len = config.default_max_len.min(MAX_ANALYTICS_WINDOW_LEN);
+    config
+}
+
 /// Builds the default runtime engine using configured provider and signal module.
 pub fn build_default_engine(cfg: EngineConfig) -> Result<DefaultEngine, RuntimeError> {
     validate_startup_config(&cfg)?;
@@ -1707,9 +1906,11 @@ pub fn build_default_engine(cfg: EngineConfig) -> Result<DefaultEngine, RuntimeE
     )?);
 
     let adapter = create_adapter(&cfg.adapter).map_err(|e| RuntimeError::Adapter(e.to_string()))?;
-    Ok(
-        Engine::new(cfg, adapter, of_signals::DeltaMomentumSignal::new(signal_threshold))
-            .with_persistence(persistence)
-            .with_audit(audit),
+    Ok(Engine::new(
+        cfg,
+        adapter,
+        of_signals::DeltaMomentumSignal::new(signal_threshold),
     )
+    .with_persistence(persistence)
+    .with_audit(audit))
 }

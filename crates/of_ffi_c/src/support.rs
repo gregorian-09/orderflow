@@ -3,6 +3,8 @@ use std::ptr;
 use std::sync::atomic::Ordering;
 
 use of_adapters::RawEvent;
+#[cfg(feature = "tickbar")]
+use of_core::CompletedBar;
 use of_core::{
     ACDSnapshot, AgentTypeSnapshot, AlmgrenChrissSnapshot, BookAction, BookAnalyticsSnapshot,
     BookEventAnalyticsSnapshot, BookSnapshot, CvdEnhancementSnapshot, DarkLitCorrelationSnapshot,
@@ -10,10 +12,9 @@ use of_core::{
     InstitutionalFlowSnapshot, IntervalCandleSnapshot, KineticEnergySnapshot, KyleLambdaSnapshot,
     LOBFeatureSnapshot, NoiseSnapshot, OIAnalysisSnapshot, OptionsFlowSnapshot, PatternSnapshot,
     RegimeSnapshot, ResiliencySnapshot, SessionCandleSnapshot, Side, SignalState,
-    SpreadDecompositionSnapshot, SymbolId, VolatilitySignatureSnapshot, VolatilitySnapshot, VpinSnapshot,
+    SpreadDecompositionSnapshot, SymbolId, VolatilitySignatureSnapshot, VolatilitySnapshot,
+    VpinSnapshot,
 };
-#[cfg(feature = "tickbar")]
-use of_core::CompletedBar;
 
 use crate::{of_engine, of_error_t, of_event_t, of_symbol_t};
 
@@ -415,7 +416,11 @@ pub(crate) fn format_cvd_enhancement_snapshot(snap: &CvdEnhancementSnapshot) -> 
         "{{\"delta_ratio\":{:.4},\"delta_zscore\":{:.4},\"divergence_detected\":{}}}",
         snap.delta_ratio,
         snap.delta_zscore,
-        if snap.divergence_detected { "true" } else { "false" },
+        if snap.divergence_detected {
+            "true"
+        } else {
+            "false"
+        },
     )
 }
 
@@ -455,11 +460,19 @@ pub(crate) fn format_pattern_snapshot(snap: &PatternSnapshot) -> String {
 
 fn json_from_bytes(buf: &[u8; 512]) -> &str {
     let end = buf.iter().position(|&b| b == 0).unwrap_or(0);
-    if end == 0 { "{}" } else { std::str::from_utf8(&buf[..end]).unwrap_or("{}") }
+    if end == 0 {
+        "{}"
+    } else {
+        std::str::from_utf8(&buf[..end]).unwrap_or("{}")
+    }
 }
 
 fn bool_str(b: bool) -> &'static str {
-    if b { "true" } else { "false" }
+    if b {
+        "true"
+    } else {
+        "false"
+    }
 }
 
 pub(crate) fn format_analytics_snapshot(snap: &of_core::AnalyticsSnapshot) -> String {
@@ -560,13 +573,19 @@ pub(crate) fn escape_json(input: &str) -> String {
 }
 
 pub(crate) fn format_kinetic_energy_snapshot(snap: &KineticEnergySnapshot) -> String {
-    format!("{{\"kinetic_energy\":{:.8},\"order_flow_momentum\":{:.8},\"energy_change\":{:.8}}}",
-        snap.kinetic_energy, snap.order_flow_momentum, snap.energy_change)
+    format!(
+        "{{\"kinetic_energy\":{:.8},\"order_flow_momentum\":{:.8},\"energy_change\":{:.8}}}",
+        snap.kinetic_energy, snap.order_flow_momentum, snap.energy_change
+    )
 }
 
 pub(crate) fn format_dark_pool_snapshot(snap: &DarkPoolSnapshot) -> String {
-    format!("{{\"dark_volume_pct\":{:.4},\"dark_zscore\":{:.4},\"dark_lit_divergence\":{}}}",
-        snap.dark_volume_pct, snap.dark_zscore, bool_str(snap.dark_lit_divergence))
+    format!(
+        "{{\"dark_volume_pct\":{:.4},\"dark_zscore\":{:.4},\"dark_lit_divergence\":{}}}",
+        snap.dark_volume_pct,
+        snap.dark_zscore,
+        bool_str(snap.dark_lit_divergence)
+    )
 }
 
 pub(crate) fn format_options_flow_snapshot(snap: &OptionsFlowSnapshot) -> String {
@@ -580,23 +599,31 @@ pub(crate) fn format_futures_snapshot(snap: &FuturesSnapshot) -> String {
 }
 
 pub(crate) fn format_volatility_snapshot(snap: &VolatilitySnapshot) -> String {
-    format!("{{\"classic_rv\":{:.8},\"parkinson\":{:.8},\"garman_klass\":{:.8},\"yang_zhang\":{:.8}}}",
-        snap.classic_rv, snap.parkinson, snap.garman_klass, snap.yang_zhang)
+    format!(
+        "{{\"classic_rv\":{:.8},\"parkinson\":{:.8},\"garman_klass\":{:.8},\"yang_zhang\":{:.8}}}",
+        snap.classic_rv, snap.parkinson, snap.garman_klass, snap.yang_zhang
+    )
 }
 
 pub(crate) fn format_noise_snapshot(snap: &NoiseSnapshot) -> String {
-    format!("{{\"noise_variance\":{:.8},\"signal_to_noise\":{:.4}}}",
-        snap.noise_variance, snap.signal_to_noise)
+    format!(
+        "{{\"noise_variance\":{:.8},\"signal_to_noise\":{:.4}}}",
+        snap.noise_variance, snap.signal_to_noise
+    )
 }
 
 pub(crate) fn format_hasbrouck_snapshot(snap: &HasbrouckSnapshot) -> String {
-    format!("{{\"permanent_impact\":{:.6},\"temporary_impact\":{:.6},\"information_share\":{:.4}}}",
-        snap.permanent_impact, snap.temporary_impact, snap.information_share)
+    format!(
+        "{{\"permanent_impact\":{:.6},\"temporary_impact\":{:.6},\"information_share\":{:.4}}}",
+        snap.permanent_impact, snap.temporary_impact, snap.information_share
+    )
 }
 
 pub(crate) fn format_almgren_chriss_snapshot(snap: &AlmgrenChrissSnapshot) -> String {
-    format!("{{\"permanent_impact_coef\":{:.6},\"temporary_impact_coef\":{:.6}}}",
-        snap.permanent_impact_coef, snap.temporary_impact_coef)
+    format!(
+        "{{\"permanent_impact_coef\":{:.6},\"temporary_impact_coef\":{:.6}}}",
+        snap.permanent_impact_coef, snap.temporary_impact_coef
+    )
 }
 
 pub(crate) fn format_spread_decomp_snapshot(snap: &SpreadDecompositionSnapshot) -> String {
@@ -605,42 +632,60 @@ pub(crate) fn format_spread_decomp_snapshot(snap: &SpreadDecompositionSnapshot) 
 }
 
 pub(crate) fn format_acd_snapshot(snap: &ACDSnapshot) -> String {
-    format!("{{\"mean_duration_ns\":{:.0},\"intensity\":{:.6},\"alpha\":{:.4},\"beta\":{:.4}}}",
-        snap.mean_duration_ns, snap.intensity, snap.alpha, snap.beta)
+    format!(
+        "{{\"mean_duration_ns\":{:.0},\"intensity\":{:.6},\"alpha\":{:.4},\"beta\":{:.4}}}",
+        snap.mean_duration_ns, snap.intensity, snap.alpha, snap.beta
+    )
 }
 
 pub(crate) fn format_regime_snapshot(snap: &RegimeSnapshot) -> String {
-    format!("{{\"regime\":{},\"spread_z\":{:.4},\"vol_z\":{:.4},\"vpin_z\":{:.4}}}",
-        snap.regime, snap.spread_z, snap.vol_z, snap.vpin_z)
+    format!(
+        "{{\"regime\":{},\"spread_z\":{:.4},\"vol_z\":{:.4},\"vpin_z\":{:.4}}}",
+        snap.regime, snap.spread_z, snap.vol_z, snap.vpin_z
+    )
 }
 
 pub(crate) fn format_vol_signature_snapshot(snap: &VolatilitySignatureSnapshot) -> String {
-    let points_str: Vec<String> = snap.points[..snap.point_count as usize].iter().map(|p| {
-        format!("{{\"lag\":{},\"rv\":{:.8}}}", p.lag, p.rv)
-    }).collect();
-    format!("{{\"points\":[{}],\"optimal_lag\":{}}}",
-        points_str.join(","), snap.optimal_lag)
+    let points_str: Vec<String> = snap.points[..snap.point_count as usize]
+        .iter()
+        .map(|p| format!("{{\"lag\":{},\"rv\":{:.8}}}", p.lag, p.rv))
+        .collect();
+    format!(
+        "{{\"points\":[{}],\"optimal_lag\":{}}}",
+        points_str.join(","),
+        snap.optimal_lag
+    )
 }
 
 pub(crate) fn format_agent_type_snapshot(snap: &AgentTypeSnapshot) -> String {
-    format!("{{\"irp\":{:.4},\"ipin\":{:.6},\"ivpin\":{:.6},\"hft_reflexivity\":{:.4}}}",
-        snap.irp, snap.ipin, snap.ivpin, snap.hft_reflexivity)
+    format!(
+        "{{\"irp\":{:.4},\"ipin\":{:.6},\"ivpin\":{:.6},\"hft_reflexivity\":{:.4}}}",
+        snap.irp, snap.ipin, snap.ivpin, snap.hft_reflexivity
+    )
 }
 
 pub(crate) fn format_dark_lit_correlation_snapshot(snap: &DarkLitCorrelationSnapshot) -> String {
-    format!("{{\"correlation\":{:.4},\"siphon_active\":{}}}",
-        snap.correlation, if snap.siphon_active { "true" } else { "false" })
+    format!(
+        "{{\"correlation\":{:.4},\"siphon_active\":{}}}",
+        snap.correlation,
+        if snap.siphon_active { "true" } else { "false" }
+    )
 }
 
 pub(crate) fn format_institutional_flow_snapshot(snap: &InstitutionalFlowSnapshot) -> String {
-    format!("{{\"institutional_buy_ratio\":{:.4},\"crowding_score\":{:.4}}}",
-        snap.institutional_buy_ratio, snap.crowding_score)
+    format!(
+        "{{\"institutional_buy_ratio\":{:.4},\"crowding_score\":{:.4}}}",
+        snap.institutional_buy_ratio, snap.crowding_score
+    )
 }
 
 pub(crate) fn format_oi_analysis_snapshot(snap: &OIAnalysisSnapshot) -> String {
-    format!("{{\"oi_divergence\":{},\"oi_build_rate\":{:.6},\"max_pain_distance_bps\":{:.2}}}",
+    format!(
+        "{{\"oi_divergence\":{},\"oi_build_rate\":{:.6},\"max_pain_distance_bps\":{:.2}}}",
         if snap.oi_divergence { "true" } else { "false" },
-        snap.oi_build_rate, snap.max_pain_distance_bps)
+        snap.oi_build_rate,
+        snap.max_pain_distance_bps
+    )
 }
 
 pub(crate) fn format_lob_feature_snapshot(snap: &LOBFeatureSnapshot) -> String {

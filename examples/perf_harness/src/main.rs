@@ -217,7 +217,10 @@ fn main() {
     let mode = parse_mode();
     match mode.as_str() {
         "benchmark" => run_benchmark(parse_arg_usize("events", 200_000)),
-        "soak" => run_soak(parse_arg_u64("duration", 30), parse_arg_usize("batch", 2000)),
+        "soak" => run_soak(
+            parse_arg_u64("duration", 30),
+            parse_arg_usize("batch", 2000),
+        ),
         _ => {
             eprintln!("usage:");
             eprintln!("  perf_harness benchmark --events=200000");
