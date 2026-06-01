@@ -23,6 +23,8 @@ public interface OrderflowNative extends Library {
 
     /** Creates execution engine instance. */
     int of_execution_engine_create(OfExecutionRouteConfig cfg, PointerByReference outEngine);
+    /** Creates execution engine instance with multiple route/account/symbol configs. */
+    int of_execution_engine_create_multi(OfExecutionRouteConfig[] routes, int routeCount, PointerByReference outEngine);
     /** Starts execution engine. */
     int of_execution_engine_start(Pointer engine);
     /** Stops execution engine. */

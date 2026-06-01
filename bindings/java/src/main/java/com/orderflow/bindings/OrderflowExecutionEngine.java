@@ -2,6 +2,7 @@ package com.orderflow.bindings;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
@@ -28,6 +29,25 @@ public final class OrderflowExecutionEngine implements AutoCloseable {
         cfg.write();
         PointerByReference out = new PointerByReference();
         check(nativeLib.of_execution_engine_create(cfg, out), "of_execution_engine_create", List.of());
+        this.engine = out.getValue();
+    }
+
+    /**
+     * Creates an execution engine using multiple route configurations.
+     *
+     * @param nativePath native library path, or null/blank for default debug path
+     * @param routes route/account/symbol risk configurations
+     */
+    public OrderflowExecutionEngine(String nativePath, List<RouteConfig> routes) {
+        String libPath = nativePath == null || nativePath.isBlank() ? defaultLibraryPath() : nativePath;
+        this.nativeLib = OrderflowNative.load(libPath);
+        OfExecutionRouteConfig[] cfgs = toNativeRoutes(routes);
+        PointerByReference out = new PointerByReference();
+        check(
+            nativeLib.of_execution_engine_create_multi(cfgs, cfgs.length, out),
+            "of_execution_engine_create_multi",
+            List.of()
+        );
         this.engine = out.getValue();
     }
 
@@ -156,6 +176,7 @@ public final class OrderflowExecutionEngine implements AutoCloseable {
     }
 
     private static OfExecutionRouteConfig toNative(RouteConfig route) {
+        Objects.requireNonNull(route, "route");
         OfExecutionRouteConfig cfg = new OfExecutionRouteConfig();
         cfg.route_id = route.routeId;
         cfg.account_id = route.accountId;
@@ -169,6 +190,31 @@ public final class OrderflowExecutionEngine implements AutoCloseable {
         cfg.max_open_notional = route.riskLimits.maxOpenNotional;
         cfg.price_band_ticks = route.riskLimits.priceBandTicks;
         return cfg;
+    }
+
+    private static OfExecutionRouteConfig[] toNativeRoutes(List<RouteConfig> routes) {
+        Objects.requireNonNull(routes, "routes");
+        if (routes.isEmpty()) {
+            throw new OrderflowArgException("at least one execution route is required");
+        }
+        OfExecutionRouteConfig[] cfgs =
+            (OfExecutionRouteConfig[]) new OfExecutionRouteConfig().toArray(routes.size());
+        for (int idx = 0; idx < routes.size(); idx++) {
+            OfExecutionRouteConfig cfg = toNative(routes.get(idx));
+            cfgs[idx].route_id = cfg.route_id;
+            cfgs[idx].account_id = cfg.account_id;
+            cfgs[idx].venue = cfg.venue;
+            cfgs[idx].instrument = cfg.instrument;
+            cfgs[idx].enabled = cfg.enabled;
+            cfgs[idx].kill_switch = cfg.kill_switch;
+            cfgs[idx].max_order_qty = cfg.max_order_qty;
+            cfgs[idx].max_order_notional = cfg.max_order_notional;
+            cfgs[idx].max_open_orders = cfg.max_open_orders;
+            cfgs[idx].max_open_notional = cfg.max_open_notional;
+            cfgs[idx].price_band_ticks = cfg.price_band_ticks;
+            cfgs[idx].write();
+        }
+        return cfgs;
     }
 
     private static OfExecutionOrderRequest toNative(OrderRequest request) {
