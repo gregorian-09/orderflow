@@ -368,6 +368,13 @@ class OrderflowLib:
         ]
         lib.of_execution_engine_create.restype = c_int32
 
+        lib.of_execution_engine_create_multi.argtypes = [
+            ctypes.POINTER(OfExecutionRouteConfig),
+            c_uint32,
+            ctypes.POINTER(c_void_p),
+        ]
+        lib.of_execution_engine_create_multi.restype = c_int32
+
         lib.of_execution_engine_start.argtypes = [c_void_p]
         lib.of_execution_engine_start.restype = c_int32
 

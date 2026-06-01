@@ -24,7 +24,7 @@ from __future__ import annotations
 import ctypes
 import json
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Sequence
 
 from ._ffi import (
     OfAnalyticsConfig,
@@ -325,13 +325,26 @@ class ExecutionMetrics:
 class ExecutionEngine:
     """High-level Python wrapper around the native execution C ABI."""
 
-    def __init__(self, route: RouteConfig, library_path: Optional[str] = None) -> None:
-        """Creates a simulated execution engine for one configured route."""
+    def __init__(
+        self,
+        route: RouteConfig | Sequence[RouteConfig],
+        library_path: Optional[str] = None,
+    ) -> None:
+        """Creates a simulated execution engine for one or more configured routes."""
         self._ffi = OrderflowLib(library_path=library_path)
         self._engine = ctypes.c_void_p()
-        cfg = self._to_c_route(route)
-        rc = self._ffi.lib.of_execution_engine_create(ctypes.byref(cfg), ctypes.byref(self._engine))
-        self._check(rc, "of_execution_engine_create", [])
+        if isinstance(route, RouteConfig):
+            cfg = self._to_c_route(route)
+            rc = self._ffi.lib.of_execution_engine_create(
+                ctypes.byref(cfg), ctypes.byref(self._engine)
+            )
+            self._check(rc, "of_execution_engine_create", [])
+        else:
+            cfgs = self._to_c_routes(route)
+            rc = self._ffi.lib.of_execution_engine_create_multi(
+                cfgs, ctypes.c_uint32(len(cfgs)), ctypes.byref(self._engine)
+            )
+            self._check(rc, "of_execution_engine_create_multi", [])
 
     def __enter__(self) -> "ExecutionEngine":
         """Context manager entry that starts execution."""
@@ -515,6 +528,16 @@ class ExecutionEngine:
             max_open_notional=ctypes.c_int64(limits.max_open_notional),
             price_band_ticks=ctypes.c_int64(limits.price_band_ticks),
         )
+
+    def _to_c_routes(
+        self, routes: Sequence[RouteConfig]
+    ) -> ctypes.Array[OfExecutionRouteConfig]:
+        if not routes:
+            raise OrderflowArgError("at least one execution route is required")
+        cfgs = (OfExecutionRouteConfig * len(routes))()
+        for idx, route in enumerate(routes):
+            cfgs[idx] = self._to_c_route(route)
+        return cfgs
 
     def _to_c_order(self, request: OrderRequest) -> OfExecutionOrderRequest:
         return OfExecutionOrderRequest(
