@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/of_core",
+  "crates/of_execution_core",
   "crates/of_adapters",
   "crates/of_signals",
   "crates/of_persist",

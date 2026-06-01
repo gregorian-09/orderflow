@@ -146,6 +146,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "of_execution_core"
+version = "0.3.0"
+
+[[package]]
 name = "of_ffi_c"
 version = "0.3.0"
 dependencies = [
