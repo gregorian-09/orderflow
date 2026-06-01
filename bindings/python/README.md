@@ -12,6 +12,10 @@ external feed ingestion.
 The package includes a PEP 561 `py.typed` marker so type checkers can consume
 the inline annotations shipped with the binding.
 
+The binding also exposes an additive execution API through `ExecutionEngine`.
+Execution uses a separate native handle from analytics and returns typed
+execution events rather than JSON on the order path.
+
 The README is intentionally API-complete so the PyPI page can be used as a
 single reference, similar to high-signal package pages such as TA-Lib and
 FastAPI.
@@ -25,6 +29,27 @@ FastAPI.
   `ORDERFLOW_LIBRARY_PATH`, bundled wheel libraries, then the local debug build.
 - Runtime `metrics()` may include additive backpressure, aggregate health, and
   circuit-breaker fields when using a `0.3.0` native library.
+- Development builds include additive simulated execution APIs:
+  `ExecutionEngine`, `OrderRequest`, `CancelRequest`, `AmendRequest`,
+  `RiskLimits`, and `RouteConfig`.
+
+### Execution quick start
+
+```python
+from orderflow import (
+    ExecutionEngine, ExecutionOrderType, ExecutionSide, ExecutionTimeInForce,
+    OrderRequest, RiskLimits, RouteConfig,
+)
+
+route = RouteConfig("SIM", "ACC", "SIM", "ES", True, RiskLimits(False, 100, 1_000_000, 10, 10_000_000, 0))
+
+with ExecutionEngine(route) as execution:
+    events = execution.submit_order(OrderRequest(
+        "C1", "ACC", "SIM", "STRAT", "SIM", "ES",
+        ExecutionSide.BUY, ExecutionOrderType.LIMIT, ExecutionTimeInForce.DAY,
+        10, 5000,
+    ))
+```
 
 ## Architecture
 

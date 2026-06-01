@@ -8,6 +8,10 @@ Production-oriented Java SDK for Orderflow using JNA over the stable `of_ffi_c`
 ABI. Designed for low-latency analytics workflows, deterministic replay, and
 external feed bridges.
 
+The binding also includes an additive execution API through
+`OrderflowExecutionEngine`. Execution uses a separate native handle from
+analytics and returns typed execution events rather than JSON on the order path.
+
 This README is intentionally API-complete so Maven users can understand the
 entire public surface from one place.
 
@@ -28,6 +32,25 @@ entire public surface from one place.
   backpressure, aggregate adapter health, and circuit-breaker state.
 - Existing native resolution behavior is unchanged: explicit path,
   `ORDERFLOW_LIBRARY_PATH`, then local debug library.
+- Development builds include additive simulated execution APIs:
+  `OrderflowExecutionEngine`, `OrderRequest`, `CancelRequest`, `AmendRequest`,
+  `RiskLimits`, and `RouteConfig`.
+
+### Execution quick start
+
+```java
+RiskLimits limits = new RiskLimits(false, 100, 1_000_000, 10, 10_000_000, 0);
+RouteConfig route = new RouteConfig("SIM", "ACC", "SIM", "ES", true, limits);
+
+try (OrderflowExecutionEngine execution = new OrderflowExecutionEngine(null, route)) {
+    execution.start();
+    execution.submitOrder(new OrderRequest(
+        "C1", "ACC", "SIM", "STRAT", "SIM", "ES",
+        ExecutionSide.BUY, ExecutionOrderType.LIMIT, ExecutionTimeInForce.DAY,
+        10, 5000, 0, 1, 2
+    ));
+}
+```
 
 ## Java Version
 

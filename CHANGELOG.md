@@ -23,6 +23,15 @@ and this project follows [Semantic Versioning](https://semver.org/).
   (off by default).
 - Strategy cookbook expanded to 30 strategy examples with payload-key-accurate
   examples and API compatibility mapping across Rust, C, Python, and Java.
+- Additive execution-core foundation for order-management workflows:
+  `of_execution_core`, `of_execution`, and `of_execution_adapters` introduce
+  fixed-size execution identifiers, typed order/cancel/amend requests,
+  FIX-style order-state transitions, structured pre-trade risk rejection,
+  bounded execution event buffers, simulated execution, journal/recovery hooks,
+  and a FIX execution-report mapping scaffold.
+- Additive execution C ABI, Python, and Java APIs using separate execution
+  handles (`of_execution_engine_t`, `ExecutionEngine`,
+  `OrderflowExecutionEngine`). Existing analytics/runtime APIs are unchanged.
 
 ## [0.3.0] - 2026-05-09
 This is a non-breaking operational hardening release after `0.2.0`. For the

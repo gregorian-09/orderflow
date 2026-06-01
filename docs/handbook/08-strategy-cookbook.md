@@ -1125,6 +1125,61 @@ if __name__ == "__main__":
 | LOB features           | `compute_lob_features`  | `of_compute_lob_features`        | `engine.lob_features`          | `engine.lobFeatures`            |
 | Analytics config       | `AnalyticsConfig`       | `of_engine_set_analytics_config` | `engine.set_analytics_config`  | `engine.setAnalyticsConfig`     |
 | Tickbar                | `AnalyticsAccumulator::with_tickbar`| `of_engine_set_tickbar_interval`| `engine.set_tickbar_interval`  | `engine.setTickbarInterval`     |
+| Execution simulation   | `of_execution::simulated_engine`| `of_execution_submit_order` | `ExecutionEngine.submit_order` | `OrderflowExecutionEngine.submitOrder` |
+
+---
+
+## Execution Recipe: Simulated Risk-Gated Order
+
+Use the execution layer when a strategy decision needs to become a typed order
+command. The execution API is separate from analytics and starts with simulated
+execution plus structured risk rejection.
+
+```python
+from orderflow import (
+    ExecutionEngine, ExecutionOrderType, ExecutionSide, ExecutionTimeInForce,
+    OrderRequest, OrderflowRiskError, RiskLimits, RouteConfig,
+)
+
+route = RouteConfig(
+    route_id="SIM",
+    account_id="ACC",
+    venue="SIM",
+    instrument="ES",
+    enabled=True,
+    risk_limits=RiskLimits(
+        kill_switch=False,
+        max_order_qty=100,
+        max_order_notional=1_000_000,
+        max_open_orders=10,
+        max_open_notional=10_000_000,
+        price_band_ticks=0,
+    ),
+)
+
+with ExecutionEngine(route) as execution:
+    try:
+        events = execution.submit_order(OrderRequest(
+            client_order_id="C1",
+            account_id="ACC",
+            route_id="SIM",
+            strategy_id="STRAT",
+            venue="SIM",
+            instrument="ES",
+            side=ExecutionSide.BUY,
+            order_type=ExecutionOrderType.LIMIT,
+            time_in_force=ExecutionTimeInForce.DAY,
+            quantity=10,
+            limit_price=5000,
+        ))
+    except OrderflowRiskError as exc:
+        print("risk rejected", exc.events)
+    else:
+        print("final status", events[-1].order_status)
+```
+
+For low-latency integrations, use the Rust or C APIs directly so requests and
+events stay as typed structs in caller-owned buffers.
 
 ---
 

@@ -6,6 +6,13 @@ Java — from spread metrics and VPIN toxicity through fingerprint patterns,
 volatility signatures, Almgren-Chriss impact models, options flow, futures
 basis, dark pool siphon detection, and machine-learning-ready LOB features.
 
+The current development line also includes an additive execution-core
+foundation for developer-built order-management workflows. Execution APIs use
+separate handles and crates, so existing analytics integrations remain stable.
+The execution layer provides typed order requests, FIX-style state transitions,
+structured risk rejection, simulated execution, C/Python/Java bindings, and a
+FIX mapping scaffold. It is not a broker-certified production OMS by itself.
+
 ## Documentation
 
 Start here:
@@ -31,6 +38,20 @@ Start here:
 | T5   | Dark pool, dark-lit correlation, institutional flow | Rust, C, Python, Java |
 | T6   | Options flow, OI analysis | Rust, C, Python, Java |
 | T7   | Futures basis, calendar spread, settlement | Rust, C, Python, Java |
+
+## Execution Core at a Glance
+
+| Layer | Additive API |
+|------|--------------|
+| Rust core | `of_execution_core` order IDs, requests, events, state machine, risk |
+| Rust engine | `of_execution` adapter trait, bounded event buffer, simulator, journal hooks |
+| Adapter scaffold | `of_execution_adapters::fix` execution-report mapper and FIX capabilities |
+| C ABI | `of_execution_engine_t`, submit/cancel/amend/poll/state/health/metrics |
+| Python | `ExecutionEngine`, `OrderRequest`, `CancelRequest`, `AmendRequest` |
+| Java | `OrderflowExecutionEngine`, `OrderRequest`, `CancelRequest`, `AmendRequest` |
+
+Low-latency-sensitive paths use typed structs and caller-owned event buffers,
+not JSON payloads. JSON remains for analytics snapshots and diagnostics.
 
 Every analytics type is configurable via the 22-field `AnalyticsConfig` struct
 and queryable through the same buffer-negotiation C ABI pattern.
@@ -66,6 +87,25 @@ with Engine(EngineConfig()) as engine:
     print(engine.lob_features(Symbol("CME", "ESM6", 10), 0.0, 0.0, 0.0))
 ```
 
+Execution simulation:
+
+```python
+from orderflow import (
+    ExecutionEngine, ExecutionOrderType, ExecutionSide, ExecutionTimeInForce,
+    OrderRequest, RiskLimits, RouteConfig,
+)
+
+route = RouteConfig("SIM", "ACC", "SIM", "ES", True, RiskLimits(False, 100, 1_000_000, 10, 10_000_000, 0))
+
+with ExecutionEngine(route) as execution:
+    events = execution.submit_order(OrderRequest(
+        "C1", "ACC", "SIM", "STRAT", "SIM", "ES",
+        ExecutionSide.BUY, ExecutionOrderType.LIMIT, ExecutionTimeInForce.DAY,
+        10, 5000,
+    ))
+    print(events[-1].order_status)
+```
+
 ### Java
 ```java
 try (OrderflowEngine engine = new OrderflowEngine()) {
@@ -75,6 +115,22 @@ try (OrderflowEngine engine = new OrderflowEngine()) {
 
     System.out.println(engine.analyticsSnapshot(sym));
     System.out.println(engine.volatilitySnapshot(sym));
+}
+```
+
+Execution simulation:
+
+```java
+RiskLimits limits = new RiskLimits(false, 100, 1_000_000, 10, 10_000_000, 0);
+RouteConfig route = new RouteConfig("SIM", "ACC", "SIM", "ES", true, limits);
+
+try (OrderflowExecutionEngine execution = new OrderflowExecutionEngine(null, route)) {
+    execution.start();
+    execution.submitOrder(new OrderRequest(
+        "C1", "ACC", "SIM", "STRAT", "SIM", "ES",
+        ExecutionSide.BUY, ExecutionOrderType.LIMIT, ExecutionTimeInForce.DAY,
+        10, 5000, 0, 1, 2
+    ));
 }
 ```
 
