@@ -1598,4 +1598,125 @@ mod tests {
         assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
         of_engine_destroy(engine);
     }
+
+    #[test]
+    fn execution_abi_submits_simulated_order() {
+        let _guard = test_lock().lock().expect("test lock");
+        let route = CString::new("SIM").expect("cstring");
+        let account = CString::new("ACC").expect("cstring");
+        let venue = CString::new("SIM").expect("cstring");
+        let instrument = CString::new("ES").expect("cstring");
+        let cfg = of_execution_route_config_t {
+            route_id: route.as_ptr(),
+            account_id: account.as_ptr(),
+            venue: venue.as_ptr(),
+            instrument: instrument.as_ptr(),
+            enabled: 1,
+            kill_switch: 0,
+            max_order_qty: 100,
+            max_order_notional: 1_000_000,
+            max_open_orders: 10,
+            max_open_notional: 10_000_000,
+            price_band_ticks: 0,
+        };
+
+        let mut engine: *mut of_execution_engine = ptr::null_mut();
+        assert_eq!(
+            of_execution_engine_create(&cfg, &mut engine),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!engine.is_null());
+        assert_eq!(
+            of_execution_engine_start(engine),
+            of_error_t::OF_OK as i32
+        );
+
+        let client_order_id = CString::new("C1").expect("cstring");
+        let strategy = CString::new("STRAT").expect("cstring");
+        let req = of_execution_order_request_t {
+            client_order_id: client_order_id.as_ptr(),
+            account_id: account.as_ptr(),
+            route_id: route.as_ptr(),
+            strategy_id: strategy.as_ptr(),
+            venue: venue.as_ptr(),
+            instrument: instrument.as_ptr(),
+            side: 1,
+            order_type: 2,
+            time_in_force: 1,
+            quantity: 10,
+            limit_price: 5000,
+            stop_price: 0,
+            ts_exchange_ns: 1,
+            ts_recv_ns: 2,
+        };
+        let mut events = [of_execution_event_t {
+            exec_type: 0,
+            order_status: 0,
+            client_order_id: [0; 41],
+            orig_client_order_id: [0; 41],
+            venue_order_id: [0; 49],
+            execution_id: [0; 49],
+            account_id: [0; 33],
+            route_id: [0; 33],
+            venue: [0; 17],
+            instrument: [0; 33],
+            last_qty: 0,
+            last_price: 0,
+            cumulative_qty: 0,
+            leaves_qty: 0,
+            average_price: 0,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+            reason: 0,
+            text: [0; 129],
+        }; 4];
+        let mut len = events.len() as u32;
+        assert_eq!(
+            of_execution_submit_order(engine, &req, events.as_mut_ptr(), &mut len),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(len, 2);
+        assert_eq!(events[0].exec_type, 1);
+        assert_eq!(events[1].exec_type, 3);
+        assert_eq!(events[1].order_status, 4);
+
+        let mut state = of_execution_order_state_t {
+            client_order_id: [0; 41],
+            venue_order_id: [0; 49],
+            account_id: [0; 33],
+            route_id: [0; 33],
+            venue: [0; 17],
+            instrument: [0; 33],
+            status: 0,
+            order_qty: 0,
+            cumulative_qty: 0,
+            leaves_qty: 0,
+            average_price: 0,
+            updated_ns: 0,
+        };
+        assert_eq!(
+            of_execution_get_order_state(engine, client_order_id.as_ptr(), &mut state),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(state.status, 4);
+        assert_eq!(state.cumulative_qty, 10);
+
+        let mut metrics = of_execution_metrics_t {
+            submitted: 0,
+            cancelled: 0,
+            amended: 0,
+            events_applied: 0,
+            risk_rejected: 0,
+            adapter_errors: 0,
+            recovered: 0,
+        };
+        assert_eq!(
+            of_execution_metrics(engine, &mut metrics),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(metrics.submitted, 1);
+        assert_eq!(metrics.events_applied, 2);
+
+        of_execution_engine_destroy(engine);
+    }
 }
