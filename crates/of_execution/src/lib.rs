@@ -318,6 +318,58 @@ pub struct RouteConfig {
     pub risk_limits: RiskLimits,
 }
 
+/// Stable lookup key for a configured execution route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RouteKey {
+    /// Route id.
+    pub route_id: RouteId,
+    /// Trading account.
+    pub account_id: AccountId,
+    /// Venue-native execution symbol.
+    pub symbol: ExecutionSymbol,
+}
+
+impl RouteKey {
+    /// Creates a route lookup key.
+    pub const fn new(route_id: RouteId, account_id: AccountId, symbol: ExecutionSymbol) -> Self {
+        Self {
+            route_id,
+            account_id,
+            symbol,
+        }
+    }
+}
+
+/// Pass-through risk hook for engines that rely on route-scoped limits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AllowAllRiskGate;
+
+impl RiskCheck for AllowAllRiskGate {
+    fn check_new(
+        &self,
+        _req: &OrderRequest,
+        _ctx: &RiskContext,
+    ) -> of_execution_core::RiskDecision {
+        of_execution_core::RiskDecision::allow()
+    }
+
+    fn check_amend(
+        &self,
+        _req: &AmendRequest,
+        _ctx: &RiskContext,
+    ) -> of_execution_core::RiskDecision {
+        of_execution_core::RiskDecision::allow()
+    }
+
+    fn check_cancel(
+        &self,
+        _req: &CancelRequest,
+        _ctx: &RiskContext,
+    ) -> of_execution_core::RiskDecision {
+        of_execution_core::RiskDecision::allow()
+    }
+}
+
 /// Journal command kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JournalCommandKind {
@@ -426,7 +478,10 @@ pub struct ExecutionEngine<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJourna
     risk: R,
     journal: J,
     routes: Vec<RouteConfig>,
+    route_index: HashMap<RouteKey, usize>,
     orders: HashMap<ClientOrderId, OrderStateMachine>,
+    order_prices: HashMap<ClientOrderId, OrderPrice>,
+    pending_amend_prices: HashMap<ClientOrderId, OrderPrice>,
     metrics: ExecutionMetrics,
     scratch: ExecutionEventBuffer,
     started: bool,
@@ -435,12 +490,16 @@ pub struct ExecutionEngine<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJourna
 impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, R, J> {
     /// Creates an execution engine.
     pub fn new(adapter: A, risk: R, journal: J, routes: Vec<RouteConfig>) -> Self {
+        let route_index = build_route_index(&routes);
         Self {
             adapter,
             risk,
             journal,
             routes,
+            route_index,
             orders: HashMap::new(),
+            order_prices: HashMap::new(),
+            pending_amend_prices: HashMap::new(),
             metrics: ExecutionMetrics::default(),
             scratch: ExecutionEventBuffer::default(),
             started: false,
@@ -479,6 +538,11 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
         self.journal.replay(out)
     }
 
+    /// Returns configured execution routes.
+    pub fn routes(&self) -> &[RouteConfig] {
+        &self.routes
+    }
+
     /// Submits an order.
     pub fn submit(
         &mut self,
@@ -490,16 +554,27 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
         }
         req.validate()?;
 
-        let Some(route) = self.find_route(req.route_id, req.account_id, req.symbol) else {
+        let Some(route) = self
+            .find_route(req.route_id, req.account_id, req.symbol)
+            .copied()
+        else {
             return Err(ExecutionError::RouteNotFound);
         };
         let caps = self.adapter.capabilities();
         let ctx = self.risk_context(
             &req.client_order_id,
-            route,
+            &route,
             caps.supports_order_type(req.order_type),
             caps.supports_tif(req.time_in_force),
         );
+        let decision = self.check_route_new(&req, &route, &ctx);
+        if !decision.allowed {
+            self.metrics.risk_rejected = self.metrics.risk_rejected.saturating_add(1);
+            let event = ExecutionEvent::rejected(&req, decision.reason, decision.text);
+            self.journal.record_event(&event)?;
+            out.push(event)?;
+            return Err(ExecutionError::RiskRejected(decision.reason));
+        }
         let decision = self.risk.check_new(&req, &ctx);
         if !decision.allowed {
             self.metrics.risk_rejected = self.metrics.risk_rejected.saturating_add(1);
@@ -516,6 +591,10 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
         )?;
         self.orders
             .insert(req.client_order_id, OrderStateMachine::new(&req));
+        self.order_prices.insert(
+            req.client_order_id,
+            execution_price(req.limit_price, req.stop_price),
+        );
         self.scratch.clear();
         self.adapter.submit(&req, &mut self.scratch)?;
         self.metrics.submitted = self.metrics.submitted.saturating_add(1);
@@ -534,6 +613,18 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
         }
         if !self.orders.contains_key(&req.orig_client_order_id) {
             return Err(ExecutionError::RouteNotFound);
+        }
+        let Some(route) = self
+            .find_route(req.route_id, req.account_id, req.symbol)
+            .copied()
+        else {
+            return Err(ExecutionError::RouteNotFound);
+        };
+        let ctx = self.risk_context(&req.client_order_id, &route, true, true);
+        let decision = self.risk.check_cancel(&req, &ctx);
+        if !decision.allowed {
+            self.metrics.risk_rejected = self.metrics.risk_rejected.saturating_add(1);
+            return Err(ExecutionError::RiskRejected(decision.reason));
         }
         self.journal.record_command(
             JournalCommandKind::Cancel,
@@ -562,11 +653,30 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
         if !self.orders.contains_key(&req.orig_client_order_id) {
             return Err(ExecutionError::RouteNotFound);
         }
+        let Some(route) = self
+            .find_route(req.route_id, req.account_id, req.symbol)
+            .copied()
+        else {
+            return Err(ExecutionError::RouteNotFound);
+        };
+        let ctx = self.risk_context(&req.client_order_id, &route, true, true);
+        let decision = self.check_route_amend(&req, &route, &ctx);
+        if !decision.allowed {
+            self.metrics.risk_rejected = self.metrics.risk_rejected.saturating_add(1);
+            return Err(ExecutionError::RiskRejected(decision.reason));
+        }
+        let decision = self.risk.check_amend(&req, &ctx);
+        if !decision.allowed {
+            self.metrics.risk_rejected = self.metrics.risk_rejected.saturating_add(1);
+            return Err(ExecutionError::RiskRejected(decision.reason));
+        }
         self.journal.record_command(
             JournalCommandKind::Amend,
             req.client_order_id,
             req.ts_recv_ns,
         )?;
+        self.pending_amend_prices
+            .insert(req.client_order_id, req.limit_price);
         self.scratch.clear();
         self.adapter.amend(&req, &mut self.scratch)?;
         self.metrics.amended = self.metrics.amended.saturating_add(1);
@@ -605,12 +715,11 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
         account_id: AccountId,
         symbol: ExecutionSymbol,
     ) -> Option<&RouteConfig> {
-        self.routes.iter().find(|route| {
-            route.enabled
-                && route.route_id == route_id
-                && route.account_id == account_id
-                && route.symbol == symbol
-        })
+        let key = RouteKey::new(route_id, account_id, symbol);
+        self.route_index
+            .get(&key)
+            .and_then(|index| self.routes.get(*index))
+            .filter(|route| route.enabled)
     }
 
     fn risk_context(
@@ -621,12 +730,8 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
         tif_supported: bool,
     ) -> RiskContext {
         RiskContext {
-            open_orders: self
-                .orders
-                .values()
-                .filter(|sm| !sm.state().status.is_terminal())
-                .count() as u32,
-            open_notional: self.open_notional(),
+            open_orders: self.scoped_open_orders(route),
+            open_notional: self.scoped_open_notional(route),
             reference_price: OrderPrice(0),
             duplicate_client_order_id: self.orders.contains_key(id),
             account_enabled: route.enabled,
@@ -637,15 +742,153 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
         }
     }
 
-    fn open_notional(&self) -> i128 {
+    fn scoped_open_orders(&self, route: &RouteConfig) -> u32 {
         self.orders
             .values()
             .filter(|sm| !sm.state().status.is_terminal())
-            .map(|sm| {
-                i128::from(sm.state().leaves_qty.0)
-                    .saturating_mul(i128::from(sm.state().average_price.0))
-            })
+            .filter(|sm| state_matches_route(sm.state(), route))
+            .count() as u32
+    }
+
+    fn scoped_open_notional(&self, route: &RouteConfig) -> i128 {
+        self.orders
+            .values()
+            .filter(|sm| !sm.state().status.is_terminal())
+            .filter(|sm| state_matches_route(sm.state(), route))
+            .map(|sm| self.open_state_notional(sm.state()))
             .sum()
+    }
+
+    fn open_state_notional(&self, state: &OrderState) -> i128 {
+        let price = self
+            .order_prices
+            .get(&state.client_order_id)
+            .or_else(|| self.order_prices.get(&state.last_accepted_client_order_id))
+            .copied()
+            .unwrap_or(state.average_price);
+        i128::from(state.leaves_qty.0).saturating_mul(i128::from(price.0))
+    }
+
+    fn check_route_new(
+        &self,
+        req: &OrderRequest,
+        route: &RouteConfig,
+        ctx: &RiskContext,
+    ) -> of_execution_core::RiskDecision {
+        self.check_route_common(&route.risk_limits, ctx)
+            .or_else(|| {
+                self.check_route_size_price(&route.risk_limits, req.quantity, req.limit_price, ctx)
+            })
+            .unwrap_or_else(of_execution_core::RiskDecision::allow)
+    }
+
+    fn check_route_amend(
+        &self,
+        req: &AmendRequest,
+        route: &RouteConfig,
+        ctx: &RiskContext,
+    ) -> of_execution_core::RiskDecision {
+        self.check_route_common(&route.risk_limits, ctx)
+            .or_else(|| {
+                self.check_route_size_price(&route.risk_limits, req.quantity, req.limit_price, ctx)
+            })
+            .unwrap_or_else(of_execution_core::RiskDecision::allow)
+    }
+
+    fn check_route_common(
+        &self,
+        limits: &RiskLimits,
+        ctx: &RiskContext,
+    ) -> Option<of_execution_core::RiskDecision> {
+        if limits.kill_switch {
+            return Some(route_reject(
+                RiskRejectReason::KillSwitch,
+                "kill switch active",
+            ));
+        }
+        if !ctx.account_enabled {
+            return Some(route_reject(
+                RiskRejectReason::AccountDisabled,
+                "account disabled",
+            ));
+        }
+        if !ctx.route_enabled {
+            return Some(route_reject(
+                RiskRejectReason::RouteDisabled,
+                "route disabled",
+            ));
+        }
+        if !ctx.symbol_enabled {
+            return Some(route_reject(
+                RiskRejectReason::SymbolDisabled,
+                "symbol disabled",
+            ));
+        }
+        if ctx.duplicate_client_order_id {
+            return Some(route_reject(
+                RiskRejectReason::DuplicateClientOrderId,
+                "duplicate client order id",
+            ));
+        }
+        if !ctx.order_type_supported {
+            return Some(route_reject(
+                RiskRejectReason::UnsupportedOrderType,
+                "unsupported order type",
+            ));
+        }
+        if !ctx.tif_supported {
+            return Some(route_reject(
+                RiskRejectReason::UnsupportedTimeInForce,
+                "unsupported time in force",
+            ));
+        }
+        if limits.max_open_orders > 0 && ctx.open_orders >= limits.max_open_orders {
+            return Some(route_reject(
+                RiskRejectReason::MaxOpenOrders,
+                "max open orders exceeded",
+            ));
+        }
+        None
+    }
+
+    fn check_route_size_price(
+        &self,
+        limits: &RiskLimits,
+        qty: OrderQty,
+        price: OrderPrice,
+        ctx: &RiskContext,
+    ) -> Option<of_execution_core::RiskDecision> {
+        if limits.max_order_qty > 0 && qty.0 > limits.max_order_qty {
+            return Some(route_reject(
+                RiskRejectReason::MaxOrderQty,
+                "max order quantity exceeded",
+            ));
+        }
+        let notional = i128::from(qty.0).saturating_mul(i128::from(price.0));
+        if limits.max_order_notional > 0 && notional > limits.max_order_notional {
+            return Some(route_reject(
+                RiskRejectReason::MaxOrderNotional,
+                "max order notional exceeded",
+            ));
+        }
+        if limits.max_open_notional > 0
+            && ctx.open_notional.saturating_add(notional) > limits.max_open_notional
+        {
+            return Some(route_reject(
+                RiskRejectReason::MaxOpenNotional,
+                "max open notional exceeded",
+            ));
+        }
+        if limits.price_band_ticks > 0 && ctx.reference_price.0 > 0 && price.0 > 0 {
+            let distance = price.0.saturating_sub(ctx.reference_price.0).abs();
+            if distance > limits.price_band_ticks {
+                return Some(route_reject(
+                    RiskRejectReason::PriceBand,
+                    "price outside risk band",
+                ));
+            }
+        }
+        None
     }
 
     fn apply_scratch(&mut self, out: &mut ExecutionEventBuffer) -> ExecutionResult<usize> {
@@ -683,6 +926,12 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
                 let replaced = *sm;
                 self.orders.remove(&key);
                 self.orders.insert(event.client_order_id, replaced);
+                let price = self
+                    .pending_amend_prices
+                    .remove(&event.client_order_id)
+                    .unwrap_or(event.average_price);
+                self.order_prices.remove(&key);
+                self.order_prices.insert(event.client_order_id, price);
             }
         } else if matches!(event.exec_type, ExecutionType::Restated) {
             self.orders.insert(
@@ -703,6 +952,8 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
                     ts_recv_ns: event.ts_recv_ns,
                 }),
             );
+            self.order_prices
+                .insert(event.client_order_id, event.average_price);
         }
         self.journal.record_event(&event)?;
         self.metrics.events_applied = self.metrics.events_applied.saturating_add(1);
@@ -898,6 +1149,48 @@ pub fn simulated_engine(
     )
 }
 
+/// Creates a simulated execution engine for multiple configured routes.
+pub fn simulated_engine_with_routes(
+    routes: Vec<RouteConfig>,
+) -> ExecutionEngine<SimExecutionAdapter, AllowAllRiskGate, InMemoryJournal> {
+    ExecutionEngine::new(
+        SimExecutionAdapter::default(),
+        AllowAllRiskGate,
+        InMemoryJournal::default(),
+        routes,
+    )
+}
+
+fn build_route_index(routes: &[RouteConfig]) -> HashMap<RouteKey, usize> {
+    let mut index = HashMap::with_capacity(routes.len());
+    for (position, route) in routes.iter().enumerate() {
+        index.insert(
+            RouteKey::new(route.route_id, route.account_id, route.symbol),
+            position,
+        );
+    }
+    index
+}
+
+fn state_matches_route(state: &OrderState, route: &RouteConfig) -> bool {
+    state.route_id == route.route_id
+        && state.account_id == route.account_id
+        && state.symbol == route.symbol
+}
+
+fn execution_price(limit_price: OrderPrice, stop_price: OrderPrice) -> OrderPrice {
+    if limit_price.0 > 0 {
+        limit_price
+    } else {
+        stop_price
+    }
+}
+
+fn route_reject(reason: RiskRejectReason, text: &str) -> of_execution_core::RiskDecision {
+    let text = ExecutionText::new(text).unwrap_or_else(|_| ExecutionText::empty());
+    of_execution_core::RiskDecision::reject(reason, text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -908,16 +1201,20 @@ mod tests {
     }
 
     fn route() -> RouteConfig {
+        route_for("ES", 10)
+    }
+
+    fn route_for(instrument: &str, max_open_orders: u32) -> RouteConfig {
         RouteConfig {
             route_id: id("SIM"),
             account_id: id("ACC"),
-            symbol: ExecutionSymbol::new("SIM", "ES").unwrap(),
+            symbol: ExecutionSymbol::new("SIM", instrument).unwrap(),
             enabled: true,
             risk_limits: RiskLimits {
                 kill_switch: false,
                 max_order_qty: 100,
                 max_order_notional: 1_000_000,
-                max_open_orders: 10,
+                max_open_orders,
                 max_open_notional: 10_000_000,
                 price_band_ticks: 0,
             },
@@ -925,12 +1222,16 @@ mod tests {
     }
 
     fn order() -> OrderRequest {
+        order_for("C1", "ES")
+    }
+
+    fn order_for(client_order_id: &str, instrument: &str) -> OrderRequest {
         OrderRequest {
-            client_order_id: id("C1"),
+            client_order_id: id(client_order_id),
             account_id: id("ACC"),
             route_id: id("SIM"),
             strategy_id: id("STRAT"),
-            symbol: ExecutionSymbol::new("SIM", "ES").unwrap(),
+            symbol: ExecutionSymbol::new("SIM", instrument).unwrap(),
             side: OrderSide::Buy,
             order_type: OrderType::Limit,
             time_in_force: TimeInForce::Day,
@@ -1001,5 +1302,54 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn multi_route_engine_submits_multiple_symbols() {
+        let routes = vec![route_for("ES", 10), route_for("NQ", 10)];
+        let mut engine = simulated_engine_with_routes(routes);
+        engine.start().unwrap();
+
+        let mut out = ExecutionEventBuffer::with_capacity(8);
+        engine.submit(order_for("ES-1", "ES"), &mut out).unwrap();
+        out.clear();
+        engine.submit(order_for("NQ-1", "NQ"), &mut out).unwrap();
+
+        assert_eq!(
+            engine.order_state(&id("ES-1")).unwrap().status,
+            OrderStatus::Filled
+        );
+        assert_eq!(
+            engine.order_state(&id("NQ-1")).unwrap().status,
+            OrderStatus::Filled
+        );
+        assert_eq!(engine.metrics().submitted, 2);
+    }
+
+    #[test]
+    fn route_limits_are_scoped_by_symbol() {
+        let routes = vec![route_for("ES", 1), route_for("NQ", 1)];
+        let mut engine = ExecutionEngine::new(
+            SimExecutionAdapter::default().with_partial_fill(true),
+            AllowAllRiskGate,
+            InMemoryJournal::default(),
+            routes,
+        );
+        engine.start().unwrap();
+
+        let mut out = ExecutionEventBuffer::with_capacity(8);
+        engine.submit(order_for("ES-1", "ES"), &mut out).unwrap();
+        out.clear();
+        engine.submit(order_for("NQ-1", "NQ"), &mut out).unwrap();
+        out.clear();
+
+        let err = engine
+            .submit(order_for("ES-2", "ES"), &mut out)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ExecutionError::RiskRejected(RiskRejectReason::MaxOpenOrders)
+        ));
+        assert_eq!(out.as_slice()[0].reason, RiskRejectReason::MaxOpenOrders);
     }
 }
