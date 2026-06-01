@@ -13,13 +13,13 @@ use std::sync::{
 use of_adapters::{AdapterConfig, ProviderKind};
 use of_core::{AnalyticsConfig, BookUpdate, DataQualityFlags, SignalState, SymbolId, TradePrint};
 use of_execution::{
-    simulated_engine, ExecutionEngine, ExecutionError, ExecutionEventBuffer, InMemoryJournal,
-    RouteConfig, SimExecutionAdapter,
+    simulated_engine_with_routes, AllowAllRiskGate, ExecutionEngine, ExecutionError,
+    ExecutionEventBuffer, InMemoryJournal, RouteConfig, SimExecutionAdapter,
 };
 use of_execution_core::{
-    AmendRequest, BasicRiskGate, CancelRequest, ExecutionEvent, ExecutionSymbol, FixedAscii,
-    OrderPrice, OrderQty, OrderRequest, OrderSide, OrderState, OrderType, RiskLimits, StrategyId,
-    TimeInForce, VenueOrderId,
+    AmendRequest, CancelRequest, ExecutionEvent, ExecutionSymbol, FixedAscii, OrderPrice, OrderQty,
+    OrderRequest, OrderSide, OrderState, OrderType, RiskLimits, StrategyId, TimeInForce,
+    VenueOrderId,
 };
 use of_runtime::{
     build_default_engine, load_engine_config_from_path, DefaultEngine, EngineConfig,
@@ -456,7 +456,7 @@ pub struct of_engine {
 
 /// Opaque execution engine handle.
 pub struct of_execution_engine {
-    inner: ExecutionEngine<SimExecutionAdapter, BasicRiskGate, InMemoryJournal>,
+    inner: ExecutionEngine<SimExecutionAdapter, AllowAllRiskGate, InMemoryJournal>,
 }
 
 /// Opaque subscription token.
@@ -531,8 +531,37 @@ pub extern "C" fn of_execution_engine_create(
         Ok(route) => route,
         Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
     };
+    create_execution_engine_from_routes(vec![route], out_engine)
+}
+
+/// Creates a simulated execution engine from multiple route configs.
+#[no_mangle]
+pub extern "C" fn of_execution_engine_create_multi(
+    routes: *const of_execution_route_config_t,
+    route_count: u32,
+    out_engine: *mut *mut of_execution_engine,
+) -> i32 {
+    if routes.is_null() || route_count == 0 || out_engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let routes = unsafe { std::slice::from_raw_parts(routes, route_count as usize) };
+    let mut route_configs = Vec::with_capacity(routes.len());
+    for route in routes {
+        let route = match route_config_from_ffi(route) {
+            Ok(route) => route,
+            Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+        };
+        route_configs.push(route);
+    }
+    create_execution_engine_from_routes(route_configs, out_engine)
+}
+
+fn create_execution_engine_from_routes(
+    routes: Vec<RouteConfig>,
+    out_engine: *mut *mut of_execution_engine,
+) -> i32 {
     let engine = Box::new(of_execution_engine {
-        inner: simulated_engine(route),
+        inner: simulated_engine_with_routes(routes),
     });
     unsafe {
         *out_engine = Box::into_raw(engine);

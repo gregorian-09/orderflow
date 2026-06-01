@@ -350,6 +350,8 @@ uint32_t of_execution_api_version(void);
 
 /** Creates a simulated execution engine instance. */
 int32_t of_execution_engine_create(const of_execution_route_config_t* cfg, of_execution_engine_t** out_engine);
+/** Creates a simulated execution engine instance with multiple route/account/symbol configs. */
+int32_t of_execution_engine_create_multi(const of_execution_route_config_t* routes, uint32_t route_count, of_execution_engine_t** out_engine);
 /** Starts an execution engine. */
 int32_t of_execution_engine_start(of_execution_engine_t* engine);
 /** Stops an execution engine. */

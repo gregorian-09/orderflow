@@ -26,6 +26,7 @@ expected_symbols=(
   of_build_info
   of_execution_api_version
   of_execution_engine_create
+  of_execution_engine_create_multi
   of_execution_engine_start
   of_execution_engine_stop
   of_execution_engine_destroy
