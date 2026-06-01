@@ -123,6 +123,12 @@ Low-latency execution paths use fixed-size identifiers, integer-normalized
 price/quantity fields, and caller-owned event buffers. JSON is not used on the
 submit/cancel/amend hot path.
 
+Execution routing is configured as a set of route/account/symbol scopes. The
+engine builds an indexed route table for constant-time lookup and applies open
+order and open notional limits within the matching scope before the adapter is
+called. This lets one execution engine manage multiple symbols without allowing
+activity on one instrument to consume another instrument's route budget.
+
 ## Key Runtime Data Models (UML-style)
 
 ```mermaid

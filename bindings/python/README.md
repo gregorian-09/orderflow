@@ -41,15 +41,23 @@ from orderflow import (
     OrderRequest, RiskLimits, RouteConfig,
 )
 
-route = RouteConfig("SIM", "ACC", "SIM", "ES", True, RiskLimits(False, 100, 1_000_000, 10, 10_000_000, 0))
+limits = RiskLimits(False, 100, 1_000_000, 10, 10_000_000, 0)
+routes = [
+    RouteConfig("SIM", "ACC", "SIM", "ES", True, limits),
+    RouteConfig("SIM", "ACC", "SIM", "NQ", True, limits),
+]
 
-with ExecutionEngine(route) as execution:
+with ExecutionEngine(routes) as execution:
     events = execution.submit_order(OrderRequest(
         "C1", "ACC", "SIM", "STRAT", "SIM", "ES",
         ExecutionSide.BUY, ExecutionOrderType.LIMIT, ExecutionTimeInForce.DAY,
         10, 5000,
     ))
 ```
+
+`ExecutionEngine(route)` remains supported for single-symbol integrations. When
+you pass a route list, native risk accounting is scoped per
+route/account/symbol.
 
 ## Architecture
 

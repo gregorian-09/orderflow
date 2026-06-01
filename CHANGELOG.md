@@ -32,6 +32,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Additive execution C ABI, Python, and Java APIs using separate execution
   handles (`of_execution_engine_t`, `ExecutionEngine`,
   `OrderflowExecutionEngine`). Existing analytics/runtime APIs are unchanged.
+- Multi-route execution engines for multi-symbol order flow. Rust execution now
+  indexes route/account/symbol configs, applies route-scoped open-order and
+  notional risk accounting, and exposes additive C (`of_execution_engine_create_multi`),
+  Python (`ExecutionEngine([routes...])`), and Java
+  (`new OrderflowExecutionEngine(path, List<RouteConfig>)`) entry points.
 
 ## [0.3.0] - 2026-05-09
 This is a non-breaking operational hardening release after `0.2.0`. For the

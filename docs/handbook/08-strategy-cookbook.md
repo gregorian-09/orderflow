@@ -1126,6 +1126,7 @@ if __name__ == "__main__":
 | Analytics config       | `AnalyticsConfig`       | `of_engine_set_analytics_config` | `engine.set_analytics_config`  | `engine.setAnalyticsConfig`     |
 | Tickbar                | `AnalyticsAccumulator::with_tickbar`| `of_engine_set_tickbar_interval`| `engine.set_tickbar_interval`  | `engine.setTickbarInterval`     |
 | Execution simulation   | `of_execution::simulated_engine`| `of_execution_submit_order` | `ExecutionEngine.submit_order` | `OrderflowExecutionEngine.submitOrder` |
+| Multi-route execution  | `simulated_engine_with_routes` | `of_execution_engine_create_multi` | `ExecutionEngine([routes...])` | `new OrderflowExecutionEngine(path, routes)` |
 
 ---
 
@@ -1141,7 +1142,7 @@ from orderflow import (
     OrderRequest, OrderflowRiskError, RiskLimits, RouteConfig,
 )
 
-route = RouteConfig(
+es_route = RouteConfig(
     route_id="SIM",
     account_id="ACC",
     venue="SIM",
@@ -1156,8 +1157,16 @@ route = RouteConfig(
         price_band_ticks=0,
     ),
 )
+nq_route = RouteConfig(
+    route_id="SIM",
+    account_id="ACC",
+    venue="SIM",
+    instrument="NQ",
+    enabled=True,
+    risk_limits=es_route.risk_limits,
+)
 
-with ExecutionEngine(route) as execution:
+with ExecutionEngine([es_route, nq_route]) as execution:
     try:
         events = execution.submit_order(OrderRequest(
             client_order_id="C1",
@@ -1177,6 +1186,12 @@ with ExecutionEngine(route) as execution:
     else:
         print("final status", events[-1].order_status)
 ```
+
+For multi-symbol strategies, configure one route per `(route_id, account_id,
+venue, instrument)` scope and submit each order with the matching route fields.
+The execution engine indexes those routes and enforces open-order and open
+notional limits within that exact scope, so a busy ES route does not consume the
+NQ route's open-order budget.
 
 For low-latency integrations, use the Rust or C APIs directly so requests and
 events stay as typed structs in caller-owned buffers.

@@ -39,10 +39,15 @@ entire public surface from one place.
 ### Execution quick start
 
 ```java
-RiskLimits limits = new RiskLimits(false, 100, 1_000_000, 10, 10_000_000, 0);
-RouteConfig route = new RouteConfig("SIM", "ACC", "SIM", "ES", true, limits);
+import java.util.List;
 
-try (OrderflowExecutionEngine execution = new OrderflowExecutionEngine(null, route)) {
+RiskLimits limits = new RiskLimits(false, 100, 1_000_000, 10, 10_000_000, 0);
+List<RouteConfig> routes = List.of(
+    new RouteConfig("SIM", "ACC", "SIM", "ES", true, limits),
+    new RouteConfig("SIM", "ACC", "SIM", "NQ", true, limits)
+);
+
+try (OrderflowExecutionEngine execution = new OrderflowExecutionEngine(null, routes)) {
     execution.start();
     execution.submitOrder(new OrderRequest(
         "C1", "ACC", "SIM", "STRAT", "SIM", "ES",
@@ -51,6 +56,10 @@ try (OrderflowExecutionEngine execution = new OrderflowExecutionEngine(null, rou
     ));
 }
 ```
+
+`new OrderflowExecutionEngine(path, route)` remains supported for single-symbol
+integrations. The `List<RouteConfig>` constructor configures one engine for
+multi-symbol routing with native route/account/symbol-scoped risk checks.
 
 ## Java Version
 

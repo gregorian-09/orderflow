@@ -95,9 +95,13 @@ from orderflow import (
     OrderRequest, RiskLimits, RouteConfig,
 )
 
-route = RouteConfig("SIM", "ACC", "SIM", "ES", True, RiskLimits(False, 100, 1_000_000, 10, 10_000_000, 0))
+limits = RiskLimits(False, 100, 1_000_000, 10, 10_000_000, 0)
+routes = [
+    RouteConfig("SIM", "ACC", "SIM", "ES", True, limits),
+    RouteConfig("SIM", "ACC", "SIM", "NQ", True, limits),
+]
 
-with ExecutionEngine(route) as execution:
+with ExecutionEngine(routes) as execution:
     events = execution.submit_order(OrderRequest(
         "C1", "ACC", "SIM", "STRAT", "SIM", "ES",
         ExecutionSide.BUY, ExecutionOrderType.LIMIT, ExecutionTimeInForce.DAY,
@@ -122,9 +126,12 @@ Execution simulation:
 
 ```java
 RiskLimits limits = new RiskLimits(false, 100, 1_000_000, 10, 10_000_000, 0);
-RouteConfig route = new RouteConfig("SIM", "ACC", "SIM", "ES", true, limits);
+List<RouteConfig> routes = List.of(
+    new RouteConfig("SIM", "ACC", "SIM", "ES", true, limits),
+    new RouteConfig("SIM", "ACC", "SIM", "NQ", true, limits)
+);
 
-try (OrderflowExecutionEngine execution = new OrderflowExecutionEngine(null, route)) {
+try (OrderflowExecutionEngine execution = new OrderflowExecutionEngine(null, routes)) {
     execution.start();
     execution.submitOrder(new OrderRequest(
         "C1", "ACC", "SIM", "STRAT", "SIM", "ES",
