@@ -162,6 +162,8 @@ version = "0.3.0"
 dependencies = [
  "of_adapters",
  "of_core",
+ "of_execution",
+ "of_execution_core",
  "of_runtime",
  "of_signals",
 ]

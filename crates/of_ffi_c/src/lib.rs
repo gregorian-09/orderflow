@@ -12,6 +12,15 @@ use std::sync::{
 
 use of_adapters::{AdapterConfig, ProviderKind};
 use of_core::{AnalyticsConfig, BookUpdate, DataQualityFlags, SignalState, SymbolId, TradePrint};
+use of_execution::{
+    simulated_engine, ExecutionEngine, ExecutionError, ExecutionEventBuffer, InMemoryJournal,
+    RouteConfig, SimExecutionAdapter,
+};
+use of_execution_core::{
+    AmendRequest, BasicRiskGate, CancelRequest, ExecutionEvent, ExecutionSymbol, FixedAscii,
+    OrderPrice, OrderQty, OrderRequest, OrderSide, OrderState, OrderType, RiskLimits, StrategyId,
+    TimeInForce, VenueOrderId,
+};
 use of_runtime::{
     build_default_engine, load_engine_config_from_path, DefaultEngine, EngineConfig,
     ExternalFeedPolicy, RuntimeError,
@@ -35,7 +44,9 @@ use support::{
 };
 
 const API_VERSION: u32 = 0x0001_0000;
+const EXECUTION_API_VERSION: u32 = 0x0001_0000;
 const BUILD_INFO: &[u8] = concat!("of_ffi_c/", env!("CARGO_PKG_VERSION"), "\0").as_bytes();
+const FFI_EVENT_BUFFER_CAP: usize = 32;
 
 /// Analytics configuration passed to [`of_engine_set_analytics_config`].
 #[repr(C)]
@@ -219,14 +230,233 @@ pub enum of_error_t {
     OF_ERR_BACKPRESSURE = 5,
     /// Data-quality policy rejection.
     OF_ERR_DATA_QUALITY = 6,
+    /// Pre-trade risk rejection.
+    OF_ERR_RISK = 7,
     /// Internal/unknown failure.
     OF_ERR_INTERNAL = 255,
+}
+
+/// Execution route and risk configuration.
+#[repr(C)]
+pub struct of_execution_route_config_t {
+    /// Route identifier.
+    pub route_id: *const c_char,
+    /// Account identifier.
+    pub account_id: *const c_char,
+    /// Venue identifier.
+    pub venue: *const c_char,
+    /// Instrument identifier.
+    pub instrument: *const c_char,
+    /// Non-zero enables the route.
+    pub enabled: u8,
+    /// Non-zero enables the kill switch.
+    pub kill_switch: u8,
+    /// Maximum order quantity; zero disables.
+    pub max_order_qty: i64,
+    /// Maximum order notional; zero disables.
+    pub max_order_notional: i64,
+    /// Maximum open orders; zero disables.
+    pub max_open_orders: u32,
+    /// Maximum open notional; zero disables.
+    pub max_open_notional: i64,
+    /// Maximum price distance from reference, in ticks; zero disables.
+    pub price_band_ticks: i64,
+}
+
+/// Execution order request.
+#[repr(C)]
+pub struct of_execution_order_request_t {
+    /// Client order id.
+    pub client_order_id: *const c_char,
+    /// Account id.
+    pub account_id: *const c_char,
+    /// Route id.
+    pub route_id: *const c_char,
+    /// Strategy id.
+    pub strategy_id: *const c_char,
+    /// Venue id.
+    pub venue: *const c_char,
+    /// Instrument id.
+    pub instrument: *const c_char,
+    /// Side (`1=Buy`, `2=Sell`).
+    pub side: u32,
+    /// Order type (`1=Market`, `2=Limit`, `3=Stop`, `4=StopLimit`).
+    pub order_type: u32,
+    /// Time-in-force (`1=Day`, `2=Gtc`, `3=Ioc`, `4=Fok`, `5=Gtd`).
+    pub time_in_force: u32,
+    /// Quantity in integer-normalized units.
+    pub quantity: i64,
+    /// Limit price in integer-normalized units, or zero.
+    pub limit_price: i64,
+    /// Stop price in integer-normalized units, or zero.
+    pub stop_price: i64,
+    /// Exchange timestamp in nanoseconds.
+    pub ts_exchange_ns: u64,
+    /// Local receive/create timestamp in nanoseconds.
+    pub ts_recv_ns: u64,
+}
+
+/// Execution cancel request.
+#[repr(C)]
+pub struct of_execution_cancel_request_t {
+    /// Client id for the cancel request.
+    pub client_order_id: *const c_char,
+    /// Last accepted client order id.
+    pub orig_client_order_id: *const c_char,
+    /// Venue order id, if known.
+    pub venue_order_id: *const c_char,
+    /// Account id.
+    pub account_id: *const c_char,
+    /// Route id.
+    pub route_id: *const c_char,
+    /// Venue id.
+    pub venue: *const c_char,
+    /// Instrument id.
+    pub instrument: *const c_char,
+    /// Local receive/create timestamp in nanoseconds.
+    pub ts_recv_ns: u64,
+}
+
+/// Execution amend request.
+#[repr(C)]
+pub struct of_execution_amend_request_t {
+    /// Client id for the replacement request.
+    pub client_order_id: *const c_char,
+    /// Last accepted client order id.
+    pub orig_client_order_id: *const c_char,
+    /// Venue order id, if known.
+    pub venue_order_id: *const c_char,
+    /// Account id.
+    pub account_id: *const c_char,
+    /// Route id.
+    pub route_id: *const c_char,
+    /// Venue id.
+    pub venue: *const c_char,
+    /// Instrument id.
+    pub instrument: *const c_char,
+    /// Replacement quantity.
+    pub quantity: i64,
+    /// Replacement limit price.
+    pub limit_price: i64,
+    /// Local receive/create timestamp in nanoseconds.
+    pub ts_recv_ns: u64,
+}
+
+/// Execution event returned by execution C APIs.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct of_execution_event_t {
+    /// Execution type.
+    pub exec_type: u32,
+    /// Current order status.
+    pub order_status: u32,
+    /// Client order id.
+    pub client_order_id: [c_char; 41],
+    /// Original client order id.
+    pub orig_client_order_id: [c_char; 41],
+    /// Venue order id.
+    pub venue_order_id: [c_char; 49],
+    /// Execution id.
+    pub execution_id: [c_char; 49],
+    /// Account id.
+    pub account_id: [c_char; 33],
+    /// Route id.
+    pub route_id: [c_char; 33],
+    /// Venue id.
+    pub venue: [c_char; 17],
+    /// Instrument id.
+    pub instrument: [c_char; 33],
+    /// Last fill quantity.
+    pub last_qty: i64,
+    /// Last fill price.
+    pub last_price: i64,
+    /// Cumulative quantity.
+    pub cumulative_qty: i64,
+    /// Leaves quantity.
+    pub leaves_qty: i64,
+    /// Average price.
+    pub average_price: i64,
+    /// Exchange timestamp in nanoseconds.
+    pub ts_exchange_ns: u64,
+    /// Local receive timestamp in nanoseconds.
+    pub ts_recv_ns: u64,
+    /// Structured reason code.
+    pub reason: u32,
+    /// Bounded diagnostic text.
+    pub text: [c_char; 129],
+}
+
+/// Execution order state returned by state query.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct of_execution_order_state_t {
+    /// Client order id.
+    pub client_order_id: [c_char; 41],
+    /// Venue order id.
+    pub venue_order_id: [c_char; 49],
+    /// Account id.
+    pub account_id: [c_char; 33],
+    /// Route id.
+    pub route_id: [c_char; 33],
+    /// Venue id.
+    pub venue: [c_char; 17],
+    /// Instrument id.
+    pub instrument: [c_char; 33],
+    /// Order status.
+    pub status: u32,
+    /// Original order quantity.
+    pub order_qty: i64,
+    /// Cumulative quantity.
+    pub cumulative_qty: i64,
+    /// Leaves quantity.
+    pub leaves_qty: i64,
+    /// Average price.
+    pub average_price: i64,
+    /// Last update timestamp in nanoseconds.
+    pub updated_ns: u64,
+}
+
+/// Execution health snapshot.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct of_execution_health_t {
+    /// Non-zero when connected.
+    pub connected: u8,
+    /// Non-zero when degraded.
+    pub degraded: u8,
+    /// Monotonic health sequence.
+    pub health_seq: u64,
+}
+
+/// Execution metrics snapshot.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct of_execution_metrics_t {
+    /// Submitted orders accepted locally.
+    pub submitted: u64,
+    /// Cancel commands accepted locally.
+    pub cancelled: u64,
+    /// Amend commands accepted locally.
+    pub amended: u64,
+    /// Events applied.
+    pub events_applied: u64,
+    /// Risk rejections.
+    pub risk_rejected: u64,
+    /// Adapter errors.
+    pub adapter_errors: u64,
+    /// Recovery events applied.
+    pub recovered: u64,
 }
 
 /// Opaque engine handle.
 pub struct of_engine {
     inner: DefaultEngine,
     subs: Vec<SubscriptionRecord>,
+}
+
+/// Opaque execution engine handle.
+pub struct of_execution_engine {
+    inner: ExecutionEngine<SimExecutionAdapter, BasicRiskGate, InMemoryJournal>,
 }
 
 /// Opaque subscription token.
@@ -279,6 +509,244 @@ pub extern "C" fn of_api_version() -> u32 {
 #[no_mangle]
 pub extern "C" fn of_build_info() -> *const c_char {
     BUILD_INFO.as_ptr() as *const c_char
+}
+
+/// Returns execution ABI version (`major << 16 | minor` style encoding).
+#[no_mangle]
+pub extern "C" fn of_execution_api_version() -> u32 {
+    EXECUTION_API_VERSION
+}
+
+/// Creates a simulated execution engine and stores it in `out_engine`.
+#[no_mangle]
+pub extern "C" fn of_execution_engine_create(
+    cfg: *const of_execution_route_config_t,
+    out_engine: *mut *mut of_execution_engine,
+) -> i32 {
+    if cfg.is_null() || out_engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let cfg = unsafe { &*cfg };
+    let route = match route_config_from_ffi(cfg) {
+        Ok(route) => route,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let engine = Box::new(of_execution_engine {
+        inner: simulated_engine(route),
+    });
+    unsafe {
+        *out_engine = Box::into_raw(engine);
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Starts an execution engine.
+#[no_mangle]
+pub extern "C" fn of_execution_engine_start(engine: *mut of_execution_engine) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    map_execution_result(engine.inner.start())
+}
+
+/// Stops an execution engine.
+#[no_mangle]
+pub extern "C" fn of_execution_engine_stop(engine: *mut of_execution_engine) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Destroys an execution engine.
+#[no_mangle]
+pub extern "C" fn of_execution_engine_destroy(engine: *mut of_execution_engine) {
+    if engine.is_null() {
+        return;
+    }
+    unsafe {
+        let _ = Box::from_raw(engine);
+    }
+}
+
+/// Submits an execution order.
+#[no_mangle]
+pub extern "C" fn of_execution_submit_order(
+    engine: *mut of_execution_engine,
+    req: *const of_execution_order_request_t,
+    out_events: *mut of_execution_event_t,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() || req.is_null() || inout_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let req = match order_request_from_ffi(unsafe { &*req }) {
+        Ok(req) => req,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let mut events = ExecutionEventBuffer::with_capacity(FFI_EVENT_BUFFER_CAP);
+    let rc = match engine.inner.submit(req, &mut events) {
+        Ok(()) => of_error_t::OF_OK as i32,
+        Err(err) => map_execution_error(&err),
+    };
+    let copy_rc = copy_execution_events(&events, out_events, inout_len);
+    if copy_rc != of_error_t::OF_OK as i32 {
+        copy_rc
+    } else {
+        rc
+    }
+}
+
+/// Cancels an execution order.
+#[no_mangle]
+pub extern "C" fn of_execution_cancel_order(
+    engine: *mut of_execution_engine,
+    req: *const of_execution_cancel_request_t,
+    out_events: *mut of_execution_event_t,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() || req.is_null() || inout_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let req = match cancel_request_from_ffi(unsafe { &*req }) {
+        Ok(req) => req,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let mut events = ExecutionEventBuffer::with_capacity(FFI_EVENT_BUFFER_CAP);
+    let rc = match engine.inner.cancel(req, &mut events) {
+        Ok(()) => of_error_t::OF_OK as i32,
+        Err(err) => map_execution_error(&err),
+    };
+    let copy_rc = copy_execution_events(&events, out_events, inout_len);
+    if copy_rc != of_error_t::OF_OK as i32 {
+        copy_rc
+    } else {
+        rc
+    }
+}
+
+/// Amends an execution order.
+#[no_mangle]
+pub extern "C" fn of_execution_amend_order(
+    engine: *mut of_execution_engine,
+    req: *const of_execution_amend_request_t,
+    out_events: *mut of_execution_event_t,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() || req.is_null() || inout_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let req = match amend_request_from_ffi(unsafe { &*req }) {
+        Ok(req) => req,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let mut events = ExecutionEventBuffer::with_capacity(FFI_EVENT_BUFFER_CAP);
+    let rc = match engine.inner.amend(req, &mut events) {
+        Ok(()) => of_error_t::OF_OK as i32,
+        Err(err) => map_execution_error(&err),
+    };
+    let copy_rc = copy_execution_events(&events, out_events, inout_len);
+    if copy_rc != of_error_t::OF_OK as i32 {
+        copy_rc
+    } else {
+        rc
+    }
+}
+
+/// Polls execution events.
+#[no_mangle]
+pub extern "C" fn of_execution_poll(
+    engine: *mut of_execution_engine,
+    out_events: *mut of_execution_event_t,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() || inout_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    let mut events = ExecutionEventBuffer::with_capacity(FFI_EVENT_BUFFER_CAP);
+    let rc = match engine.inner.poll(&mut events) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(err) => map_execution_error(&err),
+    };
+    let copy_rc = copy_execution_events(&events, out_events, inout_len);
+    if copy_rc != of_error_t::OF_OK as i32 {
+        copy_rc
+    } else {
+        rc
+    }
+}
+
+/// Gets current order state for a client order id.
+#[no_mangle]
+pub extern "C" fn of_execution_get_order_state(
+    engine: *const of_execution_engine,
+    client_order_id: *const c_char,
+    out_state: *mut of_execution_order_state_t,
+) -> i32 {
+    if engine.is_null() || client_order_id.is_null() || out_state.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let id = match fixed_from_ptr::<40>(client_order_id) {
+        Ok(id) => id,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let engine = unsafe { &*engine };
+    let Some(state) = engine.inner.order_state(&id) else {
+        return of_error_t::OF_ERR_STATE as i32;
+    };
+    unsafe {
+        *out_state = order_state_to_ffi(&state);
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Gets execution health.
+#[no_mangle]
+pub extern "C" fn of_execution_health(
+    engine: *const of_execution_engine,
+    out_health: *mut of_execution_health_t,
+) -> i32 {
+    if engine.is_null() || out_health.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let health = unsafe { &*engine }.inner.health();
+    unsafe {
+        *out_health = of_execution_health_t {
+            connected: u8::from(health.connected),
+            degraded: u8::from(health.degraded),
+            health_seq: health.health_seq,
+        };
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Gets execution metrics.
+#[no_mangle]
+pub extern "C" fn of_execution_metrics(
+    engine: *const of_execution_engine,
+    out_metrics: *mut of_execution_metrics_t,
+) -> i32 {
+    if engine.is_null() || out_metrics.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let metrics = unsafe { &*engine }.inner.metrics();
+    unsafe {
+        *out_metrics = of_execution_metrics_t {
+            submitted: metrics.submitted,
+            cancelled: metrics.cancelled,
+            amended: metrics.amended,
+            events_applied: metrics.events_applied,
+            risk_rejected: metrics.risk_rejected,
+            adapter_errors: metrics.adapter_errors,
+            recovered: metrics.recovered,
+        };
+    }
+    of_error_t::OF_OK as i32
 }
 
 /// Creates a runtime engine and stores it in `out_engine`.
@@ -1504,6 +1972,220 @@ fn map_runtime_error(err: &RuntimeError) -> i32 {
     } else {
         of_error_t::OF_ERR_STATE as i32
     }
+}
+
+fn map_execution_result(result: Result<(), ExecutionError>) -> i32 {
+    match result {
+        Ok(()) => of_error_t::OF_OK as i32,
+        Err(err) => map_execution_error(&err),
+    }
+}
+
+fn map_execution_error(err: &ExecutionError) -> i32 {
+    match err {
+        ExecutionError::RiskRejected(_) => of_error_t::OF_ERR_RISK as i32,
+        ExecutionError::BufferFull => of_error_t::OF_ERR_BACKPRESSURE as i32,
+        ExecutionError::Disconnected | ExecutionError::RouteNotFound => {
+            of_error_t::OF_ERR_STATE as i32
+        }
+        ExecutionError::Core(_) => of_error_t::OF_ERR_INVALID_ARG as i32,
+        ExecutionError::Adapter(_) | ExecutionError::Journal(_) => {
+            of_error_t::OF_ERR_INTERNAL as i32
+        }
+    }
+}
+
+fn fixed_from_ptr<const N: usize>(ptr: *const c_char) -> Result<FixedAscii<N>, ()> {
+    let value = non_empty_string(ptr).ok_or(())?;
+    FixedAscii::new(&value).map_err(|_| ())
+}
+
+fn route_config_from_ffi(cfg: &of_execution_route_config_t) -> Result<RouteConfig, ()> {
+    Ok(RouteConfig {
+        route_id: fixed_from_ptr::<32>(cfg.route_id)?,
+        account_id: fixed_from_ptr::<32>(cfg.account_id)?,
+        symbol: ExecutionSymbol {
+            venue: fixed_from_ptr::<16>(cfg.venue)?,
+            instrument: fixed_from_ptr::<32>(cfg.instrument)?,
+        },
+        enabled: cfg.enabled != 0,
+        risk_limits: RiskLimits {
+            kill_switch: cfg.kill_switch != 0,
+            max_order_qty: cfg.max_order_qty,
+            max_order_notional: i128::from(cfg.max_order_notional),
+            max_open_orders: cfg.max_open_orders,
+            max_open_notional: i128::from(cfg.max_open_notional),
+            price_band_ticks: cfg.price_band_ticks,
+        },
+    })
+}
+
+fn order_request_from_ffi(req: &of_execution_order_request_t) -> Result<OrderRequest, ()> {
+    Ok(OrderRequest {
+        client_order_id: fixed_from_ptr::<40>(req.client_order_id)?,
+        account_id: fixed_from_ptr::<32>(req.account_id)?,
+        route_id: fixed_from_ptr::<32>(req.route_id)?,
+        strategy_id: fixed_from_ptr::<32>(req.strategy_id).unwrap_or_else(|_| StrategyId::empty()),
+        symbol: ExecutionSymbol {
+            venue: fixed_from_ptr::<16>(req.venue)?,
+            instrument: fixed_from_ptr::<32>(req.instrument)?,
+        },
+        side: side_from_execution_ffi(req.side)?,
+        order_type: order_type_from_ffi(req.order_type)?,
+        time_in_force: tif_from_ffi(req.time_in_force)?,
+        quantity: OrderQty(req.quantity),
+        limit_price: OrderPrice(req.limit_price),
+        stop_price: OrderPrice(req.stop_price),
+        ts_exchange_ns: req.ts_exchange_ns,
+        ts_recv_ns: req.ts_recv_ns,
+    })
+}
+
+fn cancel_request_from_ffi(req: &of_execution_cancel_request_t) -> Result<CancelRequest, ()> {
+    Ok(CancelRequest {
+        client_order_id: fixed_from_ptr::<40>(req.client_order_id)?,
+        orig_client_order_id: fixed_from_ptr::<40>(req.orig_client_order_id)?,
+        venue_order_id: fixed_from_ptr::<48>(req.venue_order_id)
+            .unwrap_or_else(|_| VenueOrderId::empty()),
+        account_id: fixed_from_ptr::<32>(req.account_id)?,
+        route_id: fixed_from_ptr::<32>(req.route_id)?,
+        symbol: ExecutionSymbol {
+            venue: fixed_from_ptr::<16>(req.venue)?,
+            instrument: fixed_from_ptr::<32>(req.instrument)?,
+        },
+        ts_recv_ns: req.ts_recv_ns,
+    })
+}
+
+fn amend_request_from_ffi(req: &of_execution_amend_request_t) -> Result<AmendRequest, ()> {
+    Ok(AmendRequest {
+        client_order_id: fixed_from_ptr::<40>(req.client_order_id)?,
+        orig_client_order_id: fixed_from_ptr::<40>(req.orig_client_order_id)?,
+        venue_order_id: fixed_from_ptr::<48>(req.venue_order_id)
+            .unwrap_or_else(|_| VenueOrderId::empty()),
+        account_id: fixed_from_ptr::<32>(req.account_id)?,
+        route_id: fixed_from_ptr::<32>(req.route_id)?,
+        symbol: ExecutionSymbol {
+            venue: fixed_from_ptr::<16>(req.venue)?,
+            instrument: fixed_from_ptr::<32>(req.instrument)?,
+        },
+        quantity: OrderQty(req.quantity),
+        limit_price: OrderPrice(req.limit_price),
+        ts_recv_ns: req.ts_recv_ns,
+    })
+}
+
+fn side_from_execution_ffi(value: u32) -> Result<OrderSide, ()> {
+    match value {
+        1 => Ok(OrderSide::Buy),
+        2 => Ok(OrderSide::Sell),
+        _ => Err(()),
+    }
+}
+
+fn order_type_from_ffi(value: u32) -> Result<OrderType, ()> {
+    match value {
+        1 => Ok(OrderType::Market),
+        2 => Ok(OrderType::Limit),
+        3 => Ok(OrderType::Stop),
+        4 => Ok(OrderType::StopLimit),
+        _ => Err(()),
+    }
+}
+
+fn tif_from_ffi(value: u32) -> Result<TimeInForce, ()> {
+    match value {
+        1 => Ok(TimeInForce::Day),
+        2 => Ok(TimeInForce::Gtc),
+        3 => Ok(TimeInForce::Ioc),
+        4 => Ok(TimeInForce::Fok),
+        5 => Ok(TimeInForce::Gtd),
+        _ => Err(()),
+    }
+}
+
+fn copy_execution_events(
+    events: &ExecutionEventBuffer,
+    out_events: *mut of_execution_event_t,
+    inout_len: *mut u32,
+) -> i32 {
+    if inout_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let capacity = unsafe { *inout_len as usize };
+    let needed = events.len();
+    unsafe {
+        *inout_len = needed as u32;
+    }
+    if needed == 0 {
+        return of_error_t::OF_OK as i32;
+    }
+    if out_events.is_null() {
+        return of_error_t::OF_ERR_BACKPRESSURE as i32;
+    }
+    if capacity < needed {
+        return of_error_t::OF_ERR_BACKPRESSURE as i32;
+    }
+    for (idx, event) in events.as_slice().iter().enumerate() {
+        unsafe {
+            *out_events.add(idx) = event_to_ffi(event);
+        }
+    }
+    of_error_t::OF_OK as i32
+}
+
+fn event_to_ffi(event: &ExecutionEvent) -> of_execution_event_t {
+    of_execution_event_t {
+        exec_type: event.exec_type as u32,
+        order_status: event.order_status as u32,
+        client_order_id: cstr_array(event.client_order_id.as_str()),
+        orig_client_order_id: cstr_array(event.orig_client_order_id.as_str()),
+        venue_order_id: cstr_array(event.venue_order_id.as_str()),
+        execution_id: cstr_array(event.execution_id.as_str()),
+        account_id: cstr_array(event.account_id.as_str()),
+        route_id: cstr_array(event.route_id.as_str()),
+        venue: cstr_array(event.symbol.venue.as_str()),
+        instrument: cstr_array(event.symbol.instrument.as_str()),
+        last_qty: event.last_qty.0,
+        last_price: event.last_price.0,
+        cumulative_qty: event.cumulative_qty.0,
+        leaves_qty: event.leaves_qty.0,
+        average_price: event.average_price.0,
+        ts_exchange_ns: event.ts_exchange_ns,
+        ts_recv_ns: event.ts_recv_ns,
+        reason: event.reason as u32,
+        text: cstr_array(event.text.as_str()),
+    }
+}
+
+fn order_state_to_ffi(state: &OrderState) -> of_execution_order_state_t {
+    of_execution_order_state_t {
+        client_order_id: cstr_array(state.client_order_id.as_str()),
+        venue_order_id: cstr_array(state.venue_order_id.as_str()),
+        account_id: cstr_array(state.account_id.as_str()),
+        route_id: cstr_array(state.route_id.as_str()),
+        venue: cstr_array(state.symbol.venue.as_str()),
+        instrument: cstr_array(state.symbol.instrument.as_str()),
+        status: state.status as u32,
+        order_qty: state.order_qty.0,
+        cumulative_qty: state.cumulative_qty.0,
+        leaves_qty: state.leaves_qty.0,
+        average_price: state.average_price.0,
+        updated_ns: state.updated_ns,
+    }
+}
+
+fn cstr_array<const N: usize>(value: &str) -> [c_char; N] {
+    let mut out = [0 as c_char; N];
+    if N == 0 {
+        return out;
+    }
+    let bytes = value.as_bytes();
+    let max = bytes.len().min(N - 1);
+    for idx in 0..max {
+        out[idx] = bytes[idx] as c_char;
+    }
+    out
 }
 
 #[cfg(test)]

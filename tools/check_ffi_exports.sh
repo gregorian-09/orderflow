@@ -24,6 +24,18 @@ esac
 expected_symbols=(
   of_api_version
   of_build_info
+  of_execution_api_version
+  of_execution_engine_create
+  of_execution_engine_start
+  of_execution_engine_stop
+  of_execution_engine_destroy
+  of_execution_submit_order
+  of_execution_cancel_order
+  of_execution_amend_order
+  of_execution_poll
+  of_execution_get_order_state
+  of_execution_health
+  of_execution_metrics
   of_engine_create
   of_engine_start
   of_engine_stop
