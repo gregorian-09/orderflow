@@ -18,6 +18,31 @@ public interface OrderflowNative extends Library {
     int of_api_version();
     /** Returns static build info string. */
     String of_build_info();
+    /** Returns execution ABI version. */
+    int of_execution_api_version();
+
+    /** Creates execution engine instance. */
+    int of_execution_engine_create(OfExecutionRouteConfig cfg, PointerByReference outEngine);
+    /** Starts execution engine. */
+    int of_execution_engine_start(Pointer engine);
+    /** Stops execution engine. */
+    int of_execution_engine_stop(Pointer engine);
+    /** Destroys execution engine. */
+    void of_execution_engine_destroy(Pointer engine);
+    /** Submits execution order. */
+    int of_execution_submit_order(Pointer engine, OfExecutionOrderRequest req, OfExecutionEvent[] outEvents, IntByReference inoutLen);
+    /** Cancels execution order. */
+    int of_execution_cancel_order(Pointer engine, OfExecutionCancelRequest req, OfExecutionEvent[] outEvents, IntByReference inoutLen);
+    /** Amends execution order. */
+    int of_execution_amend_order(Pointer engine, OfExecutionAmendRequest req, OfExecutionEvent[] outEvents, IntByReference inoutLen);
+    /** Polls execution events. */
+    int of_execution_poll(Pointer engine, OfExecutionEvent[] outEvents, IntByReference inoutLen);
+    /** Gets execution order state. */
+    int of_execution_get_order_state(Pointer engine, String clientOrderId, OfExecutionOrderState outState);
+    /** Gets execution health. */
+    int of_execution_health(Pointer engine, OfExecutionHealth outHealth);
+    /** Gets execution metrics. */
+    int of_execution_metrics(Pointer engine, OfExecutionMetrics outMetrics);
 
     /** Creates engine instance. */
     int of_engine_create(OfEngineConfig cfg, PointerByReference outEngine);
