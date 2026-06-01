@@ -1,0 +1,25 @@
+[package]
+name = "of_execution_adapters"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Execution adapter scaffolds for Orderflow venues and broker protocols"
+readme = "README.md"
+documentation = "https://docs.rs/of_execution_adapters"
+keywords = ["orderflow", "execution", "fix", "adapters", "finance"]
+categories = ["finance", "api-bindings"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = []
+fix = []
+
+[dependencies]
+of_execution = { path = "../of_execution", version = "0.3.0" }
+of_execution_core = { path = "../of_execution_core", version = "0.3.0" }
+

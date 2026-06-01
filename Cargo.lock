@@ -153,6 +153,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "of_execution_adapters"
+version = "0.3.0"
+dependencies = [
+ "of_execution",
+ "of_execution_core",
+]
+
+[[package]]
 name = "of_execution_core"
 version = "0.3.0"
 

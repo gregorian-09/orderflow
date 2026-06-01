@@ -3,6 +3,7 @@ members = [
   "crates/of_core",
   "crates/of_execution_core",
   "crates/of_execution",
+  "crates/of_execution_adapters",
   "crates/of_adapters",
   "crates/of_signals",
   "crates/of_persist",
