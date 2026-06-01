@@ -157,6 +157,146 @@ class OfEvent(ctypes.Structure):
 OfEventCallback = ctypes.CFUNCTYPE(None, ctypes.POINTER(OfEvent), c_void_p)
 
 
+class OfExecutionRouteConfig(ctypes.Structure):
+    """ctypes mirror of `of_execution_route_config_t`."""
+
+    _fields_ = [
+        ("route_id", c_char_p),
+        ("account_id", c_char_p),
+        ("venue", c_char_p),
+        ("instrument", c_char_p),
+        ("enabled", c_uint8),
+        ("kill_switch", c_uint8),
+        ("max_order_qty", c_int64),
+        ("max_order_notional", c_int64),
+        ("max_open_orders", c_uint32),
+        ("max_open_notional", c_int64),
+        ("price_band_ticks", c_int64),
+    ]
+
+
+class OfExecutionOrderRequest(ctypes.Structure):
+    """ctypes mirror of `of_execution_order_request_t`."""
+
+    _fields_ = [
+        ("client_order_id", c_char_p),
+        ("account_id", c_char_p),
+        ("route_id", c_char_p),
+        ("strategy_id", c_char_p),
+        ("venue", c_char_p),
+        ("instrument", c_char_p),
+        ("side", c_uint32),
+        ("order_type", c_uint32),
+        ("time_in_force", c_uint32),
+        ("quantity", c_int64),
+        ("limit_price", c_int64),
+        ("stop_price", c_int64),
+        ("ts_exchange_ns", c_uint64),
+        ("ts_recv_ns", c_uint64),
+    ]
+
+
+class OfExecutionCancelRequest(ctypes.Structure):
+    """ctypes mirror of `of_execution_cancel_request_t`."""
+
+    _fields_ = [
+        ("client_order_id", c_char_p),
+        ("orig_client_order_id", c_char_p),
+        ("venue_order_id", c_char_p),
+        ("account_id", c_char_p),
+        ("route_id", c_char_p),
+        ("venue", c_char_p),
+        ("instrument", c_char_p),
+        ("ts_recv_ns", c_uint64),
+    ]
+
+
+class OfExecutionAmendRequest(ctypes.Structure):
+    """ctypes mirror of `of_execution_amend_request_t`."""
+
+    _fields_ = [
+        ("client_order_id", c_char_p),
+        ("orig_client_order_id", c_char_p),
+        ("venue_order_id", c_char_p),
+        ("account_id", c_char_p),
+        ("route_id", c_char_p),
+        ("venue", c_char_p),
+        ("instrument", c_char_p),
+        ("quantity", c_int64),
+        ("limit_price", c_int64),
+        ("ts_recv_ns", c_uint64),
+    ]
+
+
+class OfExecutionEvent(ctypes.Structure):
+    """ctypes mirror of `of_execution_event_t`."""
+
+    _fields_ = [
+        ("exec_type", c_uint32),
+        ("order_status", c_uint32),
+        ("client_order_id", ctypes.c_char * 41),
+        ("orig_client_order_id", ctypes.c_char * 41),
+        ("venue_order_id", ctypes.c_char * 49),
+        ("execution_id", ctypes.c_char * 49),
+        ("account_id", ctypes.c_char * 33),
+        ("route_id", ctypes.c_char * 33),
+        ("venue", ctypes.c_char * 17),
+        ("instrument", ctypes.c_char * 33),
+        ("last_qty", c_int64),
+        ("last_price", c_int64),
+        ("cumulative_qty", c_int64),
+        ("leaves_qty", c_int64),
+        ("average_price", c_int64),
+        ("ts_exchange_ns", c_uint64),
+        ("ts_recv_ns", c_uint64),
+        ("reason", c_uint32),
+        ("text", ctypes.c_char * 129),
+    ]
+
+
+class OfExecutionOrderState(ctypes.Structure):
+    """ctypes mirror of `of_execution_order_state_t`."""
+
+    _fields_ = [
+        ("client_order_id", ctypes.c_char * 41),
+        ("venue_order_id", ctypes.c_char * 49),
+        ("account_id", ctypes.c_char * 33),
+        ("route_id", ctypes.c_char * 33),
+        ("venue", ctypes.c_char * 17),
+        ("instrument", ctypes.c_char * 33),
+        ("status", c_uint32),
+        ("order_qty", c_int64),
+        ("cumulative_qty", c_int64),
+        ("leaves_qty", c_int64),
+        ("average_price", c_int64),
+        ("updated_ns", c_uint64),
+    ]
+
+
+class OfExecutionHealth(ctypes.Structure):
+    """ctypes mirror of `of_execution_health_t`."""
+
+    _fields_ = [
+        ("connected", c_uint8),
+        ("degraded", c_uint8),
+        ("health_seq", c_uint64),
+    ]
+
+
+class OfExecutionMetrics(ctypes.Structure):
+    """ctypes mirror of `of_execution_metrics_t`."""
+
+    _fields_ = [
+        ("submitted", c_uint64),
+        ("cancelled", c_uint64),
+        ("amended", c_uint64),
+        ("events_applied", c_uint64),
+        ("risk_rejected", c_uint64),
+        ("adapter_errors", c_uint64),
+        ("recovered", c_uint64),
+    ]
+
+
 def _library_filename() -> str:
     if sys.platform == "win32":
         return "of_ffi_c.dll"
@@ -218,6 +358,68 @@ class OrderflowLib:
 
         lib.of_build_info.argtypes = []
         lib.of_build_info.restype = c_char_p
+
+        lib.of_execution_api_version.argtypes = []
+        lib.of_execution_api_version.restype = c_uint32
+
+        lib.of_execution_engine_create.argtypes = [
+            ctypes.POINTER(OfExecutionRouteConfig),
+            ctypes.POINTER(c_void_p),
+        ]
+        lib.of_execution_engine_create.restype = c_int32
+
+        lib.of_execution_engine_start.argtypes = [c_void_p]
+        lib.of_execution_engine_start.restype = c_int32
+
+        lib.of_execution_engine_stop.argtypes = [c_void_p]
+        lib.of_execution_engine_stop.restype = c_int32
+
+        lib.of_execution_engine_destroy.argtypes = [c_void_p]
+        lib.of_execution_engine_destroy.restype = None
+
+        lib.of_execution_submit_order.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfExecutionOrderRequest),
+            ctypes.POINTER(OfExecutionEvent),
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_execution_submit_order.restype = c_int32
+
+        lib.of_execution_cancel_order.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfExecutionCancelRequest),
+            ctypes.POINTER(OfExecutionEvent),
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_execution_cancel_order.restype = c_int32
+
+        lib.of_execution_amend_order.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfExecutionAmendRequest),
+            ctypes.POINTER(OfExecutionEvent),
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_execution_amend_order.restype = c_int32
+
+        lib.of_execution_poll.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfExecutionEvent),
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_execution_poll.restype = c_int32
+
+        lib.of_execution_get_order_state.argtypes = [
+            c_void_p,
+            c_char_p,
+            ctypes.POINTER(OfExecutionOrderState),
+        ]
+        lib.of_execution_get_order_state.restype = c_int32
+
+        lib.of_execution_health.argtypes = [c_void_p, ctypes.POINTER(OfExecutionHealth)]
+        lib.of_execution_health.restype = c_int32
+
+        lib.of_execution_metrics.argtypes = [c_void_p, ctypes.POINTER(OfExecutionMetrics)]
+        lib.of_execution_metrics.restype = c_int32
 
         lib.of_engine_create.argtypes = [ctypes.POINTER(OfEngineConfig), ctypes.POINTER(c_void_p)]
         lib.of_engine_create.restype = c_int32

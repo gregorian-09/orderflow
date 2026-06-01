@@ -32,6 +32,14 @@ from ._ffi import (
     OfEngineConfig,
     OfEvent,
     OfEventCallback,
+    OfExecutionAmendRequest,
+    OfExecutionCancelRequest,
+    OfExecutionEvent,
+    OfExecutionHealth,
+    OfExecutionMetrics,
+    OfExecutionOrderRequest,
+    OfExecutionOrderState,
+    OfExecutionRouteConfig,
     OfExternalFeedPolicy,
     OfSymbol,
     OfTrade,
@@ -77,6 +85,32 @@ class DataQualityFlags:
     ADAPTER_DEGRADED = 1 << 5
 
 
+class ExecutionSide:
+    """Execution order side constants."""
+
+    BUY = 1
+    SELL = 2
+
+
+class ExecutionOrderType:
+    """Execution order type constants."""
+
+    MARKET = 1
+    LIMIT = 2
+    STOP = 3
+    STOP_LIMIT = 4
+
+
+class ExecutionTimeInForce:
+    """Execution time-in-force constants."""
+
+    DAY = 1
+    GTC = 2
+    IOC = 3
+    FOK = 4
+    GTD = 5
+
+
 class OrderflowError(RuntimeError):
     """Base exception for Python binding errors."""
 
@@ -95,6 +129,15 @@ class OrderflowArgError(OrderflowError):
     pass
 
 
+class OrderflowRiskError(OrderflowError):
+    """Raised when execution pre-trade risk rejects a command."""
+
+    def __init__(self, message: str, events: list["ExecutionEvent"]) -> None:
+        """Creates a risk exception carrying native rejection events."""
+        super().__init__(message)
+        self.events = events
+
+
 _ERROR_MAP = {
     0: None,
     1: OrderflowArgError,
@@ -103,6 +146,7 @@ _ERROR_MAP = {
     4: OrderflowError,
     5: OrderflowError,
     6: OrderflowError,
+    7: OrderflowRiskError,
     255: OrderflowError,
 }
 
@@ -137,6 +181,397 @@ class ExternalFeedPolicy:
 
     stale_after_ms: int = 15_000
     enforce_sequence: bool = True
+
+
+@dataclass(frozen=True)
+class RiskLimits:
+    """Execution pre-trade risk limits."""
+
+    kill_switch: bool = True
+    max_order_qty: int = 0
+    max_order_notional: int = 0
+    max_open_orders: int = 0
+    max_open_notional: int = 0
+    price_band_ticks: int = 0
+
+
+@dataclass(frozen=True)
+class RouteConfig:
+    """Execution route, account, symbol, and risk configuration."""
+
+    route_id: str
+    account_id: str
+    venue: str
+    instrument: str
+    enabled: bool = True
+    risk_limits: RiskLimits = RiskLimits()
+
+
+@dataclass(frozen=True)
+class OrderRequest:
+    """Execution new-order request."""
+
+    client_order_id: str
+    account_id: str
+    route_id: str
+    strategy_id: str
+    venue: str
+    instrument: str
+    side: int
+    order_type: int
+    time_in_force: int
+    quantity: int
+    limit_price: int = 0
+    stop_price: int = 0
+    ts_exchange_ns: int = 0
+    ts_recv_ns: int = 0
+
+
+@dataclass(frozen=True)
+class CancelRequest:
+    """Execution cancel request."""
+
+    client_order_id: str
+    orig_client_order_id: str
+    venue_order_id: str
+    account_id: str
+    route_id: str
+    venue: str
+    instrument: str
+    ts_recv_ns: int = 0
+
+
+@dataclass(frozen=True)
+class AmendRequest:
+    """Execution amend/cancel-replace request."""
+
+    client_order_id: str
+    orig_client_order_id: str
+    venue_order_id: str
+    account_id: str
+    route_id: str
+    venue: str
+    instrument: str
+    quantity: int
+    limit_price: int
+    ts_recv_ns: int = 0
+
+
+@dataclass(frozen=True)
+class ExecutionEvent:
+    """Execution event returned by the native execution engine."""
+
+    exec_type: int
+    order_status: int
+    client_order_id: str
+    orig_client_order_id: str
+    venue_order_id: str
+    execution_id: str
+    account_id: str
+    route_id: str
+    venue: str
+    instrument: str
+    last_qty: int
+    last_price: int
+    cumulative_qty: int
+    leaves_qty: int
+    average_price: int
+    ts_exchange_ns: int
+    ts_recv_ns: int
+    reason: int
+    text: str
+
+
+@dataclass(frozen=True)
+class ExecutionOrderState:
+    """Current native execution order state."""
+
+    client_order_id: str
+    venue_order_id: str
+    account_id: str
+    route_id: str
+    venue: str
+    instrument: str
+    status: int
+    order_qty: int
+    cumulative_qty: int
+    leaves_qty: int
+    average_price: int
+    updated_ns: int
+
+
+@dataclass(frozen=True)
+class ExecutionHealth:
+    """Execution engine health snapshot."""
+
+    connected: bool
+    degraded: bool
+    health_seq: int
+
+
+@dataclass(frozen=True)
+class ExecutionMetrics:
+    """Execution engine metrics snapshot."""
+
+    submitted: int
+    cancelled: int
+    amended: int
+    events_applied: int
+    risk_rejected: int
+    adapter_errors: int
+    recovered: int
+
+
+class ExecutionEngine:
+    """High-level Python wrapper around the native execution C ABI."""
+
+    def __init__(self, route: RouteConfig, library_path: Optional[str] = None) -> None:
+        """Creates a simulated execution engine for one configured route."""
+        self._ffi = OrderflowLib(library_path=library_path)
+        self._engine = ctypes.c_void_p()
+        cfg = self._to_c_route(route)
+        rc = self._ffi.lib.of_execution_engine_create(ctypes.byref(cfg), ctypes.byref(self._engine))
+        self._check(rc, "of_execution_engine_create", [])
+
+    def __enter__(self) -> "ExecutionEngine":
+        """Context manager entry that starts execution."""
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        """Context manager exit that closes execution."""
+        self.close()
+
+    @property
+    def api_version(self) -> int:
+        """Returns execution ABI version reported by native library."""
+        return int(self._ffi.lib.of_execution_api_version())
+
+    def start(self) -> None:
+        """Starts execution adapter/session."""
+        self._require_handle()
+        rc = self._ffi.lib.of_execution_engine_start(self._engine)
+        self._check(rc, "of_execution_engine_start", [])
+
+    def stop(self) -> None:
+        """Stops execution adapter/session."""
+        if self._engine:
+            rc = self._ffi.lib.of_execution_engine_stop(self._engine)
+            self._check(rc, "of_execution_engine_stop", [])
+
+    def close(self) -> None:
+        """Destroys native execution engine handle."""
+        if self._engine:
+            self._ffi.lib.of_execution_engine_destroy(self._engine)
+            self._engine = ctypes.c_void_p()
+
+    def submit_order(self, request: OrderRequest) -> list[ExecutionEvent]:
+        """Submits an order and returns generated execution events."""
+        self._require_handle()
+        req = self._to_c_order(request)
+        events, length = self._event_array()
+        rc = self._ffi.lib.of_execution_submit_order(
+            self._engine, ctypes.byref(req), events, ctypes.byref(length)
+        )
+        decoded = self._decode_events(events, length.value)
+        self._check(rc, "of_execution_submit_order", decoded)
+        return decoded
+
+    def cancel_order(self, request: CancelRequest) -> list[ExecutionEvent]:
+        """Cancels an order and returns generated execution events."""
+        self._require_handle()
+        req = self._to_c_cancel(request)
+        events, length = self._event_array()
+        rc = self._ffi.lib.of_execution_cancel_order(
+            self._engine, ctypes.byref(req), events, ctypes.byref(length)
+        )
+        decoded = self._decode_events(events, length.value)
+        self._check(rc, "of_execution_cancel_order", decoded)
+        return decoded
+
+    def amend_order(self, request: AmendRequest) -> list[ExecutionEvent]:
+        """Amends an order and returns generated execution events."""
+        self._require_handle()
+        req = self._to_c_amend(request)
+        events, length = self._event_array()
+        rc = self._ffi.lib.of_execution_amend_order(
+            self._engine, ctypes.byref(req), events, ctypes.byref(length)
+        )
+        decoded = self._decode_events(events, length.value)
+        self._check(rc, "of_execution_amend_order", decoded)
+        return decoded
+
+    def poll_execution(self) -> list[ExecutionEvent]:
+        """Polls execution events into a Python list."""
+        self._require_handle()
+        events, length = self._event_array()
+        rc = self._ffi.lib.of_execution_poll(self._engine, events, ctypes.byref(length))
+        decoded = self._decode_events(events, length.value)
+        self._check(rc, "of_execution_poll", decoded)
+        return decoded
+
+    def order_state(self, client_order_id: str) -> ExecutionOrderState:
+        """Returns current order state for a client order id."""
+        self._require_handle()
+        state = OfExecutionOrderState()
+        rc = self._ffi.lib.of_execution_get_order_state(
+            self._engine, self._encode(client_order_id), ctypes.byref(state)
+        )
+        self._check(rc, "of_execution_get_order_state", [])
+        return ExecutionOrderState(
+            client_order_id=self._decode_c_array(state.client_order_id),
+            venue_order_id=self._decode_c_array(state.venue_order_id),
+            account_id=self._decode_c_array(state.account_id),
+            route_id=self._decode_c_array(state.route_id),
+            venue=self._decode_c_array(state.venue),
+            instrument=self._decode_c_array(state.instrument),
+            status=int(state.status),
+            order_qty=int(state.order_qty),
+            cumulative_qty=int(state.cumulative_qty),
+            leaves_qty=int(state.leaves_qty),
+            average_price=int(state.average_price),
+            updated_ns=int(state.updated_ns),
+        )
+
+    def execution_health(self) -> ExecutionHealth:
+        """Returns execution health."""
+        self._require_handle()
+        health = OfExecutionHealth()
+        rc = self._ffi.lib.of_execution_health(self._engine, ctypes.byref(health))
+        self._check(rc, "of_execution_health", [])
+        return ExecutionHealth(
+            connected=bool(health.connected),
+            degraded=bool(health.degraded),
+            health_seq=int(health.health_seq),
+        )
+
+    def execution_metrics(self) -> ExecutionMetrics:
+        """Returns execution metrics."""
+        self._require_handle()
+        metrics = OfExecutionMetrics()
+        rc = self._ffi.lib.of_execution_metrics(self._engine, ctypes.byref(metrics))
+        self._check(rc, "of_execution_metrics", [])
+        return ExecutionMetrics(
+            submitted=int(metrics.submitted),
+            cancelled=int(metrics.cancelled),
+            amended=int(metrics.amended),
+            events_applied=int(metrics.events_applied),
+            risk_rejected=int(metrics.risk_rejected),
+            adapter_errors=int(metrics.adapter_errors),
+            recovered=int(metrics.recovered),
+        )
+
+    @staticmethod
+    def _event_array() -> tuple[ctypes.Array[OfExecutionEvent], ctypes.c_uint32]:
+        events = (OfExecutionEvent * 32)()
+        return events, ctypes.c_uint32(32)
+
+    @staticmethod
+    def _encode(value: str) -> bytes:
+        return value.encode("ascii") if value else b""
+
+    @staticmethod
+    def _decode_c_array(value) -> str:
+        return bytes(value).split(b"\0", 1)[0].decode("ascii")
+
+    def _decode_events(self, events, count: int) -> list[ExecutionEvent]:
+        return [self._decode_event(events[idx]) for idx in range(count)]
+
+    def _decode_event(self, event: OfExecutionEvent) -> ExecutionEvent:
+        return ExecutionEvent(
+            exec_type=int(event.exec_type),
+            order_status=int(event.order_status),
+            client_order_id=self._decode_c_array(event.client_order_id),
+            orig_client_order_id=self._decode_c_array(event.orig_client_order_id),
+            venue_order_id=self._decode_c_array(event.venue_order_id),
+            execution_id=self._decode_c_array(event.execution_id),
+            account_id=self._decode_c_array(event.account_id),
+            route_id=self._decode_c_array(event.route_id),
+            venue=self._decode_c_array(event.venue),
+            instrument=self._decode_c_array(event.instrument),
+            last_qty=int(event.last_qty),
+            last_price=int(event.last_price),
+            cumulative_qty=int(event.cumulative_qty),
+            leaves_qty=int(event.leaves_qty),
+            average_price=int(event.average_price),
+            ts_exchange_ns=int(event.ts_exchange_ns),
+            ts_recv_ns=int(event.ts_recv_ns),
+            reason=int(event.reason),
+            text=self._decode_c_array(event.text),
+        )
+
+    def _to_c_route(self, route: RouteConfig) -> OfExecutionRouteConfig:
+        limits = route.risk_limits
+        return OfExecutionRouteConfig(
+            route_id=self._encode(route.route_id),
+            account_id=self._encode(route.account_id),
+            venue=self._encode(route.venue),
+            instrument=self._encode(route.instrument),
+            enabled=ctypes.c_uint8(1 if route.enabled else 0),
+            kill_switch=ctypes.c_uint8(1 if limits.kill_switch else 0),
+            max_order_qty=ctypes.c_int64(limits.max_order_qty),
+            max_order_notional=ctypes.c_int64(limits.max_order_notional),
+            max_open_orders=ctypes.c_uint32(limits.max_open_orders),
+            max_open_notional=ctypes.c_int64(limits.max_open_notional),
+            price_band_ticks=ctypes.c_int64(limits.price_band_ticks),
+        )
+
+    def _to_c_order(self, request: OrderRequest) -> OfExecutionOrderRequest:
+        return OfExecutionOrderRequest(
+            client_order_id=self._encode(request.client_order_id),
+            account_id=self._encode(request.account_id),
+            route_id=self._encode(request.route_id),
+            strategy_id=self._encode(request.strategy_id),
+            venue=self._encode(request.venue),
+            instrument=self._encode(request.instrument),
+            side=ctypes.c_uint32(request.side),
+            order_type=ctypes.c_uint32(request.order_type),
+            time_in_force=ctypes.c_uint32(request.time_in_force),
+            quantity=ctypes.c_int64(request.quantity),
+            limit_price=ctypes.c_int64(request.limit_price),
+            stop_price=ctypes.c_int64(request.stop_price),
+            ts_exchange_ns=ctypes.c_uint64(request.ts_exchange_ns),
+            ts_recv_ns=ctypes.c_uint64(request.ts_recv_ns),
+        )
+
+    def _to_c_cancel(self, request: CancelRequest) -> OfExecutionCancelRequest:
+        return OfExecutionCancelRequest(
+            client_order_id=self._encode(request.client_order_id),
+            orig_client_order_id=self._encode(request.orig_client_order_id),
+            venue_order_id=self._encode(request.venue_order_id),
+            account_id=self._encode(request.account_id),
+            route_id=self._encode(request.route_id),
+            venue=self._encode(request.venue),
+            instrument=self._encode(request.instrument),
+            ts_recv_ns=ctypes.c_uint64(request.ts_recv_ns),
+        )
+
+    def _to_c_amend(self, request: AmendRequest) -> OfExecutionAmendRequest:
+        return OfExecutionAmendRequest(
+            client_order_id=self._encode(request.client_order_id),
+            orig_client_order_id=self._encode(request.orig_client_order_id),
+            venue_order_id=self._encode(request.venue_order_id),
+            account_id=self._encode(request.account_id),
+            route_id=self._encode(request.route_id),
+            venue=self._encode(request.venue),
+            instrument=self._encode(request.instrument),
+            quantity=ctypes.c_int64(request.quantity),
+            limit_price=ctypes.c_int64(request.limit_price),
+            ts_recv_ns=ctypes.c_uint64(request.ts_recv_ns),
+        )
+
+    @staticmethod
+    def _check(rc: int, fn_name: str, events: list[ExecutionEvent]) -> None:
+        if int(rc) == 0:
+            return
+        if int(rc) == 7:
+            raise OrderflowRiskError(f"{fn_name} failed with code {rc}", events)
+        exc = _ERROR_MAP.get(int(rc), OrderflowError)
+        raise exc(f"{fn_name} failed with code {rc}")
+
+    def _require_handle(self) -> None:
+        if not self._engine:
+            raise OrderflowStateError("execution engine is closed")
 
 
 class Engine:
