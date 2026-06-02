@@ -11,6 +11,8 @@ extern "C" {
 typedef struct of_engine of_engine_t;
 /** Opaque execution engine handle. */
 typedef struct of_execution_engine of_execution_engine_t;
+/** Opaque concurrent execution engine handle. */
+typedef struct of_execution_concurrent_engine of_execution_concurrent_engine_t;
 /** Analytics configuration struct — mirrors of_core::AnalyticsConfig. */
 typedef struct {
   double agent_small_trade_threshold;
@@ -341,6 +343,28 @@ typedef struct {
   uint64_t recovered;
 } of_execution_metrics_t;
 
+/** Concurrent execution worker configuration. */
+typedef struct {
+  /** Bounded command queue capacity; 0 uses default. */
+  uint32_t command_capacity;
+  /** Bounded report queue capacity; 0 uses default. */
+  uint32_t report_capacity;
+  /** Per-command event buffer capacity; 0 uses default. */
+  uint32_t event_buffer_capacity;
+} of_execution_concurrent_config_t;
+
+/** Concurrent execution command report. */
+typedef struct {
+  /** Monotonic command sequence. */
+  uint64_t sequence;
+  /** Command kind (`1=Submit`, `2=Cancel`, `3=Amend`, `4=Poll`, `5=Recover`, `6=Stop`). */
+  uint32_t kind;
+  /** Result code for the command. */
+  int32_t result_code;
+  /** Number of events copied or required. */
+  uint32_t event_count;
+} of_execution_command_report_t;
+
 /** Returns ABI version number. */
 uint32_t of_api_version(void);
 /** Returns static build info string. */
@@ -372,6 +396,22 @@ int32_t of_execution_get_order_state(const of_execution_engine_t* engine, const 
 int32_t of_execution_health(const of_execution_engine_t* engine, of_execution_health_t* out_health);
 /** Gets execution metrics. */
 int32_t of_execution_metrics(const of_execution_engine_t* engine, of_execution_metrics_t* out_metrics);
+/** Creates and starts a concurrent simulated execution engine instance. */
+int32_t of_execution_concurrent_engine_create_multi(const of_execution_route_config_t* routes, uint32_t route_count, const of_execution_concurrent_config_t* config, of_execution_concurrent_engine_t** out_engine);
+/** Destroys a concurrent execution engine. */
+void of_execution_concurrent_engine_destroy(of_execution_concurrent_engine_t* engine);
+/** Requests concurrent execution worker stop. */
+int32_t of_execution_concurrent_stop(of_execution_concurrent_engine_t* engine, uint64_t* out_sequence);
+/** Sends a non-blocking submit command. */
+int32_t of_execution_concurrent_submit_order(of_execution_concurrent_engine_t* engine, const of_execution_order_request_t* req, uint64_t* out_sequence);
+/** Sends a non-blocking cancel command. */
+int32_t of_execution_concurrent_cancel_order(of_execution_concurrent_engine_t* engine, const of_execution_cancel_request_t* req, uint64_t* out_sequence);
+/** Sends a non-blocking amend command. */
+int32_t of_execution_concurrent_amend_order(of_execution_concurrent_engine_t* engine, const of_execution_amend_request_t* req, uint64_t* out_sequence);
+/** Sends a non-blocking poll command. */
+int32_t of_execution_concurrent_poll(of_execution_concurrent_engine_t* engine, uint64_t* out_sequence);
+/** Attempts to receive one concurrent command report without blocking. */
+int32_t of_execution_concurrent_try_recv_report(of_execution_concurrent_engine_t* engine, of_execution_command_report_t* out_report, of_execution_event_t* out_events, uint32_t* inout_len);
 
 /** Creates a runtime engine instance. */
 int32_t of_engine_create(const of_engine_config_t* cfg, of_engine_t** out_engine);

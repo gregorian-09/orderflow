@@ -13,8 +13,10 @@ use std::sync::{
 use of_adapters::{AdapterConfig, ProviderKind};
 use of_core::{AnalyticsConfig, BookUpdate, DataQualityFlags, SignalState, SymbolId, TradePrint};
 use of_execution::{
-    simulated_engine_with_routes, AllowAllRiskGate, ExecutionEngine, ExecutionError,
-    ExecutionEventBuffer, InMemoryJournal, RouteConfig, SimExecutionAdapter,
+    simulated_engine_with_routes, AllowAllRiskGate, ConcurrentExecutionConfig,
+    ConcurrentExecutionEngine, ConcurrentExecutionError, ExecutionCommand, ExecutionCommandKind,
+    ExecutionCommandReport, ExecutionEngine, ExecutionError, ExecutionEventBuffer, InMemoryJournal,
+    RouteConfig, SimExecutionAdapter,
 };
 use of_execution_core::{
     AmendRequest, CancelRequest, ExecutionEvent, ExecutionSymbol, FixedAscii, OrderPrice, OrderQty,
@@ -448,6 +450,32 @@ pub struct of_execution_metrics_t {
     pub recovered: u64,
 }
 
+/// Concurrent execution worker configuration.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct of_execution_concurrent_config_t {
+    /// Bounded command queue capacity.
+    pub command_capacity: u32,
+    /// Bounded report queue capacity.
+    pub report_capacity: u32,
+    /// Per-command event buffer capacity.
+    pub event_buffer_capacity: u32,
+}
+
+/// Concurrent execution command report.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct of_execution_command_report_t {
+    /// Monotonic command sequence.
+    pub sequence: u64,
+    /// Command kind.
+    pub kind: u32,
+    /// Result code for the command.
+    pub result_code: i32,
+    /// Number of events copied to the caller event array.
+    pub event_count: u32,
+}
+
 /// Opaque engine handle.
 pub struct of_engine {
     inner: DefaultEngine,
@@ -457,6 +485,11 @@ pub struct of_engine {
 /// Opaque execution engine handle.
 pub struct of_execution_engine {
     inner: ExecutionEngine<SimExecutionAdapter, AllowAllRiskGate, InMemoryJournal>,
+}
+
+/// Opaque concurrent execution engine handle.
+pub struct of_execution_concurrent_engine {
+    inner: ConcurrentExecutionEngine,
 }
 
 /// Opaque subscription token.
@@ -544,15 +577,10 @@ pub extern "C" fn of_execution_engine_create_multi(
     if routes.is_null() || route_count == 0 || out_engine.is_null() {
         return of_error_t::OF_ERR_INVALID_ARG as i32;
     }
-    let routes = unsafe { std::slice::from_raw_parts(routes, route_count as usize) };
-    let mut route_configs = Vec::with_capacity(routes.len());
-    for route in routes {
-        let route = match route_config_from_ffi(route) {
-            Ok(route) => route,
-            Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
-        };
-        route_configs.push(route);
-    }
+    let route_configs = match route_configs_from_ffi(routes, route_count) {
+        Ok(routes) => routes,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
     create_execution_engine_from_routes(route_configs, out_engine)
 }
 
@@ -567,6 +595,152 @@ fn create_execution_engine_from_routes(
         *out_engine = Box::into_raw(engine);
     }
     of_error_t::OF_OK as i32
+}
+
+/// Creates and starts a concurrent simulated execution engine.
+#[no_mangle]
+pub extern "C" fn of_execution_concurrent_engine_create_multi(
+    routes: *const of_execution_route_config_t,
+    route_count: u32,
+    config: *const of_execution_concurrent_config_t,
+    out_engine: *mut *mut of_execution_concurrent_engine,
+) -> i32 {
+    if routes.is_null() || route_count == 0 || out_engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let route_configs = match route_configs_from_ffi(routes, route_count) {
+        Ok(routes) => routes,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let cfg = concurrent_config_from_ffi(config);
+    let engine = simulated_engine_with_routes(route_configs);
+    let inner = match ConcurrentExecutionEngine::spawn(engine, cfg) {
+        Ok(engine) => engine,
+        Err(err) => return map_concurrent_execution_error(&err),
+    };
+    let wrapped = Box::new(of_execution_concurrent_engine { inner });
+    unsafe {
+        *out_engine = Box::into_raw(wrapped);
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Destroys a concurrent execution engine.
+#[no_mangle]
+pub extern "C" fn of_execution_concurrent_engine_destroy(
+    engine: *mut of_execution_concurrent_engine,
+) {
+    if engine.is_null() {
+        return;
+    }
+    unsafe {
+        let _ = Box::from_raw(engine);
+    }
+}
+
+/// Requests graceful concurrent execution worker stop.
+#[no_mangle]
+pub extern "C" fn of_execution_concurrent_stop(
+    engine: *mut of_execution_concurrent_engine,
+    out_sequence: *mut u64,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    match engine.inner.request_stop() {
+        Ok(sequence) => {
+            write_optional_u64(out_sequence, sequence);
+            of_error_t::OF_OK as i32
+        }
+        Err(err) => map_concurrent_execution_error(&err),
+    }
+}
+
+/// Sends a non-blocking submit command to a concurrent execution worker.
+#[no_mangle]
+pub extern "C" fn of_execution_concurrent_submit_order(
+    engine: *mut of_execution_concurrent_engine,
+    req: *const of_execution_order_request_t,
+    out_sequence: *mut u64,
+) -> i32 {
+    if engine.is_null() || req.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let req = match order_request_from_ffi(unsafe { &*req }) {
+        Ok(req) => req,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    send_concurrent_command(engine, ExecutionCommand::Submit(req), out_sequence)
+}
+
+/// Sends a non-blocking cancel command to a concurrent execution worker.
+#[no_mangle]
+pub extern "C" fn of_execution_concurrent_cancel_order(
+    engine: *mut of_execution_concurrent_engine,
+    req: *const of_execution_cancel_request_t,
+    out_sequence: *mut u64,
+) -> i32 {
+    if engine.is_null() || req.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let req = match cancel_request_from_ffi(unsafe { &*req }) {
+        Ok(req) => req,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    send_concurrent_command(engine, ExecutionCommand::Cancel(req), out_sequence)
+}
+
+/// Sends a non-blocking amend command to a concurrent execution worker.
+#[no_mangle]
+pub extern "C" fn of_execution_concurrent_amend_order(
+    engine: *mut of_execution_concurrent_engine,
+    req: *const of_execution_amend_request_t,
+    out_sequence: *mut u64,
+) -> i32 {
+    if engine.is_null() || req.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let req = match amend_request_from_ffi(unsafe { &*req }) {
+        Ok(req) => req,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    send_concurrent_command(engine, ExecutionCommand::Amend(req), out_sequence)
+}
+
+/// Sends a non-blocking poll command to a concurrent execution worker.
+#[no_mangle]
+pub extern "C" fn of_execution_concurrent_poll(
+    engine: *mut of_execution_concurrent_engine,
+    out_sequence: *mut u64,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    send_concurrent_command(engine, ExecutionCommand::Poll, out_sequence)
+}
+
+/// Attempts to receive one concurrent command report without blocking.
+#[no_mangle]
+pub extern "C" fn of_execution_concurrent_try_recv_report(
+    engine: *mut of_execution_concurrent_engine,
+    out_report: *mut of_execution_command_report_t,
+    out_events: *mut of_execution_event_t,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() || out_report.is_null() || inout_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    let report = match engine.inner.try_recv_report() {
+        Ok(report) => report,
+        Err(err) => return map_concurrent_execution_error(&err),
+    };
+    write_concurrent_report(&report, out_report, out_events, inout_len)
 }
 
 /// Starts an execution engine.
@@ -2020,6 +2194,105 @@ fn map_execution_error(err: &ExecutionError) -> i32 {
         ExecutionError::Core(_) => of_error_t::OF_ERR_INVALID_ARG as i32,
         ExecutionError::Adapter(_) | ExecutionError::Journal(_) => {
             of_error_t::OF_ERR_INTERNAL as i32
+        }
+    }
+}
+
+fn map_concurrent_execution_error(err: &ConcurrentExecutionError) -> i32 {
+    match err {
+        ConcurrentExecutionError::Backpressure => of_error_t::OF_ERR_BACKPRESSURE as i32,
+        ConcurrentExecutionError::Stopped | ConcurrentExecutionError::WorkerPanic => {
+            of_error_t::OF_ERR_STATE as i32
+        }
+        ConcurrentExecutionError::Execution(err) => map_execution_error(err),
+    }
+}
+
+fn route_configs_from_ffi(
+    routes: *const of_execution_route_config_t,
+    route_count: u32,
+) -> Result<Vec<RouteConfig>, ()> {
+    let routes = unsafe { std::slice::from_raw_parts(routes, route_count as usize) };
+    let mut route_configs = Vec::with_capacity(routes.len());
+    for route in routes {
+        route_configs.push(route_config_from_ffi(route)?);
+    }
+    Ok(route_configs)
+}
+
+fn concurrent_config_from_ffi(
+    config: *const of_execution_concurrent_config_t,
+) -> ConcurrentExecutionConfig {
+    if config.is_null() {
+        return ConcurrentExecutionConfig::default();
+    }
+    let config = unsafe { *config };
+    ConcurrentExecutionConfig {
+        command_capacity: nonzero_usize(config.command_capacity, 1024),
+        report_capacity: nonzero_usize(config.report_capacity, 1024),
+        event_buffer_capacity: nonzero_usize(config.event_buffer_capacity, FFI_EVENT_BUFFER_CAP),
+    }
+}
+
+fn nonzero_usize(value: u32, default_value: usize) -> usize {
+    if value == 0 {
+        default_value
+    } else {
+        value as usize
+    }
+}
+
+fn send_concurrent_command(
+    engine: &mut of_execution_concurrent_engine,
+    command: ExecutionCommand,
+    out_sequence: *mut u64,
+) -> i32 {
+    match engine.inner.try_send(command) {
+        Ok(sequence) => {
+            write_optional_u64(out_sequence, sequence);
+            of_error_t::OF_OK as i32
+        }
+        Err(err) => map_concurrent_execution_error(&err),
+    }
+}
+
+fn write_concurrent_report(
+    report: &ExecutionCommandReport,
+    out_report: *mut of_execution_command_report_t,
+    out_events: *mut of_execution_event_t,
+    inout_len: *mut u32,
+) -> i32 {
+    let copy_rc = copy_execution_events(&report.events, out_events, inout_len);
+    let event_count = unsafe { *inout_len };
+    unsafe {
+        *out_report = of_execution_command_report_t {
+            sequence: report.sequence,
+            kind: execution_command_kind_to_u32(report.kind),
+            result_code: match &report.result {
+                Ok(_) => of_error_t::OF_OK as i32,
+                Err(err) => map_execution_error(err),
+            },
+            event_count,
+        };
+    }
+    copy_rc
+}
+
+fn execution_command_kind_to_u32(kind: ExecutionCommandKind) -> u32 {
+    match kind {
+        ExecutionCommandKind::Submit => 1,
+        ExecutionCommandKind::Cancel => 2,
+        ExecutionCommandKind::Amend => 3,
+        ExecutionCommandKind::Poll => 4,
+        ExecutionCommandKind::RecoverOpenOrders => 5,
+        ExecutionCommandKind::Stop => 6,
+    }
+}
+
+fn write_optional_u64(ptr: *mut u64, value: u64) {
+    if !ptr.is_null() {
+        unsafe {
+            *ptr = value;
         }
     }
 }

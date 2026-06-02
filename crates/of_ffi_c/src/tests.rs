@@ -1855,4 +1855,125 @@ mod tests {
 
         of_execution_engine_destroy(engine);
     }
+
+    #[test]
+    fn execution_concurrent_abi_submits_and_reports() {
+        let _guard = test_lock().lock().expect("test lock");
+        let route = CString::new("SIM").expect("cstring");
+        let account = CString::new("ACC").expect("cstring");
+        let venue = CString::new("SIM").expect("cstring");
+        let instrument = CString::new("ES").expect("cstring");
+        let cfg = of_execution_route_config_t {
+            route_id: route.as_ptr(),
+            account_id: account.as_ptr(),
+            venue: venue.as_ptr(),
+            instrument: instrument.as_ptr(),
+            enabled: 1,
+            kill_switch: 0,
+            max_order_qty: 100,
+            max_order_notional: 1_000_000,
+            max_open_orders: 10,
+            max_open_notional: 10_000_000,
+            price_band_ticks: 0,
+        };
+        let worker_cfg = of_execution_concurrent_config_t {
+            command_capacity: 8,
+            report_capacity: 8,
+            event_buffer_capacity: 8,
+        };
+
+        let mut engine: *mut of_execution_concurrent_engine = ptr::null_mut();
+        assert_eq!(
+            of_execution_concurrent_engine_create_multi(&cfg, 1, &worker_cfg, &mut engine),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!engine.is_null());
+
+        let client_order_id = CString::new("C1").expect("cstring");
+        let strategy = CString::new("STRAT").expect("cstring");
+        let req = of_execution_order_request_t {
+            client_order_id: client_order_id.as_ptr(),
+            account_id: account.as_ptr(),
+            route_id: route.as_ptr(),
+            strategy_id: strategy.as_ptr(),
+            venue: venue.as_ptr(),
+            instrument: instrument.as_ptr(),
+            side: 1,
+            order_type: 2,
+            time_in_force: 1,
+            quantity: 10,
+            limit_price: 5000,
+            stop_price: 0,
+            ts_exchange_ns: 1,
+            ts_recv_ns: 2,
+        };
+        let mut sequence = 0_u64;
+        assert_eq!(
+            of_execution_concurrent_submit_order(engine, &req, &mut sequence),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(sequence, 1);
+
+        let mut report = of_execution_command_report_t {
+            sequence: 0,
+            kind: 0,
+            result_code: 0,
+            event_count: 0,
+        };
+        let mut events = [of_execution_event_t {
+            exec_type: 0,
+            order_status: 0,
+            client_order_id: [0; 41],
+            orig_client_order_id: [0; 41],
+            venue_order_id: [0; 49],
+            execution_id: [0; 49],
+            account_id: [0; 33],
+            route_id: [0; 33],
+            venue: [0; 17],
+            instrument: [0; 33],
+            last_qty: 0,
+            last_price: 0,
+            cumulative_qty: 0,
+            leaves_qty: 0,
+            average_price: 0,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+            reason: 0,
+            text: [0; 129],
+        }; 4];
+        let mut len = events.len() as u32;
+        let mut rc = of_execution_concurrent_try_recv_report(
+            engine,
+            &mut report,
+            events.as_mut_ptr(),
+            &mut len,
+        );
+        for _ in 0..100 {
+            if rc == of_error_t::OF_OK as i32 {
+                break;
+            }
+            std::thread::yield_now();
+            len = events.len() as u32;
+            rc = of_execution_concurrent_try_recv_report(
+                engine,
+                &mut report,
+                events.as_mut_ptr(),
+                &mut len,
+            );
+        }
+        assert_eq!(rc, of_error_t::OF_OK as i32);
+        assert_eq!(report.sequence, 1);
+        assert_eq!(report.kind, 1);
+        assert_eq!(report.result_code, of_error_t::OF_OK as i32);
+        assert_eq!(report.event_count, 2);
+        assert_eq!(len, 2);
+        assert_eq!(events[0].exec_type, 1);
+        assert_eq!(events[1].exec_type, 3);
+
+        assert_eq!(
+            of_execution_concurrent_stop(engine, &mut sequence),
+            of_error_t::OF_OK as i32
+        );
+        of_execution_concurrent_engine_destroy(engine);
+    }
 }

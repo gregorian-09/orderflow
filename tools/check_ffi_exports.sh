@@ -37,6 +37,14 @@ expected_symbols=(
   of_execution_get_order_state
   of_execution_health
   of_execution_metrics
+  of_execution_concurrent_engine_create_multi
+  of_execution_concurrent_engine_destroy
+  of_execution_concurrent_stop
+  of_execution_concurrent_submit_order
+  of_execution_concurrent_cancel_order
+  of_execution_concurrent_amend_order
+  of_execution_concurrent_poll
+  of_execution_concurrent_try_recv_report
   of_engine_create
   of_engine_start
   of_engine_stop
