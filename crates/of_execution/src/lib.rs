@@ -1,6 +1,9 @@
 //! Execution routing and adapter contracts for Orderflow.
 #![doc = include_str!("../README.md")]
 
+mod oms;
+pub use oms::*;
+
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
