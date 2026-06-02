@@ -9,6 +9,8 @@ Latest release: `0.3.0`.
   the `0.3.0` native library.
 - C ABI symbols remain stable; metrics JSON includes additive operational
   fields.
+- Current unreleased docs also cover the additive execution/OMS APIs exposed
+  through Rust, C, Python, and Java.
 
 - [Python Binding](./python.md)
 - [Java Binding](./java.md)
@@ -18,3 +20,5 @@ Latest release: `0.3.0`.
 For cross-language concepts and architecture, use the handbook:
 
 - `docs/handbook/README.md`
+- `docs/handbook/09-oms-architecture.md`
+- `docs/handbook/10-oms-cookbook.md`

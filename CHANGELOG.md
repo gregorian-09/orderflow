@@ -50,6 +50,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Concurrent execution runtime access across C, Python, and Java through
   additive handles/classes (`of_execution_concurrent_engine_t`,
   `ConcurrentExecutionEngine`, and `ConcurrentOrderflowExecutionEngine`).
+- Expanded handbook coverage for the execution and OMS subsystem, including
+  crate references, OMS architecture, multi-symbol cookbook workflows,
+  low-latency design guidance, provider adapter authoring, and recovery
+  operations.
 
 ## [0.3.0] - 2026-05-09
 This is a non-breaking operational hardening release after `0.2.0`. For the
