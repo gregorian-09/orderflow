@@ -297,6 +297,27 @@ class OfExecutionMetrics(ctypes.Structure):
     ]
 
 
+class OfExecutionConcurrentConfig(ctypes.Structure):
+    """ctypes mirror of `of_execution_concurrent_config_t`."""
+
+    _fields_ = [
+        ("command_capacity", c_uint32),
+        ("report_capacity", c_uint32),
+        ("event_buffer_capacity", c_uint32),
+    ]
+
+
+class OfExecutionCommandReport(ctypes.Structure):
+    """ctypes mirror of `of_execution_command_report_t`."""
+
+    _fields_ = [
+        ("sequence", c_uint64),
+        ("kind", c_uint32),
+        ("result_code", c_int32),
+        ("event_count", c_uint32),
+    ]
+
+
 def _library_filename() -> str:
     if sys.platform == "win32":
         return "of_ffi_c.dll"
@@ -427,6 +448,52 @@ class OrderflowLib:
 
         lib.of_execution_metrics.argtypes = [c_void_p, ctypes.POINTER(OfExecutionMetrics)]
         lib.of_execution_metrics.restype = c_int32
+
+        lib.of_execution_concurrent_engine_create_multi.argtypes = [
+            ctypes.POINTER(OfExecutionRouteConfig),
+            c_uint32,
+            ctypes.POINTER(OfExecutionConcurrentConfig),
+            ctypes.POINTER(c_void_p),
+        ]
+        lib.of_execution_concurrent_engine_create_multi.restype = c_int32
+
+        lib.of_execution_concurrent_engine_destroy.argtypes = [c_void_p]
+        lib.of_execution_concurrent_engine_destroy.restype = None
+
+        lib.of_execution_concurrent_stop.argtypes = [c_void_p, ctypes.POINTER(c_uint64)]
+        lib.of_execution_concurrent_stop.restype = c_int32
+
+        lib.of_execution_concurrent_submit_order.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfExecutionOrderRequest),
+            ctypes.POINTER(c_uint64),
+        ]
+        lib.of_execution_concurrent_submit_order.restype = c_int32
+
+        lib.of_execution_concurrent_cancel_order.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfExecutionCancelRequest),
+            ctypes.POINTER(c_uint64),
+        ]
+        lib.of_execution_concurrent_cancel_order.restype = c_int32
+
+        lib.of_execution_concurrent_amend_order.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfExecutionAmendRequest),
+            ctypes.POINTER(c_uint64),
+        ]
+        lib.of_execution_concurrent_amend_order.restype = c_int32
+
+        lib.of_execution_concurrent_poll.argtypes = [c_void_p, ctypes.POINTER(c_uint64)]
+        lib.of_execution_concurrent_poll.restype = c_int32
+
+        lib.of_execution_concurrent_try_recv_report.argtypes = [
+            c_void_p,
+            ctypes.POINTER(OfExecutionCommandReport),
+            ctypes.POINTER(OfExecutionEvent),
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_execution_concurrent_try_recv_report.restype = c_int32
 
         lib.of_engine_create.argtypes = [ctypes.POINTER(OfEngineConfig), ctypes.POINTER(c_void_p)]
         lib.of_engine_create.restype = c_int32

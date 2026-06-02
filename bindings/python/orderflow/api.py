@@ -34,6 +34,8 @@ from ._ffi import (
     OfEventCallback,
     OfExecutionAmendRequest,
     OfExecutionCancelRequest,
+    OfExecutionCommandReport,
+    OfExecutionConcurrentConfig,
     OfExecutionEvent,
     OfExecutionHealth,
     OfExecutionMetrics,
@@ -322,6 +324,26 @@ class ExecutionMetrics:
     recovered: int
 
 
+@dataclass(frozen=True)
+class ConcurrentExecutionConfig:
+    """Concurrent execution worker queue configuration."""
+
+    command_capacity: int = 1024
+    report_capacity: int = 1024
+    event_buffer_capacity: int = 64
+
+
+@dataclass(frozen=True)
+class ExecutionCommandReport:
+    """Concurrent execution command report."""
+
+    sequence: int
+    kind: int
+    result_code: int
+    event_count: int
+    events: list[ExecutionEvent]
+
+
 class ExecutionEngine:
     """High-level Python wrapper around the native execution C ABI."""
 
@@ -595,6 +617,118 @@ class ExecutionEngine:
     def _require_handle(self) -> None:
         if not self._engine:
             raise OrderflowStateError("execution engine is closed")
+
+
+class ConcurrentExecutionEngine(ExecutionEngine):
+    """Python wrapper around the concurrent native execution worker."""
+
+    def __init__(
+        self,
+        routes: RouteConfig | Sequence[RouteConfig],
+        config: ConcurrentExecutionConfig = ConcurrentExecutionConfig(),
+        library_path: Optional[str] = None,
+    ) -> None:
+        """Creates and starts a concurrent simulated execution worker."""
+        self._ffi = OrderflowLib(library_path=library_path)
+        self._engine = ctypes.c_void_p()
+        route_list: Sequence[RouteConfig] = [routes] if isinstance(routes, RouteConfig) else routes
+        cfgs = self._to_c_routes(route_list)
+        native_cfg = OfExecutionConcurrentConfig(
+            command_capacity=ctypes.c_uint32(config.command_capacity),
+            report_capacity=ctypes.c_uint32(config.report_capacity),
+            event_buffer_capacity=ctypes.c_uint32(config.event_buffer_capacity),
+        )
+        rc = self._ffi.lib.of_execution_concurrent_engine_create_multi(
+            cfgs, ctypes.c_uint32(len(cfgs)), ctypes.byref(native_cfg), ctypes.byref(self._engine)
+        )
+        self._check(rc, "of_execution_concurrent_engine_create_multi", [])
+
+    def __enter__(self) -> "ConcurrentExecutionEngine":
+        """Context manager entry."""
+        return self
+
+    def start(self) -> None:
+        """Concurrent workers start during construction."""
+        self._require_handle()
+
+    def close(self) -> None:
+        """Destroys native concurrent execution worker handle."""
+        if self._engine:
+            self._ffi.lib.of_execution_concurrent_engine_destroy(self._engine)
+            self._engine = ctypes.c_void_p()
+
+    def submit_order(self, request: OrderRequest) -> int:
+        """Queues a submit command and returns its command sequence."""
+        self._require_handle()
+        req = self._to_c_order(request)
+        sequence = ctypes.c_uint64(0)
+        rc = self._ffi.lib.of_execution_concurrent_submit_order(
+            self._engine, ctypes.byref(req), ctypes.byref(sequence)
+        )
+        self._check(rc, "of_execution_concurrent_submit_order", [])
+        return int(sequence.value)
+
+    def cancel_order(self, request: CancelRequest) -> int:
+        """Queues a cancel command and returns its command sequence."""
+        self._require_handle()
+        req = self._to_c_cancel(request)
+        sequence = ctypes.c_uint64(0)
+        rc = self._ffi.lib.of_execution_concurrent_cancel_order(
+            self._engine, ctypes.byref(req), ctypes.byref(sequence)
+        )
+        self._check(rc, "of_execution_concurrent_cancel_order", [])
+        return int(sequence.value)
+
+    def amend_order(self, request: AmendRequest) -> int:
+        """Queues an amend command and returns its command sequence."""
+        self._require_handle()
+        req = self._to_c_amend(request)
+        sequence = ctypes.c_uint64(0)
+        rc = self._ffi.lib.of_execution_concurrent_amend_order(
+            self._engine, ctypes.byref(req), ctypes.byref(sequence)
+        )
+        self._check(rc, "of_execution_concurrent_amend_order", [])
+        return int(sequence.value)
+
+    def poll_execution(self) -> int:
+        """Queues a poll command and returns its command sequence."""
+        self._require_handle()
+        sequence = ctypes.c_uint64(0)
+        rc = self._ffi.lib.of_execution_concurrent_poll(
+            self._engine, ctypes.byref(sequence)
+        )
+        self._check(rc, "of_execution_concurrent_poll", [])
+        return int(sequence.value)
+
+    def stop(self) -> int:
+        """Queues worker stop and returns its command sequence."""
+        self._require_handle()
+        sequence = ctypes.c_uint64(0)
+        rc = self._ffi.lib.of_execution_concurrent_stop(
+            self._engine, ctypes.byref(sequence)
+        )
+        self._check(rc, "of_execution_concurrent_stop", [])
+        return int(sequence.value)
+
+    def try_recv_report(self) -> Optional[ExecutionCommandReport]:
+        """Attempts to receive one command report without blocking."""
+        self._require_handle()
+        report = OfExecutionCommandReport()
+        events, length = self._event_array()
+        rc = self._ffi.lib.of_execution_concurrent_try_recv_report(
+            self._engine, ctypes.byref(report), events, ctypes.byref(length)
+        )
+        if int(rc) == 5:
+            return None
+        decoded = self._decode_events(events, length.value)
+        self._check(rc, "of_execution_concurrent_try_recv_report", decoded)
+        return ExecutionCommandReport(
+            sequence=int(report.sequence),
+            kind=int(report.kind),
+            result_code=int(report.result_code),
+            event_count=int(report.event_count),
+            events=decoded,
+        )
 
 
 class Engine:

@@ -5,6 +5,7 @@ import com.sun.jna.Memory;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import com.sun.jna.ptr.IntByReference;
+import com.sun.jna.ptr.LongByReference;
 import com.sun.jna.ptr.PointerByReference;
 
 /** JNA mapping for the exported Orderflow C ABI. */
@@ -45,6 +46,22 @@ public interface OrderflowNative extends Library {
     int of_execution_health(Pointer engine, OfExecutionHealth outHealth);
     /** Gets execution metrics. */
     int of_execution_metrics(Pointer engine, OfExecutionMetrics outMetrics);
+    /** Creates concurrent execution worker. */
+    int of_execution_concurrent_engine_create_multi(OfExecutionRouteConfig[] routes, int routeCount, OfExecutionConcurrentConfig config, PointerByReference outEngine);
+    /** Destroys concurrent execution worker. */
+    void of_execution_concurrent_engine_destroy(Pointer engine);
+    /** Requests concurrent execution worker stop. */
+    int of_execution_concurrent_stop(Pointer engine, LongByReference outSequence);
+    /** Queues concurrent submit command. */
+    int of_execution_concurrent_submit_order(Pointer engine, OfExecutionOrderRequest req, LongByReference outSequence);
+    /** Queues concurrent cancel command. */
+    int of_execution_concurrent_cancel_order(Pointer engine, OfExecutionCancelRequest req, LongByReference outSequence);
+    /** Queues concurrent amend command. */
+    int of_execution_concurrent_amend_order(Pointer engine, OfExecutionAmendRequest req, LongByReference outSequence);
+    /** Queues concurrent poll command. */
+    int of_execution_concurrent_poll(Pointer engine, LongByReference outSequence);
+    /** Attempts to receive one concurrent command report. */
+    int of_execution_concurrent_try_recv_report(Pointer engine, OfExecutionCommandReport outReport, OfExecutionEvent[] outEvents, IntByReference inoutLen);
 
     /** Creates engine instance. */
     int of_engine_create(OfEngineConfig cfg, PointerByReference outEngine);
