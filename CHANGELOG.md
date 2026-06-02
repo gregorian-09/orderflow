@@ -37,6 +37,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   notional risk accounting, and exposes additive C (`of_execution_engine_create_multi`),
   Python (`ExecutionEngine([routes...])`), and Java
   (`new OrderflowExecutionEngine(path, List<RouteConfig>)`) entry points.
+- Additive Rust `ConcurrentExecutionEngine` worker wrapper for concurrent order
+  producers. The wrapper keeps the synchronous execution engine owned by one
+  dedicated thread, uses bounded command/report channels, and preserves serial
+  deterministic order-state transitions.
 
 ## [0.3.0] - 2026-05-09
 This is a non-breaking operational hardening release after `0.2.0`. For the

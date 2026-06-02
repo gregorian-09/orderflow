@@ -129,6 +129,13 @@ order and open notional limits within the matching scope before the adapter is
 called. This lets one execution engine manage multiple symbols without allowing
 activity on one instrument to consume another instrument's route budget.
 
+Concurrency is additive and built around ownership rather than shared mutable
+state. `ConcurrentExecutionEngine` runs the synchronous engine on one dedicated
+worker thread, accepts commands from cloneable producer handles through a
+bounded channel, and emits command reports through a bounded report channel.
+This supports many caller threads without introducing async scheduler jitter or
+parallel order-state mutation.
+
 ## Key Runtime Data Models (UML-style)
 
 ```mermaid
