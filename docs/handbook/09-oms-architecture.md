@@ -10,22 +10,22 @@ the execution APIs, but those two domains remain separate.
 
 ## Layer Map
 
-```text
-Strategy / Host Language
-        |
-        v
-C / Python / Java / Rust execution API
-        |
-        v
-of_execution::ExecutionEngine or ConcurrentExecutionEngine
-        |
-        +--> RiskCheck / route-scoped limits
-        +--> ExecutionJournal
-        +--> OrderStateMachine
-        +--> ExecutionAdapter
-                 |
-                 v
-            Venue / broker / simulator
+```mermaid
+flowchart TD
+  Strategy[Strategy / Host language]
+  Api[C / Python / Java / Rust execution API]
+  Engine[of_execution::ExecutionEngine<br/>or ConcurrentExecutionEngine]
+  Risk[RiskCheck<br/>route-scoped limits]
+  Journal[ExecutionJournal]
+  State[OrderStateMachine]
+  Adapter[ExecutionAdapter]
+  Venue[Venue / broker / simulator]
+
+  Strategy --> Api --> Engine
+  Engine --> Risk
+  Engine --> Journal
+  Engine --> State
+  Engine --> Adapter --> Venue
 ```
 
 ## Core Separation
@@ -65,12 +65,20 @@ ordering.
 `ConcurrentExecutionEngine` solves concurrent producer access without making
 the state machine concurrent.
 
-```text
-Producer Thread A ----\
-Producer Thread B -----+--> bounded command queue --> worker owns ExecutionEngine
-Producer Thread C ----/                              |
-                                                     v
-                                           bounded report queue
+```mermaid
+flowchart LR
+  A[Producer thread A]
+  B[Producer thread B]
+  C[Producer thread C]
+  CQ[Bounded command queue]
+  Worker[Worker thread<br/>owns ExecutionEngine]
+  RQ[Bounded report queue]
+
+  A --> CQ
+  B --> CQ
+  C --> CQ
+  CQ --> Worker
+  Worker --> RQ
 ```
 
 Properties:
@@ -89,8 +97,18 @@ This model keeps latency predictable and makes replay/audit reasoning simpler.
 
 Execution routes are keyed by:
 
-```text
-(route_id, account_id, venue, instrument)
+```mermaid
+flowchart LR
+  RouteId[route_id]
+  AccountId[account_id]
+  Venue[venue]
+  Instrument[instrument]
+  Key[RouteKey]
+
+  RouteId --> Key
+  AccountId --> Key
+  Venue --> Key
+  Instrument --> Key
 ```
 
 The engine indexes these keys internally. Risk calculations such as open order
@@ -108,19 +126,28 @@ Example:
 
 New order flow:
 
-1. strategy builds `OrderRequest`,
-2. engine validates request shape,
-3. engine finds route,
-4. engine builds route-scoped risk context,
-5. engine checks route limits,
-6. engine checks custom risk gate,
-7. journal records command,
-8. local state is created,
-9. adapter receives request,
-10. adapter returns events,
-11. state machine applies events,
-12. journal records events,
-13. caller receives events or command report.
+```mermaid
+sequenceDiagram
+  participant Strategy
+  participant Engine
+  participant Risk
+  participant Journal
+  participant State as OrderStateMachine
+  participant Adapter
+
+  Strategy->>Engine: OrderRequest
+  Engine->>Engine: Validate request shape
+  Engine->>Engine: Find route
+  Engine->>Risk: Build context and check limits
+  Risk-->>Engine: Allow or reject
+  Engine->>Journal: Record command
+  Engine->>State: Create local pending state
+  Engine->>Adapter: Submit request
+  Adapter-->>Engine: ExecutionEvent values
+  Engine->>State: Apply events
+  Engine->>Journal: Record events
+  Engine-->>Strategy: Events or command report
+```
 
 Cancel/replace flow is similar, but starts by verifying the original client
 order id is known locally.

@@ -84,12 +84,11 @@ For bar totals:
 
 ### Example Cell Block
 
-```text
-Price     Bid x Ask    Delta
-5052.25   18 x 62      +44
-5052.00   40 x 21      -19
-5051.75   55 x 12      -43
-```
+| Price | Bid x Ask | Delta |
+| --- | ---: | ---: |
+| 5052.25 | 18 x 62 | +44 |
+| 5052.00 | 40 x 21 | -19 |
+| 5051.75 | 55 x 12 | -43 |
 
 Interpretation example:
 

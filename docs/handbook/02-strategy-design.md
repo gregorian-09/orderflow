@@ -42,30 +42,35 @@ Good rule sets are machine-checkable, not narrative.
 
 ## Example: Absorption Reversal (Pseudo Rules)
 
-```text
-IF
-  price tests prior support
-  AND bar_delta is strongly negative
-  AND low does not extend materially
-  AND next bar closes back above support
-THEN
-  enter long
-  stop = below support - buffer
-  target = POC or prior swing
-  cancel if data_quality has STALE_FEED or SEQUENCE_GAP
+```mermaid
+flowchart TD
+  A[Price tests prior support]
+  B[Bar delta is strongly negative]
+  C[Low does not extend materially]
+  D[Next bar closes back above support]
+  E{Data quality clear?}
+  F[Enter long]
+  G[Stop below support minus buffer]
+  H[Target POC or prior swing]
+  I[Cancel / block setup]
+
+  A --> B --> C --> D --> E
+  E -- Yes --> F --> G --> H
+  E -- No: stale feed or sequence gap --> I
 ```
 
 ## Example: Continuation with Stacked Imbalance
 
-```text
-IF
-  market is above session POC
-  AND >= 3 adjacent ask-side imbalances
-  AND pullback holds above imbalance stack
-THEN
-  enter long on continuation trigger
-  stop = below stack base
-  target = measured move or next liquidity zone
+```mermaid
+flowchart TD
+  A[Market is above session POC]
+  B[Three or more adjacent ask-side imbalances]
+  C[Pullback holds above imbalance stack]
+  D[Enter long on continuation trigger]
+  E[Stop below stack base]
+  F[Target measured move or next liquidity zone]
+
+  A --> B --> C --> D --> E --> F
 ```
 
 ## Quality Gating Is Not Optional
@@ -165,16 +170,18 @@ follow-through is more likely than immediate reversal.
 
 ### Practical rule shape
 
-```text
-IF
-  cumulative_delta > regime_threshold
-  AND delta > trigger_threshold
-  AND price breaks above value_area_high by breakout_ticks
-  AND quality flags are clear
-THEN
-  emit LongBias
-ELSE
-  remain Neutral or Blocked
+```mermaid
+flowchart TD
+  A[Cumulative delta above regime threshold]
+  B[Delta above trigger threshold]
+  C[Price breaks above value area high by breakout ticks]
+  D{Quality flags clear?}
+  E[Emit LongBias]
+  F[Remain Neutral or Blocked]
+
+  A --> B --> C --> D
+  D -- Yes --> E
+  D -- No --> F
 ```
 
 ## Strategy Engineering Rules

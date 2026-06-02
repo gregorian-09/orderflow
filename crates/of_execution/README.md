@@ -106,20 +106,23 @@ OMS helpers:
 
 ## Layer Model
 
-```text
-Strategy / host language
-        |
-        v
-ExecutionEngine or ConcurrentExecutionEngine
-        |
-        +--> RouteConfig / RouteKey
-        +--> RiskLimits / RiskCheck
-        +--> ExecutionJournal
-        +--> OrderStateMachine
-        +--> ExecutionAdapter
-                 |
-                 v
-            venue, broker, or simulator
+```mermaid
+flowchart TD
+  Strategy[Strategy / host language]
+  Engine[ExecutionEngine<br/>or ConcurrentExecutionEngine]
+  Route[RouteConfig / RouteKey]
+  Risk[RiskLimits / RiskCheck]
+  Journal[ExecutionJournal]
+  State[OrderStateMachine]
+  Adapter[ExecutionAdapter]
+  Venue[Venue, broker, or simulator]
+
+  Strategy --> Engine
+  Engine --> Route
+  Engine --> Risk
+  Engine --> Journal
+  Engine --> State
+  Engine --> Adapter --> Venue
 ```
 
 The synchronous [`ExecutionEngine`] is the canonical state owner. The
@@ -175,8 +178,16 @@ growth and the engine never silently drops order events.
 
 The engine indexes routes by [`RouteKey`]:
 
-```text
-(route_id, account_id, execution symbol)
+```mermaid
+flowchart LR
+  RouteId[route_id]
+  AccountId[account_id]
+  Symbol[execution symbol]
+  Key[RouteKey]
+
+  RouteId --> Key
+  AccountId --> Key
+  Symbol --> Key
 ```
 
 Open-order count and open notional are calculated only within the matched
@@ -330,12 +341,20 @@ database, or replicated log by implementing [`ExecutionJournal`].
 [`ConcurrentExecutionEngine`] gives concurrent producer access while preserving
 single-owner order-state mutation.
 
-```text
-producer A ----\
-producer B -----+--> bounded command queue --> worker owns ExecutionEngine
-producer C ----/                              |
-                                             v
-                                  bounded report queue
+```mermaid
+flowchart LR
+  A[Producer A]
+  B[Producer B]
+  C[Producer C]
+  CQ[Bounded command queue]
+  Worker[Worker owns<br/>ExecutionEngine]
+  RQ[Bounded report queue]
+
+  A --> CQ
+  B --> CQ
+  C --> CQ
+  CQ --> Worker
+  Worker --> RQ
 ```
 
 Properties:

@@ -102,12 +102,18 @@ JSONObject real = new JSONObject(engine.realisedSpreadBps(sym, 5));
 ```
 
 **Strategy rule.**
-```text
-IF effective_spread_bps < 0.5 * EMA(effective, 20)
-   AND quoted_spread > effective_spread_bps       # not crossed
-   AND half_spread_cost_bps < 0.3
-THEN enter mean-reversion scalp
-     target = opposite value-area edge
+```mermaid
+flowchart TD
+  A[Effective spread below half of 20-period EMA]
+  B[Quoted spread remains wider than effective spread]
+  C[Half-spread cost below 0.3 bps]
+  D[Enter mean-reversion scalp]
+  E[Target opposite value-area edge]
+  F[No trade]
+
+  A --> B --> C
+  C -- Conditions pass --> D --> E
+  C -- Conditions fail --> F
 ```
 
 ---
@@ -974,12 +980,17 @@ if (rc == OF_OK) {
 ```
 
 **Strategy rule.**
-```text
-IF latest_completed_bar.close > latest_completed_bar.open
-   AND latest_completed_bar.volume > rolling_bar_volume_mean
-   AND cumulative_delta > 0
-THEN allow long continuation entries
-ELSE block momentum entries until the next completed bar
+```mermaid
+flowchart TD
+  A[Latest completed bar closes above open]
+  B[Bar volume above rolling mean]
+  C[Cumulative delta is positive]
+  D[Allow long continuation entries]
+  E[Block momentum entries until next completed bar]
+
+  A --> B --> C
+  C -- Conditions pass --> D
+  C -- Conditions fail --> E
 ```
 
 ---

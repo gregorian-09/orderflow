@@ -8,8 +8,15 @@ and failure behavior matter as much as raw speed.
 
 The execution hot path is:
 
-```text
-submit/cancel/amend -> risk -> adapter -> event buffer -> state machine
+```mermaid
+flowchart LR
+  Command[submit / cancel / amend]
+  Risk[Risk check]
+  Adapter[ExecutionAdapter]
+  Buffer[ExecutionEventBuffer]
+  State[OrderStateMachine]
+
+  Command --> Risk --> Adapter --> Buffer --> State
 ```
 
 Rules:

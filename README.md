@@ -28,16 +28,15 @@ Start here:
 
 ## Analytics at a Glance
 
-| Tier | Concepts | Exposed |
-|------|----------|---------|
-| T0   | Spread, depth, book events, resiliency | Rust, C, Python, Java |
-| T1   | Trade classification, VPIN, Kyle's λ, Amihud, CVD | Rust, C, Python, Java |
-| T2   | 19 pattern flags (footprint, DOM, delta, session, volume profile) | Rust, C, Python, Java |
-| T3   | Volatility (Parkinson/GK/YZ, signature), noise, Hasbrouck, Almgren-Chriss, spread decomp, ACD, regime | Rust, C, Python, Java |
-| T4   | Kinetic energy, agent-type ID, LOB features (16 fields) | Rust, C, Python, Java |
-| T5   | Dark pool, dark-lit correlation, institutional flow | Rust, C, Python, Java |
-| T6   | Options flow, OI analysis | Rust, C, Python, Java |
-| T7   | Futures basis, calendar spread, settlement | Rust, C, Python, Java |
+| Category | Concepts | Exposed |
+|----------|----------|---------|
+| Book and spread analytics | Spread, depth, book events, resiliency | Rust, C, Python, Java |
+| Trade-flow analytics | Trade classification, VPIN, Kyle's lambda, Amihud, CVD | Rust, C, Python, Java |
+| Pattern detection | 19 pattern flags across footprint, DOM, delta, session, and volume profile context | Rust, C, Python, Java |
+| Volatility and impact | Parkinson/Garman-Klass/Yang-Zhang volatility, signature plots, noise, Hasbrouck, Almgren-Chriss, spread decomposition, ACD, regime | Rust, C, Python, Java |
+| Advanced market structure | Kinetic energy, agent-type ID, LOB features | Rust, C, Python, Java |
+| Institutional flow | Dark pool, dark-lit correlation, institutional flow | Rust, C, Python, Java |
+| Derivatives analytics | Options flow, open-interest analysis, futures basis, calendar spread, settlement | Rust, C, Python, Java |
 
 ## Execution Core at a Glance
 
