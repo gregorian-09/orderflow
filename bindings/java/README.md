@@ -61,6 +61,11 @@ try (OrderflowExecutionEngine execution = new OrderflowExecutionEngine(null, rou
 integrations. The `List<RouteConfig>` constructor configures one engine for
 multi-symbol routing with native route/account/symbol-scoped risk checks.
 
+Use `ConcurrentOrderflowExecutionEngine` when multiple producer threads need to
+queue commands into one deterministic native worker. Command methods return a
+sequence number; `tryRecvReport()` returns completed command reports without
+blocking.
+
 ## Java Version
 
 - Java 17+

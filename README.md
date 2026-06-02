@@ -91,7 +91,7 @@ Execution simulation:
 
 ```python
 from orderflow import (
-    ExecutionEngine, ExecutionOrderType, ExecutionSide, ExecutionTimeInForce,
+    ConcurrentExecutionEngine, ExecutionEngine, ExecutionOrderType, ExecutionSide, ExecutionTimeInForce,
     OrderRequest, RiskLimits, RouteConfig,
 )
 
@@ -108,6 +108,14 @@ with ExecutionEngine(routes) as execution:
         10, 5000,
     ))
     print(events[-1].order_status)
+
+with ConcurrentExecutionEngine(routes) as execution:
+    sequence = execution.submit_order(OrderRequest(
+        "C2", "ACC", "SIM", "STRAT", "SIM", "NQ",
+        ExecutionSide.BUY, ExecutionOrderType.LIMIT, ExecutionTimeInForce.DAY,
+        10, 17000,
+    ))
+    report = execution.try_recv_report()
 ```
 
 ### Java
@@ -138,6 +146,16 @@ try (OrderflowExecutionEngine execution = new OrderflowExecutionEngine(null, rou
         ExecutionSide.BUY, ExecutionOrderType.LIMIT, ExecutionTimeInForce.DAY,
         10, 5000, 0, 1, 2
     ));
+}
+
+try (ConcurrentOrderflowExecutionEngine execution =
+         new ConcurrentOrderflowExecutionEngine(null, routes)) {
+    long sequence = execution.submitOrder(new OrderRequest(
+        "C2", "ACC", "SIM", "STRAT", "SIM", "NQ",
+        ExecutionSide.BUY, ExecutionOrderType.LIMIT, ExecutionTimeInForce.DAY,
+        10, 17000, 0, 1, 3
+    ));
+    Optional<ExecutionCommandReport> report = execution.tryRecvReport();
 }
 ```
 

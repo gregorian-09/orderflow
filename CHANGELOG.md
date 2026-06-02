@@ -41,6 +41,15 @@ and this project follows [Semantic Versioning](https://semver.org/).
   producers. The wrapper keeps the synchronous execution engine owned by one
   dedicated thread, uses bounded command/report channels, and preserves serial
   deterministic order-state transitions.
+- Full additive OMS support primitives: command/request correlation, bounded
+  execution-event fanout, adapter lifecycle snapshots, file-backed durable
+  execution journal, open-order reconciliation, disconnect/kill-switch safety
+  policies, advanced risk gate helpers, position/fill ledger, order-type/TIF
+  normalization, execution telemetry, deterministic sharding, token-bucket
+  throttling, replayable OMS simulation, and provider adapter SDK helpers.
+- Concurrent execution runtime access across C, Python, and Java through
+  additive handles/classes (`of_execution_concurrent_engine_t`,
+  `ConcurrentExecutionEngine`, and `ConcurrentOrderflowExecutionEngine`).
 
 ## [0.3.0] - 2026-05-09
 This is a non-breaking operational hardening release after `0.2.0`. For the

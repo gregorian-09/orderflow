@@ -12,6 +12,10 @@ The crate is designed around explicit low-latency contracts:
 - journal hooks record command/event outcomes for recovery workflows
 - `ConcurrentExecutionEngine` gives concurrent producers a bounded command
   queue while one worker thread owns the deterministic synchronous engine
+- OMS helpers cover command correlation, event fanout, lifecycle snapshots,
+  durable journaling, reconciliation, safety policies, advanced risk,
+  position ledgers, normalization, telemetry, sharding, throttling, replay, and
+  provider adapter SDK scaffolding
 
 Real broker and exchange adapters should implement `ExecutionAdapter` and
 declare their capabilities and latency class.

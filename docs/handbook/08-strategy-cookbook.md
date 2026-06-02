@@ -1127,6 +1127,7 @@ if __name__ == "__main__":
 | Tickbar                | `AnalyticsAccumulator::with_tickbar`| `of_engine_set_tickbar_interval`| `engine.set_tickbar_interval`  | `engine.setTickbarInterval`     |
 | Execution simulation   | `of_execution::simulated_engine`| `of_execution_submit_order` | `ExecutionEngine.submit_order` | `OrderflowExecutionEngine.submitOrder` |
 | Multi-route execution  | `simulated_engine_with_routes` | `of_execution_engine_create_multi` | `ExecutionEngine([routes...])` | `new OrderflowExecutionEngine(path, routes)` |
+| Concurrent execution   | `ConcurrentExecutionEngine` | `of_execution_concurrent_submit_order` | `ConcurrentExecutionEngine.submit_order` | `ConcurrentOrderflowExecutionEngine.submitOrder` |
 
 ---
 
@@ -1195,6 +1196,12 @@ NQ route's open-order budget.
 
 For low-latency integrations, use the Rust or C APIs directly so requests and
 events stay as typed structs in caller-owned buffers.
+
+For concurrent producers, use the concurrent execution worker instead of adding
+locks around the synchronous engine. Producers enqueue submit/cancel/amend
+commands through bounded queues and consume command reports from a bounded
+report channel. The worker remains the single owner of order state, preserving
+deterministic state-machine ordering while allowing many caller threads.
 
 ---
 

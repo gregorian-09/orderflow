@@ -37,7 +37,7 @@ FastAPI.
 
 ```python
 from orderflow import (
-    ExecutionEngine, ExecutionOrderType, ExecutionSide, ExecutionTimeInForce,
+    ConcurrentExecutionEngine, ExecutionEngine, ExecutionOrderType, ExecutionSide, ExecutionTimeInForce,
     OrderRequest, RiskLimits, RouteConfig,
 )
 
@@ -58,6 +58,11 @@ with ExecutionEngine(routes) as execution:
 `ExecutionEngine(route)` remains supported for single-symbol integrations. When
 you pass a route list, native risk accounting is scoped per
 route/account/symbol.
+
+Use `ConcurrentExecutionEngine(routes)` when multiple producer threads need to
+queue commands into one deterministic native worker. Command methods return a
+sequence number; `try_recv_report()` returns completed command reports without
+blocking.
 
 ## Architecture
 

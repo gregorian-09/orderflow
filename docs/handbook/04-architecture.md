@@ -136,6 +136,13 @@ bounded channel, and emits command reports through a bounded report channel.
 This supports many caller threads without introducing async scheduler jitter or
 parallel order-state mutation.
 
+The OMS layer also provides reusable safety and operations primitives around
+that core: command correlation, bounded event fanout, lifecycle snapshots,
+durable journaling, open-order reconciliation, disconnect and kill-switch
+policies, advanced risk helpers, position ledgers, order-type/TIF
+normalization, telemetry, deterministic sharding, token-bucket throttling,
+replay simulation, and provider adapter SDK helpers.
+
 ## Key Runtime Data Models (UML-style)
 
 ```mermaid
