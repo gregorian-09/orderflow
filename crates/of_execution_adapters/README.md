@@ -76,10 +76,13 @@ keeps the same low-allocation and FFI-safe identity discipline as the rest of
 the execution model.
 
 ```rust
+# #[cfg(feature = "fix")]
+# {
 use of_execution_adapters::fix::FixSessionConfig;
 
 let cfg = FixSessionConfig::new("FIX.4.4", "BUY_SIDE", "BROKER", 30)?;
 assert_eq!(cfg.heartbeat_secs, 30);
+# }
 # Ok::<(), of_execution_core::ExecutionCoreError>(())
 ```
 
