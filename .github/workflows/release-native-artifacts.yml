@@ -123,5 +123,3 @@ jobs:
         with:
           files: |
             release-assets/**/packages/*.tar.gz
-            release-assets/**/include/orderflow.h
-            release-assets/**/lib/*
