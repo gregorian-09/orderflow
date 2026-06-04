@@ -1,4 +1,5 @@
 #![allow(non_camel_case_types)]
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 #![doc = include_str!("../README.md")]
 
 mod support;
@@ -10,23 +11,123 @@ use std::sync::{
 };
 
 use of_adapters::{AdapterConfig, ProviderKind};
-use of_core::{
-    BookUpdate, DataQualityFlags, SignalState, SymbolId, TradePrint,
+use of_core::{AnalyticsConfig, BookUpdate, DataQualityFlags, SignalState, SymbolId, TradePrint};
+use of_execution::{
+    simulated_engine_with_routes, AllowAllRiskGate, ConcurrentExecutionConfig,
+    ConcurrentExecutionEngine, ConcurrentExecutionError, ExecutionCommand, ExecutionCommandKind,
+    ExecutionCommandReport, ExecutionEngine, ExecutionError, ExecutionEventBuffer, InMemoryJournal,
+    RouteConfig, SimExecutionAdapter,
+};
+use of_execution_core::{
+    AmendRequest, CancelRequest, ExecutionEvent, ExecutionSymbol, FixedAscii, OrderPrice, OrderQty,
+    OrderRequest, OrderSide, OrderState, OrderType, RiskLimits, StrategyId, TimeInForce,
+    VenueOrderId,
 };
 use of_runtime::{
     build_default_engine, load_engine_config_from_path, DefaultEngine, EngineConfig,
     ExternalFeedPolicy, RuntimeError,
 };
+#[cfg(feature = "tickbar")]
+use support::format_bar_series;
 use support::{
     action_from_ffi, dispatch_callbacks, dispatch_health_callbacks, escape_json,
-    format_analytics_snapshot, format_book_snapshot, format_derived_analytics_snapshot,
-    format_interval_candle_snapshot, format_session_candle_snapshot, non_empty_string, parse_csv,
-    side_from_ffi, symbol_from_ffi, symbol_from_ffi_ref, write_json_to_c_buffer,
+    format_acd_snapshot, format_agent_type_snapshot, format_almgren_chriss_snapshot,
+    format_amihud_snapshot, format_analytics_snapshot, format_book_analytics_snapshot,
+    format_book_event_analytics_snapshot, format_book_snapshot, format_cvd_enhancement_snapshot,
+    format_dark_lit_correlation_snapshot, format_dark_pool_snapshot,
+    format_derived_analytics_snapshot, format_futures_snapshot, format_hasbrouck_snapshot,
+    format_institutional_flow_snapshot, format_interval_candle_snapshot,
+    format_kinetic_energy_snapshot, format_kyle_lambda_snapshot, format_lob_feature_snapshot,
+    format_noise_snapshot, format_oi_analysis_snapshot, format_options_flow_snapshot,
+    format_pattern_snapshot, format_regime_snapshot, format_resiliency_snapshot,
+    format_session_candle_snapshot, format_spread_decomp_snapshot, format_vol_signature_snapshot,
+    format_volatility_snapshot, format_vpin_snapshot, non_empty_string, parse_csv, side_from_ffi,
+    symbol_from_ffi, symbol_from_ffi_ref, write_json_to_c_buffer,
 };
 
-
 const API_VERSION: u32 = 0x0001_0000;
+const EXECUTION_API_VERSION: u32 = 0x0001_0000;
 const BUILD_INFO: &[u8] = concat!("of_ffi_c/", env!("CARGO_PKG_VERSION"), "\0").as_bytes();
+const FFI_EVENT_BUFFER_CAP: usize = 32;
+
+/// Analytics configuration passed to [`of_engine_set_analytics_config`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct of_analytics_config_t {
+    /// Trade-size threshold for agent classification.
+    pub agent_small_trade_threshold: f64,
+    /// Large-trade threshold for institutional-flow classification.
+    pub institutional_trade_threshold: i64,
+    /// Window for cancel/arrival-rate computation.
+    pub cancel_arrival_window_ns: u64,
+    /// Volume per VPIN bucket.
+    pub vpin_volume_bucket: u32,
+    /// Max VPIN buckets.
+    pub vpin_max_buckets: u32,
+    /// Kyle's Lambda rolling window.
+    pub kyle_lambda_max_len: u32,
+    /// CVD enhancement rolling window.
+    pub cvd_max_len: u32,
+    /// Volatility estimator rolling window.
+    pub vol_estimator_max_len: u32,
+    /// Microstructure noise rolling window.
+    pub noise_max_len: u32,
+    /// Hasbrouck VAR rolling window.
+    pub hasbrouck_max_len: u32,
+    /// Almgren-Chriss rolling window.
+    pub almgren_chriss_max_len: u32,
+    /// ACD model rolling window.
+    pub acd_max_len: u32,
+    /// Volatility signature rolling window.
+    pub vol_signature_max_len: u32,
+    /// Agent detector rolling window.
+    pub agent_max_len: u32,
+    /// Minimum samples for agent classification.
+    pub agent_min_samples: u32,
+    /// Institutional-flow rolling window.
+    pub institutional_max_len: u32,
+    /// Resiliency tracker rolling window.
+    pub resiliency_max_len: u32,
+    /// Spread-decomposition rolling window.
+    pub spread_decomp_max_len: u32,
+    /// Regime detector rolling window.
+    pub regime_max_len: u32,
+    /// Book-event tracker capacity.
+    pub event_tracker_max_len: u32,
+    /// Spread tracker capacity.
+    pub spread_tracker_max_len: u32,
+    /// Default rolling window for trackers not otherwise specified.
+    pub default_max_len: u32,
+}
+
+impl From<of_analytics_config_t> for AnalyticsConfig {
+    fn from(value: of_analytics_config_t) -> Self {
+        Self {
+            vpin_volume_bucket: i64::from(value.vpin_volume_bucket),
+            vpin_max_buckets: value.vpin_max_buckets,
+            kyle_lambda_max_len: value.kyle_lambda_max_len,
+            cvd_max_len: value.cvd_max_len,
+            vol_estimator_max_len: value.vol_estimator_max_len,
+            noise_max_len: value.noise_max_len,
+            hasbrouck_max_len: value.hasbrouck_max_len,
+            almgren_chriss_max_len: value.almgren_chriss_max_len,
+            acd_max_len: value.acd_max_len,
+            vol_signature_max_len: value.vol_signature_max_len,
+            agent_max_len: value.agent_max_len,
+            agent_min_samples: value.agent_min_samples,
+            agent_small_trade_threshold: value.agent_small_trade_threshold,
+            institutional_trade_threshold: value.institutional_trade_threshold,
+            institutional_max_len: value.institutional_max_len,
+            resiliency_max_len: value.resiliency_max_len,
+            spread_decomp_max_len: value.spread_decomp_max_len,
+            regime_max_len: value.regime_max_len,
+            cancel_arrival_window_ns: value.cancel_arrival_window_ns,
+            event_tracker_max_len: value.event_tracker_max_len,
+            spread_tracker_max_len: value.spread_tracker_max_len,
+            default_max_len: value.default_max_len,
+        }
+    }
+}
 
 /// Engine configuration passed to [`of_engine_create`].
 #[repr(C)]
@@ -131,14 +232,264 @@ pub enum of_error_t {
     OF_ERR_BACKPRESSURE = 5,
     /// Data-quality policy rejection.
     OF_ERR_DATA_QUALITY = 6,
+    /// Pre-trade risk rejection.
+    OF_ERR_RISK = 7,
     /// Internal/unknown failure.
     OF_ERR_INTERNAL = 255,
+}
+
+/// Execution route and risk configuration.
+#[repr(C)]
+pub struct of_execution_route_config_t {
+    /// Route identifier.
+    pub route_id: *const c_char,
+    /// Account identifier.
+    pub account_id: *const c_char,
+    /// Venue identifier.
+    pub venue: *const c_char,
+    /// Instrument identifier.
+    pub instrument: *const c_char,
+    /// Non-zero enables the route.
+    pub enabled: u8,
+    /// Non-zero enables the kill switch.
+    pub kill_switch: u8,
+    /// Maximum order quantity; zero disables.
+    pub max_order_qty: i64,
+    /// Maximum order notional; zero disables.
+    pub max_order_notional: i64,
+    /// Maximum open orders; zero disables.
+    pub max_open_orders: u32,
+    /// Maximum open notional; zero disables.
+    pub max_open_notional: i64,
+    /// Maximum price distance from reference, in ticks; zero disables.
+    pub price_band_ticks: i64,
+}
+
+/// Execution order request.
+#[repr(C)]
+pub struct of_execution_order_request_t {
+    /// Client order id.
+    pub client_order_id: *const c_char,
+    /// Account id.
+    pub account_id: *const c_char,
+    /// Route id.
+    pub route_id: *const c_char,
+    /// Strategy id.
+    pub strategy_id: *const c_char,
+    /// Venue id.
+    pub venue: *const c_char,
+    /// Instrument id.
+    pub instrument: *const c_char,
+    /// Side (`1=Buy`, `2=Sell`).
+    pub side: u32,
+    /// Order type (`1=Market`, `2=Limit`, `3=Stop`, `4=StopLimit`).
+    pub order_type: u32,
+    /// Time-in-force (`1=Day`, `2=Gtc`, `3=Ioc`, `4=Fok`, `5=Gtd`).
+    pub time_in_force: u32,
+    /// Quantity in integer-normalized units.
+    pub quantity: i64,
+    /// Limit price in integer-normalized units, or zero.
+    pub limit_price: i64,
+    /// Stop price in integer-normalized units, or zero.
+    pub stop_price: i64,
+    /// Exchange timestamp in nanoseconds.
+    pub ts_exchange_ns: u64,
+    /// Local receive/create timestamp in nanoseconds.
+    pub ts_recv_ns: u64,
+}
+
+/// Execution cancel request.
+#[repr(C)]
+pub struct of_execution_cancel_request_t {
+    /// Client id for the cancel request.
+    pub client_order_id: *const c_char,
+    /// Last accepted client order id.
+    pub orig_client_order_id: *const c_char,
+    /// Venue order id, if known.
+    pub venue_order_id: *const c_char,
+    /// Account id.
+    pub account_id: *const c_char,
+    /// Route id.
+    pub route_id: *const c_char,
+    /// Venue id.
+    pub venue: *const c_char,
+    /// Instrument id.
+    pub instrument: *const c_char,
+    /// Local receive/create timestamp in nanoseconds.
+    pub ts_recv_ns: u64,
+}
+
+/// Execution amend request.
+#[repr(C)]
+pub struct of_execution_amend_request_t {
+    /// Client id for the replacement request.
+    pub client_order_id: *const c_char,
+    /// Last accepted client order id.
+    pub orig_client_order_id: *const c_char,
+    /// Venue order id, if known.
+    pub venue_order_id: *const c_char,
+    /// Account id.
+    pub account_id: *const c_char,
+    /// Route id.
+    pub route_id: *const c_char,
+    /// Venue id.
+    pub venue: *const c_char,
+    /// Instrument id.
+    pub instrument: *const c_char,
+    /// Replacement quantity.
+    pub quantity: i64,
+    /// Replacement limit price.
+    pub limit_price: i64,
+    /// Local receive/create timestamp in nanoseconds.
+    pub ts_recv_ns: u64,
+}
+
+/// Execution event returned by execution C APIs.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct of_execution_event_t {
+    /// Execution type.
+    pub exec_type: u32,
+    /// Current order status.
+    pub order_status: u32,
+    /// Client order id.
+    pub client_order_id: [c_char; 41],
+    /// Original client order id.
+    pub orig_client_order_id: [c_char; 41],
+    /// Venue order id.
+    pub venue_order_id: [c_char; 49],
+    /// Execution id.
+    pub execution_id: [c_char; 49],
+    /// Account id.
+    pub account_id: [c_char; 33],
+    /// Route id.
+    pub route_id: [c_char; 33],
+    /// Venue id.
+    pub venue: [c_char; 17],
+    /// Instrument id.
+    pub instrument: [c_char; 33],
+    /// Last fill quantity.
+    pub last_qty: i64,
+    /// Last fill price.
+    pub last_price: i64,
+    /// Cumulative quantity.
+    pub cumulative_qty: i64,
+    /// Leaves quantity.
+    pub leaves_qty: i64,
+    /// Average price.
+    pub average_price: i64,
+    /// Exchange timestamp in nanoseconds.
+    pub ts_exchange_ns: u64,
+    /// Local receive timestamp in nanoseconds.
+    pub ts_recv_ns: u64,
+    /// Structured reason code.
+    pub reason: u32,
+    /// Bounded diagnostic text.
+    pub text: [c_char; 129],
+}
+
+/// Execution order state returned by state query.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct of_execution_order_state_t {
+    /// Client order id.
+    pub client_order_id: [c_char; 41],
+    /// Venue order id.
+    pub venue_order_id: [c_char; 49],
+    /// Account id.
+    pub account_id: [c_char; 33],
+    /// Route id.
+    pub route_id: [c_char; 33],
+    /// Venue id.
+    pub venue: [c_char; 17],
+    /// Instrument id.
+    pub instrument: [c_char; 33],
+    /// Order status.
+    pub status: u32,
+    /// Original order quantity.
+    pub order_qty: i64,
+    /// Cumulative quantity.
+    pub cumulative_qty: i64,
+    /// Leaves quantity.
+    pub leaves_qty: i64,
+    /// Average price.
+    pub average_price: i64,
+    /// Last update timestamp in nanoseconds.
+    pub updated_ns: u64,
+}
+
+/// Execution health snapshot.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct of_execution_health_t {
+    /// Non-zero when connected.
+    pub connected: u8,
+    /// Non-zero when degraded.
+    pub degraded: u8,
+    /// Monotonic health sequence.
+    pub health_seq: u64,
+}
+
+/// Execution metrics snapshot.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct of_execution_metrics_t {
+    /// Submitted orders accepted locally.
+    pub submitted: u64,
+    /// Cancel commands accepted locally.
+    pub cancelled: u64,
+    /// Amend commands accepted locally.
+    pub amended: u64,
+    /// Events applied.
+    pub events_applied: u64,
+    /// Risk rejections.
+    pub risk_rejected: u64,
+    /// Adapter errors.
+    pub adapter_errors: u64,
+    /// Recovery events applied.
+    pub recovered: u64,
+}
+
+/// Concurrent execution worker configuration.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct of_execution_concurrent_config_t {
+    /// Bounded command queue capacity.
+    pub command_capacity: u32,
+    /// Bounded report queue capacity.
+    pub report_capacity: u32,
+    /// Per-command event buffer capacity.
+    pub event_buffer_capacity: u32,
+}
+
+/// Concurrent execution command report.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct of_execution_command_report_t {
+    /// Monotonic command sequence.
+    pub sequence: u64,
+    /// Command kind.
+    pub kind: u32,
+    /// Result code for the command.
+    pub result_code: i32,
+    /// Number of events copied to the caller event array.
+    pub event_count: u32,
 }
 
 /// Opaque engine handle.
 pub struct of_engine {
     inner: DefaultEngine,
     subs: Vec<SubscriptionRecord>,
+}
+
+/// Opaque execution engine handle.
+pub struct of_execution_engine {
+    inner: ExecutionEngine<SimExecutionAdapter, AllowAllRiskGate, InMemoryJournal>,
+}
+
+/// Opaque concurrent execution engine handle.
+pub struct of_execution_concurrent_engine {
+    inner: ConcurrentExecutionEngine,
 }
 
 /// Opaque subscription token.
@@ -191,6 +542,414 @@ pub extern "C" fn of_api_version() -> u32 {
 #[no_mangle]
 pub extern "C" fn of_build_info() -> *const c_char {
     BUILD_INFO.as_ptr() as *const c_char
+}
+
+/// Returns execution ABI version (`major << 16 | minor` style encoding).
+#[no_mangle]
+pub extern "C" fn of_execution_api_version() -> u32 {
+    EXECUTION_API_VERSION
+}
+
+/// Creates a simulated execution engine and stores it in `out_engine`.
+#[no_mangle]
+pub extern "C" fn of_execution_engine_create(
+    cfg: *const of_execution_route_config_t,
+    out_engine: *mut *mut of_execution_engine,
+) -> i32 {
+    if cfg.is_null() || out_engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let cfg = unsafe { &*cfg };
+    let route = match route_config_from_ffi(cfg) {
+        Ok(route) => route,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    create_execution_engine_from_routes(vec![route], out_engine)
+}
+
+/// Creates a simulated execution engine from multiple route configs.
+#[no_mangle]
+pub extern "C" fn of_execution_engine_create_multi(
+    routes: *const of_execution_route_config_t,
+    route_count: u32,
+    out_engine: *mut *mut of_execution_engine,
+) -> i32 {
+    if routes.is_null() || route_count == 0 || out_engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let route_configs = match route_configs_from_ffi(routes, route_count) {
+        Ok(routes) => routes,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    create_execution_engine_from_routes(route_configs, out_engine)
+}
+
+fn create_execution_engine_from_routes(
+    routes: Vec<RouteConfig>,
+    out_engine: *mut *mut of_execution_engine,
+) -> i32 {
+    let engine = Box::new(of_execution_engine {
+        inner: simulated_engine_with_routes(routes),
+    });
+    unsafe {
+        *out_engine = Box::into_raw(engine);
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Creates and starts a concurrent simulated execution engine.
+#[no_mangle]
+pub extern "C" fn of_execution_concurrent_engine_create_multi(
+    routes: *const of_execution_route_config_t,
+    route_count: u32,
+    config: *const of_execution_concurrent_config_t,
+    out_engine: *mut *mut of_execution_concurrent_engine,
+) -> i32 {
+    if routes.is_null() || route_count == 0 || out_engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let route_configs = match route_configs_from_ffi(routes, route_count) {
+        Ok(routes) => routes,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let cfg = concurrent_config_from_ffi(config);
+    let engine = simulated_engine_with_routes(route_configs);
+    let inner = match ConcurrentExecutionEngine::spawn(engine, cfg) {
+        Ok(engine) => engine,
+        Err(err) => return map_concurrent_execution_error(&err),
+    };
+    let wrapped = Box::new(of_execution_concurrent_engine { inner });
+    unsafe {
+        *out_engine = Box::into_raw(wrapped);
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Destroys a concurrent execution engine.
+#[no_mangle]
+pub extern "C" fn of_execution_concurrent_engine_destroy(
+    engine: *mut of_execution_concurrent_engine,
+) {
+    if engine.is_null() {
+        return;
+    }
+    unsafe {
+        let _ = Box::from_raw(engine);
+    }
+}
+
+/// Requests graceful concurrent execution worker stop.
+#[no_mangle]
+pub extern "C" fn of_execution_concurrent_stop(
+    engine: *mut of_execution_concurrent_engine,
+    out_sequence: *mut u64,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    match engine.inner.request_stop() {
+        Ok(sequence) => {
+            write_optional_u64(out_sequence, sequence);
+            of_error_t::OF_OK as i32
+        }
+        Err(err) => map_concurrent_execution_error(&err),
+    }
+}
+
+/// Sends a non-blocking submit command to a concurrent execution worker.
+#[no_mangle]
+pub extern "C" fn of_execution_concurrent_submit_order(
+    engine: *mut of_execution_concurrent_engine,
+    req: *const of_execution_order_request_t,
+    out_sequence: *mut u64,
+) -> i32 {
+    if engine.is_null() || req.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let req = match order_request_from_ffi(unsafe { &*req }) {
+        Ok(req) => req,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    send_concurrent_command(engine, ExecutionCommand::Submit(req), out_sequence)
+}
+
+/// Sends a non-blocking cancel command to a concurrent execution worker.
+#[no_mangle]
+pub extern "C" fn of_execution_concurrent_cancel_order(
+    engine: *mut of_execution_concurrent_engine,
+    req: *const of_execution_cancel_request_t,
+    out_sequence: *mut u64,
+) -> i32 {
+    if engine.is_null() || req.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let req = match cancel_request_from_ffi(unsafe { &*req }) {
+        Ok(req) => req,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    send_concurrent_command(engine, ExecutionCommand::Cancel(req), out_sequence)
+}
+
+/// Sends a non-blocking amend command to a concurrent execution worker.
+#[no_mangle]
+pub extern "C" fn of_execution_concurrent_amend_order(
+    engine: *mut of_execution_concurrent_engine,
+    req: *const of_execution_amend_request_t,
+    out_sequence: *mut u64,
+) -> i32 {
+    if engine.is_null() || req.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let req = match amend_request_from_ffi(unsafe { &*req }) {
+        Ok(req) => req,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    send_concurrent_command(engine, ExecutionCommand::Amend(req), out_sequence)
+}
+
+/// Sends a non-blocking poll command to a concurrent execution worker.
+#[no_mangle]
+pub extern "C" fn of_execution_concurrent_poll(
+    engine: *mut of_execution_concurrent_engine,
+    out_sequence: *mut u64,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    send_concurrent_command(engine, ExecutionCommand::Poll, out_sequence)
+}
+
+/// Attempts to receive one concurrent command report without blocking.
+#[no_mangle]
+pub extern "C" fn of_execution_concurrent_try_recv_report(
+    engine: *mut of_execution_concurrent_engine,
+    out_report: *mut of_execution_command_report_t,
+    out_events: *mut of_execution_event_t,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() || out_report.is_null() || inout_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    let report = match engine.inner.try_recv_report() {
+        Ok(report) => report,
+        Err(err) => return map_concurrent_execution_error(&err),
+    };
+    write_concurrent_report(&report, out_report, out_events, inout_len)
+}
+
+/// Starts an execution engine.
+#[no_mangle]
+pub extern "C" fn of_execution_engine_start(engine: *mut of_execution_engine) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    map_execution_result(engine.inner.start())
+}
+
+/// Stops an execution engine.
+#[no_mangle]
+pub extern "C" fn of_execution_engine_stop(engine: *mut of_execution_engine) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Destroys an execution engine.
+#[no_mangle]
+pub extern "C" fn of_execution_engine_destroy(engine: *mut of_execution_engine) {
+    if engine.is_null() {
+        return;
+    }
+    unsafe {
+        let _ = Box::from_raw(engine);
+    }
+}
+
+/// Submits an execution order.
+#[no_mangle]
+pub extern "C" fn of_execution_submit_order(
+    engine: *mut of_execution_engine,
+    req: *const of_execution_order_request_t,
+    out_events: *mut of_execution_event_t,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() || req.is_null() || inout_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let req = match order_request_from_ffi(unsafe { &*req }) {
+        Ok(req) => req,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let mut events = ExecutionEventBuffer::with_capacity(FFI_EVENT_BUFFER_CAP);
+    let rc = match engine.inner.submit(req, &mut events) {
+        Ok(()) => of_error_t::OF_OK as i32,
+        Err(err) => map_execution_error(&err),
+    };
+    let copy_rc = copy_execution_events(&events, out_events, inout_len);
+    if copy_rc != of_error_t::OF_OK as i32 {
+        copy_rc
+    } else {
+        rc
+    }
+}
+
+/// Cancels an execution order.
+#[no_mangle]
+pub extern "C" fn of_execution_cancel_order(
+    engine: *mut of_execution_engine,
+    req: *const of_execution_cancel_request_t,
+    out_events: *mut of_execution_event_t,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() || req.is_null() || inout_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let req = match cancel_request_from_ffi(unsafe { &*req }) {
+        Ok(req) => req,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let mut events = ExecutionEventBuffer::with_capacity(FFI_EVENT_BUFFER_CAP);
+    let rc = match engine.inner.cancel(req, &mut events) {
+        Ok(()) => of_error_t::OF_OK as i32,
+        Err(err) => map_execution_error(&err),
+    };
+    let copy_rc = copy_execution_events(&events, out_events, inout_len);
+    if copy_rc != of_error_t::OF_OK as i32 {
+        copy_rc
+    } else {
+        rc
+    }
+}
+
+/// Amends an execution order.
+#[no_mangle]
+pub extern "C" fn of_execution_amend_order(
+    engine: *mut of_execution_engine,
+    req: *const of_execution_amend_request_t,
+    out_events: *mut of_execution_event_t,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() || req.is_null() || inout_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let req = match amend_request_from_ffi(unsafe { &*req }) {
+        Ok(req) => req,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let mut events = ExecutionEventBuffer::with_capacity(FFI_EVENT_BUFFER_CAP);
+    let rc = match engine.inner.amend(req, &mut events) {
+        Ok(()) => of_error_t::OF_OK as i32,
+        Err(err) => map_execution_error(&err),
+    };
+    let copy_rc = copy_execution_events(&events, out_events, inout_len);
+    if copy_rc != of_error_t::OF_OK as i32 {
+        copy_rc
+    } else {
+        rc
+    }
+}
+
+/// Polls execution events.
+#[no_mangle]
+pub extern "C" fn of_execution_poll(
+    engine: *mut of_execution_engine,
+    out_events: *mut of_execution_event_t,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() || inout_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    let mut events = ExecutionEventBuffer::with_capacity(FFI_EVENT_BUFFER_CAP);
+    let rc = match engine.inner.poll(&mut events) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(err) => map_execution_error(&err),
+    };
+    let copy_rc = copy_execution_events(&events, out_events, inout_len);
+    if copy_rc != of_error_t::OF_OK as i32 {
+        copy_rc
+    } else {
+        rc
+    }
+}
+
+/// Gets current order state for a client order id.
+#[no_mangle]
+pub extern "C" fn of_execution_get_order_state(
+    engine: *const of_execution_engine,
+    client_order_id: *const c_char,
+    out_state: *mut of_execution_order_state_t,
+) -> i32 {
+    if engine.is_null() || client_order_id.is_null() || out_state.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let id = match fixed_from_ptr::<40>(client_order_id) {
+        Ok(id) => id,
+        Err(_) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let engine = unsafe { &*engine };
+    let Some(state) = engine.inner.order_state(&id) else {
+        return of_error_t::OF_ERR_STATE as i32;
+    };
+    unsafe {
+        *out_state = order_state_to_ffi(&state);
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Gets execution health.
+#[no_mangle]
+pub extern "C" fn of_execution_health(
+    engine: *const of_execution_engine,
+    out_health: *mut of_execution_health_t,
+) -> i32 {
+    if engine.is_null() || out_health.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let health = unsafe { &*engine }.inner.health();
+    unsafe {
+        *out_health = of_execution_health_t {
+            connected: u8::from(health.connected),
+            degraded: u8::from(health.degraded),
+            health_seq: health.health_seq,
+        };
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Gets execution metrics.
+#[no_mangle]
+pub extern "C" fn of_execution_metrics(
+    engine: *const of_execution_engine,
+    out_metrics: *mut of_execution_metrics_t,
+) -> i32 {
+    if engine.is_null() || out_metrics.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let metrics = unsafe { &*engine }.inner.metrics();
+    unsafe {
+        *out_metrics = of_execution_metrics_t {
+            submitted: metrics.submitted,
+            cancelled: metrics.cancelled,
+            amended: metrics.amended,
+            events_applied: metrics.events_applied,
+            risk_rejected: metrics.risk_rejected,
+            adapter_errors: metrics.adapter_errors,
+            recovered: metrics.recovered,
+        };
+    }
+    of_error_t::OF_OK as i32
 }
 
 /// Creates a runtime engine and stores it in `out_engine`.
@@ -323,7 +1082,11 @@ pub extern "C" fn of_subscribe(
     };
 
     let engine = unsafe { &mut *engine };
-    if engine.inner.subscribe(symbol.clone(), depth_levels).is_err() {
+    if engine
+        .inner
+        .subscribe(symbol.clone(), depth_levels)
+        .is_err()
+    {
         return of_error_t::OF_ERR_STATE as i32;
     }
 
@@ -367,10 +1130,7 @@ pub extern "C" fn of_unsubscribe(sub: *mut of_subscription) -> i32 {
 
 /// Unsubscribes all active streams for a symbol on this engine.
 #[no_mangle]
-pub extern "C" fn of_unsubscribe_symbol(
-    engine: *mut of_engine,
-    symbol: *const of_symbol_t,
-) -> i32 {
+pub extern "C" fn of_unsubscribe_symbol(engine: *mut of_engine, symbol: *const of_symbol_t) -> i32 {
     if engine.is_null() || symbol.is_null() {
         return of_error_t::OF_ERR_INVALID_ARG as i32;
     }
@@ -589,6 +1349,501 @@ pub extern "C" fn of_get_book_snapshot(
     }
 }
 
+/// Writes current book analytics snapshot JSON into caller buffer.
+///
+/// Payload shape:
+/// ```json
+/// {"best_bid":...,"best_ask":...,"quoted_spread":...,"relative_spread_bps":...,
+///  "microprice":...,"bid_depth":...,"ask_depth":...,"depth_imbalance_bps":...}
+/// ```
+#[no_mangle]
+pub extern "C" fn of_get_book_analytics_snapshot(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+
+    let engine = unsafe { &mut *engine };
+    let payload = match engine.inner.book_analytics_snapshot(&symbol) {
+        Some(snap) => format_book_analytics_snapshot(&snap),
+        None => "{}".to_string(),
+    };
+
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Computes weighted average price for an order of `qty` and writes JSON result.
+///
+/// Payload: `{"price": N}` on success, `{}` if insufficient liquidity.
+/// Positive qty = buy (walks asks), negative qty = sell (walks bids).
+#[no_mangle]
+pub extern "C" fn of_compute_weighted_average_price(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    qty: i64,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+
+    let engine = unsafe { &mut *engine };
+    let payload = match engine.inner.weighted_average_price(&symbol, qty) {
+        Some(price) => format!("{{\"price\":{}}}", price),
+        None => "{}".to_string(),
+    };
+
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Computes depth slope for the first `levels` price levels and writes JSON result.
+///
+/// Payload: `{"slope": N.N}`. Returns `{"slope":0.0}` if book has fewer than 2 levels.
+#[no_mangle]
+pub extern "C" fn of_compute_depth_slope(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    levels: u32,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+
+    let engine = unsafe { &mut *engine };
+    let slope = engine.inner.depth_slope(&symbol, levels as usize);
+    let payload = format!("{{\"slope\":{:.4}}}", slope);
+
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes mid price as JSON: `{"mid": N}`, or `{}` if no book data.
+#[no_mangle]
+pub extern "C" fn of_get_mid_price(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let payload = match engine.inner.mid_price(&symbol) {
+        Some(mid) => format!("{{\"mid\":{}}}", mid),
+        None => "{}".to_string(),
+    };
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes last effective spread in bps as JSON: `{"bps": N}`, or `{}`.
+#[no_mangle]
+pub extern "C" fn of_get_effective_spread_bps(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let bps = engine.inner.effective_spread_bps(&symbol);
+    let payload = format!("{{\"bps\":{}}}", bps);
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes average half-spread cost over `window` trades: `{"bps": N}`.
+#[no_mangle]
+pub extern "C" fn of_get_half_spread_cost_bps(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    window: u32,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let bps = engine.inner.half_spread_cost_bps(&symbol, window as usize);
+    let payload = format!("{{\"bps\":{}}}", bps);
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes realised spread over `hold_ticks` ticks ago: `{"bps": N}`.
+#[no_mangle]
+pub extern "C" fn of_get_realised_spread_bps(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    hold_ticks: u32,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let bps = engine
+        .inner
+        .realised_spread_bps(&symbol, hold_ticks as usize);
+    let payload = format!("{{\"bps\":{}}}", bps);
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes book-event analytics snapshot JSON over `window_ns`.
+#[no_mangle]
+pub extern "C" fn of_get_book_event_analytics(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    window_ns: u64,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let snap = engine.inner.book_event_analytics(&symbol, window_ns);
+    let payload = format_book_event_analytics_snapshot(&snap);
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes resiliency snapshot JSON.
+#[no_mangle]
+pub extern "C" fn of_get_resiliency_snapshot(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let snap = engine.inner.resiliency_snapshot(&symbol);
+    let payload = format_resiliency_snapshot(&snap);
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes VPIN snapshot JSON.
+#[no_mangle]
+pub extern "C" fn of_get_vpin_snapshot(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let payload = format_vpin_snapshot(&engine.inner.vpin_snapshot(&symbol));
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes Kyle's Lambda snapshot JSON.
+#[no_mangle]
+pub extern "C" fn of_get_kyle_lambda_snapshot(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let payload = format_kyle_lambda_snapshot(&engine.inner.kyle_lambda_snapshot(&symbol));
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes Amihud illiquidity snapshot JSON.
+#[no_mangle]
+pub extern "C" fn of_get_amihud_snapshot(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let payload = format_amihud_snapshot(&engine.inner.amihud_snapshot(&symbol));
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes CVD enhancement snapshot JSON.
+#[no_mangle]
+pub extern "C" fn of_get_cvd_enhancement_snapshot(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let payload = format_cvd_enhancement_snapshot(&engine.inner.cvd_enhancement_snapshot(&symbol));
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Writes pattern detection snapshot JSON into caller buffer.
+#[no_mangle]
+pub extern "C" fn of_get_pattern_snapshot(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &mut *engine };
+    let payload = format_pattern_snapshot(&engine.inner.pattern_snapshot(&symbol));
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+macro_rules! snapshot_c_abi {
+    ($name:ident, $format:ident, $method:ident) => {
+        /// Writes an analytics snapshot JSON payload into the caller-provided buffer.
+        #[no_mangle]
+        pub extern "C" fn $name(
+            engine: *mut of_engine,
+            symbol: *const of_symbol_t,
+            out_buf: *mut c_void,
+            inout_len: *mut u32,
+        ) -> i32 {
+            if engine.is_null() {
+                return of_error_t::OF_ERR_INVALID_ARG as i32;
+            }
+            let (symbol, _) = match symbol_from_ffi(symbol) {
+                Ok(v) => v,
+                Err(e) => return e as i32,
+            };
+            let engine = unsafe { &mut *engine };
+            let payload = $format(&engine.inner.$method(&symbol));
+            match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+                Ok(_) => of_error_t::OF_OK as i32,
+                Err(e) => e as i32,
+            }
+        }
+    };
+}
+
+snapshot_c_abi!(
+    of_get_volatility_snapshot,
+    format_volatility_snapshot,
+    volatility_snapshot
+);
+snapshot_c_abi!(of_get_noise_snapshot, format_noise_snapshot, noise_snapshot);
+snapshot_c_abi!(
+    of_get_hasbrouck_snapshot,
+    format_hasbrouck_snapshot,
+    hasbrouck_snapshot
+);
+snapshot_c_abi!(
+    of_get_almgren_chriss_snapshot,
+    format_almgren_chriss_snapshot,
+    almgren_chriss_snapshot
+);
+snapshot_c_abi!(
+    of_get_spread_decomp_snapshot,
+    format_spread_decomp_snapshot,
+    spread_decomp_snapshot
+);
+snapshot_c_abi!(of_get_acd_snapshot, format_acd_snapshot, acd_snapshot);
+snapshot_c_abi!(
+    of_get_regime_snapshot,
+    format_regime_snapshot,
+    regime_snapshot
+);
+snapshot_c_abi!(
+    of_get_kinetic_energy_snapshot,
+    format_kinetic_energy_snapshot,
+    kinetic_energy_snapshot
+);
+snapshot_c_abi!(
+    of_get_dark_pool_snapshot,
+    format_dark_pool_snapshot,
+    dark_pool_snapshot
+);
+snapshot_c_abi!(
+    of_get_options_flow_snapshot,
+    format_options_flow_snapshot,
+    options_flow_snapshot
+);
+snapshot_c_abi!(
+    of_get_futures_snapshot,
+    format_futures_snapshot,
+    futures_snapshot
+);
+snapshot_c_abi!(
+    of_get_vol_signature_snapshot,
+    format_vol_signature_snapshot,
+    vol_signature_snapshot
+);
+snapshot_c_abi!(
+    of_get_agent_type_snapshot,
+    format_agent_type_snapshot,
+    agent_type_snapshot
+);
+snapshot_c_abi!(
+    of_get_dark_lit_correlation_snapshot,
+    format_dark_lit_correlation_snapshot,
+    dark_lit_correlation_snapshot
+);
+snapshot_c_abi!(
+    of_get_institutional_flow_snapshot,
+    format_institutional_flow_snapshot,
+    institutional_flow_snapshot
+);
+snapshot_c_abi!(
+    of_get_oi_analysis_snapshot,
+    format_oi_analysis_snapshot,
+    oi_analysis_snapshot
+);
+
+/// Computes LOB feature snapshot from engine book state and caller-provided flow metrics.
+#[no_mangle]
+pub extern "C" fn of_compute_lob_features(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    trade_imbalance: f64,
+    cancel_rate: f64,
+    arrival_rate: f64,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+    let engine = unsafe { &*engine };
+    let payload = format_lob_feature_snapshot(&engine.inner.lob_features(
+        &symbol,
+        trade_imbalance,
+        cancel_rate,
+        arrival_rate,
+    ));
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
 /// Writes current analytics snapshot JSON into caller buffer.
 #[no_mangle]
 pub extern "C" fn of_get_analytics_snapshot(
@@ -706,6 +1961,87 @@ pub extern "C" fn of_get_interval_candle_snapshot(
     }
 }
 
+/// Sets the tickbar aggregation interval for new per-symbol accumulators.
+///
+/// A positive `interval_ns` enables tickbar aggregation at the given interval for
+/// symbols whose accumulators are created after this call. Zero or negative values
+/// disable tickbar aggregation for future accumulators. Existing accumulators
+/// are not affected.
+///
+/// Requires the `tickbar` feature to be enabled at build time.
+#[cfg(feature = "tickbar")]
+#[no_mangle]
+pub extern "C" fn of_engine_set_tickbar_interval(engine: *mut of_engine, interval_ns: i64) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    if interval_ns > 0 {
+        engine.inner.set_tickbar_interval(Some(interval_ns));
+    } else {
+        engine.inner.set_tickbar_interval(None);
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Reports unsupported tickbar configuration when the native library is built without `tickbar`.
+#[cfg(not(feature = "tickbar"))]
+#[no_mangle]
+pub extern "C" fn of_engine_set_tickbar_interval(engine: *mut of_engine, _interval_ns: i64) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    of_error_t::OF_ERR_STATE as i32
+}
+
+/// Writes completed bar series JSON array into caller buffer.
+///
+/// Requires the `tickbar` feature to be enabled at build time.
+/// Returns `OF_ERR_STATE` when tickbar aggregation is not configured for the symbol.
+#[cfg(feature = "tickbar")]
+#[no_mangle]
+pub extern "C" fn of_get_bar_series(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+
+    let engine = unsafe { &mut *engine };
+    let payload = match engine.inner.bar_series(&symbol) {
+        Some(bars) => format_bar_series(&bars),
+        None => "[]".to_string(),
+    };
+
+    match write_json_to_c_buffer(&payload, out_buf, inout_len) {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(e) => e as i32,
+    }
+}
+
+/// Reports unsupported tickbar bar retrieval when the native library is built without `tickbar`.
+#[cfg(not(feature = "tickbar"))]
+#[no_mangle]
+pub extern "C" fn of_get_bar_series(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_buf: *mut c_void,
+    inout_len: *mut u32,
+) -> i32 {
+    if engine.is_null() || symbol.is_null() || out_buf.is_null() || inout_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    of_error_t::OF_ERR_STATE as i32
+}
+
 /// Writes current signal snapshot JSON into caller buffer.
 #[no_mangle]
 pub extern "C" fn of_get_signal_snapshot(
@@ -811,6 +2147,28 @@ pub extern "C" fn of_engine_poll_once(engine: *mut of_engine, quality_flags: u32
     }
 }
 
+/// Override analytics thresholds and buffer sizes at runtime.
+/// Pass a pointer to a populated analytics config. Passing NULL resets to defaults.
+#[no_mangle]
+pub extern "C" fn of_engine_set_analytics_config(
+    engine: *mut of_engine,
+    config: *const of_analytics_config_t,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    if config.is_null() {
+        engine
+            .inner
+            .set_analytics_config(AnalyticsConfig::default());
+    } else {
+        let cfg = unsafe { *config };
+        engine.inner.set_analytics_config(cfg.into());
+    }
+    of_error_t::OF_OK as i32
+}
+
 fn map_runtime_error(err: &RuntimeError) -> i32 {
     if err.is_backpressure() {
         of_error_t::OF_ERR_BACKPRESSURE as i32
@@ -819,6 +2177,318 @@ fn map_runtime_error(err: &RuntimeError) -> i32 {
     }
 }
 
+fn map_execution_result(result: Result<(), ExecutionError>) -> i32 {
+    match result {
+        Ok(()) => of_error_t::OF_OK as i32,
+        Err(err) => map_execution_error(&err),
+    }
+}
+
+fn map_execution_error(err: &ExecutionError) -> i32 {
+    match err {
+        ExecutionError::RiskRejected(_) => of_error_t::OF_ERR_RISK as i32,
+        ExecutionError::BufferFull => of_error_t::OF_ERR_BACKPRESSURE as i32,
+        ExecutionError::Disconnected | ExecutionError::RouteNotFound => {
+            of_error_t::OF_ERR_STATE as i32
+        }
+        ExecutionError::Core(_) => of_error_t::OF_ERR_INVALID_ARG as i32,
+        ExecutionError::Adapter(_) | ExecutionError::Journal(_) => {
+            of_error_t::OF_ERR_INTERNAL as i32
+        }
+    }
+}
+
+fn map_concurrent_execution_error(err: &ConcurrentExecutionError) -> i32 {
+    match err {
+        ConcurrentExecutionError::Backpressure => of_error_t::OF_ERR_BACKPRESSURE as i32,
+        ConcurrentExecutionError::Stopped | ConcurrentExecutionError::WorkerPanic => {
+            of_error_t::OF_ERR_STATE as i32
+        }
+        ConcurrentExecutionError::Execution(err) => map_execution_error(err),
+    }
+}
+
+fn route_configs_from_ffi(
+    routes: *const of_execution_route_config_t,
+    route_count: u32,
+) -> Result<Vec<RouteConfig>, ()> {
+    let routes = unsafe { std::slice::from_raw_parts(routes, route_count as usize) };
+    let mut route_configs = Vec::with_capacity(routes.len());
+    for route in routes {
+        route_configs.push(route_config_from_ffi(route)?);
+    }
+    Ok(route_configs)
+}
+
+fn concurrent_config_from_ffi(
+    config: *const of_execution_concurrent_config_t,
+) -> ConcurrentExecutionConfig {
+    if config.is_null() {
+        return ConcurrentExecutionConfig::default();
+    }
+    let config = unsafe { *config };
+    ConcurrentExecutionConfig {
+        command_capacity: nonzero_usize(config.command_capacity, 1024),
+        report_capacity: nonzero_usize(config.report_capacity, 1024),
+        event_buffer_capacity: nonzero_usize(config.event_buffer_capacity, FFI_EVENT_BUFFER_CAP),
+    }
+}
+
+fn nonzero_usize(value: u32, default_value: usize) -> usize {
+    if value == 0 {
+        default_value
+    } else {
+        value as usize
+    }
+}
+
+fn send_concurrent_command(
+    engine: &mut of_execution_concurrent_engine,
+    command: ExecutionCommand,
+    out_sequence: *mut u64,
+) -> i32 {
+    match engine.inner.try_send(command) {
+        Ok(sequence) => {
+            write_optional_u64(out_sequence, sequence);
+            of_error_t::OF_OK as i32
+        }
+        Err(err) => map_concurrent_execution_error(&err),
+    }
+}
+
+fn write_concurrent_report(
+    report: &ExecutionCommandReport,
+    out_report: *mut of_execution_command_report_t,
+    out_events: *mut of_execution_event_t,
+    inout_len: *mut u32,
+) -> i32 {
+    let copy_rc = copy_execution_events(&report.events, out_events, inout_len);
+    let event_count = unsafe { *inout_len };
+    unsafe {
+        *out_report = of_execution_command_report_t {
+            sequence: report.sequence,
+            kind: execution_command_kind_to_u32(report.kind),
+            result_code: match &report.result {
+                Ok(_) => of_error_t::OF_OK as i32,
+                Err(err) => map_execution_error(err),
+            },
+            event_count,
+        };
+    }
+    copy_rc
+}
+
+fn execution_command_kind_to_u32(kind: ExecutionCommandKind) -> u32 {
+    match kind {
+        ExecutionCommandKind::Submit => 1,
+        ExecutionCommandKind::Cancel => 2,
+        ExecutionCommandKind::Amend => 3,
+        ExecutionCommandKind::Poll => 4,
+        ExecutionCommandKind::RecoverOpenOrders => 5,
+        ExecutionCommandKind::Stop => 6,
+    }
+}
+
+fn write_optional_u64(ptr: *mut u64, value: u64) {
+    if !ptr.is_null() {
+        unsafe {
+            *ptr = value;
+        }
+    }
+}
+
+fn fixed_from_ptr<const N: usize>(ptr: *const c_char) -> Result<FixedAscii<N>, ()> {
+    let value = non_empty_string(ptr).ok_or(())?;
+    FixedAscii::new(&value).map_err(|_| ())
+}
+
+fn route_config_from_ffi(cfg: &of_execution_route_config_t) -> Result<RouteConfig, ()> {
+    Ok(RouteConfig {
+        route_id: fixed_from_ptr::<32>(cfg.route_id)?,
+        account_id: fixed_from_ptr::<32>(cfg.account_id)?,
+        symbol: ExecutionSymbol {
+            venue: fixed_from_ptr::<16>(cfg.venue)?,
+            instrument: fixed_from_ptr::<32>(cfg.instrument)?,
+        },
+        enabled: cfg.enabled != 0,
+        risk_limits: RiskLimits {
+            kill_switch: cfg.kill_switch != 0,
+            max_order_qty: cfg.max_order_qty,
+            max_order_notional: i128::from(cfg.max_order_notional),
+            max_open_orders: cfg.max_open_orders,
+            max_open_notional: i128::from(cfg.max_open_notional),
+            price_band_ticks: cfg.price_band_ticks,
+        },
+    })
+}
+
+fn order_request_from_ffi(req: &of_execution_order_request_t) -> Result<OrderRequest, ()> {
+    Ok(OrderRequest {
+        client_order_id: fixed_from_ptr::<40>(req.client_order_id)?,
+        account_id: fixed_from_ptr::<32>(req.account_id)?,
+        route_id: fixed_from_ptr::<32>(req.route_id)?,
+        strategy_id: fixed_from_ptr::<32>(req.strategy_id).unwrap_or_else(|_| StrategyId::empty()),
+        symbol: ExecutionSymbol {
+            venue: fixed_from_ptr::<16>(req.venue)?,
+            instrument: fixed_from_ptr::<32>(req.instrument)?,
+        },
+        side: side_from_execution_ffi(req.side)?,
+        order_type: order_type_from_ffi(req.order_type)?,
+        time_in_force: tif_from_ffi(req.time_in_force)?,
+        quantity: OrderQty(req.quantity),
+        limit_price: OrderPrice(req.limit_price),
+        stop_price: OrderPrice(req.stop_price),
+        ts_exchange_ns: req.ts_exchange_ns,
+        ts_recv_ns: req.ts_recv_ns,
+    })
+}
+
+fn cancel_request_from_ffi(req: &of_execution_cancel_request_t) -> Result<CancelRequest, ()> {
+    Ok(CancelRequest {
+        client_order_id: fixed_from_ptr::<40>(req.client_order_id)?,
+        orig_client_order_id: fixed_from_ptr::<40>(req.orig_client_order_id)?,
+        venue_order_id: fixed_from_ptr::<48>(req.venue_order_id)
+            .unwrap_or_else(|_| VenueOrderId::empty()),
+        account_id: fixed_from_ptr::<32>(req.account_id)?,
+        route_id: fixed_from_ptr::<32>(req.route_id)?,
+        symbol: ExecutionSymbol {
+            venue: fixed_from_ptr::<16>(req.venue)?,
+            instrument: fixed_from_ptr::<32>(req.instrument)?,
+        },
+        ts_recv_ns: req.ts_recv_ns,
+    })
+}
+
+fn amend_request_from_ffi(req: &of_execution_amend_request_t) -> Result<AmendRequest, ()> {
+    Ok(AmendRequest {
+        client_order_id: fixed_from_ptr::<40>(req.client_order_id)?,
+        orig_client_order_id: fixed_from_ptr::<40>(req.orig_client_order_id)?,
+        venue_order_id: fixed_from_ptr::<48>(req.venue_order_id)
+            .unwrap_or_else(|_| VenueOrderId::empty()),
+        account_id: fixed_from_ptr::<32>(req.account_id)?,
+        route_id: fixed_from_ptr::<32>(req.route_id)?,
+        symbol: ExecutionSymbol {
+            venue: fixed_from_ptr::<16>(req.venue)?,
+            instrument: fixed_from_ptr::<32>(req.instrument)?,
+        },
+        quantity: OrderQty(req.quantity),
+        limit_price: OrderPrice(req.limit_price),
+        ts_recv_ns: req.ts_recv_ns,
+    })
+}
+
+fn side_from_execution_ffi(value: u32) -> Result<OrderSide, ()> {
+    match value {
+        1 => Ok(OrderSide::Buy),
+        2 => Ok(OrderSide::Sell),
+        _ => Err(()),
+    }
+}
+
+fn order_type_from_ffi(value: u32) -> Result<OrderType, ()> {
+    match value {
+        1 => Ok(OrderType::Market),
+        2 => Ok(OrderType::Limit),
+        3 => Ok(OrderType::Stop),
+        4 => Ok(OrderType::StopLimit),
+        _ => Err(()),
+    }
+}
+
+fn tif_from_ffi(value: u32) -> Result<TimeInForce, ()> {
+    match value {
+        1 => Ok(TimeInForce::Day),
+        2 => Ok(TimeInForce::Gtc),
+        3 => Ok(TimeInForce::Ioc),
+        4 => Ok(TimeInForce::Fok),
+        5 => Ok(TimeInForce::Gtd),
+        _ => Err(()),
+    }
+}
+
+fn copy_execution_events(
+    events: &ExecutionEventBuffer,
+    out_events: *mut of_execution_event_t,
+    inout_len: *mut u32,
+) -> i32 {
+    if inout_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let capacity = unsafe { *inout_len as usize };
+    let needed = events.len();
+    unsafe {
+        *inout_len = needed as u32;
+    }
+    if needed == 0 {
+        return of_error_t::OF_OK as i32;
+    }
+    if out_events.is_null() {
+        return of_error_t::OF_ERR_BACKPRESSURE as i32;
+    }
+    if capacity < needed {
+        return of_error_t::OF_ERR_BACKPRESSURE as i32;
+    }
+    for (idx, event) in events.as_slice().iter().enumerate() {
+        unsafe {
+            *out_events.add(idx) = event_to_ffi(event);
+        }
+    }
+    of_error_t::OF_OK as i32
+}
+
+fn event_to_ffi(event: &ExecutionEvent) -> of_execution_event_t {
+    of_execution_event_t {
+        exec_type: event.exec_type as u32,
+        order_status: event.order_status as u32,
+        client_order_id: cstr_array(event.client_order_id.as_str()),
+        orig_client_order_id: cstr_array(event.orig_client_order_id.as_str()),
+        venue_order_id: cstr_array(event.venue_order_id.as_str()),
+        execution_id: cstr_array(event.execution_id.as_str()),
+        account_id: cstr_array(event.account_id.as_str()),
+        route_id: cstr_array(event.route_id.as_str()),
+        venue: cstr_array(event.symbol.venue.as_str()),
+        instrument: cstr_array(event.symbol.instrument.as_str()),
+        last_qty: event.last_qty.0,
+        last_price: event.last_price.0,
+        cumulative_qty: event.cumulative_qty.0,
+        leaves_qty: event.leaves_qty.0,
+        average_price: event.average_price.0,
+        ts_exchange_ns: event.ts_exchange_ns,
+        ts_recv_ns: event.ts_recv_ns,
+        reason: event.reason as u32,
+        text: cstr_array(event.text.as_str()),
+    }
+}
+
+fn order_state_to_ffi(state: &OrderState) -> of_execution_order_state_t {
+    of_execution_order_state_t {
+        client_order_id: cstr_array(state.client_order_id.as_str()),
+        venue_order_id: cstr_array(state.venue_order_id.as_str()),
+        account_id: cstr_array(state.account_id.as_str()),
+        route_id: cstr_array(state.route_id.as_str()),
+        venue: cstr_array(state.symbol.venue.as_str()),
+        instrument: cstr_array(state.symbol.instrument.as_str()),
+        status: state.status as u32,
+        order_qty: state.order_qty.0,
+        cumulative_qty: state.cumulative_qty.0,
+        leaves_qty: state.leaves_qty.0,
+        average_price: state.average_price.0,
+        updated_ns: state.updated_ns,
+    }
+}
+
+fn cstr_array<const N: usize>(value: &str) -> [c_char; N] {
+    let mut out = [0 as c_char; N];
+    if N == 0 {
+        return out;
+    }
+    let bytes = value.as_bytes();
+    let max = bytes.len().min(N - 1);
+    for idx in 0..max {
+        out[idx] = bytes[idx] as c_char;
+    }
+    out
+}
 
 #[cfg(test)]
 include!("tests.rs");

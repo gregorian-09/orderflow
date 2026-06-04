@@ -11,25 +11,36 @@ It is the native interface used by Python (`ctypes`), Java (JNA), and any C-comp
 - Polling and snapshots: `of_engine_poll_once`, `of_get_book_snapshot`, `of_get_analytics_snapshot`, `of_get_derived_analytics_snapshot`, `of_get_session_candle_snapshot`, `of_get_interval_candle_snapshot`, `of_get_signal_snapshot`
 - Metrics and memory management: `of_get_metrics_json`, `of_string_free`
 
-## New In 0.3.0
+## New In 0.4.0
 
-The C ABI remains stable in `0.3.0`. Existing exported symbols are unchanged,
-while `of_get_metrics_json(...)` returns additive runtime fields for
-backpressure, aggregate adapter health, and circuit-breaker state.
+`0.4.0` keeps all existing analytics/runtime C ABI symbols valid and adds a
+separate execution ABI family. Existing hosts that only call
+`of_engine_create`, subscribe, poll, ingest, and read snapshots do not need to
+change those call sites.
 
-## New In 0.2.0
+New execution ABI concepts:
 
-Relative to the `0.1.x` line, the C ABI now exposes:
+- `of_execution_engine_t`: synchronous simulated execution handle
+- `of_execution_engine_create` and `of_execution_engine_create_multi`:
+  single-route and multi-route construction
+- `of_execution_submit_order`, `of_execution_cancel_order`,
+  `of_execution_amend_order`, and `of_execution_poll`
+- `of_execution_order_state`, `of_execution_health`, and
+  `of_execution_metrics`
+- `of_execution_concurrent_engine_t`: bounded worker for many command
+  producers and one deterministic execution owner
+- `of_execution_command_report_t`: typed command completion report with a
+  caller-owned event buffer
 
-- `of_get_book_snapshot(...)`
-- `of_get_derived_analytics_snapshot(...)`
-- `of_get_session_candle_snapshot(...)`
-- `of_get_interval_candle_snapshot(...)`
-- `BOOK_SNAPSHOT` callback stream support
-- `DERIVED_ANALYTICS` callback stream support
+The execution ABI is additive and intentionally separate from the market-data
+engine ABI. That separation lets C, Python, Java, and other FFI users adopt OMS
+workflows without destabilizing existing analytics deployments.
 
-These are additive ABI extensions; existing lifecycle and polling calls remain
-valid.
+Version policy:
+
+- `of_ffi_c` publishes as `0.4.0` with the established native library line;
+- the Rust execution crates behind the ABI publish as `0.1.0`;
+- native headers and libraries should still be upgraded together.
 
 ## Public ABI Inventory
 

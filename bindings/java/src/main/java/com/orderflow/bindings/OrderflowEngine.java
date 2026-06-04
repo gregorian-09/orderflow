@@ -207,6 +207,25 @@ public final class OrderflowEngine implements AutoCloseable {
                 "of_external_set_reconnecting");
     }
 
+    /**
+     * Sets the tickbar aggregation interval for new per-symbol accumulators.
+     *
+     * <p>A positive {@code intervalNs} enables tickbar aggregation at the
+     * given interval for symbols whose accumulators are created after this
+     * call. Zero or negative values disable tickbar aggregation for future
+     * accumulators. Existing accumulators are not affected.
+     *
+     * <p>Requires the native library to be built with the {@code tickbar} feature.
+     *
+     * @param intervalNs aggregation interval in nanoseconds (0 or negative to disable)
+     */
+    public void setTickbarInterval(long intervalNs) {
+        requireEngine();
+        check(
+                nativeLib.of_engine_set_tickbar_interval(engine, intervalNs),
+                "of_engine_set_tickbar_interval");
+    }
+
     /** Re-evaluates external-feed health without ingesting new events. */
     public void externalHealthTick() {
         requireEngine();
@@ -333,6 +352,16 @@ public final class OrderflowEngine implements AutoCloseable {
     }
 
     /**
+     * Returns current book analytics snapshot (spread, depth, imbalance, microprice) as JSON string.
+     *
+     * @param symbol target symbol
+     * @return JSON payload with computed book metrics
+     */
+    public String bookAnalyticsSnapshot(Symbol symbol) {
+        return snapshot(symbol, SnapshotKind.BOOK_ANALYTICS);
+    }
+
+    /**
      * Returns current analytics snapshot as JSON string.
      *
      * @param symbol target symbol
@@ -381,6 +410,19 @@ public final class OrderflowEngine implements AutoCloseable {
      */
     public String signalSnapshot(Symbol symbol) {
         return snapshot(symbol, SnapshotKind.SIGNAL);
+    }
+
+    /**
+     * Returns completed bar series JSON array for a symbol.
+     *
+     * <p>Requires the native library to be built with the {@code tickbar} feature.
+     * Returns {@code []} when tickbar aggregation is not configured for the symbol.
+     *
+     * @param symbol target symbol
+     * @return JSON array of bar objects, each with timestamp_ns, open, high, low, close, volume, tick_count, vwap
+     */
+    public String barSeries(Symbol symbol) {
+        return snapshot(symbol, SnapshotKind.BAR_SERIES);
     }
 
     /**
@@ -444,11 +486,37 @@ public final class OrderflowEngine implements AutoCloseable {
             int rc;
             switch (kind) {
                 case BOOK -> rc = nativeLib.of_get_book_snapshot(engine, sym, buffer, length);
+                case BOOK_ANALYTICS -> rc = nativeLib.of_get_book_analytics_snapshot(engine, sym, buffer, length);
                 case ANALYTICS -> rc = nativeLib.of_get_analytics_snapshot(engine, sym, buffer, length);
                 case DERIVED_ANALYTICS -> rc = nativeLib.of_get_derived_analytics_snapshot(engine, sym, buffer, length);
                 case SESSION_CANDLE -> rc = nativeLib.of_get_session_candle_snapshot(engine, sym, buffer, length);
                 case INTERVAL_CANDLE -> rc = nativeLib.of_get_interval_candle_snapshot(engine, sym, windowNs, buffer, length);
                 case SIGNAL -> rc = nativeLib.of_get_signal_snapshot(engine, sym, buffer, length);
+                case BAR_SERIES -> rc = nativeLib.of_get_bar_series(engine, sym, buffer, length);
+                case MID_PRICE -> rc = nativeLib.of_get_mid_price(engine, sym, buffer, length);
+                case EFFECTIVE_SPREAD -> rc = nativeLib.of_get_effective_spread_bps(engine, sym, buffer, length);
+                case RESILIENCY -> rc = nativeLib.of_get_resiliency_snapshot(engine, sym, buffer, length);
+                case VPIN -> rc = nativeLib.of_get_vpin_snapshot(engine, sym, buffer, length);
+                case KYLE_LAMBDA -> rc = nativeLib.of_get_kyle_lambda_snapshot(engine, sym, buffer, length);
+                case AMIHUD -> rc = nativeLib.of_get_amihud_snapshot(engine, sym, buffer, length);
+                case CVD_ENHANCEMENT -> rc = nativeLib.of_get_cvd_enhancement_snapshot(engine, sym, buffer, length);
+                case PATTERN -> rc = nativeLib.of_get_pattern_snapshot(engine, sym, buffer, length);
+                case VOLATILITY -> rc = nativeLib.of_get_volatility_snapshot(engine, sym, buffer, length);
+                case NOISE -> rc = nativeLib.of_get_noise_snapshot(engine, sym, buffer, length);
+                case HASBROUCK -> rc = nativeLib.of_get_hasbrouck_snapshot(engine, sym, buffer, length);
+                case ALMGREN_CHRISS -> rc = nativeLib.of_get_almgren_chriss_snapshot(engine, sym, buffer, length);
+                case SPREAD_DECOMP -> rc = nativeLib.of_get_spread_decomp_snapshot(engine, sym, buffer, length);
+                case ACD -> rc = nativeLib.of_get_acd_snapshot(engine, sym, buffer, length);
+                case REGIME -> rc = nativeLib.of_get_regime_snapshot(engine, sym, buffer, length);
+                case KINETIC_ENERGY -> rc = nativeLib.of_get_kinetic_energy_snapshot(engine, sym, buffer, length);
+                case DARK_POOL -> rc = nativeLib.of_get_dark_pool_snapshot(engine, sym, buffer, length);
+                case OPTIONS_FLOW -> rc = nativeLib.of_get_options_flow_snapshot(engine, sym, buffer, length);
+                case FUTURES -> rc = nativeLib.of_get_futures_snapshot(engine, sym, buffer, length);
+                case VOL_SIGNATURE -> rc = nativeLib.of_get_vol_signature_snapshot(engine, sym, buffer, length);
+                case AGENT_TYPE -> rc = nativeLib.of_get_agent_type_snapshot(engine, sym, buffer, length);
+                case DARK_LIT_CORRELATION -> rc = nativeLib.of_get_dark_lit_correlation_snapshot(engine, sym, buffer, length);
+                case INSTITUTIONAL_FLOW -> rc = nativeLib.of_get_institutional_flow_snapshot(engine, sym, buffer, length);
+                case OI_ANALYSIS -> rc = nativeLib.of_get_oi_analysis_snapshot(engine, sym, buffer, length);
                 default -> throw new OrderflowException("unknown snapshot kind");
             }
 
@@ -506,12 +574,177 @@ public final class OrderflowEngine implements AutoCloseable {
         return "target/debug/" + mapped;
     }
 
+    private String parameterizedQuery(Symbol symbol, QueryKind kind, long param) {
+        requireEngine();
+        OfSymbol sym = toNativeSymbol(symbol);
+        sym.write();
+
+        int capacity = 4096;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            Memory buffer = new Memory(capacity);
+            IntByReference length = new IntByReference(capacity);
+
+            int rc;
+            switch (kind) {
+                case WEIGHTED_AVERAGE_PRICE -> rc = nativeLib.of_compute_weighted_average_price(engine, sym, param, buffer, length);
+                case DEPTH_SLOPE -> rc = nativeLib.of_compute_depth_slope(engine, sym, (int) param, buffer, length);
+                case HALF_SPREAD_COST -> rc = nativeLib.of_get_half_spread_cost_bps(engine, sym, (int) param, buffer, length);
+                case REALISED_SPREAD -> rc = nativeLib.of_get_realised_spread_bps(engine, sym, (int) param, buffer, length);
+                case BOOK_EVENT_ANALYTICS -> rc = nativeLib.of_get_book_event_analytics(engine, sym, param, buffer, length);
+                default -> throw new OrderflowException("unknown query kind");
+            }
+
+            if (rc == 0) {
+                int outLen = length.getValue();
+                if (outLen <= 0) {
+                    return "{}";
+                }
+                return new String(buffer.getByteArray(0, outLen), StandardCharsets.UTF_8);
+            }
+
+            int required = length.getValue();
+            if (rc != 1 || required <= capacity) {
+                check(rc, "parameterizedQuery");
+            }
+            capacity = required;
+        }
+
+        check(1, "parameterizedQuery");
+        return "{}";
+    }
+
+    // Convenience methods for new T0 analytics
+
+    /** Returns mid price JSON. */
+    public String midPrice(Symbol symbol) { return snapshot(symbol, SnapshotKind.MID_PRICE); }
+
+    /** Returns last effective spread in bps JSON. */
+    public String effectiveSpreadBps(Symbol symbol) { return snapshot(symbol, SnapshotKind.EFFECTIVE_SPREAD); }
+
+    /** Returns average half-spread cost in bps over `window` trades. */
+    public String halfSpreadCostBps(Symbol symbol, int window) {
+        return parameterizedQuery(symbol, QueryKind.HALF_SPREAD_COST, window);
+    }
+
+    /** Returns realised spread in bps for trade `holdTicks` ago. */
+    public String realisedSpreadBps(Symbol symbol, int holdTicks) {
+        return parameterizedQuery(symbol, QueryKind.REALISED_SPREAD, holdTicks);
+    }
+
+    /** Returns book-event analytics snapshot JSON over `windowNs` window. */
+    public String bookEventAnalytics(Symbol symbol, long windowNs) {
+        return parameterizedQuery(symbol, QueryKind.BOOK_EVENT_ANALYTICS, windowNs);
+    }
+
+    /** Returns resiliency snapshot JSON. */
+    public String resiliencySnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.RESILIENCY); }
+    /** Returns VPIN snapshot JSON. */
+    public String vpinSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.VPIN); }
+    /** Returns Kyle's Lambda snapshot JSON. */
+    public String kyleLambdaSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.KYLE_LAMBDA); }
+    /** Returns Amihud illiquidity snapshot JSON. */
+    public String amihudSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.AMIHUD); }
+    /** Returns CVD enhancement snapshot JSON. */
+    public String cvdEnhancementSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.CVD_ENHANCEMENT); }
+
+    /** Returns pattern detection snapshot JSON. */
+    public String patternSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.PATTERN); }
+
+    /** Returns realised volatility estimator snapshot JSON. */
+    public String volatilitySnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.VOLATILITY); }
+    /** Returns microstructure noise snapshot JSON. */
+    public String noiseSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.NOISE); }
+    /** Returns Hasbrouck impact snapshot JSON. */
+    public String hasbrouckSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.HASBROUCK); }
+    /** Returns Almgren-Chriss impact snapshot JSON. */
+    public String almgrenChrissSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.ALMGREN_CHRISS); }
+    /** Returns spread decomposition snapshot JSON. */
+    public String spreadDecompSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.SPREAD_DECOMP); }
+    /** Returns ACD duration-model snapshot JSON. */
+    public String acdSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.ACD); }
+    /** Returns regime detection snapshot JSON. */
+    public String regimeSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.REGIME); }
+
+    /** Returns order-book kinetic-energy snapshot JSON. */
+    public String kineticEnergySnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.KINETIC_ENERGY); }
+    /** Returns dark-pool analytics snapshot JSON. */
+    public String darkPoolSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.DARK_POOL); }
+    /** Returns options-flow analytics snapshot JSON. */
+    public String optionsFlowSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.OPTIONS_FLOW); }
+    /** Returns futures basis and roll snapshot JSON. */
+    public String futuresSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.FUTURES); }
+
+    /** Returns volatility-signature snapshot JSON. */
+    public String volSignatureSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.VOL_SIGNATURE); }
+    /** Returns agent-type identification snapshot JSON. */
+    public String agentTypeSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.AGENT_TYPE); }
+    /** Returns dark-lit correlation snapshot JSON. */
+    public String darkLitCorrelationSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.DARK_LIT_CORRELATION); }
+    /** Returns institutional-flow snapshot JSON. */
+    public String institutionalFlowSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.INSTITUTIONAL_FLOW); }
+    /** Returns open-interest analysis snapshot JSON. */
+    public String oiAnalysisSnapshot(Symbol symbol) { return snapshot(symbol, SnapshotKind.OI_ANALYSIS); }
+
+    /** Computes LOB feature snapshot JSON from book state and supplied flow metrics. */
+    public String lobFeatures(Symbol symbol, double tradeImbalance, double cancelRate, double arrivalRate) {
+        requireEngine();
+        OfSymbol sym = toNativeSymbol(symbol);
+        int capacity = 8192;
+        Memory buf = new Memory(capacity);
+        IntByReference len = new IntByReference(capacity);
+        int rc = nativeLib.of_compute_lob_features(engine, sym, tradeImbalance, cancelRate, arrivalRate, buf, len);
+        if (rc == 0) { return buf.getString(0); }
+        check(rc, "lobFeatures");
+        throw new OrderflowArgException("lobFeatures failed");
+    }
+
+    /** Applies a native analytics configuration pointer, or null to reset defaults. */
+    public void setAnalyticsConfig(Pointer config) {
+        requireEngine();
+        int rc = nativeLib.of_engine_set_analytics_config(engine, config);
+        check(rc, "setAnalyticsConfig");
+    }
+
     private enum SnapshotKind {
         BOOK,
+        BOOK_ANALYTICS,
         ANALYTICS,
         DERIVED_ANALYTICS,
         SESSION_CANDLE,
         INTERVAL_CANDLE,
         SIGNAL,
+        BAR_SERIES,
+        MID_PRICE,
+        EFFECTIVE_SPREAD,
+        RESILIENCY,
+        VPIN,
+        KYLE_LAMBDA,
+        AMIHUD,
+        CVD_ENHANCEMENT,
+        PATTERN,
+        VOLATILITY,
+        NOISE,
+        HASBROUCK,
+        ALMGREN_CHRISS,
+        SPREAD_DECOMP,
+        ACD,
+        REGIME,
+        KINETIC_ENERGY,
+        DARK_POOL,
+        OPTIONS_FLOW,
+        FUTURES,
+        VOL_SIGNATURE,
+        AGENT_TYPE,
+        DARK_LIT_CORRELATION,
+        INSTITUTIONAL_FLOW,
+        OI_ANALYSIS,
+    }
+
+    private enum QueryKind {
+        WEIGHTED_AVERAGE_PRICE,
+        DEPTH_SLOPE,
+        HALF_SPREAD_COST,
+        REALISED_SPREAD,
+        BOOK_EVENT_ANALYTICS,
     }
 }

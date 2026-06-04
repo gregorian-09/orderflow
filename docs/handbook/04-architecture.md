@@ -16,6 +16,8 @@ flowchart LR
     FFI[of_ffi_c]
     RT[of_runtime]
     CORE[of_core]
+    EXC[of_execution_core/of_execution]
+    EXA[of_execution_adapters]
     SIG[of_signals]
     PST[of_persist]
     ADP[of_adapters]
@@ -30,11 +32,14 @@ flowchart LR
   JV --> CAPI
   CAPI --> FFI
   FFI --> RT
+  FFI --> EXC
   RT --> CORE
   RT --> SIG
   RT --> PST
   RT --> ADP
+  EXC --> EXA
   ADP --> VENUE
+  EXA --> VENUE
   PY --> DASH
   DASH --> CAPI
 ```
@@ -46,9 +51,17 @@ flowchart LR
 - `of_adapters`: provider abstraction and concrete adapters (feature-gated).
 - `of_persist`: rolling JSONL persistence, typed readback, and retention pruning.
 - `of_runtime`: lifecycle, polling/ingest processing, quality supervision, health state.
+- `of_execution_core`: additive execution-domain IDs, requests, events, state machine, and risk primitives.
+- `of_execution`: execution adapter trait, routing engine, bounded event buffers, simulated execution, journal/recovery hooks.
+- `of_execution_adapters`: feature-gated execution adapter scaffolds, starting with FIX mapping.
 - `of_ffi_c`: stable C ABI and callback dispatch.
 - `bindings/python`: ctypes wrapper over C ABI.
 - `bindings/java`: JNA wrapper over C ABI.
+
+Execution is intentionally separate from market-data analytics. Market-data
+adapters emit `RawEvent::Book` and `RawEvent::Trade`; execution adapters emit
+typed `ExecutionEvent` values. Strategy code may consume both, but the two
+domains do not share mutable runtime state.
 
 ## Runtime Event Paths
 
@@ -82,9 +95,53 @@ sequenceDiagram
   FFI->>Engine: ingest_trade/ingest_book
   Engine->>Engine: sequence checks + stale/reconnect checks
   Engine->>Engine: analytics + signal + health update
-  Engine-->>FFI: updated state
+Engine-->>FFI: updated state
   FFI-->>Client: callback dispatch (stream-dependent)
 ```
+
+### Path C: Execution simulation / OMS foundation
+
+```mermaid
+sequenceDiagram
+  participant Strategy
+  participant Exec as of_execution::ExecutionEngine
+  participant Risk as RiskCheck
+  participant Adapter as ExecutionAdapter
+  participant Journal as ExecutionJournal
+
+  Strategy->>Exec: submit(OrderRequest)
+  Exec->>Risk: check_new(request, context)
+  Exec->>Journal: record command
+  Exec->>Adapter: submit(request, event_buffer)
+  Adapter-->>Exec: ExecutionEvent::Ack / Trade / Reject
+  Exec->>Exec: apply OrderStateMachine
+  Exec->>Journal: record event
+  Exec-->>Strategy: caller-owned event buffer
+```
+
+Low-latency execution paths use fixed-size identifiers, integer-normalized
+price/quantity fields, and caller-owned event buffers. JSON is not used on the
+submit/cancel/amend hot path.
+
+Execution routing is configured as a set of route/account/symbol scopes. The
+engine builds an indexed route table for constant-time lookup and applies open
+order and open notional limits within the matching scope before the adapter is
+called. This lets one execution engine manage multiple symbols without allowing
+activity on one instrument to consume another instrument's route budget.
+
+Concurrency is additive and built around ownership rather than shared mutable
+state. `ConcurrentExecutionEngine` runs the synchronous engine on one dedicated
+worker thread, accepts commands from cloneable producer handles through a
+bounded channel, and emits command reports through a bounded report channel.
+This supports many caller threads without introducing async scheduler jitter or
+parallel order-state mutation.
+
+The OMS layer also provides reusable safety and operations primitives around
+that core: command correlation, bounded event fanout, lifecycle snapshots,
+durable journaling, open-order reconciliation, disconnect and kill-switch
+policies, advanced risk helpers, position ledgers, order-type/TIF
+normalization, telemetry, deterministic sharding, token-bucket throttling,
+replay simulation, and provider adapter SDK helpers.
 
 ## Key Runtime Data Models (UML-style)
 

@@ -47,6 +47,24 @@ class DashboardState:
     replay_reload_requested: bool = False
     replay_file: str = ""
     replay_seek_target: Optional[int] = None
+    # Analytics snapshot cache for dashboard display
+    volatility: Dict[str, Any] = field(default_factory=dict)
+    noise: Dict[str, Any] = field(default_factory=dict)
+    hasbrouck: Dict[str, Any] = field(default_factory=dict)
+    almgren_chriss: Dict[str, Any] = field(default_factory=dict)
+    spread_decomp: Dict[str, Any] = field(default_factory=dict)
+    acd: Dict[str, Any] = field(default_factory=dict)
+    regime: Dict[str, Any] = field(default_factory=dict)
+    kinetic_energy: Dict[str, Any] = field(default_factory=dict)
+    dark_pool: Dict[str, Any] = field(default_factory=dict)
+    options_flow: Dict[str, Any] = field(default_factory=dict)
+    futures: Dict[str, Any] = field(default_factory=dict)
+    pattern: Dict[str, Any] = field(default_factory=dict)
+    vol_signature: Dict[str, Any] = field(default_factory=dict)
+    agent_type: Dict[str, Any] = field(default_factory=dict)
+    dark_lit_correlation: Dict[str, Any] = field(default_factory=dict)
+    institutional_flow: Dict[str, Any] = field(default_factory=dict)
+    oi_analysis: Dict[str, Any] = field(default_factory=dict)
 
     def update(self, **kwargs: Any) -> None:
         with self.lock:
@@ -77,6 +95,23 @@ class DashboardState:
                 "replay_file": self.replay_file,
                 "replay_elapsed_secs": replay_elapsed_secs,
                 "replay_total_secs": replay_total_secs,
+                "volatility": self.volatility,
+                "noise": self.noise,
+                "hasbrouck": self.hasbrouck,
+                "almgren_chriss": self.almgren_chriss,
+                "spread_decomp": self.spread_decomp,
+                "acd": self.acd,
+                "regime": self.regime,
+                "kinetic_energy": self.kinetic_energy,
+                "dark_pool": self.dark_pool,
+                "options_flow": self.options_flow,
+                "futures": self.futures,
+                "pattern": self.pattern,
+                "vol_signature": self.vol_signature,
+                "agent_type": self.agent_type,
+                "dark_lit_correlation": self.dark_lit_correlation,
+                "institutional_flow": self.institutional_flow,
+                "oi_analysis": self.oi_analysis,
                 "ts": time.time(),
             }
 
@@ -824,6 +859,66 @@ def _engine_loop() -> None:
                 else:
                     STATE.update(simulated=False)
 
+                # Fetch all analytics snapshots (live mode only)
+                advanced: Dict[str, Any] = {}
+                if mode == "live" and engine is not None:
+                    try:
+                        advanced["volatility"] = engine.volatility_snapshot(symbol)
+                    except Exception:
+                        pass
+                    try:
+                        advanced["noise"] = engine.noise_snapshot(symbol)
+                    except Exception:
+                        pass
+                    try:
+                        advanced["hasbrouck"] = engine.hasbrouck_snapshot(symbol)
+                    except Exception:
+                        pass
+                    try:
+                        advanced["almgren_chriss"] = engine.almgren_chriss_snapshot(symbol)
+                    except Exception:
+                        pass
+                    try:
+                        advanced["spread_decomp"] = engine.spread_decomp_snapshot(symbol)
+                    except Exception:
+                        pass
+                    try:
+                        advanced["acd"] = engine.acd_snapshot(symbol)
+                    except Exception:
+                        pass
+                    try:
+                        advanced["regime"] = engine.regime_snapshot(symbol)
+                    except Exception:
+                        pass
+                    try:
+                        advanced["kinetic_energy"] = engine.kinetic_energy_snapshot(symbol)
+                    except Exception:
+                        pass
+                    try:
+                        advanced["pattern"] = engine.pattern_snapshot(symbol)
+                    except Exception:
+                        pass
+                    try:
+                        advanced["vol_signature"] = engine.vol_signature_snapshot(symbol)
+                    except Exception:
+                        pass
+                    try:
+                        advanced["agent_type"] = engine.agent_type_snapshot(symbol)
+                    except Exception:
+                        pass
+                    try:
+                        advanced["dark_lit_correlation"] = engine.dark_lit_correlation_snapshot(symbol)
+                    except Exception:
+                        pass
+                    try:
+                        advanced["institutional_flow"] = engine.institutional_flow_snapshot(symbol)
+                    except Exception:
+                        pass
+                    try:
+                        advanced["oi_analysis"] = engine.oi_analysis_snapshot(symbol)
+                    except Exception:
+                        pass
+
                 _push_history(
                     float(analytics.get("delta", 0)),
                     float(analytics.get("cumulative_delta", 0)),
@@ -833,6 +928,7 @@ def _engine_loop() -> None:
                     signal=signal,
                     metrics=metrics,
                     bars=replay_bars.snapshot() if mode == "replay" else live_bars.snapshot(),
+                    **advanced,
                 )
                 time.sleep(0.2)
         finally:

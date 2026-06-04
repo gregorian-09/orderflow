@@ -1,6 +1,9 @@
 [workspace]
 members = [
   "crates/of_core",
+  "crates/of_execution_core",
+  "crates/of_execution",
+  "crates/of_execution_adapters",
   "crates/of_adapters",
   "crates/of_signals",
   "crates/of_persist",
@@ -11,7 +14,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "MIT"
 authors = ["Gregorian Rayne <gregorianrayne09@gmail.com>"]

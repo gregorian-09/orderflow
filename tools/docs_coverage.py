@@ -74,6 +74,9 @@ def _has_block_doc(lines: list[str], line_index: int) -> bool:
 def check_rust_missing_docs() -> GateResult:
     rust_packages = [
         "of_core",
+        "of_execution_core",
+        "of_execution",
+        "of_execution_adapters",
         "of_signals",
         "of_persist",
         "of_adapters",

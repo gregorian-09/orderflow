@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orderflow
+  labels:
+    app: orderflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orderflow
+  template:
+    metadata:
+      labels:
+        app: orderflow
+    spec:
+      containers:
+      - name: orderflow
+        image: orderflow:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: OF_DASH_INSTANCE_ID
+          value: "orderflow-k8s"
+        - name: OF_DASH_HOST
+          value: "0.0.0.0"
+        - name: OF_DASH_PORT
+          value: "8080"
+        - name: OF_DASH_VENUE
+          value: "CME"
+        - name: OF_DASH_SYMBOL
+          value: "ESM6"
+        - name: OF_DASH_DEPTH
+          value: "10"
+        - name: OF_DASH_DATA_ROOT
+          value: "/opt/orderflow/data"
+        - name: OF_DASH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: orderflow-secret
+              key: dashboard-token
+        - name: RUST_LOG
+          value: "info"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - python3
+            - -c
+            - "import os, urllib.request; port = os.getenv('OF_DASH_PORT', '8080'); req = urllib.request.Request('http://127.0.0.1:%s/state' % port); token = os.getenv('OF_DASH_TOKEN'); req.add_header('X-Orderflow-Token', token) if token else None; urllib.request.urlopen(req, timeout=2).close()"
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - python3
+            - -c
+            - "import os, urllib.request; port = os.getenv('OF_DASH_PORT', '8080'); req = urllib.request.Request('http://127.0.0.1:%s/state' % port); token = os.getenv('OF_DASH_TOKEN'); req.add_header('X-Orderflow-Token', token) if token else None; urllib.request.urlopen(req, timeout=2).close()"
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        volumeMounts:
+        - name: orderflow-data
+          mountPath: /opt/orderflow/data
+      volumes:
+      - name: orderflow-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orderflow
+spec:
+  selector:
+    app: orderflow
+  ports:
+  - port: 8080
+    targetPort: http
+    name: http
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orderflow-secret
+type: Opaque
+stringData:
+  dashboard-token: "change-me-in-production"

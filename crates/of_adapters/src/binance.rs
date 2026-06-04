@@ -120,10 +120,9 @@ impl WsTextTransport {
                     .stdin
                     .take()
                     .ok_or(AdapterError::Other("openssl stdin unavailable".to_string()))?;
-                let mut stdout = child
-                    .stdout
-                    .take()
-                    .ok_or(AdapterError::Other("openssl stdout unavailable".to_string()))?;
+                let mut stdout = child.stdout.take().ok_or(AdapterError::Other(
+                    "openssl stdout unavailable".to_string(),
+                ))?;
 
                 websocket_handshake_rw(
                     &mut stdin,
@@ -155,7 +154,10 @@ impl WsTextTransport {
         if !self.connected {
             return Err(AdapterError::Disconnected);
         }
-        let tx = self.outbound_tx.as_ref().ok_or(AdapterError::Disconnected)?;
+        let tx = self
+            .outbound_tx
+            .as_ref()
+            .ok_or(AdapterError::Disconnected)?;
         tx.send(Outbound::Text(text))
             .map_err(|_| AdapterError::Other("binance transport send failed".to_string()))
     }
@@ -265,7 +267,11 @@ impl BinanceAdapter {
             symbol: symbol.clone(),
             price: base + (self.seq % 25) as i64 * 10_000,
             size: 1 + (self.seq % 3) as i64,
-            aggressor_side: if self.seq % 2 == 0 { Side::Ask } else { Side::Bid },
+            aggressor_side: if self.seq.is_multiple_of(2) {
+                Side::Ask
+            } else {
+                Side::Bid
+            },
             sequence: self.seq,
             ts_exchange_ns: Self::now_ns(),
             ts_recv_ns: Self::now_ns(),
@@ -332,7 +338,7 @@ impl BinanceAdapter {
             };
             let sym_id = SymbolId {
                 venue: "BINANCE".to_string(),
-                symbol: symbol,
+                symbol,
             };
             let depth_limit = self.subscribed.get(&sym_id).copied().unwrap_or(10) as usize;
             let sequence = extract_u64_field(payload, "u").unwrap_or_else(|| {
@@ -572,7 +578,11 @@ impl MarketDataAdapter for BinanceAdapter {
     }
 
     fn health(&self) -> AdapterHealth {
-        let mode = if self.is_mock_mode() { "mock" } else { "live_ws" };
+        let mode = if self.is_mock_mode() {
+            "mock"
+        } else {
+            "live_ws"
+        };
         let last_message_age_ms = self
             .last_message_at
             .map(|t| t.elapsed().as_millis() as u64)
@@ -845,8 +855,8 @@ fn extract_field_value<'a>(raw: &'a str, key: &str) -> Option<&'a str> {
     if v.starts_with('[') {
         let mut depth = 0i32;
         let bytes = v.as_bytes();
-        for i in 0..bytes.len() {
-            match bytes[i] {
+        for (i, byte) in bytes.iter().enumerate() {
+            match *byte {
                 b'[' => depth += 1,
                 b']' => {
                     depth -= 1;
@@ -896,8 +906,10 @@ fn parse_scaled_decimal(v: &str, scale: i64) -> Option<i64> {
         frac_digits.push('0');
     }
     let frac_i = frac_digits.parse::<i64>().ok()?;
-    let scaled =
-        whole_i.saturating_mul(scale) + frac_i.saturating_mul(scale).saturating_div(1_000_000_000_000);
+    let scaled = whole_i.saturating_mul(scale)
+        + frac_i
+            .saturating_mul(scale)
+            .saturating_div(1_000_000_000_000);
     Some(if negative { -scaled } else { scaled })
 }
 
@@ -1051,7 +1063,11 @@ mod tests {
         assert!(n >= 3);
         assert!(out.iter().any(|ev| matches!(ev, RawEvent::Trade(_))));
         assert!(out.iter().any(|ev| matches!(ev, RawEvent::Book(_))));
-        assert!(adapter.health().protocol_info.unwrap_or_default().contains("subscribed=1"));
+        assert!(adapter
+            .health()
+            .protocol_info
+            .unwrap_or_default()
+            .contains("subscribed=1"));
     }
 
     #[test]
@@ -1069,7 +1085,9 @@ mod tests {
         adapter.last_message_at = adapter.last_market_data_at;
 
         let mut out = Vec::new();
-        let err = adapter.poll(&mut out).expect_err("timeout should disconnect");
+        let err = adapter
+            .poll(&mut out)
+            .expect_err("timeout should disconnect");
         assert!(matches!(err, AdapterError::Disconnected));
         assert!(adapter.health().degraded);
         assert!(adapter.next_reconnect_at.is_some());
@@ -1094,7 +1112,9 @@ mod tests {
             ws.force_disconnect();
         }
         let mut out = Vec::new();
-        let err = adapter.poll(&mut out).expect_err("disconnect should surface");
+        let err = adapter
+            .poll(&mut out)
+            .expect_err("disconnect should surface");
         assert!(matches!(err, AdapterError::Disconnected));
         assert!(adapter.next_reconnect_at.is_some());
 

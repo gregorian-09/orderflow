@@ -96,7 +96,9 @@ impl CqgAdapter {
                 contract_id,
                 ..
             } => {
-                if let Some((_symbol, depth)) = self.session.on_symbol_resolved(request_id, contract_id) {
+                if let Some((_symbol, depth)) =
+                    self.session.on_symbol_resolved(request_id, contract_id)
+                {
                     self.metrics.symbol_resolve_success += 1;
                     self.session.set_state(CqgSessionState::Subscribing);
                     if self
@@ -116,7 +118,9 @@ impl CqgAdapter {
                 contract_id,
                 accepted,
             } => {
-                if let Some((_symbol, expected_contract)) = self.session.on_subscription_ack(request_id) {
+                if let Some((_symbol, expected_contract)) =
+                    self.session.on_subscription_ack(request_id)
+                {
                     if accepted {
                         if expected_contract != contract_id {
                             self.metrics.md_subscribe_ack_mismatch += 1;
@@ -254,13 +258,16 @@ impl CqgAdapter {
         self.session.set_state(CqgSessionState::Connecting);
         if self.transport.connect().is_ok() && self.transport.is_connected() {
             self.session.set_state(CqgSessionState::LogonPending);
-            let _ = self.transport.send_frame(encode_outbound(&CqgOutbound::Logon));
+            let _ = self
+                .transport
+                .send_frame(encode_outbound(&CqgOutbound::Logon));
             if self.is_mock_mode() {
-                self.transport
-                    .inject_test_frame(encode_inbound_for_test(&CqgInbound::LogonResult {
+                self.transport.inject_test_frame(encode_inbound_for_test(
+                    &CqgInbound::LogonResult {
                         success: true,
                         message: "reconnected".to_string(),
-                    }));
+                    },
+                ));
             }
             self.drain_transport();
             self.reconnect_attempt = 0;
@@ -281,7 +288,13 @@ impl CqgAdapter {
         self.session
             .symbol_to_contract
             .iter()
-            .find_map(|(symbol, cid)| if *cid == contract_id { Some(symbol.clone()) } else { None })
+            .find_map(|(symbol, cid)| {
+                if *cid == contract_id {
+                    Some(symbol.clone())
+                } else {
+                    None
+                }
+            })
     }
 
     fn is_mock_mode(&self) -> bool {
@@ -307,12 +320,13 @@ impl CqgAdapter {
 
             if self.is_mock_mode() {
                 let contract_id = req_id as i64 + 10_000;
-                self.transport
-                    .inject_test_frame(encode_inbound_for_test(&CqgInbound::SymbolResolution {
+                self.transport.inject_test_frame(encode_inbound_for_test(
+                    &CqgInbound::SymbolResolution {
                         request_id: req_id,
                         contract_id,
                         symbol: symbol.symbol.clone(),
-                    }));
+                    },
+                ));
             }
         }
     }
@@ -333,12 +347,13 @@ impl CqgAdapter {
         self.session
             .queue_subscription_ack(sub_req_id, symbol.clone(), contract_id);
         if self.is_mock_mode() {
-            self.transport
-                .inject_test_frame(encode_inbound_for_test(&CqgInbound::SubscriptionAck {
+            self.transport.inject_test_frame(encode_inbound_for_test(
+                &CqgInbound::SubscriptionAck {
                     request_id: sub_req_id,
                     contract_id,
                     accepted: true,
-                }));
+                },
+            ));
         }
         Ok(())
     }
@@ -350,7 +365,9 @@ impl CqgAdapter {
             .map(|t| now.duration_since(t) >= Duration::from_secs(self.cfg.ping_interval_secs))
             .unwrap_or(true);
         if should_ping {
-            let _ = self.transport.send_frame(encode_outbound(&CqgOutbound::Ping));
+            let _ = self
+                .transport
+                .send_frame(encode_outbound(&CqgOutbound::Ping));
             self.last_ping_at = Some(now);
         }
     }
@@ -366,7 +383,9 @@ impl CqgAdapter {
             self.healthy_since = None;
             self.last_error = Some("cqg heartbeat timeout".to_string());
             self.session.set_state(CqgSessionState::BackoffWait);
-            let _ = self.transport.send_frame(encode_outbound(&CqgOutbound::Logoff));
+            let _ = self
+                .transport
+                .send_frame(encode_outbound(&CqgOutbound::Logoff));
             self.transport.force_disconnect();
             if self.next_reconnect_at.is_none() {
                 self.schedule_reconnect();
@@ -412,7 +431,8 @@ impl MarketDataAdapter for CqgAdapter {
         }
 
         self.session.set_state(CqgSessionState::LogonPending);
-        self.transport.send_frame(encode_outbound(&CqgOutbound::Logon))?;
+        self.transport
+            .send_frame(encode_outbound(&CqgOutbound::Logon))?;
 
         // Mock transport path seeds deterministic handshake frame.
         if self.is_mock_mode() {
@@ -471,12 +491,13 @@ impl MarketDataAdapter for CqgAdapter {
 
         if self.is_mock_mode() {
             let contract_id = req_id as i64 + 10_000;
-            self.transport
-                .inject_test_frame(encode_inbound_for_test(&CqgInbound::SymbolResolution {
+            self.transport.inject_test_frame(encode_inbound_for_test(
+                &CqgInbound::SymbolResolution {
                     request_id: req_id,
                     contract_id,
                     symbol: req.symbol.symbol.clone(),
-                }));
+                },
+            ));
             // Seed one synthetic trade event to keep end-to-end path non-empty in scaffold mode.
             self.transport
                 .inject_test_frame(encode_inbound_for_test(&CqgInbound::TradeUpdate {
@@ -581,8 +602,8 @@ mod tests {
 
     #[test]
     fn live_boundary_connects_with_wss_endpoint() {
-        let mut adapter = CqgAdapter::from_config(&cfg("wss://demoapi.cqg.com:443"))
-            .expect("cfg valid");
+        let mut adapter =
+            CqgAdapter::from_config(&cfg("wss://demoapi.cqg.com:443")).expect("cfg valid");
         adapter.connect().expect("connect");
         assert!(adapter.health().connected);
     }
@@ -631,9 +652,8 @@ mod tests {
     fn heartbeat_timeout_transitions_to_backoff() {
         let mut adapter = CqgAdapter::from_config(&cfg("mock://cqg")).expect("cfg valid");
         adapter.connect().expect("connect");
-        adapter.last_heartbeat_at = Some(
-            Instant::now() - Duration::from_secs(adapter.cfg.heartbeat_timeout_secs + 1),
-        );
+        adapter.last_heartbeat_at =
+            Some(Instant::now() - Duration::from_secs(adapter.cfg.heartbeat_timeout_secs + 1));
 
         let mut out = Vec::new();
         let _ = adapter.poll(&mut out);
@@ -676,7 +696,10 @@ mod tests {
             .expect("subscribe 5");
 
         assert_eq!(adapter.metrics.symbol_resolve_success, resolved_once);
-        assert_eq!(adapter.session.requested_depth.get(&symbol).copied(), Some(5));
+        assert_eq!(
+            adapter.session.requested_depth.get(&symbol).copied(),
+            Some(5)
+        );
         assert!(adapter.metrics.md_subscribe_success >= 2);
     }
 
@@ -726,13 +749,13 @@ mod tests {
         adapter
             .session
             .queue_subscription_ack(req_id, symbol, 12345);
-        adapter
-            .transport
-            .inject_test_frame(encode_inbound_for_test(&CqgInbound::SubscriptionAck {
+        adapter.transport.inject_test_frame(encode_inbound_for_test(
+            &CqgInbound::SubscriptionAck {
                 request_id: req_id,
                 contract_id: 99999,
                 accepted: true,
-            }));
+            },
+        ));
         let mut out = Vec::new();
         let _ = adapter.poll(&mut out).expect("poll");
         assert!(adapter.health().degraded);
@@ -765,7 +788,10 @@ mod tests {
         let mut out = Vec::new();
         let _ = adapter.poll(&mut out);
 
-        assert_eq!(adapter.session.requested_depth.get(&symbol).copied(), Some(5));
+        assert_eq!(
+            adapter.session.requested_depth.get(&symbol).copied(),
+            Some(5)
+        );
         assert!(adapter.session.symbol_to_contract.contains_key(&symbol));
     }
 

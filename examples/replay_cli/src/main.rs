@@ -68,7 +68,9 @@ fn parse_request(args: &[String]) -> Result<Request, String> {
             let from_sequence = parse_sequence_arg(&args[3], "from_sequence")?;
             let to_sequence = parse_sequence_arg(&args[4], "to_sequence")?;
             if to_sequence < from_sequence {
-                return Err("to_sequence must be greater than or equal to from_sequence".to_string());
+                return Err(
+                    "to_sequence must be greater than or equal to from_sequence".to_string()
+                );
             }
             Ok(Request::Replay {
                 data_root: args[0].clone(),

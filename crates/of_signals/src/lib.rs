@@ -207,13 +207,14 @@ impl SignalModule for AbsorptionSignal {
 
     fn snapshot(&self) -> SignalSnapshot {
         let poc_distance = (self.latest.last_price - self.latest.point_of_control).abs();
-        let (state, reason) = if poc_distance <= self.price_band && self.latest.delta <= -self.threshold {
-            (SignalState::LongBias, "sell_absorption_detected")
-        } else if poc_distance <= self.price_band && self.latest.delta >= self.threshold {
-            (SignalState::ShortBias, "buy_absorption_detected")
-        } else {
-            (SignalState::Neutral, "absorption_not_detected")
-        };
+        let (state, reason) =
+            if poc_distance <= self.price_band && self.latest.delta <= -self.threshold {
+                (SignalState::LongBias, "sell_absorption_detected")
+            } else if poc_distance <= self.price_band && self.latest.delta >= self.threshold {
+                (SignalState::ShortBias, "buy_absorption_detected")
+            } else {
+                (SignalState::Neutral, "absorption_not_detected")
+            };
 
         SignalSnapshot {
             module_id: "absorption_v1",

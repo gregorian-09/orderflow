@@ -710,7 +710,7 @@ secret_env = "OF_STRICT_SECRET"
             enable_persistence: false,
             data_root: data_root.to_string_lossy().to_string(),
             audit_log_path: audit_path.to_string_lossy().to_string(),
-            audit_max_bytes: 180,
+            audit_max_bytes: 300,
             audit_max_files: 2,
             audit_redact_tokens: vec!["token".to_string()],
             data_retention_max_bytes: 1024,
@@ -721,7 +721,7 @@ secret_env = "OF_STRICT_SECRET"
         .expect("engine build should work");
 
         engine.start().expect("start should work");
-        for i in 0..6 {
+        for i in 0..12 {
             engine
                 .subscribe(
                     SymbolId {

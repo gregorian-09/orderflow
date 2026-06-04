@@ -1297,6 +1297,215 @@ mod tests {
         of_engine_destroy(engine);
     }
 
+    #[cfg(feature = "tickbar")]
+    #[test]
+    fn bar_series_returns_completed_bars_for_tickbar_interval() {
+        let _guard = test_lock().lock().expect("lock");
+
+        let instance_id = CString::new("ffi-bar-series-test").expect("cstring");
+        let cfg = of_engine_config_t {
+            instance_id: instance_id.as_ptr(),
+            config_path: ptr::null(),
+            log_level: 0,
+            enable_persistence: 0,
+            audit_max_bytes: 0,
+            audit_max_files: 0,
+            audit_redact_tokens_csv: ptr::null(),
+            data_retention_max_bytes: 0,
+            data_retention_max_age_secs: 0,
+        };
+
+        let mut engine: *mut of_engine = ptr::null_mut();
+        assert_eq!(
+            of_engine_create(&cfg, &mut engine as *mut *mut of_engine),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!engine.is_null());
+        assert_eq!(of_engine_start(engine), of_error_t::OF_OK as i32);
+
+        // Enable tickbar with 1000ns interval BEFORE ingesting trades
+        assert_eq!(
+            of_engine_set_tickbar_interval(engine, 1000),
+            of_error_t::OF_OK as i32
+        );
+
+        let venue = CString::new("CME").expect("cstring");
+        let symbol = CString::new("ESM6").expect("cstring");
+        let ffi_symbol = of_symbol_t {
+            venue: venue.as_ptr(),
+            symbol: symbol.as_ptr(),
+            depth_levels: 10,
+        };
+
+        // Trade at T=0ns → bar [0, 1000)
+        let trade1 = of_trade_t {
+            symbol: of_symbol_t {
+                venue: venue.as_ptr(),
+                symbol: symbol.as_ptr(),
+                depth_levels: 10,
+            },
+            price: 505000,
+            size: 9,
+            aggressor_side: 1,
+            sequence: 1,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 1,
+        };
+        assert_eq!(
+            of_ingest_trade(engine, &trade1 as *const of_trade_t, 0),
+            of_error_t::OF_OK as i32
+        );
+
+        // Trade at T=500ns → same bar [0, 1000)
+        let trade2 = of_trade_t {
+            symbol: of_symbol_t {
+                venue: venue.as_ptr(),
+                symbol: symbol.as_ptr(),
+                depth_levels: 10,
+            },
+            price: 504900,
+            size: 4,
+            aggressor_side: 0,
+            sequence: 2,
+            ts_exchange_ns: 500,
+            ts_recv_ns: 501,
+        };
+        assert_eq!(
+            of_ingest_trade(engine, &trade2 as *const of_trade_t, 0),
+            of_error_t::OF_OK as i32
+        );
+
+        // Trade at T=1500ns → bar [1000, 2000)
+        let trade3 = of_trade_t {
+            symbol: of_symbol_t {
+                venue: venue.as_ptr(),
+                symbol: symbol.as_ptr(),
+                depth_levels: 10,
+            },
+            price: 505100,
+            size: 8,
+            aggressor_side: 1,
+            sequence: 3,
+            ts_exchange_ns: 1500,
+            ts_recv_ns: 1501,
+        };
+        assert_eq!(
+            of_ingest_trade(engine, &trade3 as *const of_trade_t, 0),
+            of_error_t::OF_OK as i32
+        );
+
+        // Query bar series
+        let mut buf = vec![0u8; 2048];
+        let mut len = buf.len() as u32;
+        assert_eq!(
+            of_get_bar_series(
+                engine,
+                &ffi_symbol as *const of_symbol_t,
+                buf.as_mut_ptr().cast::<c_void>(),
+                &mut len as *mut u32,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        let json = String::from_utf8_lossy(&buf[..len as usize]).to_string();
+        assert!(json.starts_with('['));
+        assert!(json.ends_with(']'));
+        assert!(json.contains("\"timestamp_ns\":0"));
+        assert!(json.contains("\"open\":505000"));
+        assert!(json.contains("\"close\":504900"));
+        assert!(json.contains("\"timestamp_ns\":1000"));
+        assert!(json.contains("\"open\":505100"));
+
+        // Should have 2 bars: [0,1000) from trades at 0 and 500, and [1000,2000) from trade at 1500
+        assert!(
+            json.matches("open").count() >= 2,
+            "expected at least 2 bars, got JSON: {json}"
+        );
+
+        assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
+        of_engine_destroy(engine);
+    }
+
+    #[cfg(feature = "tickbar")]
+    #[test]
+    fn bar_series_returns_empty_array_when_tickbar_not_configured() {
+        // Test that of_get_bar_series returns "[]" when no tickbar interval was set.
+        let _guard = test_lock().lock().expect("lock");
+
+        let instance_id = CString::new("ffi-bar-series-empty-test").expect("cstring");
+        let cfg = of_engine_config_t {
+            instance_id: instance_id.as_ptr(),
+            config_path: ptr::null(),
+            log_level: 0,
+            enable_persistence: 0,
+            audit_max_bytes: 0,
+            audit_max_files: 0,
+            audit_redact_tokens_csv: ptr::null(),
+            data_retention_max_bytes: 0,
+            data_retention_max_age_secs: 0,
+        };
+
+        let mut engine: *mut of_engine = ptr::null_mut();
+        assert_eq!(
+            of_engine_create(&cfg, &mut engine as *mut *mut of_engine),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!engine.is_null());
+        assert_eq!(of_engine_start(engine), of_error_t::OF_OK as i32);
+
+        let venue = CString::new("CME").expect("cstring");
+        let symbol = CString::new("ESM6").expect("cstring");
+        let ffi_symbol = of_symbol_t {
+            venue: venue.as_ptr(),
+            symbol: symbol.as_ptr(),
+            depth_levels: 10,
+        };
+
+        // Ingest a trade (no tickbar interval set)
+        let trade = of_trade_t {
+            symbol: of_symbol_t {
+                venue: venue.as_ptr(),
+                symbol: symbol.as_ptr(),
+                depth_levels: 10,
+            },
+            price: 505000,
+            size: 9,
+            aggressor_side: 1,
+            sequence: 1,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 1,
+        };
+        assert_eq!(
+            of_ingest_trade(engine, &trade as *const of_trade_t, 0),
+            of_error_t::OF_OK as i32
+        );
+
+        let mut buf = vec![0u8; 1024];
+        let mut len = buf.len() as u32;
+        assert_eq!(
+            of_get_bar_series(
+                engine,
+                &ffi_symbol as *const of_symbol_t,
+                buf.as_mut_ptr().cast::<c_void>(),
+                &mut len as *mut u32,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        let json = String::from_utf8_lossy(&buf[..len as usize]).to_string();
+        assert_eq!(json, "[]");
+
+        assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
+        of_engine_destroy(engine);
+    }
+
+    #[cfg(feature = "tickbar")]
+    #[test]
+    fn bar_series_rejects_null_engine() {
+        assert_eq!(
+            of_get_bar_series(ptr::null_mut(), ptr::null(), ptr::null_mut(), ptr::null_mut()),
+            of_error_t::OF_ERR_INVALID_ARG as i32
+        );
+    }
+
     #[test]
     fn derived_analytics_stream_emits_session_snapshot_payload() {
         let _guard = test_lock().lock().expect("lock");
@@ -1388,5 +1597,383 @@ mod tests {
         assert_eq!(of_unsubscribe(sub), of_error_t::OF_OK as i32);
         assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
         of_engine_destroy(engine);
+    }
+
+    #[test]
+    fn execution_abi_submits_simulated_order() {
+        let _guard = test_lock().lock().expect("test lock");
+        let route = CString::new("SIM").expect("cstring");
+        let account = CString::new("ACC").expect("cstring");
+        let venue = CString::new("SIM").expect("cstring");
+        let instrument = CString::new("ES").expect("cstring");
+        let cfg = of_execution_route_config_t {
+            route_id: route.as_ptr(),
+            account_id: account.as_ptr(),
+            venue: venue.as_ptr(),
+            instrument: instrument.as_ptr(),
+            enabled: 1,
+            kill_switch: 0,
+            max_order_qty: 100,
+            max_order_notional: 1_000_000,
+            max_open_orders: 10,
+            max_open_notional: 10_000_000,
+            price_band_ticks: 0,
+        };
+
+        let mut engine: *mut of_execution_engine = ptr::null_mut();
+        assert_eq!(
+            of_execution_engine_create(&cfg, &mut engine),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!engine.is_null());
+        assert_eq!(
+            of_execution_engine_start(engine),
+            of_error_t::OF_OK as i32
+        );
+
+        let client_order_id = CString::new("C1").expect("cstring");
+        let strategy = CString::new("STRAT").expect("cstring");
+        let req = of_execution_order_request_t {
+            client_order_id: client_order_id.as_ptr(),
+            account_id: account.as_ptr(),
+            route_id: route.as_ptr(),
+            strategy_id: strategy.as_ptr(),
+            venue: venue.as_ptr(),
+            instrument: instrument.as_ptr(),
+            side: 1,
+            order_type: 2,
+            time_in_force: 1,
+            quantity: 10,
+            limit_price: 5000,
+            stop_price: 0,
+            ts_exchange_ns: 1,
+            ts_recv_ns: 2,
+        };
+        let mut events = [of_execution_event_t {
+            exec_type: 0,
+            order_status: 0,
+            client_order_id: [0; 41],
+            orig_client_order_id: [0; 41],
+            venue_order_id: [0; 49],
+            execution_id: [0; 49],
+            account_id: [0; 33],
+            route_id: [0; 33],
+            venue: [0; 17],
+            instrument: [0; 33],
+            last_qty: 0,
+            last_price: 0,
+            cumulative_qty: 0,
+            leaves_qty: 0,
+            average_price: 0,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+            reason: 0,
+            text: [0; 129],
+        }; 4];
+        let mut len = events.len() as u32;
+        assert_eq!(
+            of_execution_submit_order(engine, &req, events.as_mut_ptr(), &mut len),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(len, 2);
+        assert_eq!(events[0].exec_type, 1);
+        assert_eq!(events[1].exec_type, 3);
+        assert_eq!(events[1].order_status, 4);
+
+        let mut state = of_execution_order_state_t {
+            client_order_id: [0; 41],
+            venue_order_id: [0; 49],
+            account_id: [0; 33],
+            route_id: [0; 33],
+            venue: [0; 17],
+            instrument: [0; 33],
+            status: 0,
+            order_qty: 0,
+            cumulative_qty: 0,
+            leaves_qty: 0,
+            average_price: 0,
+            updated_ns: 0,
+        };
+        assert_eq!(
+            of_execution_get_order_state(engine, client_order_id.as_ptr(), &mut state),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(state.status, 4);
+        assert_eq!(state.cumulative_qty, 10);
+
+        let mut metrics = of_execution_metrics_t {
+            submitted: 0,
+            cancelled: 0,
+            amended: 0,
+            events_applied: 0,
+            risk_rejected: 0,
+            adapter_errors: 0,
+            recovered: 0,
+        };
+        assert_eq!(
+            of_execution_metrics(engine, &mut metrics),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(metrics.submitted, 1);
+        assert_eq!(metrics.events_applied, 2);
+
+        of_execution_engine_destroy(engine);
+    }
+
+    #[test]
+    fn execution_abi_create_multi_routes_submits_multiple_symbols() {
+        let _guard = test_lock().lock().expect("test lock");
+        let route = CString::new("SIM").expect("cstring");
+        let account = CString::new("ACC").expect("cstring");
+        let venue = CString::new("SIM").expect("cstring");
+        let es = CString::new("ES").expect("cstring");
+        let nq = CString::new("NQ").expect("cstring");
+        let cfgs = [
+            of_execution_route_config_t {
+                route_id: route.as_ptr(),
+                account_id: account.as_ptr(),
+                venue: venue.as_ptr(),
+                instrument: es.as_ptr(),
+                enabled: 1,
+                kill_switch: 0,
+                max_order_qty: 100,
+                max_order_notional: 1_000_000,
+                max_open_orders: 10,
+                max_open_notional: 10_000_000,
+                price_band_ticks: 0,
+            },
+            of_execution_route_config_t {
+                route_id: route.as_ptr(),
+                account_id: account.as_ptr(),
+                venue: venue.as_ptr(),
+                instrument: nq.as_ptr(),
+                enabled: 1,
+                kill_switch: 0,
+                max_order_qty: 100,
+                max_order_notional: 1_000_000,
+                max_open_orders: 10,
+                max_open_notional: 10_000_000,
+                price_band_ticks: 0,
+            },
+        ];
+
+        let mut engine: *mut of_execution_engine = ptr::null_mut();
+        assert_eq!(
+            of_execution_engine_create_multi(cfgs.as_ptr(), cfgs.len() as u32, &mut engine),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!engine.is_null());
+        assert_eq!(
+            of_execution_engine_start(engine),
+            of_error_t::OF_OK as i32
+        );
+
+        let strategy = CString::new("STRAT").expect("cstring");
+        let es_id = CString::new("ES-1").expect("cstring");
+        let nq_id = CString::new("NQ-1").expect("cstring");
+        let es_req = of_execution_order_request_t {
+            client_order_id: es_id.as_ptr(),
+            account_id: account.as_ptr(),
+            route_id: route.as_ptr(),
+            strategy_id: strategy.as_ptr(),
+            venue: venue.as_ptr(),
+            instrument: es.as_ptr(),
+            side: 1,
+            order_type: 2,
+            time_in_force: 1,
+            quantity: 10,
+            limit_price: 5000,
+            stop_price: 0,
+            ts_exchange_ns: 1,
+            ts_recv_ns: 2,
+        };
+        let nq_req = of_execution_order_request_t {
+            client_order_id: nq_id.as_ptr(),
+            account_id: account.as_ptr(),
+            route_id: route.as_ptr(),
+            strategy_id: strategy.as_ptr(),
+            venue: venue.as_ptr(),
+            instrument: nq.as_ptr(),
+            side: 1,
+            order_type: 2,
+            time_in_force: 1,
+            quantity: 10,
+            limit_price: 5000,
+            stop_price: 0,
+            ts_exchange_ns: 1,
+            ts_recv_ns: 3,
+        };
+        let mut events = [of_execution_event_t {
+            exec_type: 0,
+            order_status: 0,
+            client_order_id: [0; 41],
+            orig_client_order_id: [0; 41],
+            venue_order_id: [0; 49],
+            execution_id: [0; 49],
+            account_id: [0; 33],
+            route_id: [0; 33],
+            venue: [0; 17],
+            instrument: [0; 33],
+            last_qty: 0,
+            last_price: 0,
+            cumulative_qty: 0,
+            leaves_qty: 0,
+            average_price: 0,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+            reason: 0,
+            text: [0; 129],
+        }; 4];
+        let mut len = events.len() as u32;
+        assert_eq!(
+            of_execution_submit_order(engine, &es_req, events.as_mut_ptr(), &mut len),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(len, 2);
+        len = events.len() as u32;
+        assert_eq!(
+            of_execution_submit_order(engine, &nq_req, events.as_mut_ptr(), &mut len),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(len, 2);
+
+        let mut metrics = of_execution_metrics_t {
+            submitted: 0,
+            cancelled: 0,
+            amended: 0,
+            events_applied: 0,
+            risk_rejected: 0,
+            adapter_errors: 0,
+            recovered: 0,
+        };
+        assert_eq!(
+            of_execution_metrics(engine, &mut metrics),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(metrics.submitted, 2);
+        assert_eq!(metrics.events_applied, 4);
+
+        of_execution_engine_destroy(engine);
+    }
+
+    #[test]
+    fn execution_concurrent_abi_submits_and_reports() {
+        let _guard = test_lock().lock().expect("test lock");
+        let route = CString::new("SIM").expect("cstring");
+        let account = CString::new("ACC").expect("cstring");
+        let venue = CString::new("SIM").expect("cstring");
+        let instrument = CString::new("ES").expect("cstring");
+        let cfg = of_execution_route_config_t {
+            route_id: route.as_ptr(),
+            account_id: account.as_ptr(),
+            venue: venue.as_ptr(),
+            instrument: instrument.as_ptr(),
+            enabled: 1,
+            kill_switch: 0,
+            max_order_qty: 100,
+            max_order_notional: 1_000_000,
+            max_open_orders: 10,
+            max_open_notional: 10_000_000,
+            price_band_ticks: 0,
+        };
+        let worker_cfg = of_execution_concurrent_config_t {
+            command_capacity: 8,
+            report_capacity: 8,
+            event_buffer_capacity: 8,
+        };
+
+        let mut engine: *mut of_execution_concurrent_engine = ptr::null_mut();
+        assert_eq!(
+            of_execution_concurrent_engine_create_multi(&cfg, 1, &worker_cfg, &mut engine),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!engine.is_null());
+
+        let client_order_id = CString::new("C1").expect("cstring");
+        let strategy = CString::new("STRAT").expect("cstring");
+        let req = of_execution_order_request_t {
+            client_order_id: client_order_id.as_ptr(),
+            account_id: account.as_ptr(),
+            route_id: route.as_ptr(),
+            strategy_id: strategy.as_ptr(),
+            venue: venue.as_ptr(),
+            instrument: instrument.as_ptr(),
+            side: 1,
+            order_type: 2,
+            time_in_force: 1,
+            quantity: 10,
+            limit_price: 5000,
+            stop_price: 0,
+            ts_exchange_ns: 1,
+            ts_recv_ns: 2,
+        };
+        let mut sequence = 0_u64;
+        assert_eq!(
+            of_execution_concurrent_submit_order(engine, &req, &mut sequence),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(sequence, 1);
+
+        let mut report = of_execution_command_report_t {
+            sequence: 0,
+            kind: 0,
+            result_code: 0,
+            event_count: 0,
+        };
+        let mut events = [of_execution_event_t {
+            exec_type: 0,
+            order_status: 0,
+            client_order_id: [0; 41],
+            orig_client_order_id: [0; 41],
+            venue_order_id: [0; 49],
+            execution_id: [0; 49],
+            account_id: [0; 33],
+            route_id: [0; 33],
+            venue: [0; 17],
+            instrument: [0; 33],
+            last_qty: 0,
+            last_price: 0,
+            cumulative_qty: 0,
+            leaves_qty: 0,
+            average_price: 0,
+            ts_exchange_ns: 0,
+            ts_recv_ns: 0,
+            reason: 0,
+            text: [0; 129],
+        }; 4];
+        let mut len = events.len() as u32;
+        let mut rc = of_execution_concurrent_try_recv_report(
+            engine,
+            &mut report,
+            events.as_mut_ptr(),
+            &mut len,
+        );
+        for _ in 0..100 {
+            if rc == of_error_t::OF_OK as i32 {
+                break;
+            }
+            std::thread::yield_now();
+            len = events.len() as u32;
+            rc = of_execution_concurrent_try_recv_report(
+                engine,
+                &mut report,
+                events.as_mut_ptr(),
+                &mut len,
+            );
+        }
+        assert_eq!(rc, of_error_t::OF_OK as i32);
+        assert_eq!(report.sequence, 1);
+        assert_eq!(report.kind, 1);
+        assert_eq!(report.result_code, of_error_t::OF_OK as i32);
+        assert_eq!(report.event_count, 2);
+        assert_eq!(len, 2);
+        assert_eq!(events[0].exec_type, 1);
+        assert_eq!(events[1].exec_type, 3);
+
+        assert_eq!(
+            of_execution_concurrent_stop(engine, &mut sequence),
+            of_error_t::OF_OK as i32
+        );
+        of_execution_concurrent_engine_destroy(engine);
     }
 }

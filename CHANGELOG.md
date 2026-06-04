@@ -5,8 +5,73 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-06-04
 ### Added
-- Placeholder for the next release cycle.
+- Broad additive analytics expansion across Rust, C, Python, and Java:
+  spread/book-event/resiliency helpers; VPIN, Kyle's Lambda, Amihud, and CVD
+  enhancement snapshots; practitioner pattern detection; volatility, noise,
+  Hasbrouck, Almgren-Chriss, spread decomposition, ACD, regime, kinetic-energy,
+  agent-type, dark-pool, options-flow, futures, dark-lit correlation,
+  institutional-flow, OI-analysis, and LOB-feature APIs.
+- `AnalyticsConfig` tuning surface across Rust, C, and Python for rolling
+  window lengths, thresholds, and event-rate windows.
+- Tickbar integration: fixed-interval OHLCV bar aggregation using the `tickbar`
+  crate. New `CompletedBar` domain type, `AnalyticsAccumulator::with_tickbar()`,
+  `bar_series()`, and `reset_tickbar()` methods. Exposed through C ABI
+  (`of_engine_set_tickbar_interval`, `of_get_bar_series`), Python binding
+  (`set_tickbar_interval()`, `bar_series()`), and Java binding
+  (`setTickbarInterval()`, `barSeries()`). Feature-gated behind `tickbar`
+  (off by default).
+- Strategy cookbook expanded to 30 strategy examples with payload-key-accurate
+  examples and API compatibility mapping across Rust, C, Python, and Java.
+- Additive execution-core foundation for order-management workflows:
+  `of_execution_core`, `of_execution`, and `of_execution_adapters` introduce
+  fixed-size execution identifiers, typed order/cancel/amend requests,
+  FIX-style order-state transitions, structured pre-trade risk rejection,
+  bounded execution event buffers, simulated execution, journal/recovery hooks,
+  and a FIX execution-report mapping scaffold.
+- Additive execution C ABI, Python, and Java APIs using separate execution
+  handles (`of_execution_engine_t`, `ExecutionEngine`,
+  `OrderflowExecutionEngine`). Existing analytics/runtime APIs are unchanged.
+- Multi-route execution engines for multi-symbol order flow. Rust execution now
+  indexes route/account/symbol configs, applies route-scoped open-order and
+  notional risk accounting, and exposes additive C (`of_execution_engine_create_multi`),
+  Python (`ExecutionEngine([routes...])`), and Java
+  (`new OrderflowExecutionEngine(path, List<RouteConfig>)`) entry points.
+- Additive Rust `ConcurrentExecutionEngine` worker wrapper for concurrent order
+  producers. The wrapper keeps the synchronous execution engine owned by one
+  dedicated thread, uses bounded command/report channels, and preserves serial
+  deterministic order-state transitions.
+- Full additive OMS support primitives: command/request correlation, bounded
+  execution-event fanout, adapter lifecycle snapshots, file-backed durable
+  execution journal, open-order reconciliation, disconnect/kill-switch safety
+  policies, advanced risk gate helpers, position/fill ledger, order-type/TIF
+  normalization, execution telemetry, deterministic sharding, token-bucket
+  throttling, replayable OMS simulation, and provider adapter SDK helpers.
+- Concurrent execution runtime access across C, Python, and Java through
+  additive handles/classes (`of_execution_concurrent_engine_t`,
+  `ConcurrentExecutionEngine`, and `ConcurrentOrderflowExecutionEngine`).
+- Expanded handbook coverage for the execution and OMS subsystem, including
+  crate references, OMS architecture, multi-symbol cookbook workflows,
+  low-latency design guidance, provider adapter authoring, and recovery
+  operations.
+
+### Changed
+- Existing analytics/runtime/native/binding package line advances to `0.4.0`.
+- New Rust execution crates publish as `0.1.0`:
+  `of_execution_core`, `of_execution`, and `of_execution_adapters`.
+- Root README, crate READMEs, Python README, Java README, strategy handbook,
+  and OMS cookbook now focus on the `0.4.0` analytics-to-execution workflow.
+
+### Upgrade Notes
+- Existing analytics/runtime APIs are intended to remain source-compatible.
+- Update Python/Java packages and the native `of_ffi_c` runtime/header together
+  to `0.4.0`.
+- If you build native execution providers, depend on the execution crates at
+  compatible `0.1.x` versions and follow adapter-authoring guidance.
+- Treat simulated execution as a deterministic test and integration tool, not a
+  broker-certified live OMS.
 
 ## [0.3.0] - 2026-05-09
 This is a non-breaking operational hardening release after `0.2.0`. For the

@@ -12,19 +12,73 @@ external feed ingestion.
 The package includes a PEP 561 `py.typed` marker so type checkers can consume
 the inline annotations shipped with the binding.
 
+The binding also exposes an additive execution API through `ExecutionEngine`.
+Execution uses a separate native handle from analytics and returns typed
+execution events rather than JSON on the order path.
+
 The README is intentionally API-complete so the PyPI page can be used as a
 single reference, similar to high-signal package pages such as TA-Lib and
 FastAPI.
 
-## What's New In 0.3.0
+## What's New In 0.4.0
 
-- PEP 561 `py.typed` marker for static type checkers.
-- Binary wheels can bundle the native `of_ffi_c` runtime under
-  `orderflow/native/`.
-- Native library lookup now checks explicit `library_path=`,
-  `ORDERFLOW_LIBRARY_PATH`, bundled wheel libraries, then the local debug build.
-- Runtime `metrics()` may include additive backpressure, aggregate health, and
-  circuit-breaker fields when using a `0.3.0` native library.
+`0.4.0` is the first Python release with end-to-end analytics plus execution
+concepts in one binding package. Existing `Engine` users keep the same market
+data API; execution is exposed through separate classes and native handles.
+
+Highlights:
+
+- additive simulated execution APIs: `ExecutionEngine`,
+  `ConcurrentExecutionEngine`, `OrderRequest`, `CancelRequest`, `AmendRequest`,
+  `RiskLimits`, `RouteConfig`, and execution event dataclasses
+- multi-route execution construction for multi-symbol order flow
+- bounded concurrent execution worker for many producers and one deterministic
+  native order-state owner
+- typed execution events and command reports instead of JSON on the order path
+- route/account/symbol-scoped risk checks before adapter routing
+- analytics-to-execution examples in this README and the handbook
+- continued PEP 561 `py.typed` support and bundled native library lookup
+
+Version policy:
+
+- Python package: `0.4.0`
+- compatible native `of_ffi_c` library/header: `0.4.0`
+- new Rust execution crates behind the native ABI: `0.1.0`
+
+Install the Python package and native runtime at the same release version.
+Execution users should treat the Rust execution crates as a new `0.1.x`
+surface if they build custom native providers.
+
+### Execution quick start
+
+```python
+from orderflow import (
+    ConcurrentExecutionEngine, ExecutionEngine, ExecutionOrderType, ExecutionSide, ExecutionTimeInForce,
+    OrderRequest, RiskLimits, RouteConfig,
+)
+
+limits = RiskLimits(False, 100, 1_000_000, 10, 10_000_000, 0)
+routes = [
+    RouteConfig("SIM", "ACC", "SIM", "ES", True, limits),
+    RouteConfig("SIM", "ACC", "SIM", "NQ", True, limits),
+]
+
+with ExecutionEngine(routes) as execution:
+    events = execution.submit_order(OrderRequest(
+        "C1", "ACC", "SIM", "STRAT", "SIM", "ES",
+        ExecutionSide.BUY, ExecutionOrderType.LIMIT, ExecutionTimeInForce.DAY,
+        10, 5000,
+    ))
+```
+
+`ExecutionEngine(route)` remains supported for single-symbol integrations. When
+you pass a route list, native risk accounting is scoped per
+route/account/symbol.
+
+Use `ConcurrentExecutionEngine(routes)` when multiple producer threads need to
+queue commands into one deterministic native worker. Command methods return a
+sequence number; `try_recv_report()` returns completed command reports without
+blocking.
 
 ## Architecture
 
@@ -73,6 +127,86 @@ with Engine(EngineConfig(instance_id="py-client")) as eng:
     print("signal", eng.signal_snapshot(sym))
     print("metrics", eng.metrics())
 ```
+
+## Complete End-To-End Example
+
+This example uses deterministic external ingest and simulated execution. It is
+safe for documentation, CI smoke tests, and first user experiments because it
+does not connect to a broker.
+
+```python
+from orderflow import (
+    BookAction,
+    DataQualityFlags,
+    Engine,
+    EngineConfig,
+    ExecutionEngine,
+    ExecutionOrderType,
+    ExecutionSide,
+    ExecutionTimeInForce,
+    ExternalFeedPolicy,
+    OrderRequest,
+    RiskLimits,
+    RouteConfig,
+    Side,
+    StreamKind,
+    Symbol,
+)
+
+
+def signal_allows_long(analytics: dict, signal: dict) -> bool:
+    quality = int(analytics.get("quality_flags", 0))
+    delta = int(analytics.get("delta", 0))
+    cumulative_delta = float(analytics.get("cumulative_delta", 0.0))
+    confidence = float(signal.get("confidence", 0.0))
+    return (
+        quality == DataQualityFlags.NONE
+        and delta > 0
+        and cumulative_delta > 0.0
+        and confidence >= 0.50
+    )
+
+
+sym = Symbol("SIM", "ES", 10)
+limits = RiskLimits(False, 5, 1_000_000, 1, 1_000_000, 0)
+routes = [RouteConfig("SIM", "ACC", "SIM", "ES", True, limits)]
+
+with Engine(EngineConfig(instance_id="py-end-to-end")) as market, ExecutionEngine(routes) as execution:
+    market.configure_external_feed(ExternalFeedPolicy(2_000, True))
+    market.subscribe(sym, StreamKind.ANALYTICS)
+    market.subscribe(sym, StreamKind.SIGNALS)
+
+    market.ingest_book(sym, Side.BID, 0, 500_000, 100, BookAction.UPSERT, sequence=1)
+    market.ingest_book(sym, Side.ASK, 0, 500_025, 120, BookAction.UPSERT, sequence=2)
+    market.ingest_trade(sym, 500_025, 2, Side.ASK, sequence=3)
+    market.poll_once(DataQualityFlags.NONE)
+
+    analytics = market.analytics_snapshot(sym)
+    signal = market.signal_snapshot(sym)
+
+    if signal_allows_long(analytics, signal):
+        events = execution.submit_order(OrderRequest(
+            "PY-0001",
+            "ACC",
+            "SIM",
+            "DOCS",
+            "SIM",
+            "ES",
+            ExecutionSide.BUY,
+            ExecutionOrderType.LIMIT,
+            ExecutionTimeInForce.DAY,
+            1,
+            500_025,
+        ))
+        print("events", events)
+        print("state", execution.order_state("PY-0001"))
+        print("execution metrics", execution.execution_metrics())
+    else:
+        print("blocked", {"analytics": analytics, "signal": signal})
+```
+
+Production applications add durable persistence, execution journaling, provider
+adapter ownership, reconnect/recovery policy, and monitoring around this shape.
 
 ## Public API Reference
 
@@ -239,6 +373,63 @@ The Python wrapper retries automatically if the native snapshot payload is large
 - `vwap`
 - `first_ts_exchange_ns`
 - `last_ts_exchange_ns`
+
+### Execution API Reference
+
+Execution objects use typed dataclasses and separate native handles from the
+analytics runtime.
+
+#### Execution constants
+
+| Class | Values |
+|---|---|
+| `ExecutionSide` | `BUY`, `SELL` |
+| `ExecutionOrderType` | `MARKET`, `LIMIT`, `STOP`, `STOP_LIMIT` |
+| `ExecutionTimeInForce` | `DAY`, `GTC`, `IOC`, `FOK`, `GTD` |
+
+#### Execution dataclasses
+
+| Dataclass | Purpose |
+|---|---|
+| `RiskLimits` | Per-route pre-trade limits: kill switch, max quantity, max notional, max open orders, max open notional, price band |
+| `RouteConfig` | Route/account/venue/instrument binding plus `RiskLimits` |
+| `OrderRequest` | New-order command |
+| `CancelRequest` | Cancel command with new cancel id and original client id |
+| `AmendRequest` | Cancel/replace command |
+| `ExecutionEvent` | Typed native execution event |
+| `ExecutionOrderState` | Current native order state for one client order id |
+| `ExecutionHealth` | Connected/degraded/sequence health snapshot |
+| `ExecutionMetrics` | Submitted/cancelled/amended/events/risk/adapter/recovery counters |
+| `ConcurrentExecutionConfig` | Command/report/event-buffer capacities |
+| `ExecutionCommandReport` | Concurrent command result, sequence, result code, and events |
+
+#### `ExecutionEngine`
+
+| Signature | Description |
+|---|---|
+| `ExecutionEngine(route_or_routes, library_path=None)` | Creates a simulated execution engine for one route or a route list |
+| `start()` | Starts adapter/session |
+| `stop()` | Stops adapter/session |
+| `close()` | Destroys native execution handle |
+| `submit_order(request)` | Submits a new order and returns `list[ExecutionEvent]` |
+| `cancel_order(request)` | Cancels an order and returns `list[ExecutionEvent]` |
+| `amend_order(request)` | Amends an order and returns `list[ExecutionEvent]` |
+| `poll_execution()` | Polls execution adapter and returns `list[ExecutionEvent]` |
+| `order_state(client_order_id)` | Returns `ExecutionOrderState` |
+| `execution_health()` | Returns `ExecutionHealth` |
+| `execution_metrics()` | Returns `ExecutionMetrics` |
+
+#### `ConcurrentExecutionEngine`
+
+| Signature | Description |
+|---|---|
+| `ConcurrentExecutionEngine(routes, config=ConcurrentExecutionConfig(), library_path=None)` | Creates a bounded worker |
+| `submit_order(request)` | Queues submit and returns command sequence |
+| `cancel_order(request)` | Queues cancel and returns command sequence |
+| `amend_order(request)` | Queues amend and returns command sequence |
+| `poll_execution()` | Queues poll and returns command sequence |
+| `try_recv_report()` | Returns `ExecutionCommandReport` or `None` without blocking |
+| `stop()` | Queues worker stop and returns command sequence |
 
 ## Usage Patterns
 

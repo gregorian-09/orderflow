@@ -70,6 +70,9 @@ Last updated: 2026-04-08
 
 - Rust API compatibility is checked in CI for all published crates using `cargo-semver-checks` with patch-level compatibility rules:
   - `of_core`
+  - `of_execution_core`
+  - `of_execution`
+  - `of_execution_adapters`
   - `of_adapters`
   - `of_signals`
   - `of_persist`

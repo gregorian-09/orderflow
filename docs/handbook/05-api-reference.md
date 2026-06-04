@@ -22,12 +22,23 @@ Rust crate chapters:
 - [`of_persist` reference](./05d-of-persist-reference.md)
 - [`of_runtime` reference](./05e-of-runtime-reference.md)
 - [`of_ffi_c` reference](./05f-of-ffi-c-reference.md)
+- [`of_execution_core` reference](./05g-of-execution-core-reference.md)
+- [`of_execution` reference](./05h-of-execution-reference.md)
+- [`of_execution_adapters` reference](./05i-of-execution-adapters-reference.md)
 
 Binding-specific docs:
 
 - [Python binding handbook](../bindings/python.md)
 - [Java binding handbook](../bindings/java.md)
 - [C ABI header](../../crates/of_ffi_c/include/orderflow.h)
+
+Execution and OMS workflow docs:
+
+- [OMS architecture](./09-oms-architecture.md)
+- [OMS cookbook](./10-oms-cookbook.md)
+- [Low-latency design](./11-low-latency-design.md)
+- [Provider adapter authoring](./12-provider-adapter-authoring.md)
+- [OMS recovery and operations](./13-recovery-and-operations.md)
 
 ---
 
@@ -208,6 +219,147 @@ Public runtime methods:
 - `health_json() -> String`
 - `last_events() -> &[RawEvent]`
 - `current_quality_flags_bits() -> u32`
+
+### `of_execution_core`
+
+Public identifier types:
+
+- `FixedAscii<N>`
+- `ClientOrderId`
+- `VenueOrderId`
+- `ExecutionId`
+- `AccountId`
+- `RouteId`
+- `StrategyId`
+- `VenueId`
+- `InstrumentId`
+- `ExecutionText`
+
+Public execution model types:
+
+- `ExecutionSymbol`
+- `OrderQty`
+- `OrderPrice`
+- `OrderSide`
+- `OrderType`
+- `TimeInForce`
+- `OrderStatus`
+- `ExecutionType`
+- `OrderRequest`
+- `CancelRequest`
+- `AmendRequest`
+- `ExecutionEvent`
+- `OrderState`
+- `OrderStateMachine`
+
+Public risk types:
+
+- `RiskRejectReason`
+- `RiskDecision`
+- `RiskLimits`
+- `RiskContext`
+- `RiskCheck` trait
+- `BasicRiskGate`
+
+For field-level semantics and transition rules, see
+[`of_execution_core` reference](./05g-of-execution-core-reference.md).
+
+### `of_execution`
+
+Public adapter and engine types:
+
+- `ExecutionError`
+- `ExecutionResult<T>`
+- `ExecutionEventBuffer`
+- `LatencyClass`
+- `ExecutionCapabilities`
+- `ExecutionHealth`
+- `ExecutionAdapter` trait
+- `RouteConfig`
+- `RouteKey`
+- `AllowAllRiskGate`
+- `ExecutionEngine`
+- `SimExecutionAdapter`
+
+Public journal types:
+
+- `JournalCommandKind`
+- `JournalRecord`
+- `ExecutionJournal` trait
+- `InMemoryJournal`
+
+Public concurrent execution types:
+
+- `ConcurrentExecutionConfig`
+- `ExecutionCommandKind`
+- `ExecutionCommand`
+- `ExecutionCommandReport`
+- `ConcurrentExecutionError`
+- `ExecutionCommandSender`
+- `ConcurrentExecutionEngine`
+
+Public OMS helper types:
+
+- `CommandId`
+- `RequestId`
+- `CommandIdGenerator`
+- `CommandCorrelation`
+- `ExecutionEventFanout`
+- `ExecutionEventSubscriber`
+- `ExecutionAdapterState`
+- `ExecutionLifecycle`
+- `ExecutionLifecycleSnapshot`
+- `FileExecutionJournal`
+- `ReconciliationAction`
+- `ReconciliationItem`
+- `ReconciliationReport`
+- `DisconnectPolicy`
+- `RouteSafetyPolicy`
+- `AdvancedRiskLimits`
+- `AdvancedRiskGate`
+- `Position`
+- `PositionKey`
+- `PositionLedger`
+- `VenueOrderCapabilities`
+- `NormalizedOrderType`
+- `ExecutionTelemetry`
+- `ShardKey`
+- `ShardRouter`
+- `OrderThrottle`
+- `ReplayDecision`
+- `ReplayResult`
+- `ProviderAdapterContext`
+- `ExecutionAdapterFactory`
+- `ProviderAdapterSdk`
+
+Public helper functions:
+
+- `simulated_engine(route) -> ExecutionEngine<SimExecutionAdapter, BasicRiskGate, InMemoryJournal>`
+- `simulated_engine_with_routes(routes) -> ExecutionEngine<SimExecutionAdapter, AllowAllRiskGate, InMemoryJournal>`
+- `reconcile_open_orders(local, venue) -> ReconciliationReport`
+- `normalize_order_type(order_type, tif, capabilities) -> NormalizedOrderType`
+- `replay_simulated_oms(routes, decisions) -> ExecutionResult<ReplayResult>`
+
+For lifecycle, routing, concurrency, and OMS helper details, see
+[`of_execution` reference](./05h-of-execution-reference.md).
+
+### `of_execution_adapters`
+
+Feature-gated public FIX scaffold types under `of_execution_adapters::fix`:
+
+- `FixSessionConfig`
+- `FixExecutionReport`
+- `FixExecType`
+- `FixOrdStatus`
+- `FixExecutionAdapter`
+
+Feature-gated public FIX helper functions under `of_execution_adapters::fix`:
+
+- `map_execution_report(report) -> ExecutionEvent`
+
+For mapping rules and adapter implementation guidance, see
+[`of_execution_adapters` reference](./05i-of-execution-adapters-reference.md)
+and [Provider Adapter Authoring](./12-provider-adapter-authoring.md).
 
 ---
 

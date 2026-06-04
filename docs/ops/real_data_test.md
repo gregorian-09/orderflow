@@ -40,11 +40,7 @@ export OF_DASH_REPLAY_FILE=data_capture/BINANCE/BTCUSDT/trades.jsonl
 python3 dashboard/server.py
 ```
 
-Open:
-
-```text
-http://127.0.0.1:8080
-```
+Open <http://127.0.0.1:8080>.
 
 In UI:
 

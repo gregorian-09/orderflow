@@ -59,7 +59,9 @@ pub fn load_engine_config_report_from_path(path: &str) -> Result<ConfigLoadRepor
 /// Validates startup configuration and environment prerequisites.
 pub fn validate_startup_config(cfg: &EngineConfig) -> Result<(), RuntimeError> {
     if cfg.instance_id.trim().is_empty() {
-        return Err(RuntimeError::Config("instance_id must not be empty".to_string()));
+        return Err(RuntimeError::Config(
+            "instance_id must not be empty".to_string(),
+        ));
     }
 
     if cfg.signal_threshold <= 0 {
@@ -89,7 +91,10 @@ pub fn validate_startup_config(cfg: &EngineConfig) -> Result<(), RuntimeError> {
             "data_root must not be empty when persistence is enabled".to_string(),
         ));
     }
-    if cfg.enable_persistence && cfg.data_retention_max_bytes == 0 && cfg.data_retention_max_age_secs == 0 {
+    if cfg.enable_persistence
+        && cfg.data_retention_max_bytes == 0
+        && cfg.data_retention_max_age_secs == 0
+    {
         return Err(RuntimeError::Config(
             "set at least one of data_retention_max_bytes or data_retention_max_age_secs when persistence is enabled".to_string(),
         ));
@@ -111,7 +116,10 @@ pub fn validate_startup_config(cfg: &EngineConfig) -> Result<(), RuntimeError> {
                 ));
             }
 
-            if matches!(cfg.adapter.provider, ProviderKind::Rithmic | ProviderKind::Cqg) {
+            if matches!(
+                cfg.adapter.provider,
+                ProviderKind::Rithmic | ProviderKind::Cqg
+            ) {
                 let creds = cfg.adapter.credentials.as_ref().ok_or_else(|| {
                     RuntimeError::Config(
                         "rithmic/cqg providers require adapter.credentials references".to_string(),

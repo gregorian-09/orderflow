@@ -1,7 +1,10 @@
 #[derive(Debug, Clone)]
 pub enum CqgOutbound {
     Logon,
-    InformationRequest { request_id: u64, symbol: String },
+    InformationRequest {
+        request_id: u64,
+        symbol: String,
+    },
     MarketDataSubscription {
         request_id: u64,
         contract_id: i64,
@@ -13,7 +16,10 @@ pub enum CqgOutbound {
 
 #[derive(Debug, Clone)]
 pub enum CqgInbound {
-    LogonResult { success: bool, message: String },
+    LogonResult {
+        success: bool,
+        message: String,
+    },
     SymbolResolution {
         request_id: u64,
         contract_id: i64,
@@ -40,7 +46,10 @@ pub enum CqgInbound {
         contract_id: i64,
         accepted: bool,
     },
-    Reject { request_id: u64, reason: String },
+    Reject {
+        request_id: u64,
+        reason: String,
+    },
     Heartbeat,
 }
 
@@ -192,8 +201,7 @@ mod protobuf_codec {
                     decode_sint64_field(payload, 1)?.ok_or("missing contract_id".to_string())?;
                 let sequence =
                     decode_varint_field(payload, 2)?.ok_or("missing sequence".to_string())?;
-                let price =
-                    decode_sint64_field(payload, 3)?.ok_or("missing price".to_string())?;
+                let price = decode_sint64_field(payload, 3)?.ok_or("missing price".to_string())?;
                 let size = decode_sint64_field(payload, 4)?.ok_or("missing size".to_string())?;
                 let level = decode_varint_field(payload, 5)?.ok_or("missing level".to_string())?;
                 let is_bid = decode_bool_field(payload, 6)?.unwrap_or(false);
@@ -213,8 +221,7 @@ mod protobuf_codec {
                     decode_sint64_field(payload, 1)?.ok_or("missing contract_id".to_string())?;
                 let sequence =
                     decode_varint_field(payload, 2)?.ok_or("missing sequence".to_string())?;
-                let price =
-                    decode_sint64_field(payload, 3)?.ok_or("missing price".to_string())?;
+                let price = decode_sint64_field(payload, 3)?.ok_or("missing price".to_string())?;
                 let size = decode_sint64_field(payload, 4)?.ok_or("missing size".to_string())?;
                 let aggressor_is_buy = decode_bool_field(payload, 5)?.unwrap_or(false);
                 Ok(CqgInbound::TradeUpdate {
