@@ -2,15 +2,16 @@
 
 These pages are binding-specific distribution and usage docs.
 
-Latest release: `0.3.0`.
+Latest release: `0.4.0`.
 
-- Python adds type-checker metadata and bundled native-wheel loading support.
-- Java keeps the existing JNA API and receives additive runtime metrics through
-  the `0.3.0` native library.
-- C ABI symbols remain stable; metrics JSON includes additive operational
-  fields.
-- Current unreleased docs also cover the additive execution/OMS APIs exposed
-  through Rust, C, Python, and Java.
+- Python and Java keep the existing analytics/runtime APIs and add separate
+  execution classes.
+- C ABI symbols for analytics remain stable and add a separate execution symbol
+  family.
+- The new execution Rust crates publish as `0.1.0`; bindings and native runtime
+  publish as `0.4.0`.
+- Binding README files include end-to-end examples that combine market data,
+  analytics, signal gating, simulated execution, and order reports.
 
 - [Python Binding](./python.md)
 - [Java Binding](./java.md)

@@ -16,26 +16,29 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
   - [`SweepDetectionSignal`]
   - [`CompositeSignal`]
 
-## New In 0.3.0
+## New In 0.4.0
 
-`0.3.0` adds runtime-level replay parity coverage that verifies persisted
-streams replay into matching signal state. The `SignalModule` trait and built-in
-signal constructors remain unchanged.
+`0.4.0` keeps the [`SignalModule`] trait and built-in signal constructors
+stable. The major release-level change is that signals can now sit in a full
+developer workflow: analytics -> signal snapshot -> quality gate -> risk gate
+-> simulated execution -> journal/replay review.
 
-## New In 0.2.0
+What changes for signal authors:
 
-Relative to the `0.1.x` line, `of_signals` now includes a broader built-in
-catalog:
+- signal modules still consume analytics and quality state; they do not submit
+  orders directly;
+- execution is an application-level decision made after signal and risk gating;
+- the strategy handbook now documents complete signal-to-execution examples in
+  Rust, Python, Java, and C-oriented flows;
+- replay parity remains the recommended validation path before a signal is
+  allowed to drive an execution adapter;
+- custom signal modules remain source-compatible with the existing trait.
 
-- [`VolumeImbalanceSignal`]
-- [`CumulativeDeltaSignal`]
-- [`AbsorptionSignal`]
-- [`ExhaustionSignal`]
-- [`SweepDetectionSignal`]
-- [`CompositeSignal`]
+Version policy:
 
-The original trait contract stayed stable, so downstream custom modules do not
-need a migration.
+- `of_signals` publishes as `0.4.0`;
+- execution crates publish as `0.1.0` and depend on their own execution-domain
+  contracts, not on this signal trait.
 
 ## Public API Inventory
 

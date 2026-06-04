@@ -11,6 +11,190 @@ This section shows how to build a strategy from idea to executable rules.
 5. **Exit rule**: target, trail, or condition-based exit.
 6. **Review loop**: measure and refine.
 
+In `0.4.0`, a complete Orderflow strategy should be described as two explicit
+planes:
+
+- **market-data plane**: adapters, external ingest, analytics, signals,
+  quality flags, persistence, and replay
+- **execution plane**: route selection, risk checks, submit/cancel/amend,
+  order-state transitions, command reports, journals, recovery, and
+  reconciliation
+
+Keep those planes separate in code. A signal is not an order. A strategy should
+first prove that market data is clean, the setup is measurable, and risk allows
+the intent. Only then should it create an execution request.
+
+```mermaid
+flowchart LR
+  Feed[Adapter or external feed]
+  Runtime[of_runtime market-data engine]
+  Analytics[Analytics snapshots]
+  Signal[Signal snapshot]
+  Quality{Quality flags clear?}
+  Sizing[Risk sizing and route selection]
+  Exec[of_execution engine]
+  Report[Execution events and order state]
+  Journal[Market-data replay + execution journal]
+  Review[Post-session review]
+
+  Feed --> Runtime --> Analytics --> Signal --> Quality
+  Quality -- no --> Review
+  Quality -- yes --> Sizing --> Exec --> Report --> Journal --> Review
+```
+
+## End-To-End Strategy Shape
+
+This section shows the full shape developers should copy when they are learning
+the library. It uses deterministic external ingest and simulated execution so
+the example is safe to run without a broker.
+
+The example implements a small continuation strategy:
+
+- ingest book and trade events,
+- read analytics and signal snapshots,
+- block trading when data quality is degraded,
+- size a route/account/symbol-scoped order,
+- submit through simulated execution,
+- inspect the resulting execution events,
+- poll final metrics for review.
+
+```python
+from orderflow import (
+    BookAction,
+    DataQualityFlags,
+    Engine,
+    EngineConfig,
+    ExecutionEngine,
+    ExecutionOrderType,
+    ExecutionSide,
+    ExecutionTimeInForce,
+    ExternalFeedPolicy,
+    OrderRequest,
+    RiskLimits,
+    RouteConfig,
+    Side,
+    StreamKind,
+    Symbol,
+)
+
+
+def quality_is_clear(snapshot: dict) -> bool:
+    return int(snapshot.get("quality_flags", 0)) == DataQualityFlags.NONE
+
+
+def continuation_bias(analytics: dict, signal: dict) -> bool:
+    delta = int(analytics.get("delta", 0))
+    cumulative_delta = float(analytics.get("cumulative_delta", 0.0))
+    confidence = float(signal.get("confidence", 0.0))
+    return delta > 0 and cumulative_delta > 0.0 and confidence >= 0.50
+
+
+symbol = Symbol("SIM", "ES", depth_levels=10)
+limits = RiskLimits(
+    kill_switch=False,
+    max_order_qty=10,
+    max_order_notional=1_000_000,
+    max_open_orders=1,
+    max_open_notional=1_000_000,
+    price_band_ticks=0,
+)
+routes = [RouteConfig("SIM", "ACC", "SIM", "ES", True, limits)]
+
+with Engine(EngineConfig(instance_id="strategy-demo")) as market, ExecutionEngine(routes) as execution:
+    market.configure_external_feed(ExternalFeedPolicy(stale_after_ms=2_000, enforce_sequence=True))
+    market.subscribe(symbol, StreamKind.ANALYTICS)
+    market.subscribe(symbol, StreamKind.SIGNALS)
+
+    market.ingest_book(symbol, Side.BID, 0, 500_000, 100, BookAction.UPSERT, sequence=1)
+    market.ingest_book(symbol, Side.ASK, 0, 500_025, 120, BookAction.UPSERT, sequence=2)
+    market.ingest_trade(symbol, 500_025, 3, Side.ASK, sequence=3)
+    market.poll_once(DataQualityFlags.NONE)
+
+    analytics = market.analytics_snapshot(symbol)
+    signal = market.signal_snapshot(symbol)
+
+    if quality_is_clear(analytics) and continuation_bias(analytics, signal):
+        order = OrderRequest(
+            client_order_id="STRAT-0001",
+            account_id="ACC",
+            route_id="SIM",
+            strategy_id="CONT",
+            venue="SIM",
+            instrument="ES",
+            side=ExecutionSide.BUY,
+            order_type=ExecutionOrderType.LIMIT,
+            time_in_force=ExecutionTimeInForce.DAY,
+            quantity=1,
+            limit_price=500_025,
+            ts_recv_ns=4,
+        )
+        events = execution.submit_order(order)
+        state = execution.order_state("STRAT-0001")
+        metrics = execution.execution_metrics()
+
+        print("events", events)
+        print("state", state)
+        print("metrics", metrics)
+    else:
+        print("blocked", analytics, signal)
+```
+
+This is still a simulated example. A production application must add:
+
+- real adapter or external broker-feed ownership,
+- symbol metadata for tick-size and decimal conversion,
+- explicit strategy ids and client-order-id generation,
+- durable market-data persistence and execution journaling,
+- venue/broker adapter certification checks,
+- reconnect, recovery, and reconciliation policy,
+- operational metrics and alerting.
+
+## Concurrent Strategy Shape
+
+Use the concurrent execution worker when several strategy components may create
+execution intent at the same time. The worker preserves one native owner for
+order state while producer code gets bounded queue access.
+
+```python
+from orderflow import ConcurrentExecutionConfig, ConcurrentExecutionEngine
+
+config = ConcurrentExecutionConfig(
+    command_capacity=256,
+    report_capacity=256,
+    event_buffer_capacity=32,
+)
+
+with ConcurrentExecutionEngine(routes, config) as execution:
+    sequence = execution.submit_order(OrderRequest(
+        "STRAT-0002",
+        "ACC",
+        "SIM",
+        "CONT",
+        "SIM",
+        "ES",
+        ExecutionSide.BUY,
+        ExecutionOrderType.LIMIT,
+        ExecutionTimeInForce.DAY,
+        1,
+        500_025,
+    ))
+
+    report = None
+    while report is None:
+        report = execution.try_recv_report()
+
+    assert report.sequence == sequence
+    if report.result_code == 0:
+        print("accepted", report.events)
+    else:
+        print("rejected or failed", report.result_code, report.events)
+```
+
+Backpressure is a real strategy outcome. If a command cannot be queued, the
+strategy should not assume the order exists. It should log the failed intent,
+pause or retry according to policy, and avoid creating duplicate client order
+ids for uncertain commands.
+
 ## Example Hypotheses
 
 - **Absorption reversal**: persistent sell aggression into support fails to make new lows.

@@ -1,5 +1,10 @@
 # `of_execution_adapters`
 
+[![Crates.io](https://img.shields.io/crates/v/of_execution_adapters.svg)](https://crates.io/crates/of_execution_adapters)
+[![Docs.rs](https://docs.rs/of_execution_adapters/badge.svg)](https://docs.rs/of_execution_adapters)
+[![CI](https://github.com/gregorian-09/orderflow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gregorian-09/orderflow/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/license/mit)
+
 `of_execution_adapters` contains optional execution adapter scaffolds for
 Orderflow venues, brokers, and execution protocols.
 
@@ -12,6 +17,22 @@ Current scaffold:
 
 - `fix` feature: FIX-style execution-report mapping and fail-closed adapter
   shell.
+
+## First Release: 0.1.0
+
+`of_execution_adapters` publishes as `0.1.0` inside the broader Orderflow
+`0.4.0` release. It is a new adapter-scaffold family, not a mature production
+provider suite.
+
+Versioning rules:
+
+- `of_execution_adapters` depends on `of_execution = 0.1` and
+  `of_execution_core = 0.1`;
+- provider-specific scaffolds stay feature-gated and opt-in;
+- fail-closed scaffolds are allowed in `0.1.x` as long as README and docs state
+  the production boundary clearly;
+- production adapters should document certification status, recovery behavior,
+  rate limits, duplicate handling, and latency assumptions.
 
 ## Design Goals
 
@@ -33,7 +54,7 @@ The crate has `default = []`. Consumers opt in to provider scaffolds explicitly:
 
 ```toml
 [dependencies]
-of_execution_adapters = { version = "0.3.0", features = ["fix"] }
+of_execution_adapters = { version = "0.1.0", features = ["fix"] }
 ```
 
 ## Public API Inventory

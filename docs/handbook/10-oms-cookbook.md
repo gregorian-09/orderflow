@@ -1,7 +1,114 @@
 # OMS Cookbook
 
-This cookbook shows common OMS workflows. Examples are intentionally small and
-focus on how pieces fit together.
+This cookbook shows common OMS workflows added in the `0.4.0` release. The
+examples are safe by default: they use simulated execution, route-scoped risk,
+bounded event buffers, and deterministic command reports.
+
+The OMS layer is not a broker-certified production system by itself. It gives
+developers the reusable pieces needed to build one:
+
+- typed submit/cancel/amend requests,
+- route/account/symbol risk checks,
+- strict order-state transitions,
+- synchronous and concurrent execution ownership models,
+- bounded command/report queues,
+- journals and replay helpers,
+- reconciliation and recovery primitives,
+- provider adapter scaffolding.
+
+```mermaid
+flowchart LR
+  Strategy[Strategy producers]
+  Queue[Bounded command queue]
+  Engine[ExecutionEngine owns state]
+  Adapter[Sim or provider adapter]
+  Events[Execution events]
+  Journal[Execution journal]
+  Reconcile[Recovery and reconciliation]
+
+  Strategy --> Queue --> Engine --> Adapter --> Events
+  Events --> Engine
+  Engine --> Journal --> Reconcile
+```
+
+## 0. Choosing The Correct Execution Model
+
+| Model | Use When | Tradeoff |
+| --- | --- | --- |
+| `ExecutionEngine` | one thread owns execution and calls submit/cancel/amend directly | simplest and most deterministic |
+| `ConcurrentExecutionEngine` | multiple producers need to enqueue orders into one native owner | adds bounded queues and command reports |
+| Custom `ExecutionAdapter` | you are connecting a broker, exchange, REST API, WebSocket API, FIX session, or SDK | you own provider correctness and certification |
+| `of_execution_adapters::fix` | you want shared FIX report mapping scaffolding | not a full FIX transport |
+
+Use the synchronous engine first. Move to the concurrent worker only when the
+host application really has multiple producers or must isolate execution
+ownership from strategy threads.
+
+## 0.1 Full Safe OMS Session
+
+Python:
+
+```python
+from orderflow import (
+    CancelRequest,
+    ExecutionEngine,
+    ExecutionOrderType,
+    ExecutionSide,
+    ExecutionTimeInForce,
+    OrderRequest,
+    RiskLimits,
+    RouteConfig,
+)
+
+limits = RiskLimits(
+    kill_switch=False,
+    max_order_qty=5,
+    max_order_notional=1_000_000,
+    max_open_orders=1,
+    max_open_notional=1_000_000,
+    price_band_ticks=0,
+)
+routes = [RouteConfig("SIM", "ACC", "SIM", "ES", True, limits)]
+
+with ExecutionEngine(routes) as execution:
+    submit_events = execution.submit_order(OrderRequest(
+        "OMS-0001",
+        "ACC",
+        "SIM",
+        "DOCS",
+        "SIM",
+        "ES",
+        ExecutionSide.BUY,
+        ExecutionOrderType.LIMIT,
+        ExecutionTimeInForce.DAY,
+        1,
+        500_000,
+    ))
+    print("submit", submit_events)
+
+    state = execution.order_state("OMS-0001")
+    print("state", state)
+
+    cancel_events = execution.cancel_order(CancelRequest(
+        "OMS-CXL-0001",
+        "OMS-0001",
+        state.venue_order_id,
+        "ACC",
+        "SIM",
+        "SIM",
+        "ES",
+    ))
+    print("cancel", cancel_events)
+    print("metrics", execution.execution_metrics())
+```
+
+This session demonstrates the important invariants:
+
+- every order has a strategy-generated client order id;
+- route, account, venue, and symbol are explicit in the command;
+- the engine validates and risk-checks locally before adapter routing;
+- returned execution events are the source of order-state truth;
+- cancel uses a new cancel client id plus the original client id.
 
 ## 1. Configure Multi-Symbol Routes
 

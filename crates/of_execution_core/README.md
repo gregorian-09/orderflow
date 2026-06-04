@@ -1,5 +1,10 @@
 # `of_execution_core`
 
+[![Crates.io](https://img.shields.io/crates/v/of_execution_core.svg)](https://crates.io/crates/of_execution_core)
+[![Docs.rs](https://docs.rs/of_execution_core/badge.svg)](https://docs.rs/of_execution_core)
+[![CI](https://github.com/gregorian-09/orderflow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gregorian-09/orderflow/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/license/mit)
+
 `of_execution_core` is the canonical execution-domain model for Orderflow.
 It contains the low-level types used by the order-management and execution
 layers: fixed-size identifiers, typed order requests, execution reports,
@@ -14,6 +19,23 @@ runtime. Higher-level crates build on it:
 - `of_execution_adapters` adds optional provider adapter scaffolds.
 - `of_ffi_c`, Python, and Java expose execution APIs through additive handles
   and classes.
+
+## First Release: 0.1.0
+
+`of_execution_core` starts at `0.1.0` even though the broader Orderflow release
+line is `0.4.0`. This crate is a new public execution-domain surface. It is
+kept independent from the mature analytics crates so its identifiers, state
+machine, and risk contracts can stabilize honestly without implying the same
+API age as `of_core`.
+
+Compatibility expectations:
+
+- all public APIs are intended to be additive where possible;
+- provider adapters should pin compatible `0.1.x` versions while the execution
+  trait family matures;
+- analytics crates do not depend on this crate;
+- bindings expose these concepts through additive execution handles/classes,
+  not by changing existing analytics types.
 
 ## Design Goals
 

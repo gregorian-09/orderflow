@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-06-04
 ### Added
 - Broad additive analytics expansion across Rust, C, Python, and Java:
   spread/book-event/resiliency helpers; VPIN, Kyle's Lambda, Amihud, and CVD
@@ -54,6 +56,22 @@ and this project follows [Semantic Versioning](https://semver.org/).
   crate references, OMS architecture, multi-symbol cookbook workflows,
   low-latency design guidance, provider adapter authoring, and recovery
   operations.
+
+### Changed
+- Existing analytics/runtime/native/binding package line advances to `0.4.0`.
+- New Rust execution crates publish as `0.1.0`:
+  `of_execution_core`, `of_execution`, and `of_execution_adapters`.
+- Root README, crate READMEs, Python README, Java README, strategy handbook,
+  and OMS cookbook now focus on the `0.4.0` analytics-to-execution workflow.
+
+### Upgrade Notes
+- Existing analytics/runtime APIs are intended to remain source-compatible.
+- Update Python/Java packages and the native `of_ffi_c` runtime/header together
+  to `0.4.0`.
+- If you build native execution providers, depend on the execution crates at
+  compatible `0.1.x` versions and follow adapter-authoring guidance.
+- Treat simulated execution as a deterministic test and integration tool, not a
+  broker-certified live OMS.
 
 ## [0.3.0] - 2026-05-09
 This is a non-breaking operational hardening release after `0.2.0`. For the

@@ -6,12 +6,54 @@ Java — from spread metrics and VPIN toxicity through fingerprint patterns,
 volatility signatures, Almgren-Chriss impact models, options flow, futures
 basis, dark pool siphon detection, and machine-learning-ready LOB features.
 
-The current development line also includes an additive execution-core
-foundation for developer-built order-management workflows. Execution APIs use
-separate handles and crates, so existing analytics integrations remain stable.
-The execution layer provides typed order requests, FIX-style state transitions,
-structured risk rejection, simulated execution, C/Python/Java bindings, and a
-FIX mapping scaffold. It is not a broker-certified production OMS by itself.
+Version `0.4.0` adds an execution and OMS foundation for developer-built order
+management workflows. Execution APIs use separate Rust crates, C handles,
+Python classes, and Java classes, so existing analytics integrations remain
+stable. The execution layer provides typed order requests, FIX-style state
+transitions, structured risk rejection, simulated execution, bounded
+concurrent command workers, journals, recovery helpers, C/Python/Java bindings,
+and a FIX mapping scaffold. It is not a broker-certified production OMS by
+itself; it is the reusable foundation developers use to build one.
+
+## What's New In 0.4.0
+
+`0.4.0` is a non-breaking expansion release. The mature analytics/runtime/C
+ABI/binding packages move from `0.3.0` to `0.4.0`; the new execution crates are
+published as `0.1.0` because they are new public crate surfaces with their own
+stabilization path.
+
+Package versions for this release:
+
+| Package family | Version | Why |
+| --- | ---: | --- |
+| Existing Rust crates: `of_core`, `of_adapters`, `of_signals`, `of_persist`, `of_runtime`, `of_ffi_c` | `0.4.0` | Same established API line, additive analytics/execution exposure |
+| Python binding: `orderflow-gregorian09` | `0.4.0` | Matches the native `of_ffi_c` ABI package line |
+| Java binding: `orderflow-java-binding` | `0.4.0` | Matches the native `of_ffi_c` ABI package line |
+| New Rust crates: `of_execution_core`, `of_execution`, `of_execution_adapters` | `0.1.0` | New execution crate family, intentionally versioned from its own first public release |
+
+Major additions:
+
+- execution-domain primitives: fixed-size identifiers, typed submit/cancel/amend
+  requests, execution reports, strict order-state machine, and basic risk gates
+- execution engine: route/account/symbol routing, simulated adapter, bounded
+  event buffers, route-scoped risk accounting, journaling, metrics, and health
+- concurrent OMS worker: bounded command/report queues for many producers while
+  one native worker owns order state deterministically
+- OMS helpers: command correlation, event fanout, lifecycle snapshots, durable
+  file journal, reconciliation, safety policies, advanced risk, position ledger,
+  order normalization, telemetry, sharding, throttling, and replay simulation
+- adapter scaffolding: FIX execution-report mapping and fail-closed adapter shell
+  for provider adapter authors
+- bindings: additive C ABI, Python, and Java execution APIs that do not change
+  existing analytics APIs
+- documentation: end-to-end strategy workflow, OMS architecture, OMS cookbook,
+  low-latency design, provider adapter authoring, recovery operations, and
+  exhaustive binding READMEs
+
+Upgrade rule: existing analytics users can upgrade without renaming existing
+APIs. Execution adopters should treat the new execution crates as a `0.1.0`
+surface and pin them explicitly if building provider adapters against their
+traits.
 
 ## Documentation
 
@@ -22,6 +64,12 @@ Start here:
   four API layers (Rust, C, Python, Java), plus a full multi-concept live
   trading loop, an API compatibility map, and the `AnalyticsConfig` tuning
   guide.
+- **[Building an Orderflow Strategy](./docs/handbook/02-strategy-design.md)** —
+  complete idea-to-execution workflow: ingest, analytics, signal gating, risk,
+  simulated OMS execution, reports, journal, replay, and promotion checklist.
+- **[OMS Cookbook](./docs/handbook/10-oms-cookbook.md)** — multi-symbol routes,
+  synchronous and concurrent execution, risk rejection, recovery, reconciliation,
+  throttling, replay, and C/Python/Java worker examples.
 - [Handbook Home](./docs/handbook/README.md) — primer, architecture, API reference.
 - [docs/README.md](./docs/README.md) — full navigation.
 - [docs/bindings/README.md](./docs/bindings/README.md) — Python (ctypes) and Java (JNA) setup.

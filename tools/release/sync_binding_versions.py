@@ -16,6 +16,12 @@ PYPROJECT_PATH = ROOT / "bindings" / "python" / "pyproject.toml"
 JAVA_POM_PATH = ROOT / "bindings" / "java" / "pom.xml"
 CARGO_WORKSPACE_PATH = ROOT / "Cargo.toml"
 CRATES_DIR = ROOT / "crates"
+EXECUTION_CRATE_VERSION = "0.1.0"
+RUST_INTERNAL_DEP_VERSION_OVERRIDES = {
+    "of_execution": EXECUTION_CRATE_VERSION,
+    "of_execution_adapters": EXECUTION_CRATE_VERSION,
+    "of_execution_core": EXECUTION_CRATE_VERSION,
+}
 
 
 def read_versions() -> dict[str, str]:
@@ -89,7 +95,7 @@ def sync_rust_workspace(version: str, check: bool) -> bool:
 def sync_rust_internal_dependency_versions(version: str, check: bool) -> int:
     crate_files = sorted(CRATES_DIR.glob("*/Cargo.toml"))
     dep_pattern = re.compile(
-        r'(?m)^(\s*of_[a-z_]+\s*=\s*\{[^\n]*\bpath\s*=\s*"\.\./of_[^"\n]+"[^\n]*\bversion\s*=\s*")([^"\n]+)(")'
+        r'(?m)^(\s*(of_[a-z_]+)\s*=\s*\{[^\n]*\bpath\s*=\s*"\.\./of_[^"\n]+"[^\n]*\bversion\s*=\s*")([^"\n]+)(")'
     )
     changed_files = 0
     mismatches: list[str] = []
@@ -98,11 +104,15 @@ def sync_rust_internal_dependency_versions(version: str, check: bool) -> int:
         text = cargo_toml.read_text(encoding="utf-8")
 
         def replace_dep(match: re.Match[str]) -> str:
-            current = match.group(2)
-            if current == version:
+            dep_name = match.group(2)
+            expected = RUST_INTERNAL_DEP_VERSION_OVERRIDES.get(dep_name, version)
+            current = match.group(3)
+            if current == expected:
                 return match.group(0)
-            mismatches.append(f"{cargo_toml.relative_to(ROOT)}={current}")
-            return f"{match.group(1)}{version}{match.group(3)}"
+            mismatches.append(
+                f"{cargo_toml.relative_to(ROOT)}:{dep_name}={current}, expected={expected}"
+            )
+            return f"{match.group(1)}{expected}{match.group(4)}"
 
         updated, subs = dep_pattern.subn(replace_dep, text)
         if subs > 0 and updated != text:
@@ -113,8 +123,8 @@ def sync_rust_internal_dependency_versions(version: str, check: bool) -> int:
     if check and mismatches:
         mismatch_preview = ", ".join(mismatches[:5])
         raise ValueError(
-            "rust internal dependency version mismatch (expected "
-            f"{version}): {mismatch_preview}"
+            "rust internal dependency version mismatch: "
+            f"{mismatch_preview}"
         )
     return changed_files
 

@@ -11,25 +11,31 @@ It standardizes lifecycle, subscription, polling, and health reporting while kee
 - Config: [`AdapterConfig`], [`ProviderKind`], [`CredentialsRef`]
 - Health: [`AdapterHealth`]
 
-## New In 0.3.0
+## New In 0.4.0
 
-`0.3.0` adds runtime-level aggregate health and opt-in circuit breaking around
-adapter polling without changing the [`MarketDataAdapter`] trait. Existing
-adapters continue to implement the same lifecycle, subscription, polling, and
-health methods.
+`0.4.0` keeps the market-data [`MarketDataAdapter`] trait stable. The execution
+and OMS expansion lives in separate crates, so existing feed adapters continue
+to compile against the same subscription, polling, event, and health contract.
 
-## New In 0.2.0
+What changes for adapter authors:
 
-Relative to the `0.1.x` line, the adapter layer now has materially stronger
-live-path supervision:
+- market-data adapters remain responsible only for normalized book/trade
+  events and health;
+- order-entry adapters should target `of_execution::ExecutionAdapter`, not
+  `MarketDataAdapter`;
+- provider SDK authors can share venue configuration and symbol-normalization
+  concepts across both adapter families without merging their traits;
+- operational health, backpressure, and circuit-breaker fields introduced in
+  the previous release remain visible through runtime metrics;
+- the handbook now separates market-data provider authoring from execution
+  adapter authoring so developers can build the right integration boundary.
 
-- reconnect with backoff
-- subscription replay after reconnect
-- richer `AdapterHealth::protocol_info`
-- stronger degraded and timeout handling in the live providers
+Version policy:
 
-The trait surface stayed stable; the hardening happened behind the same public
-adapter interface.
+- `of_adapters` publishes as `0.4.0` with the established analytics/runtime
+  family;
+- `of_execution_adapters` publishes as `0.1.0` because it is a new execution
+  adapter scaffold family.
 
 ## Public API Inventory
 

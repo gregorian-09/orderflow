@@ -9,6 +9,7 @@
 
 ## Table of Contents
 
+0. [Complete 0.4.0 Analytics-To-Execution Loop](#0-complete-040-analytics-to-execution-loop)
 1. [Spread Regime Scalping](#1-spread-regime-scalping)
 2. [Depth-Imbalance Mean Reversion](#2-depth-imbalance-mean-reversion)
 3. [Book-Event Momentum Detection](#3-book-event-momentum-detection)
@@ -39,6 +40,117 @@
 28. [Futures Basis Calendar Spread Arbitrage](#28-futures-basis-calendar-spread-arbitrage)
 29. [AnalyticsConfig Tuning Workflow](#29-analyticsconfig-tuning-workflow)
 30. [Tickbar OHLCV Momentum Confirmation](#30-tickbar-ohlcv-momentum-confirmation)
+
+---
+
+## 0. Complete 0.4.0 Analytics-To-Execution Loop
+
+Use this as the reference shape for the rest of the cookbook. Individual
+recipes later in this document focus on one analytics idea; real strategies
+need the full loop: clean data, measurable signal, risk decision, execution
+request, report handling, and review.
+
+```mermaid
+flowchart TD
+  A[Ingest or poll normalized market data]
+  B[Read analytics, candle, profile, and signal snapshots]
+  C{Quality flags clear?}
+  D{Strategy rule passes?}
+  E{Route risk allows order?}
+  F[Submit simulated or live execution request]
+  G[Apply execution events to order state]
+  H[Journal market data and execution reports]
+  I[Replay losing and skipped decisions]
+  X[Block and record reason]
+
+  A --> B --> C
+  C -- no --> X --> H
+  C -- yes --> D
+  D -- no --> X
+  D -- yes --> E
+  E -- no --> X
+  E -- yes --> F --> G --> H --> I
+```
+
+Python reference implementation:
+
+```python
+from orderflow import (
+    BookAction,
+    DataQualityFlags,
+    Engine,
+    EngineConfig,
+    ExecutionEngine,
+    ExecutionOrderType,
+    ExecutionSide,
+    ExecutionTimeInForce,
+    ExternalFeedPolicy,
+    OrderRequest,
+    RiskLimits,
+    RouteConfig,
+    Side,
+    StreamKind,
+    Symbol,
+)
+
+
+def should_buy(analytics: dict, signal: dict) -> bool:
+    return (
+        int(analytics.get("quality_flags", 0)) == DataQualityFlags.NONE
+        and int(analytics.get("delta", 0)) > 0
+        and float(analytics.get("cumulative_delta", 0.0)) > 0.0
+        and float(signal.get("confidence", 0.0)) >= 0.50
+    )
+
+
+sym = Symbol("SIM", "ES", 10)
+limits = RiskLimits(False, 5, 1_000_000, 1, 1_000_000, 0)
+routes = [RouteConfig("SIM", "ACC", "SIM", "ES", True, limits)]
+
+with Engine(EngineConfig(instance_id="cookbook-loop")) as market, ExecutionEngine(routes) as oms:
+    market.configure_external_feed(ExternalFeedPolicy(2_000, True))
+    market.subscribe(sym, StreamKind.ANALYTICS)
+    market.subscribe(sym, StreamKind.SIGNALS)
+
+    market.ingest_book(sym, Side.BID, 0, 500_000, 100, BookAction.UPSERT, sequence=1)
+    market.ingest_book(sym, Side.ASK, 0, 500_025, 120, BookAction.UPSERT, sequence=2)
+    market.ingest_trade(sym, 500_025, 2, Side.ASK, sequence=3)
+    market.poll_once(DataQualityFlags.NONE)
+
+    analytics = market.analytics_snapshot(sym)
+    signal = market.signal_snapshot(sym)
+
+    if should_buy(analytics, signal):
+        events = oms.submit_order(OrderRequest(
+            "COOK-0001",
+            "ACC",
+            "SIM",
+            "COOK",
+            "SIM",
+            "ES",
+            ExecutionSide.BUY,
+            ExecutionOrderType.LIMIT,
+            ExecutionTimeInForce.DAY,
+            1,
+            500_025,
+        ))
+        print("execution events", events)
+        print("order state", oms.order_state("COOK-0001"))
+    else:
+        print("blocked", {"analytics": analytics, "signal": signal})
+```
+
+The same structure applies to C, Java, and Rust:
+
+| Step | Rust crate/API | C ABI | Python | Java |
+| --- | --- | --- | --- | --- |
+| Market-data runtime | `of_runtime::Engine` | `of_engine_*` | `Engine` | `OrderflowEngine` |
+| Analytics snapshot | `analytics_snapshot` | `of_get_analytics_snapshot` | `analytics_snapshot` | `analyticsSnapshot` |
+| Signal snapshot | `signal_snapshot` | `of_get_signal_snapshot` | `signal_snapshot` | `signalSnapshot` |
+| Route/risk config | `RouteConfig`, `RiskLimits` | `of_execution_route_config_t` | `RouteConfig`, `RiskLimits` | `RouteConfig`, `RiskLimits` |
+| Submit order | `ExecutionEngine::submit` | `of_execution_submit_order` | `submit_order` | `submitOrder` |
+| Concurrent order path | `ConcurrentExecutionEngine` | `of_execution_concurrent_*` | `ConcurrentExecutionEngine` | `ConcurrentOrderflowExecutionEngine` |
+| Review | `of_persist`, `ExecutionJournal` | host-owned files | market snapshots + execution events | JSON snapshots + execution events |
 
 ---
 

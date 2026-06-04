@@ -11,24 +11,33 @@ the same normalized semantics.
 - Quality flags: [`DataQualityFlags`]
 - Runtime outputs: [`AnalyticsSnapshot`], [`DerivedAnalyticsSnapshot`], [`SessionCandleSnapshot`], [`IntervalCandleSnapshot`], [`SignalSnapshot`], [`SignalState`]
 - Deterministic analytics engine: [`AnalyticsAccumulator`]
--
-## New In 0.3.0
+## New In 0.4.0
 
-`0.3.0` keeps the core data model API stable. The release hardens the runtime,
-persistence, dashboard, and binding layers around these types rather than
-changing `of_core` contracts.
+`0.4.0` keeps the established `of_core` analytics contracts stable while the
+larger Orderflow release adds execution and OMS capabilities around them.
+Existing users of [`AnalyticsAccumulator`], [`AnalyticsSnapshot`],
+[`BookSnapshot`], candle snapshots, quality flags, and tickbar aggregation do
+not need to rename or rewrite code.
 
-## New In 0.2.0
+What changes for `of_core` users:
 
-Relative to the `0.1.x` line, `of_core` now includes:
+- `of_core` remains the canonical market-data and analytics schema for the
+  project.
+- execution types intentionally live in the new `of_execution_core` crate, so
+  order-management concerns do not pollute the market-data accumulator.
+- strategies can now combine `of_core` analytics with `of_execution` simulated
+  order flow, but the integration is at the application layer.
+- tickbar APIs remain optional behind the `tickbar` feature and are still
+  additive.
+- `DataQualityFlags` remain the bridge between market-data correctness and
+  strategy/execution gating.
 
-- [`BookSnapshot`] as a first-class materialized depth model
-- [`DerivedAnalyticsSnapshot`] for additive totals such as `vwap` and `trade_count`
-- [`SessionCandleSnapshot`] for session-wide OHLC state
-- [`IntervalCandleSnapshot`] for rolling-window OHLC state
+Version policy:
 
-These are additive data-model extensions. They do not change the older
-`AnalyticsSnapshot` contract.
+- established analytics crates publish as `0.4.0`;
+- new execution crates publish as `0.1.0`;
+- this split is intentional because execution has a newer public trait surface
+  while `of_core` continues its existing compatibility line.
 
 ## Public API Inventory
 

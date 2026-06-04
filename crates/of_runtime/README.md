@@ -13,28 +13,31 @@ It wires adapter events into book state and analytics, applies quality-aware sig
 6. Gate risk-sensitive output using [`DataQualityFlags`](of_core::DataQualityFlags).
 7. Optionally persist event streams via `of_persist`.
 
-## New In 0.3.0
+## New In 0.4.0
 
-`0.3.0` is an additive operational hardening release for `of_runtime`:
+`0.4.0` keeps `of_runtime` focused on market-data orchestration. Execution and
+OMS state are intentionally separate in `of_execution`, so existing runtime
+users do not inherit order-entry behavior or new lifecycle obligations.
 
-- opt-in backpressure with [`Engine::with_max_events_per_poll`] and
-  `OF_RUNTIME_MAX_EVENTS_PER_POLL`
-- opt-in adapter circuit breaking with [`Engine::with_circuit_breaker`],
-  `OF_RUNTIME_CIRCUIT_BREAKER_FAILURES`, and
-  `OF_RUNTIME_CIRCUIT_BREAKER_COOLDOWN_MS`
-- additive aggregate health fields in `health_json()` and `metrics_json()`
-- end-to-end persist -> readback -> replay parity coverage for analytics,
-  signals, and materialized book state
+What changes for runtime users:
 
-## New In 0.2.0
+- existing lifecycle, subscription, polling, ingest, snapshot, health, and
+  metrics APIs remain stable;
+- strategies can pair `of_runtime` snapshots with `of_execution` order routing
+  in the host application;
+- the recommended live architecture is now two explicit planes: market-data
+  runtime for analytics and execution engine for orders;
+- the handbook documents how to gate execution intent using signal snapshots,
+  `DataQualityFlags`, risk limits, and route capabilities;
+- dashboard and metrics workflows continue to observe market-data health while
+  execution health is exposed through the execution APIs.
 
-Relative to the `0.1.x` line, `of_runtime` now adds or hardens:
+Version policy:
 
-- real [`Engine::book_snapshot`] support
-- additive derived analytics, session candle, and interval candle snapshots
-- config compatibility reporting with [`ConfigLoadReport`]
-- stronger live supervision and richer health/metrics payloads
-- cleaner internal modularization without changing the public API
+- `of_runtime` publishes as `0.4.0`;
+- `of_execution` publishes as `0.1.0`;
+- keeping those versions separate preserves the non-breaking runtime API while
+  allowing execution traits to mature independently.
 
 ## Main Types
 

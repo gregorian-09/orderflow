@@ -1,5 +1,10 @@
 # `of_execution`
 
+[![Crates.io](https://img.shields.io/crates/v/of_execution.svg)](https://crates.io/crates/of_execution)
+[![Docs.rs](https://docs.rs/of_execution/badge.svg)](https://docs.rs/of_execution)
+[![CI](https://github.com/gregorian-09/orderflow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gregorian-09/orderflow/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/license/mit)
+
 `of_execution` is the execution routing and OMS crate for Orderflow. It builds
 on `of_execution_core` by adding adapter contracts, route configuration,
 bounded event buffers, simulated execution, journals, route-scoped risk,
@@ -9,6 +14,22 @@ The crate is additive to the analytics runtime. It does not change market-data
 adapter behavior and does not merge execution state into `of_runtime`.
 Strategies can read analytics from `of_runtime` and send orders through
 `of_execution`, while those two domains stay separate.
+
+## First Release: 0.1.0
+
+`of_execution` publishes as `0.1.0` inside the Orderflow `0.4.0` release. This
+is intentional. The market-data runtime and bindings are on the established
+`0.4.0` line; execution routing, adapter traits, journals, and OMS helpers are
+new public crate surfaces and should carry their own compatibility signal.
+
+Versioning rules:
+
+- `of_execution` depends on `of_execution_core = 0.1`;
+- existing analytics crates do not depend on `of_execution`;
+- `of_ffi_c 0.4.0`, Python `0.4.0`, and Java `0.4.0` expose execution through
+  additive handles/classes backed by this crate;
+- future `0.1.x` releases should prefer additive changes and clear migration
+  notes for adapter authors.
 
 ## Design Goals
 

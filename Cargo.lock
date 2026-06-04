@@ -133,28 +133,28 @@ dependencies = [
 
 [[package]]
 name = "of_adapters"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "of_core",
 ]
 
 [[package]]
 name = "of_core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "tickbar",
 ]
 
 [[package]]
 name = "of_execution"
-version = "0.3.0"
+version = "0.1.0"
 dependencies = [
  "of_execution_core",
 ]
 
 [[package]]
 name = "of_execution_adapters"
-version = "0.3.0"
+version = "0.1.0"
 dependencies = [
  "of_execution",
  "of_execution_core",
@@ -162,11 +162,11 @@ dependencies = [
 
 [[package]]
 name = "of_execution_core"
-version = "0.3.0"
+version = "0.1.0"
 
 [[package]]
 name = "of_ffi_c"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "of_adapters",
  "of_core",
@@ -178,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "of_persist"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "of_core",
  "serde",
@@ -187,7 +187,7 @@ dependencies = [
 
 [[package]]
 name = "of_runtime"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "of_adapters",
  "of_core",
@@ -200,7 +200,7 @@ dependencies = [
 
 [[package]]
 name = "of_signals"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "of_core",
 ]
@@ -213,7 +213,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "perf_harness"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "of_adapters",
  "of_core",
@@ -325,7 +325,7 @@ dependencies = [
 
 [[package]]
 name = "replay_cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "of_persist",
 ]

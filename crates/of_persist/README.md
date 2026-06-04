@@ -11,30 +11,29 @@ It is designed for replay, auditability, and post-trade research workflows.
 - [`RetentionPolicy`] - bounded retention by total bytes and/or max file age.
 - [`PersistError`] / [`PersistResult<T>`] - persistence error contract.
 
-## New In 0.3.0
+## New In 0.4.0
 
-Newly-written JSONL records now include additive schema metadata:
+`0.4.0` keeps the existing market-data persistence API stable and documents how
+persistence participates in the larger strategy lifecycle. `of_persist`
+continues to store normalized book/trade event streams; execution command and
+report journaling belongs to `of_execution`.
 
-- `"schema": 1`
-- `ts_exchange_ns`
-- `ts_recv_ns`
+What changes for persistence users:
 
-Legacy records without these fields remain readable. Runtime tests now cover
-persist -> readback -> replay parity for analytics, signals, and materialized
-book state.
+- market-data replay remains deterministic and sequence-bounded;
+- strategy validation examples now pair market-data replay with simulated OMS
+  execution so analytics and order decisions can be reviewed together;
+- JSONL schema metadata remains backward-compatible for existing persisted
+  streams;
+- execution journals are intentionally separate from market-data stores so
+  audit, retention, and recovery policies can differ;
+- production deployments should keep market-data replay files and execution
+  command/event journals correlated by strategy id, session id, and timestamp.
 
-## New In 0.2.0
+Version policy:
 
-Relative to the `0.1.x` line, `of_persist` is no longer write-only. It now
-includes:
-
-- discovery APIs for venues, symbols, and streams
-- typed readback APIs for books and trades
-- merged event replay reads
-- inclusive sequence-range filtering
-
-That makes the crate useful for replay, incident analysis, and research instead
-of only append-only storage.
+- `of_persist` publishes as `0.4.0`;
+- `of_execution` publishes as `0.1.0` and owns execution journaling helpers.
 
 ## Public API Inventory
 
