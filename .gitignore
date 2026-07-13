@@ -15,3 +15,4 @@
 docs/ops/examples/.env
 **/*.log
 **/*.tmp
+/new_features.md
