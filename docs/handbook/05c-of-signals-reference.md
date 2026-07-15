@@ -19,6 +19,13 @@ and easy to test.
 | `SignalWarmupProgress` | struct | Counters used to evaluate warmup |
 | `SignalWarmupRequirement` | enum | Warmup policy for a signal |
 | `SignalLifecycle` | struct | Small lifecycle/warmup helper |
+| `HysteresisPolicy` | struct | Confidence thresholds for transition acceptance |
+| `DebouncePolicy` | struct | Event/time confirmation policy |
+| `CooldownPolicy` | struct | Time-based post-transition suppression policy |
+| `SignalStabilizer` | struct | Opt-in hysteresis/debounce/cooldown helper |
+| `StabilizedSignal` | struct | Requested and emitted signal pair |
+| `SignalTransitionKind` | enum | Classified transition type |
+| `SignalSuppressionReason` | enum | Reason a request was suppressed |
 | `SignalDescriptor` | struct | Static metadata for signal discovery |
 | `SignalParameterDescriptor` | struct | Static metadata for one parameter |
 | `SignalOutputSemantics` | enum | How consumers should interpret output |
@@ -55,6 +62,68 @@ and easy to test.
 - `snapshot()` should be cheap and side-effect free.
 - `quality_gate(...)` should be conservative for stale, gap, or degraded feed
   conditions when the model should not trade through uncertainty.
+
+## Stabilization
+
+`SignalStabilizer` is an opt-in helper for reducing signal flapping before a
+host passes signal output into strategy, risk, or OMS code. It does not change
+any built-in signal behavior automatically.
+
+### Policies
+
+| Policy | Purpose |
+| --- | --- |
+| `HysteresisPolicy` | Requires minimum confidence for entry, exit, or reversal |
+| `DebouncePolicy` | Requires repeated and/or time-stable candidate states |
+| `CooldownPolicy` | Suppresses transitions after accepted entries, exits, or reversals |
+
+### Output
+
+`SignalStabilizer::stabilize(...)` returns `StabilizedSignal`.
+
+| Field | Meaning |
+| --- | --- |
+| `requested` | Raw snapshot requested by the underlying signal |
+| `emitted` | Snapshot emitted after stabilization |
+| `accepted` | Whether requested became emitted |
+| `suppression_reason` | `None`, `Hysteresis`, `DebouncePending`, or `CooldownActive` |
+| `transition` | `None`, `Entry`, `Exit`, `Reversal`, or `StateChange` |
+
+`SignalState::Blocked` is accepted immediately. Stabilization must not delay a
+quality or risk block.
+
+Example:
+
+```rust
+use of_core::{SignalSnapshot, SignalState};
+use of_signals::{
+    CooldownPolicy, DebouncePolicy, HysteresisPolicy, SignalStabilizer,
+    SignalSuppressionReason,
+};
+
+let mut stabilizer = SignalStabilizer::with_policies(
+    HysteresisPolicy::new(700, 0, 900),
+    DebouncePolicy::new(2, 0),
+    CooldownPolicy::new(1_000_000, 0, 2_000_000),
+);
+
+let requested = SignalSnapshot {
+    module_id: "delta_momentum_v1",
+    state: SignalState::LongBias,
+    confidence_bps: 800,
+    quality_flags: 0,
+    reason: "delta_above_threshold".to_string(),
+};
+
+let first = stabilizer.stabilize(requested.clone(), 1_000);
+assert_eq!(first.suppression_reason, SignalSuppressionReason::DebouncePending);
+
+let second = stabilizer.stabilize(requested, 1_001);
+assert!(second.accepted);
+```
+
+Use stabilization in the host or strategy layer that owns timing policy. Keep
+raw signal modules deterministic and simple.
 
 ## Contextual API
 

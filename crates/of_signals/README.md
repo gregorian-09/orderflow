@@ -10,6 +10,7 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
 - Gate result: [`SignalGateDecision`]
 - Descriptor inventory: [`built_in_signal_descriptors`] and [`describe_signal`]
 - Lifecycle helper: [`SignalLifecycle`]
+- Stabilizer: [`SignalStabilizer`]
 - Legacy adapter: [`LegacySignalAdapter`]
 - Built-in modules:
   - [`DeltaMomentumSignal`]
@@ -74,6 +75,8 @@ New additive APIs:
   signals with more than an analytics snapshot.
 - [`LegacySignalAdapter`] lets existing [`SignalModule`] implementations run in
   contextual hosts without being rewritten.
+- [`SignalStabilizer`] applies opt-in hysteresis, debounce, and cooldown
+  policies to reduce signal flapping without changing built-in signal behavior.
 
 This is intentionally metadata-first. Built-in signal behavior is unchanged:
 existing users still call `on_analytics`, `quality_gate`, and `snapshot` exactly
@@ -100,6 +103,13 @@ Public types:
 - [`SignalWarmupRequirement`]
 - [`SignalLifecycle`]
 - [`SignalOutputSemantics`]
+- [`HysteresisPolicy`]
+- [`DebouncePolicy`]
+- [`CooldownPolicy`]
+- [`SignalTransitionKind`]
+- [`SignalSuppressionReason`]
+- [`StabilizedSignal`]
+- [`SignalStabilizer`]
 - [`SignalParameterKind`]
 - [`SignalParameterValue`]
 - [`SignalParameterDescriptor`]
@@ -156,6 +166,70 @@ Recommended implementation rules:
 - include human-readable `reason` text in the snapshot when practical
 - use `confidence` consistently so downstream hosts can compare modules
 - block aggressively on stale, gap, or degraded feed conditions when a strategy should not trade through uncertainty
+
+## Stabilization Policies
+
+[`SignalStabilizer`] is an opt-in helper for hosts that need to reduce noisy
+state transitions before a signal reaches strategy/risk/OMS code.
+
+It does not change built-in signal behavior. A host explicitly creates a
+stabilizer, feeds requested [`SignalSnapshot`](of_core::SignalSnapshot) values
+into it, and uses the returned emitted snapshot.
+
+Policies:
+
+- [`HysteresisPolicy`] requires stronger confidence for entries, exits, or
+  direct long/short reversals.
+- [`DebouncePolicy`] requires the same candidate state to repeat for a number
+  of events and/or remain stable for a time window.
+- [`CooldownPolicy`] suppresses new transitions for configured durations after
+  accepted entries, exits, or reversals.
+
+Fail-safe rule:
+
+- `SignalState::Blocked` is accepted immediately. Stabilization must not delay
+  a quality/risk block.
+
+Example:
+
+```rust
+use of_core::{SignalSnapshot, SignalState};
+use of_signals::{
+    CooldownPolicy, DebouncePolicy, HysteresisPolicy, SignalStabilizer,
+    SignalSuppressionReason,
+};
+
+let mut stabilizer = SignalStabilizer::with_policies(
+    HysteresisPolicy::new(700, 0, 900),
+    DebouncePolicy::new(2, 0),
+    CooldownPolicy::new(1_000_000, 0, 2_000_000),
+);
+
+let requested = SignalSnapshot {
+    module_id: "delta_momentum_v1",
+    state: SignalState::LongBias,
+    confidence_bps: 800,
+    quality_flags: 0,
+    reason: "delta_above_threshold".to_string(),
+};
+
+let first = stabilizer.stabilize(requested.clone(), 1_000);
+assert!(!first.accepted);
+assert_eq!(first.suppression_reason, SignalSuppressionReason::DebouncePending);
+
+let second = stabilizer.stabilize(requested, 1_001);
+assert!(second.accepted);
+assert_eq!(second.emitted.state, SignalState::LongBias);
+```
+
+Recommended use:
+
+- keep raw signal modules deterministic and simple;
+- apply stabilization in the host, runtime, or strategy layer that owns timing
+  policy;
+- log both `requested` and `emitted` from [`StabilizedSignal`] when reviewing
+  suppressed transitions;
+- keep policy thresholds explicit per strategy and symbol.
 
 ## Contextual Signal Contract
 

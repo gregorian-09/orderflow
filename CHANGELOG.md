@@ -16,6 +16,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `ContextualSignalModule`, and `LegacySignalAdapter`, allowing richer signal
   hosts to pass analytics, data quality, symbol/book references, timestamps,
   lifecycle state, and extension tags without changing `SignalModule`.
+- Additive `of_signals` stabilization policies with `HysteresisPolicy`,
+  `DebouncePolicy`, `CooldownPolicy`, `SignalStabilizer`, and
+  `StabilizedSignal` so hosts can opt into deterministic anti-flapping behavior
+  without changing built-in signal outputs.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

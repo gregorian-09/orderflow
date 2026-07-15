@@ -473,6 +473,401 @@ impl SignalLifecycle {
     }
 }
 
+/// Confidence thresholds used to avoid weak signal transitions.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HysteresisPolicy {
+    /// Minimum confidence required to enter a directional state from neutral.
+    pub min_entry_confidence_bps: u16,
+    /// Minimum confidence required to exit a directional state.
+    pub min_exit_confidence_bps: u16,
+    /// Minimum confidence required to reverse directly between long and short.
+    pub min_reversal_confidence_bps: u16,
+}
+
+impl HysteresisPolicy {
+    /// Creates a hysteresis policy from confidence thresholds.
+    pub const fn new(
+        min_entry_confidence_bps: u16,
+        min_exit_confidence_bps: u16,
+        min_reversal_confidence_bps: u16,
+    ) -> Self {
+        Self {
+            min_entry_confidence_bps,
+            min_exit_confidence_bps,
+            min_reversal_confidence_bps,
+        }
+    }
+
+    /// Creates a policy that accepts every transition.
+    pub const fn disabled() -> Self {
+        Self::new(0, 0, 0)
+    }
+
+    /// Returns a policy with a different entry threshold.
+    pub const fn with_entry_confidence(mut self, confidence_bps: u16) -> Self {
+        self.min_entry_confidence_bps = confidence_bps;
+        self
+    }
+
+    /// Returns a policy with a different exit threshold.
+    pub const fn with_exit_confidence(mut self, confidence_bps: u16) -> Self {
+        self.min_exit_confidence_bps = confidence_bps;
+        self
+    }
+
+    /// Returns a policy with a different reversal threshold.
+    pub const fn with_reversal_confidence(mut self, confidence_bps: u16) -> Self {
+        self.min_reversal_confidence_bps = confidence_bps;
+        self
+    }
+}
+
+impl Default for HysteresisPolicy {
+    fn default() -> Self {
+        Self::disabled()
+    }
+}
+
+/// Confirmation policy used to prevent one-tick signal flapping.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DebouncePolicy {
+    /// Number of repeated candidate states required before transition.
+    pub confirming_events: u32,
+    /// Market/evaluation time the candidate must remain stable before transition.
+    pub confirming_time_ns: u64,
+}
+
+impl DebouncePolicy {
+    /// Creates a debounce policy.
+    pub const fn new(confirming_events: u32, confirming_time_ns: u64) -> Self {
+        Self {
+            confirming_events,
+            confirming_time_ns,
+        }
+    }
+
+    /// Creates a policy that accepts transitions immediately.
+    pub const fn disabled() -> Self {
+        Self::new(1, 0)
+    }
+
+    /// Returns `true` when this policy accepts transitions immediately.
+    pub const fn is_disabled(&self) -> bool {
+        self.confirming_events <= 1 && self.confirming_time_ns == 0
+    }
+}
+
+impl Default for DebouncePolicy {
+    fn default() -> Self {
+        Self::disabled()
+    }
+}
+
+/// Time-based suppression policy after accepted transitions.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CooldownPolicy {
+    /// Cooldown after entering a directional state.
+    pub after_entry_ns: u64,
+    /// Cooldown after exiting a directional state.
+    pub after_exit_ns: u64,
+    /// Cooldown after reversing directly between long and short.
+    pub after_reversal_ns: u64,
+}
+
+impl CooldownPolicy {
+    /// Creates a cooldown policy from explicit durations.
+    pub const fn new(after_entry_ns: u64, after_exit_ns: u64, after_reversal_ns: u64) -> Self {
+        Self {
+            after_entry_ns,
+            after_exit_ns,
+            after_reversal_ns,
+        }
+    }
+
+    /// Creates a policy that never suppresses transitions by time.
+    pub const fn disabled() -> Self {
+        Self::new(0, 0, 0)
+    }
+
+    /// Returns `true` when this policy never suppresses transitions.
+    pub const fn is_disabled(&self) -> bool {
+        self.after_entry_ns == 0 && self.after_exit_ns == 0 && self.after_reversal_ns == 0
+    }
+}
+
+/// Transition class used by signal stabilization policies.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SignalTransitionKind {
+    /// No state transition occurred.
+    None,
+    /// Transition from neutral/blocked into long or short bias.
+    Entry,
+    /// Transition from long or short bias into neutral/blocked.
+    Exit,
+    /// Direct transition between long and short bias.
+    Reversal,
+    /// Other state transition.
+    StateChange,
+}
+
+/// Reason a requested signal transition was suppressed.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SignalSuppressionReason {
+    /// The requested output was accepted.
+    None,
+    /// The requested confidence did not satisfy hysteresis thresholds.
+    Hysteresis,
+    /// The requested transition is waiting for repeated/time confirmation.
+    DebouncePending,
+    /// The requested transition occurred during a cooldown window.
+    CooldownActive,
+}
+
+/// Result returned by [`SignalStabilizer`].
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct StabilizedSignal {
+    /// Snapshot requested by the underlying signal.
+    pub requested: SignalSnapshot,
+    /// Snapshot emitted after stabilization.
+    pub emitted: SignalSnapshot,
+    /// Whether the requested snapshot became the emitted snapshot.
+    pub accepted: bool,
+    /// Reason the requested snapshot was suppressed.
+    pub suppression_reason: SignalSuppressionReason,
+    /// Transition kind represented by the request.
+    pub transition: SignalTransitionKind,
+}
+
+#[derive(Debug, Clone)]
+struct PendingSignal {
+    snapshot: SignalSnapshot,
+    first_seen_ns: u64,
+    confirming_events: u32,
+}
+
+/// Optional stabilizer that applies hysteresis, debounce, and cooldown policies.
+#[derive(Debug, Clone)]
+pub struct SignalStabilizer {
+    hysteresis: HysteresisPolicy,
+    debounce: DebouncePolicy,
+    cooldown: CooldownPolicy,
+    emitted: Option<SignalSnapshot>,
+    pending: Option<PendingSignal>,
+    last_transition_ns: Option<u64>,
+    last_transition: SignalTransitionKind,
+}
+
+impl SignalStabilizer {
+    /// Creates a stabilizer with all policies disabled.
+    pub fn new() -> Self {
+        Self::with_policies(
+            HysteresisPolicy::default(),
+            DebouncePolicy::default(),
+            CooldownPolicy::default(),
+        )
+    }
+
+    /// Creates a stabilizer from explicit policies.
+    pub fn with_policies(
+        hysteresis: HysteresisPolicy,
+        debounce: DebouncePolicy,
+        cooldown: CooldownPolicy,
+    ) -> Self {
+        Self {
+            hysteresis,
+            debounce,
+            cooldown,
+            emitted: None,
+            pending: None,
+            last_transition_ns: None,
+            last_transition: SignalTransitionKind::None,
+        }
+    }
+
+    /// Returns the configured hysteresis policy.
+    pub const fn hysteresis(&self) -> HysteresisPolicy {
+        self.hysteresis
+    }
+
+    /// Returns the configured debounce policy.
+    pub const fn debounce(&self) -> DebouncePolicy {
+        self.debounce
+    }
+
+    /// Returns the configured cooldown policy.
+    pub const fn cooldown(&self) -> CooldownPolicy {
+        self.cooldown
+    }
+
+    /// Returns the last emitted signal, if any.
+    pub fn emitted(&self) -> Option<&SignalSnapshot> {
+        self.emitted.as_ref()
+    }
+
+    /// Clears emitted and pending stabilization state.
+    pub fn reset(&mut self) {
+        self.emitted = None;
+        self.pending = None;
+        self.last_transition_ns = None;
+        self.last_transition = SignalTransitionKind::None;
+    }
+
+    /// Applies stabilization policies to a requested signal snapshot.
+    pub fn stabilize(&mut self, requested: SignalSnapshot, now_ns: u64) -> StabilizedSignal {
+        let previous_state = self
+            .emitted
+            .as_ref()
+            .map_or(SignalState::Neutral, |snapshot| snapshot.state);
+        let transition = classify_transition(previous_state, requested.state);
+
+        if requested.state == SignalState::Blocked {
+            return self.accept(requested, now_ns, transition);
+        }
+
+        if let Some(reason) = self.hysteresis_suppression(&requested, transition) {
+            self.pending = None;
+            return self.suppress(requested, transition, reason);
+        }
+
+        if self.cooldown_active(now_ns, transition) {
+            self.pending = None;
+            return self.suppress(
+                requested,
+                transition,
+                SignalSuppressionReason::CooldownActive,
+            );
+        }
+
+        if !self.debounce_satisfied(&requested, now_ns, transition) {
+            return self.suppress(
+                requested,
+                transition,
+                SignalSuppressionReason::DebouncePending,
+            );
+        }
+
+        self.pending = None;
+        self.accept(requested, now_ns, transition)
+    }
+
+    fn accept(
+        &mut self,
+        requested: SignalSnapshot,
+        now_ns: u64,
+        transition: SignalTransitionKind,
+    ) -> StabilizedSignal {
+        if transition != SignalTransitionKind::None {
+            self.last_transition_ns = Some(now_ns);
+            self.last_transition = transition;
+        }
+        self.emitted = Some(requested.clone());
+        StabilizedSignal {
+            requested: requested.clone(),
+            emitted: requested,
+            accepted: true,
+            suppression_reason: SignalSuppressionReason::None,
+            transition,
+        }
+    }
+
+    fn suppress(
+        &self,
+        requested: SignalSnapshot,
+        transition: SignalTransitionKind,
+        suppression_reason: SignalSuppressionReason,
+    ) -> StabilizedSignal {
+        let emitted = self
+            .emitted
+            .clone()
+            .unwrap_or_else(|| neutral_like(&requested));
+        StabilizedSignal {
+            requested,
+            emitted,
+            accepted: false,
+            suppression_reason,
+            transition,
+        }
+    }
+
+    fn hysteresis_suppression(
+        &self,
+        requested: &SignalSnapshot,
+        transition: SignalTransitionKind,
+    ) -> Option<SignalSuppressionReason> {
+        let required = match transition {
+            SignalTransitionKind::None => 0,
+            SignalTransitionKind::Entry => self.hysteresis.min_entry_confidence_bps,
+            SignalTransitionKind::Exit => self.hysteresis.min_exit_confidence_bps,
+            SignalTransitionKind::Reversal => self.hysteresis.min_reversal_confidence_bps,
+            SignalTransitionKind::StateChange => self.hysteresis.min_entry_confidence_bps,
+        };
+        if requested.confidence_bps < required {
+            Some(SignalSuppressionReason::Hysteresis)
+        } else {
+            None
+        }
+    }
+
+    fn cooldown_active(&self, now_ns: u64, transition: SignalTransitionKind) -> bool {
+        if transition == SignalTransitionKind::None || self.cooldown.is_disabled() {
+            return false;
+        }
+        let Some(last_transition_ns) = self.last_transition_ns else {
+            return false;
+        };
+        let cooldown_ns = match self.last_transition {
+            SignalTransitionKind::Entry => self.cooldown.after_entry_ns,
+            SignalTransitionKind::Exit => self.cooldown.after_exit_ns,
+            SignalTransitionKind::Reversal => self.cooldown.after_reversal_ns,
+            SignalTransitionKind::None | SignalTransitionKind::StateChange => 0,
+        };
+        now_ns.saturating_sub(last_transition_ns) < cooldown_ns
+    }
+
+    fn debounce_satisfied(
+        &mut self,
+        requested: &SignalSnapshot,
+        now_ns: u64,
+        transition: SignalTransitionKind,
+    ) -> bool {
+        if transition == SignalTransitionKind::None || self.debounce.is_disabled() {
+            self.pending = None;
+            return true;
+        }
+
+        let pending = match self.pending.as_mut() {
+            Some(pending) if same_pending_state(&pending.snapshot, requested) => {
+                pending.confirming_events = pending.confirming_events.saturating_add(1);
+                pending.snapshot = requested.clone();
+                pending
+            }
+            _ => {
+                self.pending = Some(PendingSignal {
+                    snapshot: requested.clone(),
+                    first_seen_ns: now_ns,
+                    confirming_events: 1,
+                });
+                self.pending.as_mut().expect("pending just inserted")
+            }
+        };
+
+        pending.confirming_events >= self.debounce.confirming_events
+            && now_ns.saturating_sub(pending.first_seen_ns) >= self.debounce.confirming_time_ns
+    }
+}
+
+impl Default for SignalStabilizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Shape of output produced by a signal module.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1138,6 +1533,37 @@ impl SignalModule for CompositeSignal {
     }
 }
 
+fn classify_transition(previous: SignalState, requested: SignalState) -> SignalTransitionKind {
+    if previous == requested {
+        return SignalTransitionKind::None;
+    }
+
+    match (is_directional(previous), is_directional(requested)) {
+        (false, true) => SignalTransitionKind::Entry,
+        (true, false) => SignalTransitionKind::Exit,
+        (true, true) => SignalTransitionKind::Reversal,
+        (false, false) => SignalTransitionKind::StateChange,
+    }
+}
+
+fn is_directional(state: SignalState) -> bool {
+    matches!(state, SignalState::LongBias | SignalState::ShortBias)
+}
+
+fn same_pending_state(left: &SignalSnapshot, right: &SignalSnapshot) -> bool {
+    left.module_id == right.module_id && left.state == right.state
+}
+
+fn neutral_like(requested: &SignalSnapshot) -> SignalSnapshot {
+    SignalSnapshot {
+        module_id: requested.module_id,
+        state: SignalState::Neutral,
+        confidence_bps: requested.confidence_bps,
+        quality_flags: requested.quality_flags,
+        reason: "stabilizer_pending".to_string(),
+    }
+}
+
 fn default_quality_gate(q: DataQualityFlags) -> SignalGateDecision {
     if q.intersects(
         DataQualityFlags::STALE_FEED
@@ -1331,6 +1757,16 @@ pub fn describe_signal(id: &str) -> Option<&'static SignalDescriptor> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn snapshot(state: SignalState, confidence_bps: u16) -> SignalSnapshot {
+        SignalSnapshot {
+            module_id: "test_signal_v1",
+            state,
+            confidence_bps,
+            quality_flags: 0,
+            reason: "test".to_string(),
+        }
+    }
 
     #[test]
     fn blocks_on_quality_issues() {
@@ -1627,5 +2063,111 @@ mod tests {
         });
 
         assert_eq!(signal.snapshot().state, SignalState::ShortBias);
+    }
+
+    #[test]
+    fn stabilizer_accepts_immediately_when_policies_are_disabled() {
+        let mut stabilizer = SignalStabilizer::new();
+        let decision = stabilizer.stabilize(snapshot(SignalState::LongBias, 1), 1);
+
+        assert!(decision.accepted);
+        assert_eq!(decision.suppression_reason, SignalSuppressionReason::None);
+        assert_eq!(decision.transition, SignalTransitionKind::Entry);
+        assert_eq!(decision.emitted.state, SignalState::LongBias);
+    }
+
+    #[test]
+    fn stabilizer_hysteresis_blocks_weak_entry() {
+        let mut stabilizer = SignalStabilizer::with_policies(
+            HysteresisPolicy::new(700, 0, 0),
+            DebouncePolicy::default(),
+            CooldownPolicy::default(),
+        );
+
+        let weak = stabilizer.stabilize(snapshot(SignalState::LongBias, 600), 1);
+        assert!(!weak.accepted);
+        assert_eq!(weak.suppression_reason, SignalSuppressionReason::Hysteresis);
+        assert_eq!(weak.emitted.state, SignalState::Neutral);
+
+        let strong = stabilizer.stabilize(snapshot(SignalState::LongBias, 700), 2);
+        assert!(strong.accepted);
+        assert_eq!(strong.emitted.state, SignalState::LongBias);
+    }
+
+    #[test]
+    fn stabilizer_debounce_requires_repeated_confirmation() {
+        let mut stabilizer = SignalStabilizer::with_policies(
+            HysteresisPolicy::default(),
+            DebouncePolicy::new(2, 0),
+            CooldownPolicy::default(),
+        );
+
+        let first = stabilizer.stabilize(snapshot(SignalState::LongBias, 900), 1);
+        assert!(!first.accepted);
+        assert_eq!(
+            first.suppression_reason,
+            SignalSuppressionReason::DebouncePending
+        );
+
+        let second = stabilizer.stabilize(snapshot(SignalState::LongBias, 900), 2);
+        assert!(second.accepted);
+        assert_eq!(second.emitted.state, SignalState::LongBias);
+    }
+
+    #[test]
+    fn stabilizer_debounce_requires_time_confirmation() {
+        let mut stabilizer = SignalStabilizer::with_policies(
+            HysteresisPolicy::default(),
+            DebouncePolicy::new(1, 10),
+            CooldownPolicy::default(),
+        );
+
+        let first = stabilizer.stabilize(snapshot(SignalState::ShortBias, 900), 100);
+        assert!(!first.accepted);
+
+        let early = stabilizer.stabilize(snapshot(SignalState::ShortBias, 900), 105);
+        assert!(!early.accepted);
+
+        let ready = stabilizer.stabilize(snapshot(SignalState::ShortBias, 900), 110);
+        assert!(ready.accepted);
+        assert_eq!(ready.emitted.state, SignalState::ShortBias);
+    }
+
+    #[test]
+    fn stabilizer_cooldown_suppresses_reversal_after_entry() {
+        let mut stabilizer = SignalStabilizer::with_policies(
+            HysteresisPolicy::default(),
+            DebouncePolicy::default(),
+            CooldownPolicy::new(100, 0, 0),
+        );
+
+        let entry = stabilizer.stabilize(snapshot(SignalState::LongBias, 900), 1_000);
+        assert!(entry.accepted);
+
+        let reversal = stabilizer.stabilize(snapshot(SignalState::ShortBias, 900), 1_050);
+        assert!(!reversal.accepted);
+        assert_eq!(
+            reversal.suppression_reason,
+            SignalSuppressionReason::CooldownActive
+        );
+        assert_eq!(reversal.emitted.state, SignalState::LongBias);
+
+        let ready = stabilizer.stabilize(snapshot(SignalState::ShortBias, 900), 1_100);
+        assert!(ready.accepted);
+        assert_eq!(ready.transition, SignalTransitionKind::Reversal);
+    }
+
+    #[test]
+    fn stabilizer_accepts_blocked_state_without_suppression() {
+        let mut stabilizer = SignalStabilizer::with_policies(
+            HysteresisPolicy::new(900, 900, 900),
+            DebouncePolicy::new(10, 1_000),
+            CooldownPolicy::new(1_000, 1_000, 1_000),
+        );
+
+        let blocked = stabilizer.stabilize(snapshot(SignalState::Blocked, 0), 1);
+        assert!(blocked.accepted);
+        assert_eq!(blocked.emitted.state, SignalState::Blocked);
+        assert_eq!(blocked.suppression_reason, SignalSuppressionReason::None);
     }
 }
