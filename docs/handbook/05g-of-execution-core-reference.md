@@ -213,6 +213,72 @@ portable.
 OMS helpers in `of_execution` add advanced risk utilities while preserving this
 contract.
 
+## Execution WAL Frame Primitives
+
+`of_execution_core` includes low-level binary WAL frame helpers for the durable
+OMS persistence roadmap. These helpers are intentionally not a file-backed
+`ExecutionJournal` yet. They provide the stable frame vocabulary that a later
+`WalExecutionJournal` can use without changing existing order, risk, or journal
+APIs.
+
+| Type | Purpose |
+| --- | --- |
+| `WalSequence` | Monotonic WAL sequence number |
+| `WalSegmentId` | Segment identifier for rotated WAL files |
+| `WalRecordKind` | Command/event/checkpoint/heartbeat frame kind |
+| `WalSyncPolicy` | Durable sync policy vocabulary |
+| `WalRecordHeader` | Fixed 80-byte binary frame header |
+| `WalRecordView<'a>` | Borrowed record plus payload slice |
+| `WalReplayCursor<'a>` | Sequential borrowed replay cursor |
+| `WalIntegrityReport` | Non-panicking scan summary |
+| `ExecutionWalError` | WAL frame, checksum, and sequence errors |
+| `execution_wal_checksum` | Deterministic non-cryptographic checksum helper |
+
+The binary frame records:
+
+- stable magic/version values;
+- payload length and record kind;
+- monotonic sequence;
+- timestamp in nanoseconds;
+- route/account/symbol hash slots;
+- previous-checksum link;
+- payload checksum;
+- header checksum.
+
+`WalRecordView` is borrowed. Encoding can append into a caller-owned buffer,
+and replay can return borrowed payload slices from an existing byte buffer. That
+keeps the primitive layer suitable for low-latency callers while still allowing
+higher-level crates to choose their own payload schema.
+
+```rust
+use of_execution_core::{
+    WalIntegrityReport, WalRecordKind, WalRecordView, WalReplayCursor,
+    WalSequence,
+};
+
+let record = WalRecordView::new(
+    WalRecordKind::ExecutionEvent,
+    WalSequence(1),
+    1_000,
+    b"private-event-payload",
+)?;
+
+let mut bytes = Vec::new();
+record.append_to(&mut bytes);
+
+let report = WalIntegrityReport::inspect(&bytes, true);
+assert!(report.valid);
+
+let mut cursor = WalReplayCursor::new(&bytes);
+let decoded = cursor.next_record()?.expect("record");
+assert_eq!(decoded.payload, b"private-event-payload");
+# Ok::<(), of_execution_core::ExecutionWalError>(())
+```
+
+The checksum is not cryptographic. It detects torn frames and accidental
+corruption. Tamper-evident deployments should layer authentication or signing
+above the WAL frame.
+
 ## When To Use This Crate
 
 Use `of_execution_core` when you are:

@@ -52,6 +52,10 @@ Compatibility expectations:
 Constants:
 
 - [`EXECUTION_TEXT_CAP`]
+- [`EXECUTION_WAL_MAGIC`]
+- [`EXECUTION_WAL_VERSION`]
+- [`EXECUTION_WAL_HEADER_LEN`]
+- [`EXECUTION_WAL_MAX_PAYLOAD_LEN`]
 
 Identifier types:
 
@@ -69,6 +73,8 @@ Identifier types:
 Errors and domain types:
 
 - [`ExecutionCoreError`]
+- [`ExecutionWalError`]
+- [`WalChecksumField`]
 - [`ExecutionSymbol`]
 - [`OrderQty`]
 - [`OrderPrice`]
@@ -98,6 +104,18 @@ Risk types:
 - [`RiskContext`]
 - [`RiskCheck`]
 - [`BasicRiskGate`]
+
+Execution WAL primitives:
+
+- [`WalSequence`]
+- [`WalSegmentId`]
+- [`WalRecordKind`]
+- [`WalSyncPolicy`]
+- [`WalRecordHeader`]
+- [`WalRecordView`]
+- [`WalReplayCursor`]
+- [`WalIntegrityReport`]
+- [`execution_wal_checksum`]
 
 ## Identifier Model
 
@@ -388,6 +406,72 @@ let gate = BasicRiskGate::new(RiskLimits {
 // Higher-level engines build RiskContext and call the gate before routing.
 let _ = gate;
 ```
+
+## Execution WAL Frame Primitives
+
+The crate includes low-level binary WAL frame helpers for production OMS
+persistence work. These are primitives, not yet a full file-backed journal.
+They let a higher-level journal encode deterministic records without JSON in
+the hot path, validate checksums, and replay borrowed payload slices without
+allocating decoded record bodies.
+
+Frame properties:
+
+- fixed 80-byte little-endian header;
+- stable magic/version fields;
+- explicit [`WalRecordKind`] discriminants;
+- monotonic [`WalSequence`] values;
+- route/account/symbol hash slots for sharding and diagnostics;
+- payload checksum and header checksum;
+- strict replay cursor that detects sequence gaps and regressions;
+- non-panicking [`WalIntegrityReport`] for startup scans and diagnostics.
+
+Record kinds cover the OMS events planned for the durable WAL:
+
+| Kind | Purpose |
+| --- | --- |
+| [`WalRecordKind::CommandSubmit`] | New-order command payload |
+| [`WalRecordKind::CommandCancel`] | Cancel command payload |
+| [`WalRecordKind::CommandAmend`] | Amend/cancel-replace command payload |
+| [`WalRecordKind::ExecutionEvent`] | Venue or local execution event |
+| [`WalRecordKind::RiskReject`] | Local risk rejection |
+| [`WalRecordKind::RecoveryEvent`] | Recovery or venue restatement |
+| [`WalRecordKind::CheckpointMarker`] | Durable checkpoint boundary |
+| [`WalRecordKind::SegmentSeal`] | Segment close marker |
+| [`WalRecordKind::Heartbeat`] | Liveness record with no state transition |
+
+Example:
+
+```rust
+use of_execution_core::{
+    WalIntegrityReport, WalRecordKind, WalRecordView, WalReplayCursor,
+    WalSequence,
+};
+
+let record = WalRecordView::new(
+    WalRecordKind::CommandSubmit,
+    WalSequence(1),
+    1_000,
+    b"private-binary-command-payload",
+)?;
+
+let mut bytes = Vec::new();
+record.append_to(&mut bytes);
+
+let report = WalIntegrityReport::inspect(&bytes, true);
+assert!(report.valid);
+assert_eq!(report.records, 1);
+
+let mut cursor = WalReplayCursor::new(&bytes);
+let decoded = cursor.next_record()?.expect("record");
+assert_eq!(decoded.header.sequence, WalSequence(1));
+assert_eq!(decoded.payload, b"private-binary-command-payload");
+# Ok::<(), of_execution_core::ExecutionWalError>(())
+```
+
+The checksum is deterministic and non-cryptographic. It is intended to catch
+torn frames and accidental corruption. Deployments that require tamper evidence
+should add authentication or signing above this frame layer.
 
 ## Low-Latency Notes
 

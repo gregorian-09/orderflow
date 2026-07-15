@@ -7,6 +7,18 @@ use std::hash::{Hash, Hasher};
 
 /// Maximum bytes stored in an execution diagnostic text field.
 pub const EXECUTION_TEXT_CAP: usize = 128;
+/// Magic value written at the start of every execution WAL frame.
+pub const EXECUTION_WAL_MAGIC: u32 = 0x4c57_464f;
+/// Binary execution WAL frame version.
+pub const EXECUTION_WAL_VERSION: u16 = 1;
+/// Encoded execution WAL header length in bytes.
+pub const EXECUTION_WAL_HEADER_LEN: usize = 80;
+/// Maximum payload bytes accepted by the execution WAL frame helpers.
+pub const EXECUTION_WAL_MAX_PAYLOAD_LEN: usize = u32::MAX as usize;
+
+const EXECUTION_WAL_CHECKSUM_OFFSET: usize = 72;
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 /// Fixed-size ASCII field used for low-allocation identifiers.
 #[repr(C)]
@@ -154,6 +166,723 @@ impl fmt::Display for ExecutionCoreError {
 }
 
 impl Error for ExecutionCoreError {}
+
+/// Execution WAL record checksum category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum WalChecksumField {
+    /// Header checksum mismatch.
+    Header,
+    /// Payload checksum mismatch.
+    Payload,
+}
+
+/// Error returned by execution WAL frame helpers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ExecutionWalError {
+    /// Output buffer was too small.
+    BufferTooSmall {
+        /// Required byte count.
+        required: usize,
+        /// Provided byte count.
+        actual: usize,
+    },
+    /// Payload exceeds the WAL frame encoding limit.
+    PayloadTooLarge {
+        /// Maximum supported payload bytes.
+        max: usize,
+        /// Actual payload bytes.
+        actual: usize,
+    },
+    /// Frame magic did not match [`EXECUTION_WAL_MAGIC`].
+    InvalidMagic {
+        /// Magic value found in the frame.
+        actual: u32,
+    },
+    /// Frame version is not supported by this crate.
+    UnsupportedVersion {
+        /// Expected version.
+        expected: u16,
+        /// Actual version.
+        actual: u16,
+    },
+    /// Encoded header length is not supported.
+    InvalidHeaderLength {
+        /// Expected header length.
+        expected: usize,
+        /// Actual header length.
+        actual: usize,
+    },
+    /// Record kind discriminant is unknown.
+    UnknownRecordKind {
+        /// Raw record-kind value.
+        raw: u16,
+    },
+    /// Header or payload checksum did not match.
+    ChecksumMismatch {
+        /// Field that failed validation.
+        field: WalChecksumField,
+        /// Checksum stored in the frame.
+        expected: u64,
+        /// Checksum calculated from bytes.
+        actual: u64,
+    },
+    /// Frame ended before the declared record length.
+    TruncatedFrame {
+        /// Required bytes to decode the frame.
+        required: usize,
+        /// Available bytes.
+        actual: usize,
+    },
+    /// WAL sequence moved backward or repeated during strict replay.
+    SequenceRegression {
+        /// Previous accepted sequence.
+        previous: WalSequence,
+        /// Next decoded sequence.
+        next: WalSequence,
+    },
+    /// WAL sequence skipped a value during strict replay.
+    SequenceGap {
+        /// Expected sequence.
+        expected: WalSequence,
+        /// Actual decoded sequence.
+        actual: WalSequence,
+    },
+}
+
+impl fmt::Display for ExecutionWalError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BufferTooSmall { required, actual } => {
+                write!(f, "buffer too small: required {required}, actual {actual}")
+            }
+            Self::PayloadTooLarge { max, actual } => {
+                write!(f, "WAL payload length {actual} exceeds limit {max}")
+            }
+            Self::InvalidMagic { actual } => write!(f, "invalid WAL magic {actual:#x}"),
+            Self::UnsupportedVersion { expected, actual } => {
+                write!(f, "unsupported WAL version {actual}; expected {expected}")
+            }
+            Self::InvalidHeaderLength { expected, actual } => {
+                write!(f, "invalid WAL header length {actual}; expected {expected}")
+            }
+            Self::UnknownRecordKind { raw } => write!(f, "unknown WAL record kind {raw}"),
+            Self::ChecksumMismatch {
+                field,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "{field:?} checksum mismatch: expected {expected:#x}, actual {actual:#x}"
+            ),
+            Self::TruncatedFrame { required, actual } => {
+                write!(
+                    f,
+                    "truncated WAL frame: required {required}, actual {actual}"
+                )
+            }
+            Self::SequenceRegression { previous, next } => {
+                write!(
+                    f,
+                    "WAL sequence regressed from {} to {}",
+                    previous.0, next.0
+                )
+            }
+            Self::SequenceGap { expected, actual } => {
+                write!(
+                    f,
+                    "WAL sequence gap: expected {}, actual {}",
+                    expected.0, actual.0
+                )
+            }
+        }
+    }
+}
+
+impl Error for ExecutionWalError {}
+
+/// Monotonic execution WAL sequence number.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct WalSequence(pub u64);
+
+impl WalSequence {
+    /// Returns the next sequence using saturating arithmetic.
+    pub const fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
+}
+
+/// Execution WAL segment identifier.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct WalSegmentId(pub u64);
+
+/// Execution WAL record kind.
+#[repr(u16)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum WalRecordKind {
+    /// New-order command payload.
+    CommandSubmit = 1,
+    /// Cancel command payload.
+    CommandCancel = 2,
+    /// Amend/cancel-replace command payload.
+    CommandAmend = 3,
+    /// Venue or local execution-event payload.
+    ExecutionEvent = 4,
+    /// Local risk rejection payload.
+    RiskReject = 5,
+    /// Recovery or venue-restatement payload.
+    RecoveryEvent = 6,
+    /// Marker tying the WAL to a durable checkpoint.
+    CheckpointMarker = 7,
+    /// Marker sealing a segment.
+    SegmentSeal = 8,
+    /// Liveness record with no state transition.
+    Heartbeat = 9,
+}
+
+impl TryFrom<u16> for WalRecordKind {
+    type Error = ExecutionWalError;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::CommandSubmit),
+            2 => Ok(Self::CommandCancel),
+            3 => Ok(Self::CommandAmend),
+            4 => Ok(Self::ExecutionEvent),
+            5 => Ok(Self::RiskReject),
+            6 => Ok(Self::RecoveryEvent),
+            7 => Ok(Self::CheckpointMarker),
+            8 => Ok(Self::SegmentSeal),
+            9 => Ok(Self::Heartbeat),
+            raw => Err(ExecutionWalError::UnknownRecordKind { raw }),
+        }
+    }
+}
+
+/// Execution WAL durability policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum WalSyncPolicy {
+    /// Never call durable sync from the WAL writer.
+    Never,
+    /// Sync after every record.
+    EveryRecord,
+    /// Sync after every configured number of records.
+    EveryNRecords(u32),
+    /// Sync after the configured elapsed nanoseconds budget.
+    EveryDurationNs(u64),
+    /// Caller performs explicit sync operations.
+    Manual,
+    /// Sync at risk-sensitive boundaries such as accepted orders and fills.
+    OnRiskBoundary,
+}
+
+/// Fixed-size execution WAL record header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct WalRecordHeader {
+    /// WAL frame version.
+    pub version: u16,
+    /// Record kind.
+    pub kind: WalRecordKind,
+    /// Writer-defined flags.
+    pub flags: u16,
+    /// Payload length in bytes.
+    pub payload_len: u32,
+    /// Monotonic WAL sequence.
+    pub sequence: WalSequence,
+    /// Event or write timestamp in nanoseconds.
+    pub timestamp_ns: u64,
+    /// Optional route hash for sharding and diagnostics.
+    pub route_hash: u64,
+    /// Optional account hash for sharding and diagnostics.
+    pub account_hash: u64,
+    /// Optional symbol hash for sharding and diagnostics.
+    pub symbol_hash: u64,
+    /// Previous record checksum or sequence link.
+    pub previous_checksum: u64,
+    /// Payload checksum.
+    pub payload_checksum: u64,
+    /// Header checksum.
+    pub header_checksum: u64,
+}
+
+impl WalRecordHeader {
+    /// Creates a header for `payload`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExecutionWalError::PayloadTooLarge`] when the payload cannot
+    /// be represented in the binary frame.
+    pub fn new(
+        kind: WalRecordKind,
+        sequence: WalSequence,
+        timestamp_ns: u64,
+        payload: &[u8],
+    ) -> Result<Self, ExecutionWalError> {
+        if payload.len() > EXECUTION_WAL_MAX_PAYLOAD_LEN {
+            return Err(ExecutionWalError::PayloadTooLarge {
+                max: EXECUTION_WAL_MAX_PAYLOAD_LEN,
+                actual: payload.len(),
+            });
+        }
+        let mut header = Self {
+            version: EXECUTION_WAL_VERSION,
+            kind,
+            flags: 0,
+            payload_len: payload.len() as u32,
+            sequence,
+            timestamp_ns,
+            route_hash: 0,
+            account_hash: 0,
+            symbol_hash: 0,
+            previous_checksum: 0,
+            payload_checksum: execution_wal_checksum(payload),
+            header_checksum: 0,
+        };
+        header.refresh_header_checksum();
+        Ok(header)
+    }
+
+    /// Sets writer-defined flags and refreshes the header checksum.
+    pub fn with_flags(mut self, flags: u16) -> Self {
+        self.flags = flags;
+        self.refresh_header_checksum();
+        self
+    }
+
+    /// Sets route/account/symbol hashes and refreshes the header checksum.
+    pub fn with_hashes(mut self, route_hash: u64, account_hash: u64, symbol_hash: u64) -> Self {
+        self.route_hash = route_hash;
+        self.account_hash = account_hash;
+        self.symbol_hash = symbol_hash;
+        self.refresh_header_checksum();
+        self
+    }
+
+    /// Sets the previous checksum link and refreshes the header checksum.
+    pub fn with_previous_checksum(mut self, previous_checksum: u64) -> Self {
+        self.previous_checksum = previous_checksum;
+        self.refresh_header_checksum();
+        self
+    }
+
+    /// Returns total encoded frame length for this header.
+    pub const fn frame_len(&self) -> usize {
+        EXECUTION_WAL_HEADER_LEN + self.payload_len as usize
+    }
+
+    fn refresh_header_checksum(&mut self) {
+        self.header_checksum = 0;
+        self.header_checksum = self.compute_header_checksum();
+    }
+
+    fn compute_header_checksum(&self) -> u64 {
+        let mut bytes = [0_u8; EXECUTION_WAL_HEADER_LEN];
+        encode_header(self, &mut bytes, false);
+        execution_wal_checksum(&bytes[..EXECUTION_WAL_CHECKSUM_OFFSET])
+    }
+
+    fn validate_checksums(&self, payload: &[u8]) -> Result<(), ExecutionWalError> {
+        let actual_payload = execution_wal_checksum(payload);
+        if self.payload_checksum != actual_payload {
+            return Err(ExecutionWalError::ChecksumMismatch {
+                field: WalChecksumField::Payload,
+                expected: self.payload_checksum,
+                actual: actual_payload,
+            });
+        }
+
+        let actual_header = self.compute_header_checksum();
+        if self.header_checksum != actual_header {
+            return Err(ExecutionWalError::ChecksumMismatch {
+                field: WalChecksumField::Header,
+                expected: self.header_checksum,
+                actual: actual_header,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Borrowed execution WAL record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct WalRecordView<'a> {
+    /// Decoded WAL header.
+    pub header: WalRecordHeader,
+    /// Borrowed payload bytes.
+    pub payload: &'a [u8],
+}
+
+impl<'a> WalRecordView<'a> {
+    /// Creates a borrowed WAL record and computes its checksums.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExecutionWalError::PayloadTooLarge`] when the payload cannot
+    /// be represented in the binary frame.
+    pub fn new(
+        kind: WalRecordKind,
+        sequence: WalSequence,
+        timestamp_ns: u64,
+        payload: &'a [u8],
+    ) -> Result<Self, ExecutionWalError> {
+        Ok(Self {
+            header: WalRecordHeader::new(kind, sequence, timestamp_ns, payload)?,
+            payload,
+        })
+    }
+
+    /// Creates a borrowed WAL record from an existing header and payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns checksum or length errors when the header does not describe the
+    /// payload exactly.
+    pub fn from_header(
+        header: WalRecordHeader,
+        payload: &'a [u8],
+    ) -> Result<Self, ExecutionWalError> {
+        if header.payload_len as usize != payload.len() {
+            return Err(ExecutionWalError::TruncatedFrame {
+                required: header.frame_len(),
+                actual: EXECUTION_WAL_HEADER_LEN + payload.len(),
+            });
+        }
+        header.validate_checksums(payload)?;
+        Ok(Self { header, payload })
+    }
+
+    /// Returns total encoded frame length.
+    pub const fn encoded_len(&self) -> usize {
+        self.header.frame_len()
+    }
+
+    /// Encodes this record into `out`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExecutionWalError::BufferTooSmall`] when `out` cannot hold
+    /// the complete frame.
+    pub fn encode_into(&self, out: &mut [u8]) -> Result<usize, ExecutionWalError> {
+        let required = self.encoded_len();
+        if out.len() < required {
+            return Err(ExecutionWalError::BufferTooSmall {
+                required,
+                actual: out.len(),
+            });
+        }
+        encode_header(&self.header, &mut out[..EXECUTION_WAL_HEADER_LEN], true);
+        out[EXECUTION_WAL_HEADER_LEN..required].copy_from_slice(self.payload);
+        Ok(required)
+    }
+
+    /// Appends this record to `out`.
+    pub fn append_to(&self, out: &mut Vec<u8>) {
+        let start = out.len();
+        out.resize(start + self.encoded_len(), 0);
+        self.encode_into(&mut out[start..])
+            .expect("resized output has exact encoded capacity");
+    }
+
+    /// Decodes one record from the beginning of `bytes`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a frame, checksum, version, or kind error when bytes do not
+    /// contain a valid WAL frame.
+    pub fn decode(bytes: &'a [u8]) -> Result<(Self, usize), ExecutionWalError> {
+        if bytes.len() < EXECUTION_WAL_HEADER_LEN {
+            return Err(ExecutionWalError::TruncatedFrame {
+                required: EXECUTION_WAL_HEADER_LEN,
+                actual: bytes.len(),
+            });
+        }
+
+        let header = decode_header(&bytes[..EXECUTION_WAL_HEADER_LEN])?;
+        let required = header.frame_len();
+        if bytes.len() < required {
+            return Err(ExecutionWalError::TruncatedFrame {
+                required,
+                actual: bytes.len(),
+            });
+        }
+
+        let payload = &bytes[EXECUTION_WAL_HEADER_LEN..required];
+        header.validate_checksums(payload)?;
+        Ok((Self { header, payload }, required))
+    }
+}
+
+/// Sequential borrowed replay cursor for execution WAL bytes.
+#[derive(Debug, Clone)]
+pub struct WalReplayCursor<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+    previous_sequence: Option<WalSequence>,
+    strict_sequence: bool,
+}
+
+impl<'a> WalReplayCursor<'a> {
+    /// Creates a cursor over encoded WAL bytes.
+    pub const fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            bytes,
+            offset: 0,
+            previous_sequence: None,
+            strict_sequence: true,
+        }
+    }
+
+    /// Enables or disables contiguous sequence validation.
+    pub const fn with_strict_sequence(mut self, strict_sequence: bool) -> Self {
+        self.strict_sequence = strict_sequence;
+        self
+    }
+
+    /// Returns the current byte offset.
+    pub const fn offset(&self) -> usize {
+        self.offset
+    }
+
+    /// Returns the number of unread bytes.
+    pub const fn remaining(&self) -> usize {
+        self.bytes.len().saturating_sub(self.offset)
+    }
+
+    /// Decodes the next record.
+    ///
+    /// Returns `Ok(None)` when the cursor is at end of input.
+    ///
+    /// # Errors
+    ///
+    /// Returns frame, checksum, or strict sequence validation errors.
+    pub fn next_record(&mut self) -> Result<Option<WalRecordView<'a>>, ExecutionWalError> {
+        if self.offset == self.bytes.len() {
+            return Ok(None);
+        }
+
+        let (record, consumed) = WalRecordView::decode(&self.bytes[self.offset..])?;
+        if self.strict_sequence {
+            if let Some(previous) = self.previous_sequence {
+                let expected = previous.next();
+                if record.header.sequence <= previous {
+                    return Err(ExecutionWalError::SequenceRegression {
+                        previous,
+                        next: record.header.sequence,
+                    });
+                }
+                if record.header.sequence != expected {
+                    return Err(ExecutionWalError::SequenceGap {
+                        expected,
+                        actual: record.header.sequence,
+                    });
+                }
+            }
+        }
+        self.previous_sequence = Some(record.header.sequence);
+        self.offset += consumed;
+        Ok(Some(record))
+    }
+}
+
+impl<'a> Iterator for WalReplayCursor<'a> {
+    type Item = Result<WalRecordView<'a>, ExecutionWalError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.next_record() {
+            Ok(Some(record)) => Some(Ok(record)),
+            Ok(None) => None,
+            Err(error) => {
+                self.offset = self.bytes.len();
+                Some(Err(error))
+            }
+        }
+    }
+}
+
+/// Integrity summary for encoded execution WAL bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct WalIntegrityReport {
+    /// Number of valid records decoded before the first fatal frame error.
+    pub records: u64,
+    /// Number of bytes consumed by valid records.
+    pub bytes: u64,
+    /// First decoded WAL sequence.
+    pub first_sequence: Option<WalSequence>,
+    /// Last decoded WAL sequence.
+    pub last_sequence: Option<WalSequence>,
+    /// Number of checksum mismatches encountered.
+    pub checksum_failures: u64,
+    /// Number of strict sequence gaps or regressions encountered.
+    pub sequence_failures: u64,
+    /// True when the input ended with a partial frame.
+    pub truncated_tail: bool,
+    /// True when all provided bytes decoded cleanly.
+    pub valid: bool,
+}
+
+impl WalIntegrityReport {
+    /// Inspects encoded WAL bytes and returns a non-panicking integrity report.
+    pub fn inspect(bytes: &[u8], strict_sequence: bool) -> Self {
+        let mut report = Self {
+            valid: true,
+            ..Self::default()
+        };
+        let mut cursor = WalReplayCursor::new(bytes).with_strict_sequence(strict_sequence);
+
+        loop {
+            match cursor.next_record() {
+                Ok(Some(record)) => {
+                    report.records = report.records.saturating_add(1);
+                    report.bytes = cursor.offset() as u64;
+                    report.first_sequence.get_or_insert(record.header.sequence);
+                    report.last_sequence = Some(record.header.sequence);
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    report.valid = false;
+                    match error {
+                        ExecutionWalError::ChecksumMismatch { .. } => {
+                            report.checksum_failures = report.checksum_failures.saturating_add(1);
+                        }
+                        ExecutionWalError::SequenceGap { .. }
+                        | ExecutionWalError::SequenceRegression { .. } => {
+                            report.sequence_failures = report.sequence_failures.saturating_add(1);
+                        }
+                        ExecutionWalError::TruncatedFrame { .. } => {
+                            report.truncated_tail = true;
+                        }
+                        ExecutionWalError::BufferTooSmall { .. }
+                        | ExecutionWalError::PayloadTooLarge { .. }
+                        | ExecutionWalError::InvalidMagic { .. }
+                        | ExecutionWalError::UnsupportedVersion { .. }
+                        | ExecutionWalError::InvalidHeaderLength { .. }
+                        | ExecutionWalError::UnknownRecordKind { .. } => {}
+                    }
+                    break;
+                }
+            }
+        }
+        report
+    }
+}
+
+/// Returns the deterministic non-cryptographic checksum used by WAL frames.
+pub fn execution_wal_checksum(bytes: &[u8]) -> u64 {
+    let mut hash = FNV_OFFSET_BASIS;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+fn encode_header(header: &WalRecordHeader, out: &mut [u8], include_header_checksum: bool) {
+    put_u32(out, 0, EXECUTION_WAL_MAGIC);
+    put_u16(out, 4, header.version);
+    put_u16(out, 6, header.kind as u16);
+    put_u16(out, 8, EXECUTION_WAL_HEADER_LEN as u16);
+    put_u16(out, 10, header.flags);
+    put_u32(out, 12, header.payload_len);
+    put_u64(out, 16, header.sequence.0);
+    put_u64(out, 24, header.timestamp_ns);
+    put_u64(out, 32, header.route_hash);
+    put_u64(out, 40, header.account_hash);
+    put_u64(out, 48, header.symbol_hash);
+    put_u64(out, 56, header.previous_checksum);
+    put_u64(out, 64, header.payload_checksum);
+    put_u64(
+        out,
+        EXECUTION_WAL_CHECKSUM_OFFSET,
+        if include_header_checksum {
+            header.header_checksum
+        } else {
+            0
+        },
+    );
+}
+
+fn decode_header(bytes: &[u8]) -> Result<WalRecordHeader, ExecutionWalError> {
+    let magic = get_u32(bytes, 0);
+    if magic != EXECUTION_WAL_MAGIC {
+        return Err(ExecutionWalError::InvalidMagic { actual: magic });
+    }
+
+    let version = get_u16(bytes, 4);
+    if version != EXECUTION_WAL_VERSION {
+        return Err(ExecutionWalError::UnsupportedVersion {
+            expected: EXECUTION_WAL_VERSION,
+            actual: version,
+        });
+    }
+
+    let header_len = get_u16(bytes, 8) as usize;
+    if header_len != EXECUTION_WAL_HEADER_LEN {
+        return Err(ExecutionWalError::InvalidHeaderLength {
+            expected: EXECUTION_WAL_HEADER_LEN,
+            actual: header_len,
+        });
+    }
+
+    let header = WalRecordHeader {
+        version,
+        kind: WalRecordKind::try_from(get_u16(bytes, 6))?,
+        flags: get_u16(bytes, 10),
+        payload_len: get_u32(bytes, 12),
+        sequence: WalSequence(get_u64(bytes, 16)),
+        timestamp_ns: get_u64(bytes, 24),
+        route_hash: get_u64(bytes, 32),
+        account_hash: get_u64(bytes, 40),
+        symbol_hash: get_u64(bytes, 48),
+        previous_checksum: get_u64(bytes, 56),
+        payload_checksum: get_u64(bytes, 64),
+        header_checksum: get_u64(bytes, EXECUTION_WAL_CHECKSUM_OFFSET),
+    };
+    Ok(header)
+}
+
+fn put_u16(out: &mut [u8], offset: usize, value: u16) {
+    out[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+fn put_u32(out: &mut [u8], offset: usize, value: u32) {
+    out[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn put_u64(out: &mut [u8], offset: usize, value: u64) {
+    out[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn get_u16(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes(
+        bytes[offset..offset + 2]
+            .try_into()
+            .expect("u16 frame field"),
+    )
+}
+
+fn get_u32(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes(
+        bytes[offset..offset + 4]
+            .try_into()
+            .expect("u32 frame field"),
+    )
+}
+
+fn get_u64(bytes: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes(
+        bytes[offset..offset + 8]
+            .try_into()
+            .expect("u64 frame field"),
+    )
+}
 
 /// Execution symbol in venue-native format.
 #[repr(C)]
@@ -1118,5 +1847,98 @@ mod tests {
         let decision = gate.check_new(&req, &live_ctx());
         assert!(!decision.allowed);
         assert_eq!(decision.reason, RiskRejectReason::PriceBand);
+    }
+
+    #[test]
+    fn wal_record_round_trips_borrowed_payload() {
+        let payload = b"submit:C1";
+        let record =
+            WalRecordView::new(WalRecordKind::CommandSubmit, WalSequence(1), 123, payload).unwrap();
+
+        let mut encoded = vec![0; record.encoded_len()];
+        assert_eq!(record.encode_into(&mut encoded).unwrap(), encoded.len());
+
+        let (decoded, consumed) = WalRecordView::decode(&encoded).unwrap();
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(decoded.header.kind, WalRecordKind::CommandSubmit);
+        assert_eq!(decoded.header.sequence, WalSequence(1));
+        assert_eq!(decoded.header.timestamp_ns, 123);
+        assert_eq!(decoded.payload, payload);
+    }
+
+    #[test]
+    fn wal_record_detects_payload_corruption() {
+        let record =
+            WalRecordView::new(WalRecordKind::ExecutionEvent, WalSequence(2), 456, b"fill")
+                .unwrap();
+        let mut encoded = Vec::new();
+        record.append_to(&mut encoded);
+        let last = encoded.last_mut().unwrap();
+        *last ^= 0x01;
+
+        let error = WalRecordView::decode(&encoded).unwrap_err();
+        assert!(matches!(
+            error,
+            ExecutionWalError::ChecksumMismatch {
+                field: WalChecksumField::Payload,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn wal_cursor_detects_strict_sequence_gap() {
+        let first = WalRecordView::new(WalRecordKind::Heartbeat, WalSequence(1), 1, b"").unwrap();
+        let second = WalRecordView::new(WalRecordKind::Heartbeat, WalSequence(3), 2, b"").unwrap();
+
+        let mut encoded = Vec::new();
+        first.append_to(&mut encoded);
+        second.append_to(&mut encoded);
+
+        let mut cursor = WalReplayCursor::new(&encoded);
+        assert_eq!(
+            cursor.next_record().unwrap().unwrap().header.sequence,
+            WalSequence(1)
+        );
+        assert!(matches!(
+            cursor.next_record().unwrap_err(),
+            ExecutionWalError::SequenceGap {
+                expected: WalSequence(2),
+                actual: WalSequence(3)
+            }
+        ));
+    }
+
+    #[test]
+    fn wal_integrity_report_summarizes_valid_bytes() {
+        let first =
+            WalRecordView::new(WalRecordKind::Heartbeat, WalSequence(10), 1, b"one").unwrap();
+        let second =
+            WalRecordView::new(WalRecordKind::Heartbeat, WalSequence(11), 2, b"two").unwrap();
+
+        let mut encoded = Vec::new();
+        first.append_to(&mut encoded);
+        second.append_to(&mut encoded);
+
+        let report = WalIntegrityReport::inspect(&encoded, true);
+        assert!(report.valid);
+        assert_eq!(report.records, 2);
+        assert_eq!(report.bytes, encoded.len() as u64);
+        assert_eq!(report.first_sequence, Some(WalSequence(10)));
+        assert_eq!(report.last_sequence, Some(WalSequence(11)));
+    }
+
+    #[test]
+    fn wal_integrity_report_detects_truncated_tail() {
+        let record =
+            WalRecordView::new(WalRecordKind::CheckpointMarker, WalSequence(1), 1, b"chk").unwrap();
+        let mut encoded = Vec::new();
+        record.append_to(&mut encoded);
+        encoded.truncate(encoded.len() - 1);
+
+        let report = WalIntegrityReport::inspect(&encoded, true);
+        assert!(!report.valid);
+        assert!(report.truncated_tail);
+        assert_eq!(report.records, 0);
     }
 }

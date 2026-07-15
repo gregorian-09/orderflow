@@ -54,6 +54,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `SignalModelMetadata`, `SignalModelInputBinding`, `SignalModelOutput`, and
   optional `ModelBackedSignal` support while keeping heavy model runtimes out of
   default builds.
+- Additive `of_execution_core` binary WAL frame primitives with
+  `WalSequence`, `WalSegmentId`, `WalRecordKind`, `WalSyncPolicy`,
+  `WalRecordHeader`, `WalRecordView`, `WalReplayCursor`,
+  `WalIntegrityReport`, checksum validation, strict sequence checks, and
+  borrowed replay support for future low-latency OMS persistence.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

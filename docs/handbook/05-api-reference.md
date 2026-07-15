@@ -421,6 +421,24 @@ Public risk types:
 - `RiskCheck` trait
 - `BasicRiskGate`
 
+Public execution WAL frame primitives:
+
+- `EXECUTION_WAL_MAGIC`
+- `EXECUTION_WAL_VERSION`
+- `EXECUTION_WAL_HEADER_LEN`
+- `EXECUTION_WAL_MAX_PAYLOAD_LEN`
+- `ExecutionWalError`
+- `WalChecksumField`
+- `WalSequence`
+- `WalSegmentId`
+- `WalRecordKind`
+- `WalSyncPolicy`
+- `WalRecordHeader`
+- `WalRecordView`
+- `WalReplayCursor`
+- `WalIntegrityReport`
+- `execution_wal_checksum`
+
 For field-level semantics and transition rules, see
 [`of_execution_core` reference](./05g-of-execution-core-reference.md).
 
