@@ -69,6 +69,9 @@ Journaling:
 - [`JournalRecord`]
 - [`ExecutionJournal`]
 - [`InMemoryJournal`]
+- [`WalJournalConfig`]
+- [`WalReplayResult`]
+- [`WalExecutionJournal`]
 
 Engine and simulation:
 
@@ -339,7 +342,9 @@ assert!(!events.is_empty());
 
 [`InMemoryJournal`] is useful for tests and embedded simulation.
 [`FileExecutionJournal`] is an append-only durable implementation in the OMS
-helper surface.
+helper surface. [`WalExecutionJournal`] is an additive binary WAL-backed
+implementation that uses `of_execution_core` WAL frames, sequence numbers,
+checksums, and configurable sync policy.
 
 Journal records use [`JournalRecord`]:
 
@@ -356,6 +361,54 @@ Command kinds use [`JournalCommandKind`]:
 
 Production deployments can replace the journal with a WAL, mmap-backed writer,
 database, or replicated log by implementing [`ExecutionJournal`].
+
+### Binary WAL journal
+
+[`WalExecutionJournal`] records the same [`JournalRecord`] model as
+[`FileExecutionJournal`], but avoids text formatting on the journal path. It
+owns WAL sequence assignment, validates existing bytes before accepting new
+records, and replays into the existing journal output type.
+
+```rust
+use of_execution::{
+    ExecutionJournal, JournalCommandKind, WalExecutionJournal, WalJournalConfig,
+};
+use of_execution_core::{ClientOrderId, WalSequence, WalSyncPolicy};
+
+let path = std::env::temp_dir().join("orders.ofwal");
+let mut journal = WalExecutionJournal::open(
+    WalJournalConfig::new(&path).with_sync_policy(WalSyncPolicy::EveryNRecords(32)),
+)?;
+
+journal.record_command(
+    JournalCommandKind::Submit,
+    ClientOrderId::new("C1")?,
+    1_000,
+)?;
+journal.sync()?;
+
+let report = journal.integrity_report()?;
+assert!(report.valid);
+
+let mut replayed = Vec::new();
+let replay = journal.replay_from(WalSequence(1), &mut replayed)?;
+assert_eq!(replay.records, replayed.len());
+# let _ = std::fs::remove_file(path);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Supported sync policies come from `of_execution_core::WalSyncPolicy`:
+
+- `Never`
+- `EveryRecord`
+- `EveryNRecords(n)`
+- `EveryDurationNs(ns)`
+- `Manual`
+- `OnRiskBoundary`
+
+This first WAL journal is a single append-only file. Segment rotation,
+checkpoint markers, and recovery-plan orchestration are separate additive
+features so the compatibility boundary stays narrow.
 
 ## Concurrent Worker
 

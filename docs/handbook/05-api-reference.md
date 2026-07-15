@@ -465,6 +465,9 @@ Public journal types:
 - `JournalRecord`
 - `ExecutionJournal` trait
 - `InMemoryJournal`
+- `WalJournalConfig`
+- `WalReplayResult`
+- `WalExecutionJournal`
 
 Public concurrent execution types:
 

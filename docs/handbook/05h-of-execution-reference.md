@@ -43,7 +43,21 @@ Journals implement:
 - `replay`
 
 `InMemoryJournal` is used for tests and embedded simulation. `FileExecutionJournal`
-in the OMS helper layer provides an append-only file-backed implementation.
+in the OMS helper layer provides an append-only text file implementation.
+`WalExecutionJournal` provides an additive binary WAL implementation backed by
+`of_execution_core` WAL frames, sequence numbers, checksums, and configurable
+sync policy.
+
+| Journal | Use |
+| --- | --- |
+| `InMemoryJournal` | Tests, simulation, volatile embedded hosts |
+| `FileExecutionJournal` | Human-readable append-only text journal |
+| `WalExecutionJournal` | Binary append-only WAL with integrity validation |
+
+`WalExecutionJournal::open(WalJournalConfig::new(path))` validates existing WAL
+bytes before accepting new records. It fails closed on corrupt frames or
+non-contiguous sequences. `replay_from(WalSequence, out)` supports bounded
+startup replay once checkpoints are added later.
 
 ## Route Configuration
 

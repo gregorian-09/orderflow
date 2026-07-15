@@ -8,12 +8,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use of_execution_core::{
     AccountId, AmendRequest, CancelRequest, ClientOrderId, ExecutionEvent, ExecutionSymbol,
     ExecutionText, ExecutionType, FixedAscii, OrderPrice, OrderQty, OrderRequest, OrderSide,
     OrderState, OrderStatus, OrderType, RiskCheck, RiskContext, RiskDecision, RiskLimits,
-    RiskRejectReason, RouteId, StrategyId, TimeInForce,
+    RiskRejectReason, RouteId, StrategyId, TimeInForce, WalIntegrityReport, WalRecordKind,
+    WalRecordView, WalReplayCursor, WalSequence, WalSyncPolicy,
 };
 
 use crate::{
@@ -337,6 +339,579 @@ impl ExecutionJournal for FileExecutionJournal {
         }
         Ok(out.len().saturating_sub(start))
     }
+}
+
+/// Configuration for [`WalExecutionJournal`].
+#[derive(Debug, Clone)]
+pub struct WalJournalConfig {
+    path: PathBuf,
+    sync_policy: WalSyncPolicy,
+}
+
+impl WalJournalConfig {
+    /// Creates a WAL journal config for `path`.
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+            sync_policy: WalSyncPolicy::EveryRecord,
+        }
+    }
+
+    /// Sets the durability sync policy.
+    pub fn with_sync_policy(mut self, sync_policy: WalSyncPolicy) -> Self {
+        self.sync_policy = sync_policy;
+        self
+    }
+
+    /// Returns the WAL file path.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Returns the configured sync policy.
+    pub const fn sync_policy(&self) -> WalSyncPolicy {
+        self.sync_policy
+    }
+}
+
+/// Replay summary returned by WAL replay helpers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct WalReplayResult {
+    /// Number of records replayed into the output vector.
+    pub records: usize,
+    /// Number of encoded bytes consumed by replay.
+    pub bytes: u64,
+    /// First replayed sequence.
+    pub first_sequence: Option<WalSequence>,
+    /// Last replayed sequence.
+    pub last_sequence: Option<WalSequence>,
+}
+
+/// Binary append-only execution WAL journal.
+///
+/// This journal implements the existing [`ExecutionJournal`] trait. It records
+/// the same command/event model as [`FileExecutionJournal`], but uses binary
+/// WAL frames from `of_execution_core` instead of text lines.
+#[derive(Debug)]
+pub struct WalExecutionJournal {
+    config: WalJournalConfig,
+    file: File,
+    next_sequence: WalSequence,
+    previous_checksum: u64,
+    records_since_sync: u32,
+    last_sync_ns: u64,
+    scratch: Vec<u8>,
+    frame_scratch: Vec<u8>,
+}
+
+impl WalExecutionJournal {
+    /// Opens or creates a binary WAL-backed execution journal.
+    ///
+    /// Existing WAL bytes are validated before the journal accepts new
+    /// records. Corrupt or non-contiguous WAL data returns a journal error so
+    /// callers can fail closed before trading resumes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an execution journal error when the file cannot be opened or
+    /// existing WAL bytes fail validation.
+    pub fn open(config: WalJournalConfig) -> ExecutionResult<Self> {
+        let (next_sequence, previous_checksum) = scan_wal_file(config.path())?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .read(true)
+            .open(config.path())
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        Ok(Self {
+            config,
+            file,
+            next_sequence,
+            previous_checksum,
+            records_since_sync: 0,
+            last_sync_ns: now_ns(),
+            scratch: Vec::with_capacity(256),
+            frame_scratch: Vec::with_capacity(384),
+        })
+    }
+
+    /// Opens a WAL journal at `path` with a durability sync policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an execution journal error when the WAL cannot be opened or its
+    /// existing bytes fail validation.
+    pub fn open_path(path: impl AsRef<Path>, sync_policy: WalSyncPolicy) -> ExecutionResult<Self> {
+        Self::open(WalJournalConfig::new(path).with_sync_policy(sync_policy))
+    }
+
+    /// Returns the WAL file path.
+    pub fn path(&self) -> &Path {
+        self.config.path()
+    }
+
+    /// Returns the configured sync policy.
+    pub const fn sync_policy(&self) -> WalSyncPolicy {
+        self.config.sync_policy()
+    }
+
+    /// Returns the next sequence that will be assigned.
+    pub const fn next_sequence(&self) -> WalSequence {
+        self.next_sequence
+    }
+
+    /// Flushes and syncs the WAL file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an execution journal error when the OS reports a flush/sync
+    /// failure.
+    pub fn sync(&mut self) -> ExecutionResult<()> {
+        self.file
+            .flush()
+            .and_then(|()| self.file.sync_data())
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        self.records_since_sync = 0;
+        self.last_sync_ns = now_ns();
+        Ok(())
+    }
+
+    /// Returns an integrity report for the WAL file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an execution journal error when the WAL file cannot be read.
+    pub fn integrity_report(&self) -> ExecutionResult<WalIntegrityReport> {
+        let bytes =
+            std::fs::read(self.path()).map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        let report = WalIntegrityReport::inspect(&bytes, true);
+        if report.valid {
+            let mut records = Vec::new();
+            let _ = replay_wal_bytes(&bytes, None, &mut records)?;
+        }
+        Ok(report)
+    }
+
+    /// Replays records with sequence greater than or equal to `sequence`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an execution journal error when the WAL cannot be read, decoded,
+    /// or mapped back into a journal record.
+    pub fn replay_from(
+        &self,
+        sequence: WalSequence,
+        out: &mut Vec<JournalRecord>,
+    ) -> ExecutionResult<WalReplayResult> {
+        let bytes =
+            std::fs::read(self.path()).map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        replay_wal_bytes(&bytes, Some(sequence), out)
+    }
+
+    fn append_record(&mut self, kind: WalRecordKind, timestamp_ns: u64) -> ExecutionResult<()> {
+        let payload_len = self.scratch.len();
+        let payload = &self.scratch[..payload_len];
+        let header = WalRecordView::new(kind, self.next_sequence, timestamp_ns, payload)
+            .map_err(wal_error)?
+            .header
+            .with_previous_checksum(self.previous_checksum);
+        let record = WalRecordView::from_header(header, payload).map_err(wal_error)?;
+        self.frame_scratch.clear();
+        self.frame_scratch.resize(record.encoded_len(), 0);
+        record
+            .encode_into(&mut self.frame_scratch)
+            .map_err(wal_error)?;
+
+        self.file
+            .write_all(&self.frame_scratch)
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        self.previous_checksum = record.header.header_checksum;
+        self.next_sequence = self.next_sequence.next();
+        self.records_since_sync = self.records_since_sync.saturating_add(1);
+        self.maybe_sync(kind)
+    }
+
+    fn maybe_sync(&mut self, kind: WalRecordKind) -> ExecutionResult<()> {
+        match self.config.sync_policy() {
+            WalSyncPolicy::Never | WalSyncPolicy::Manual => Ok(()),
+            WalSyncPolicy::EveryRecord => self.sync(),
+            WalSyncPolicy::EveryNRecords(records) => {
+                if records > 0 && self.records_since_sync >= records {
+                    self.sync()
+                } else {
+                    Ok(())
+                }
+            }
+            WalSyncPolicy::EveryDurationNs(duration_ns) => {
+                if duration_ns > 0 && now_ns().saturating_sub(self.last_sync_ns) >= duration_ns {
+                    self.sync()
+                } else {
+                    Ok(())
+                }
+            }
+            WalSyncPolicy::OnRiskBoundary => {
+                if is_risk_boundary_wal_kind(kind) {
+                    self.sync()
+                } else {
+                    Ok(())
+                }
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+impl ExecutionJournal for WalExecutionJournal {
+    fn record_command(
+        &mut self,
+        kind: JournalCommandKind,
+        id: ClientOrderId,
+        ts_ns: u64,
+    ) -> ExecutionResult<()> {
+        self.scratch.clear();
+        encode_command_payload(kind, id, ts_ns, &mut self.scratch);
+        self.append_record(command_wal_kind(kind), ts_ns)
+    }
+
+    fn record_event(&mut self, event: &ExecutionEvent) -> ExecutionResult<()> {
+        self.scratch.clear();
+        encode_event_payload(event, &mut self.scratch);
+        self.append_record(event_wal_kind(event), event.ts_recv_ns)
+    }
+
+    fn replay(&self, out: &mut Vec<JournalRecord>) -> ExecutionResult<usize> {
+        let start = out.len();
+        let _ = self.replay_from(WalSequence(1), out)?;
+        Ok(out.len().saturating_sub(start))
+    }
+}
+
+const WAL_PAYLOAD_VERSION: u16 = 1;
+
+fn scan_wal_file(path: &Path) -> ExecutionResult<(WalSequence, u64)> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((WalSequence(1), 0));
+        }
+        Err(err) => return Err(ExecutionError::Journal(err.to_string())),
+    };
+    if bytes.is_empty() {
+        return Ok((WalSequence(1), 0));
+    }
+
+    let mut cursor = WalReplayCursor::new(&bytes);
+    let mut next_sequence = WalSequence(1);
+    let mut previous_checksum = 0;
+    while let Some(record) = cursor.next_record().map_err(wal_error)? {
+        validate_wal_link(&record, previous_checksum)?;
+        let _ = decode_wal_payload(&record)?;
+        next_sequence = record.header.sequence.next();
+        previous_checksum = record.header.header_checksum;
+    }
+    Ok((next_sequence, previous_checksum))
+}
+
+fn replay_wal_bytes(
+    bytes: &[u8],
+    from_sequence: Option<WalSequence>,
+    out: &mut Vec<JournalRecord>,
+) -> ExecutionResult<WalReplayResult> {
+    let start = out.len();
+    let mut result = WalReplayResult::default();
+    let mut cursor = WalReplayCursor::new(bytes);
+    let mut previous_checksum = 0;
+
+    while let Some(record) = cursor.next_record().map_err(wal_error)? {
+        validate_wal_link(&record, previous_checksum)?;
+        previous_checksum = record.header.header_checksum;
+        result.bytes = cursor.offset() as u64;
+        if from_sequence.is_some_and(|sequence| record.header.sequence < sequence) {
+            continue;
+        }
+        if let Some(journal_record) = decode_wal_payload(&record)? {
+            out.push(journal_record);
+            result.records = out.len().saturating_sub(start);
+            result.first_sequence.get_or_insert(record.header.sequence);
+            result.last_sequence = Some(record.header.sequence);
+        }
+    }
+
+    Ok(result)
+}
+
+fn validate_wal_link(record: &WalRecordView<'_>, previous_checksum: u64) -> ExecutionResult<()> {
+    if record.header.previous_checksum == previous_checksum {
+        Ok(())
+    } else {
+        Err(ExecutionError::Journal(format!(
+            "WAL checksum link mismatch at sequence {}",
+            record.header.sequence.0
+        )))
+    }
+}
+
+fn encode_command_payload(
+    kind: JournalCommandKind,
+    id: ClientOrderId,
+    ts_ns: u64,
+    out: &mut Vec<u8>,
+) {
+    put_payload_u16(out, WAL_PAYLOAD_VERSION);
+    put_payload_u8(out, command_kind_u8(kind));
+    put_payload_u8(out, 0);
+    put_fixed(out, &id);
+    put_payload_u64(out, ts_ns);
+}
+
+fn decode_command_payload(payload: &[u8]) -> ExecutionResult<JournalRecord> {
+    let mut reader = PayloadReader::new(payload);
+    reader.read_version()?;
+    let kind = command_kind_from_u8(reader.read_u8()?)
+        .ok_or_else(|| ExecutionError::Journal("invalid WAL command kind".to_string()))?;
+    let _reserved = reader.read_u8()?;
+    let client_order_id = reader.read_fixed::<40>()?;
+    let ts_ns = reader.read_u64()?;
+    reader.finish()?;
+    Ok(JournalRecord::Command {
+        kind,
+        client_order_id,
+        ts_ns,
+    })
+}
+
+fn encode_event_payload(event: &ExecutionEvent, out: &mut Vec<u8>) {
+    put_payload_u16(out, WAL_PAYLOAD_VERSION);
+    put_payload_u8(out, event.exec_type as u8);
+    put_payload_u8(out, event.order_status as u8);
+    put_fixed(out, &event.client_order_id);
+    put_fixed(out, &event.orig_client_order_id);
+    put_fixed(out, &event.venue_order_id);
+    put_fixed(out, &event.execution_id);
+    put_fixed(out, &event.account_id);
+    put_fixed(out, &event.route_id);
+    put_fixed(out, &event.symbol.venue);
+    put_fixed(out, &event.symbol.instrument);
+    put_payload_i64(out, event.last_qty.0);
+    put_payload_i64(out, event.last_price.0);
+    put_payload_i64(out, event.cumulative_qty.0);
+    put_payload_i64(out, event.leaves_qty.0);
+    put_payload_i64(out, event.average_price.0);
+    put_payload_u64(out, event.ts_exchange_ns);
+    put_payload_u64(out, event.ts_recv_ns);
+    put_payload_u8(out, event.reason as u8);
+    put_fixed(out, &event.text);
+}
+
+fn decode_event_payload(payload: &[u8]) -> ExecutionResult<ExecutionEvent> {
+    let mut reader = PayloadReader::new(payload);
+    reader.read_version()?;
+    let exec_type = execution_type_from_u8(reader.read_u8()?)?;
+    let order_status = order_status_from_u8(reader.read_u8()?)?;
+    let client_order_id = reader.read_fixed::<40>()?;
+    let orig_client_order_id = reader.read_fixed::<40>()?;
+    let venue_order_id = reader.read_fixed::<48>()?;
+    let execution_id = reader.read_fixed::<48>()?;
+    let account_id = reader.read_fixed::<32>()?;
+    let route_id = reader.read_fixed::<32>()?;
+    let venue = reader.read_fixed::<16>()?;
+    let instrument = reader.read_fixed::<32>()?;
+    let last_qty = OrderQty(reader.read_i64()?);
+    let last_price = OrderPrice(reader.read_i64()?);
+    let cumulative_qty = OrderQty(reader.read_i64()?);
+    let leaves_qty = OrderQty(reader.read_i64()?);
+    let average_price = OrderPrice(reader.read_i64()?);
+    let ts_exchange_ns = reader.read_u64()?;
+    let ts_recv_ns = reader.read_u64()?;
+    let reason = risk_reason_from_u8(reader.read_u8()?)?;
+    let text = reader.read_fixed::<128>()?;
+    reader.finish()?;
+    Ok(ExecutionEvent {
+        exec_type,
+        order_status,
+        client_order_id,
+        orig_client_order_id,
+        venue_order_id,
+        execution_id,
+        account_id,
+        route_id,
+        symbol: ExecutionSymbol { venue, instrument },
+        last_qty,
+        last_price,
+        cumulative_qty,
+        leaves_qty,
+        average_price,
+        ts_exchange_ns,
+        ts_recv_ns,
+        reason,
+        text,
+    })
+}
+
+fn decode_wal_payload(record: &WalRecordView<'_>) -> ExecutionResult<Option<JournalRecord>> {
+    match record.header.kind {
+        WalRecordKind::CommandSubmit
+        | WalRecordKind::CommandCancel
+        | WalRecordKind::CommandAmend => Ok(Some(decode_command_payload(record.payload)?)),
+        WalRecordKind::ExecutionEvent
+        | WalRecordKind::RiskReject
+        | WalRecordKind::RecoveryEvent => Ok(Some(JournalRecord::Event(Box::new(
+            decode_event_payload(record.payload)?,
+        )))),
+        WalRecordKind::CheckpointMarker | WalRecordKind::SegmentSeal | WalRecordKind::Heartbeat => {
+            Ok(None)
+        }
+        _ => Ok(None),
+    }
+}
+
+fn command_wal_kind(kind: JournalCommandKind) -> WalRecordKind {
+    match kind {
+        JournalCommandKind::Submit => WalRecordKind::CommandSubmit,
+        JournalCommandKind::Cancel => WalRecordKind::CommandCancel,
+        JournalCommandKind::Amend => WalRecordKind::CommandAmend,
+    }
+}
+
+fn event_wal_kind(event: &ExecutionEvent) -> WalRecordKind {
+    match event.exec_type {
+        ExecutionType::Reject => WalRecordKind::RiskReject,
+        ExecutionType::Restated => WalRecordKind::RecoveryEvent,
+        _ => WalRecordKind::ExecutionEvent,
+    }
+}
+
+fn is_risk_boundary_wal_kind(kind: WalRecordKind) -> bool {
+    matches!(
+        kind,
+        WalRecordKind::CommandSubmit
+            | WalRecordKind::CommandCancel
+            | WalRecordKind::CommandAmend
+            | WalRecordKind::RiskReject
+            | WalRecordKind::RecoveryEvent
+            | WalRecordKind::CheckpointMarker
+            | WalRecordKind::SegmentSeal
+    )
+}
+
+fn put_fixed<const N: usize>(out: &mut Vec<u8>, value: &FixedAscii<N>) {
+    put_payload_u8(out, value.as_str().len() as u8);
+    let start = out.len();
+    out.resize(start + N, 0);
+    out[start..start + value.as_str().len()].copy_from_slice(value.as_str().as_bytes());
+}
+
+fn put_payload_u8(out: &mut Vec<u8>, value: u8) {
+    out.push(value);
+}
+
+fn put_payload_u16(out: &mut Vec<u8>, value: u16) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put_payload_u64(out: &mut Vec<u8>, value: u64) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put_payload_i64(out: &mut Vec<u8>, value: i64) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PayloadReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> PayloadReader<'a> {
+    const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn read_version(&mut self) -> ExecutionResult<()> {
+        let version = self.read_u16()?;
+        if version == WAL_PAYLOAD_VERSION {
+            Ok(())
+        } else {
+            Err(ExecutionError::Journal(format!(
+                "unsupported WAL payload version {version}"
+            )))
+        }
+    }
+
+    fn read_u8(&mut self) -> ExecutionResult<u8> {
+        let bytes = self.take(1)?;
+        Ok(bytes[0])
+    }
+
+    fn read_u16(&mut self) -> ExecutionResult<u16> {
+        let bytes = self.take(2)?;
+        Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
+    }
+
+    fn read_u64(&mut self) -> ExecutionResult<u64> {
+        let bytes = self.take(8)?;
+        Ok(u64::from_le_bytes(
+            bytes
+                .try_into()
+                .expect("payload reader returned eight bytes"),
+        ))
+    }
+
+    fn read_i64(&mut self) -> ExecutionResult<i64> {
+        let bytes = self.take(8)?;
+        Ok(i64::from_le_bytes(
+            bytes
+                .try_into()
+                .expect("payload reader returned eight bytes"),
+        ))
+    }
+
+    fn read_fixed<const N: usize>(&mut self) -> ExecutionResult<FixedAscii<N>> {
+        let len = usize::from(self.read_u8()?);
+        let bytes = self.take(N)?;
+        if len > N {
+            return Err(ExecutionError::Journal(
+                "WAL fixed field length exceeds capacity".to_string(),
+            ));
+        }
+        let value = std::str::from_utf8(&bytes[..len])
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        FixedAscii::new(value).map_err(|err| ExecutionError::Journal(err.to_string()))
+    }
+
+    fn finish(&self) -> ExecutionResult<()> {
+        if self.offset == self.bytes.len() {
+            Ok(())
+        } else {
+            Err(ExecutionError::Journal(
+                "trailing WAL payload bytes".to_string(),
+            ))
+        }
+    }
+
+    fn take(&mut self, len: usize) -> ExecutionResult<&'a [u8]> {
+        let end = self.offset.saturating_add(len);
+        if end > self.bytes.len() {
+            return Err(ExecutionError::Journal("truncated WAL payload".to_string()));
+        }
+        let bytes = &self.bytes[self.offset..end];
+        self.offset = end;
+        Ok(bytes)
+    }
+}
+
+fn wal_error(err: of_execution_core::ExecutionWalError) -> ExecutionError {
+    ExecutionError::Journal(err.to_string())
+}
+
+fn now_ns() -> u64 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    u64::try_from(nanos).unwrap_or(u64::MAX)
 }
 
 /// Open-order reconciliation action.
@@ -1281,6 +1856,71 @@ mod tests {
         assert_eq!(journal.replay(&mut records).unwrap(), 2);
         assert!(matches!(records[0], JournalRecord::Command { .. }));
         assert!(matches!(records[1], JournalRecord::Event(_)));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn wal_journal_replays_commands_and_events() {
+        let path = std::env::temp_dir().join(format!("orderflow-wal-{}.ofwal", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut journal = WalExecutionJournal::open_path(&path, WalSyncPolicy::Never).unwrap();
+        let req = order("C1");
+        journal
+            .record_command(
+                JournalCommandKind::Submit,
+                req.client_order_id,
+                req.ts_recv_ns,
+            )
+            .unwrap();
+        journal
+            .record_event(&ExecutionEvent::accepted(&req, id("V1")))
+            .unwrap();
+        assert_eq!(journal.next_sequence(), WalSequence(3));
+        drop(journal);
+
+        let journal = WalExecutionJournal::open_path(&path, WalSyncPolicy::Never).unwrap();
+        assert_eq!(journal.next_sequence(), WalSequence(3));
+        let report = journal.integrity_report().unwrap();
+        assert!(report.valid);
+        assert_eq!(report.records, 2);
+
+        let mut records = Vec::new();
+        assert_eq!(journal.replay(&mut records).unwrap(), 2);
+        assert!(matches!(records[0], JournalRecord::Command { .. }));
+        assert!(matches!(records[1], JournalRecord::Event(_)));
+
+        let mut tail = Vec::new();
+        let replay = journal.replay_from(WalSequence(2), &mut tail).unwrap();
+        assert_eq!(replay.records, 1);
+        assert_eq!(replay.first_sequence, Some(WalSequence(2)));
+        assert!(matches!(tail[0], JournalRecord::Event(_)));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn wal_journal_fails_closed_on_corruption() {
+        let path = std::env::temp_dir().join(format!(
+            "orderflow-wal-corrupt-{}.ofwal",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let mut journal = WalExecutionJournal::open_path(&path, WalSyncPolicy::Never).unwrap();
+        let req = order("C2");
+        journal
+            .record_command(
+                JournalCommandKind::Submit,
+                req.client_order_id,
+                req.ts_recv_ns,
+            )
+            .unwrap();
+        drop(journal);
+
+        let mut bytes = std::fs::read(&path).unwrap();
+        let last = bytes.last_mut().unwrap();
+        *last ^= 0x01;
+        std::fs::write(&path, bytes).unwrap();
+
+        assert!(WalExecutionJournal::open_path(&path, WalSyncPolicy::Never).is_err());
         let _ = std::fs::remove_file(&path);
     }
 

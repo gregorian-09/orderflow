@@ -63,10 +63,27 @@ Most live systems allow cancels while blocking new risk.
 
 ## Journal Policy
 
-`FileExecutionJournal::open(path, sync_on_write)` supports two modes:
+`FileExecutionJournal::open(path, sync_on_write)` is the human-readable
+append-only journal and supports two modes:
 
 - `sync_on_write = true`: safer, slower, fsync-like behavior.
 - `sync_on_write = false`: faster, less durable on power loss.
+
+`WalExecutionJournal::open(WalJournalConfig::new(path))` is the binary WAL
+option. It validates existing frames before accepting new writes, owns
+monotonic WAL sequence assignment, detects checksum failures, and replays into
+the same `JournalRecord` model as the text journal.
+
+WAL sync policy is explicit:
+
+- `WalSyncPolicy::EveryRecord`: safest and highest latency.
+- `WalSyncPolicy::EveryNRecords(n)`: group commit by record count.
+- `WalSyncPolicy::EveryDurationNs(ns)`: group commit by elapsed time.
+- `WalSyncPolicy::Manual`: caller invokes `sync()`.
+- `WalSyncPolicy::Never`: fastest, only appropriate for tests or externally
+  replicated environments.
+- `WalSyncPolicy::OnRiskBoundary`: sync around command/risk/recovery boundary
+  records.
 
 Production deployments should decide based on venue risk, account size, and
 host filesystem behavior.

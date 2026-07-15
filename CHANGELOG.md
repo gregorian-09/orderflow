@@ -59,6 +59,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `WalRecordHeader`, `WalRecordView`, `WalReplayCursor`,
   `WalIntegrityReport`, checksum validation, strict sequence checks, and
   borrowed replay support for future low-latency OMS persistence.
+- Additive `of_execution` `WalExecutionJournal` with `WalJournalConfig`,
+  `WalReplayResult`, binary WAL frame persistence, replay-from-sequence,
+  integrity reporting, configurable sync policy, and fail-closed validation of
+  existing WAL bytes while preserving the existing `ExecutionJournal` trait.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the
