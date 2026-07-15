@@ -11,6 +11,9 @@ and easy to test.
 | --- | --- | --- |
 | `SignalGateDecision` | enum | Quality gate result |
 | `SignalModule` | trait | Signal extension point |
+| `SignalContext` | struct | Borrowed contextual evaluation input |
+| `ContextualSignalModule` | trait | Additive richer signal extension point |
+| `LegacySignalAdapter` | struct | Adapter from `SignalModule` to contextual API |
 | `SignalInputMask` | struct | Bitset of inputs required by a signal |
 | `SignalLifecycleState` | enum | Production lifecycle state |
 | `SignalWarmupProgress` | struct | Counters used to evaluate warmup |
@@ -52,6 +55,94 @@ and easy to test.
 - `snapshot()` should be cheap and side-effect free.
 - `quality_gate(...)` should be conservative for stale, gap, or degraded feed
   conditions when the model should not trade through uncertainty.
+
+## Contextual API
+
+The contextual API is additive. Existing `SignalModule` implementations remain
+valid and do not need to be rewritten.
+
+### `SignalContext`
+
+`SignalContext` is a borrowed evaluation object for richer signal hosts.
+
+| Field | Meaning |
+| --- | --- |
+| `analytics` | Required `AnalyticsSnapshot` |
+| `data_quality` | Current `DataQualityFlags` |
+| `symbol` | Optional `SymbolId` for multi-symbol hosts |
+| `book` | Optional materialized `BookSnapshot` |
+| `ts_exchange_ns` | Optional exchange timestamp |
+| `ts_recv_ns` | Optional receive/evaluation timestamp |
+| `lifecycle_state` | Optional host lifecycle state |
+| `extension_tags` | Optional borrowed key/value tags for host-specific context |
+
+Example:
+
+```rust
+use of_core::{AnalyticsSnapshot, DataQualityFlags, SymbolId};
+use of_signals::{SignalContext, SignalLifecycleState};
+
+let analytics = AnalyticsSnapshot {
+    delta: 125,
+    ..Default::default()
+};
+let symbol = SymbolId {
+    venue: "SIM".to_string(),
+    symbol: "ES".to_string(),
+};
+
+let ctx = SignalContext::new(&analytics, DataQualityFlags::NONE)
+    .with_symbol(&symbol)
+    .with_timestamps(Some(1_000), Some(1_010))
+    .with_lifecycle_state(SignalLifecycleState::Active);
+
+assert_eq!(ctx.analytics.delta, 125);
+```
+
+### `ContextualSignalModule`
+
+`ContextualSignalModule` is for modules that consume `SignalContext`.
+
+| Method | Returns | Meaning |
+| --- | --- | --- |
+| `on_context(&SignalContext)` | `()` | Updates module state from contextual input |
+| `snapshot()` | `SignalSnapshot` | Returns current signal output |
+| `quality_gate(&SignalContext)` | `SignalGateDecision` | Applies contextual quality gate |
+| `descriptor()` | `Option<&'static SignalDescriptor>` | Returns metadata if available |
+| `lifecycle_state()` | `Option<SignalLifecycleState>` | Returns lifecycle state if tracked |
+
+### `LegacySignalAdapter`
+
+`LegacySignalAdapter` wraps an existing `SignalModule` and implements
+`ContextualSignalModule` by forwarding `ctx.analytics` to `on_analytics` and
+`ctx.data_quality` to the wrapped quality gate.
+
+Example:
+
+```rust
+use of_core::{AnalyticsSnapshot, DataQualityFlags, SignalState};
+use of_signals::{
+    ContextualSignalModule, DeltaMomentumSignal, LegacySignalAdapter,
+    SignalContext, DELTA_MOMENTUM_DESCRIPTOR,
+};
+
+let mut signal = LegacySignalAdapter::with_descriptor(
+    DeltaMomentumSignal::new(100),
+    &DELTA_MOMENTUM_DESCRIPTOR,
+);
+let analytics = AnalyticsSnapshot {
+    delta: 150,
+    ..Default::default()
+};
+let ctx = SignalContext::new(&analytics, DataQualityFlags::NONE);
+
+signal.on_context(&ctx);
+assert_eq!(signal.snapshot().state, SignalState::LongBias);
+```
+
+Use the legacy adapter when migrating existing modules into contextual hosts.
+Implement `ContextualSignalModule` directly only when the module needs symbol,
+book, timestamp, lifecycle, or extension-tag context.
 
 ## Metadata And Lifecycle
 

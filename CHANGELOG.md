@@ -12,6 +12,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   signal parameter metadata, output semantics, built-in descriptor constants,
   `built_in_signal_descriptors()`, and `describe_signal()`. Existing
   `SignalModule` implementations and built-in signal behavior are unchanged.
+- Additive `of_signals` contextual API with `SignalContext`,
+  `ContextualSignalModule`, and `LegacySignalAdapter`, allowing richer signal
+  hosts to pass analytics, data quality, symbol/book references, timestamps,
+  lifecycle state, and extension tags without changing `SignalModule`.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

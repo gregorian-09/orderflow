@@ -2,7 +2,9 @@
 
 use std::ops::{BitOr, BitOrAssign};
 
-use of_core::{AnalyticsSnapshot, DataQualityFlags, SignalSnapshot, SignalState};
+use of_core::{
+    AnalyticsSnapshot, BookSnapshot, DataQualityFlags, SignalSnapshot, SignalState, SymbolId,
+};
 
 /// Result of running quality-gate checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +23,185 @@ pub trait SignalModule: Send + Sync {
     fn snapshot(&self) -> SignalSnapshot;
     /// Applies module-specific data-quality gate.
     fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision;
+}
+
+/// Context passed to contextual signal modules.
+///
+/// This type is intentionally borrowed so hosts can compose analytics, book,
+/// symbol, and lifecycle metadata without cloning hot-path state.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy)]
+pub struct SignalContext<'a> {
+    /// Latest analytics snapshot.
+    pub analytics: &'a AnalyticsSnapshot,
+    /// Data-quality flags active for this evaluation.
+    pub data_quality: DataQualityFlags,
+    /// Optional symbol identity for multi-symbol hosts.
+    pub symbol: Option<&'a SymbolId>,
+    /// Optional materialized order-book snapshot.
+    pub book: Option<&'a BookSnapshot>,
+    /// Exchange timestamp associated with this evaluation, when known.
+    pub ts_exchange_ns: Option<u64>,
+    /// Local receive/evaluation timestamp associated with this evaluation, when known.
+    pub ts_recv_ns: Option<u64>,
+    /// Lifecycle state supplied by the host, when known.
+    pub lifecycle_state: Option<SignalLifecycleState>,
+    /// Optional opaque extension tags for host-specific context.
+    pub extension_tags: &'a [(&'a str, &'a str)],
+}
+
+impl<'a> SignalContext<'a> {
+    /// Creates a context from analytics and data-quality state.
+    pub const fn new(analytics: &'a AnalyticsSnapshot, data_quality: DataQualityFlags) -> Self {
+        Self {
+            analytics,
+            data_quality,
+            symbol: None,
+            book: None,
+            ts_exchange_ns: None,
+            ts_recv_ns: None,
+            lifecycle_state: None,
+            extension_tags: &[],
+        }
+    }
+
+    /// Returns a context with symbol identity attached.
+    pub const fn with_symbol(mut self, symbol: &'a SymbolId) -> Self {
+        self.symbol = Some(symbol);
+        self
+    }
+
+    /// Returns a context with a materialized book snapshot attached.
+    pub const fn with_book(mut self, book: &'a BookSnapshot) -> Self {
+        self.book = Some(book);
+        self
+    }
+
+    /// Returns a context with exchange and receive timestamps attached.
+    pub const fn with_timestamps(
+        mut self,
+        ts_exchange_ns: Option<u64>,
+        ts_recv_ns: Option<u64>,
+    ) -> Self {
+        self.ts_exchange_ns = ts_exchange_ns;
+        self.ts_recv_ns = ts_recv_ns;
+        self
+    }
+
+    /// Returns a context with host lifecycle state attached.
+    pub const fn with_lifecycle_state(mut self, lifecycle_state: SignalLifecycleState) -> Self {
+        self.lifecycle_state = Some(lifecycle_state);
+        self
+    }
+
+    /// Returns a context with opaque extension tags attached.
+    pub const fn with_extension_tags(mut self, extension_tags: &'a [(&'a str, &'a str)]) -> Self {
+        self.extension_tags = extension_tags;
+        self
+    }
+}
+
+/// Trait for signal modules that consume richer evaluation context.
+///
+/// This is additive beside [`SignalModule`]. Existing signal modules can be
+/// adapted with [`LegacySignalAdapter`] instead of being rewritten.
+pub trait ContextualSignalModule: Send + Sync {
+    /// Updates internal state from the latest signal context.
+    fn on_context(&mut self, ctx: &SignalContext<'_>);
+
+    /// Returns the current signal snapshot.
+    fn snapshot(&self) -> SignalSnapshot;
+
+    /// Applies contextual data-quality gating.
+    fn quality_gate(&self, ctx: &SignalContext<'_>) -> SignalGateDecision {
+        default_quality_gate(ctx.data_quality)
+    }
+
+    /// Returns static descriptor metadata when available.
+    fn descriptor(&self) -> Option<&'static SignalDescriptor> {
+        None
+    }
+
+    /// Returns lifecycle state when the module or wrapper tracks it.
+    fn lifecycle_state(&self) -> Option<SignalLifecycleState> {
+        None
+    }
+}
+
+/// Adapter that lets an existing [`SignalModule`] consume [`SignalContext`].
+#[derive(Debug)]
+pub struct LegacySignalAdapter<S> {
+    inner: S,
+    descriptor: Option<&'static SignalDescriptor>,
+    lifecycle: SignalLifecycle,
+}
+
+impl<S> LegacySignalAdapter<S> {
+    /// Wraps a legacy signal module with no descriptor metadata.
+    pub fn new(inner: S) -> Self {
+        Self {
+            inner,
+            descriptor: None,
+            lifecycle: SignalLifecycle::new(SignalWarmupRequirement::Events(1)),
+        }
+    }
+
+    /// Wraps a legacy signal module with descriptor metadata.
+    pub fn with_descriptor(inner: S, descriptor: &'static SignalDescriptor) -> Self {
+        Self {
+            inner,
+            descriptor: Some(descriptor),
+            lifecycle: SignalLifecycle::new(descriptor.warmup),
+        }
+    }
+
+    /// Returns the wrapped signal module by reference.
+    pub const fn inner(&self) -> &S {
+        &self.inner
+    }
+
+    /// Returns the wrapped signal module by mutable reference.
+    pub fn inner_mut(&mut self) -> &mut S {
+        &mut self.inner
+    }
+
+    /// Consumes the adapter and returns the wrapped signal module.
+    pub fn into_inner(self) -> S {
+        self.inner
+    }
+
+    /// Returns the adapter lifecycle helper.
+    pub const fn lifecycle(&self) -> SignalLifecycle {
+        self.lifecycle
+    }
+
+    /// Resets adapter warmup progress.
+    pub fn reset_lifecycle(&mut self) {
+        self.lifecycle.reset_warmup();
+    }
+}
+
+impl<S: SignalModule> ContextualSignalModule for LegacySignalAdapter<S> {
+    fn on_context(&mut self, ctx: &SignalContext<'_>) {
+        self.lifecycle.record_event();
+        self.inner.on_analytics(ctx.analytics);
+    }
+
+    fn snapshot(&self) -> SignalSnapshot {
+        self.inner.snapshot()
+    }
+
+    fn quality_gate(&self, ctx: &SignalContext<'_>) -> SignalGateDecision {
+        self.inner.quality_gate(ctx.data_quality)
+    }
+
+    fn descriptor(&self) -> Option<&'static SignalDescriptor> {
+        self.descriptor
+    }
+
+    fn lifecycle_state(&self) -> Option<SignalLifecycleState> {
+        Some(self.lifecycle.state())
+    }
 }
 
 /// Bitset describing which inputs a signal needs to evaluate.
@@ -1357,5 +1538,94 @@ mod tests {
             descriptor.parameter("lookback_events").unwrap().default,
             Some(SignalParameterValue::Integer(32))
         );
+    }
+
+    #[test]
+    fn signal_context_builder_attaches_optional_inputs() {
+        let analytics = AnalyticsSnapshot {
+            delta: 10,
+            ..Default::default()
+        };
+        let symbol = SymbolId {
+            venue: "SIM".to_string(),
+            symbol: "ES".to_string(),
+        };
+        let book = BookSnapshot {
+            symbol: symbol.clone(),
+            bids: Vec::new(),
+            asks: Vec::new(),
+            last_sequence: 42,
+            ts_exchange_ns: 100,
+            ts_recv_ns: 110,
+        };
+        let tags = [("profile", "research")];
+
+        let ctx = SignalContext::new(&analytics, DataQualityFlags::NONE)
+            .with_symbol(&symbol)
+            .with_book(&book)
+            .with_timestamps(Some(100), Some(110))
+            .with_lifecycle_state(SignalLifecycleState::Active)
+            .with_extension_tags(&tags);
+
+        assert_eq!(ctx.analytics.delta, 10);
+        assert_eq!(ctx.symbol.unwrap().symbol, "ES");
+        assert_eq!(ctx.book.unwrap().last_sequence, 42);
+        assert_eq!(ctx.ts_exchange_ns, Some(100));
+        assert_eq!(ctx.ts_recv_ns, Some(110));
+        assert_eq!(ctx.lifecycle_state, Some(SignalLifecycleState::Active));
+        assert_eq!(ctx.extension_tags, &[("profile", "research")]);
+    }
+
+    #[test]
+    fn legacy_adapter_forwards_context_to_signal_module() {
+        let mut signal = LegacySignalAdapter::with_descriptor(
+            DeltaMomentumSignal::new(10),
+            &DELTA_MOMENTUM_DESCRIPTOR,
+        );
+        let analytics = AnalyticsSnapshot {
+            delta: 15,
+            ..Default::default()
+        };
+        let ctx = SignalContext::new(&analytics, DataQualityFlags::NONE);
+
+        assert_eq!(
+            signal.lifecycle_state(),
+            Some(SignalLifecycleState::WarmingUp)
+        );
+        signal.on_context(&ctx);
+
+        let snapshot = signal.snapshot();
+        assert_eq!(snapshot.module_id, "delta_momentum_v1");
+        assert_eq!(snapshot.state, SignalState::LongBias);
+        assert_eq!(signal.descriptor().unwrap().id, "delta_momentum_v1");
+        assert_eq!(signal.lifecycle_state(), Some(SignalLifecycleState::Active));
+    }
+
+    #[test]
+    fn legacy_adapter_uses_wrapped_quality_gate() {
+        let signal = LegacySignalAdapter::new(DeltaMomentumSignal::default());
+        let analytics = AnalyticsSnapshot::default();
+        let ctx = SignalContext::new(&analytics, DataQualityFlags::SEQUENCE_GAP);
+
+        assert_eq!(signal.quality_gate(&ctx), SignalGateDecision::Block);
+    }
+
+    #[test]
+    fn legacy_adapter_can_return_inner_signal() {
+        let mut adapter = LegacySignalAdapter::new(DeltaMomentumSignal::new(5));
+        adapter.reset_lifecycle();
+        assert_eq!(
+            adapter.lifecycle_state(),
+            Some(SignalLifecycleState::WarmingUp)
+        );
+
+        let inner = adapter.into_inner();
+        let mut signal = inner;
+        signal.on_analytics(&AnalyticsSnapshot {
+            delta: -10,
+            ..Default::default()
+        });
+
+        assert_eq!(signal.snapshot().state, SignalState::ShortBias);
     }
 }

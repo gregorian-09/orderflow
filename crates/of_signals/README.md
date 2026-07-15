@@ -6,9 +6,11 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
 ## Core API
 
 - Trait: [`SignalModule`]
+- Contextual trait: [`ContextualSignalModule`]
 - Gate result: [`SignalGateDecision`]
 - Descriptor inventory: [`built_in_signal_descriptors`] and [`describe_signal`]
 - Lifecycle helper: [`SignalLifecycle`]
+- Legacy adapter: [`LegacySignalAdapter`]
 - Built-in modules:
   - [`DeltaMomentumSignal`]
   - [`VolumeImbalanceSignal`]
@@ -42,10 +44,11 @@ Version policy:
 - execution crates publish as `0.1.0` and depend on their own execution-domain
   contracts, not on this signal trait.
 
-## Unreleased Additive Metadata And Lifecycle APIs
+## Unreleased Additive Metadata, Lifecycle, And Context APIs
 
-The crate now exposes production-oriented signal metadata and lifecycle helpers
-without changing the existing [`SignalModule`] contract.
+The crate now exposes production-oriented signal metadata, lifecycle helpers,
+and contextual signal evaluation without changing the existing [`SignalModule`]
+contract.
 
 New additive APIs:
 
@@ -65,6 +68,12 @@ New additive APIs:
   signal constructor parameters.
 - [`built_in_signal_descriptors()`] returns metadata for every built-in signal.
 - [`describe_signal`] looks up one built-in descriptor by stable signal id.
+- [`SignalContext`] carries analytics, quality flags, optional symbol/book
+  references, timestamps, lifecycle state, and host extension tags.
+- [`ContextualSignalModule`] is a richer additive trait for hosts that evaluate
+  signals with more than an analytics snapshot.
+- [`LegacySignalAdapter`] lets existing [`SignalModule`] implementations run in
+  contextual hosts without being rewritten.
 
 This is intentionally metadata-first. Built-in signal behavior is unchanged:
 existing users still call `on_analytics`, `quality_gate`, and `snapshot` exactly
@@ -82,6 +91,9 @@ Public types:
 
 - [`SignalGateDecision`]
 - [`SignalModule`]
+- [`SignalContext`]
+- [`ContextualSignalModule`]
+- [`LegacySignalAdapter`]
 - [`SignalInputMask`]
 - [`SignalLifecycleState`]
 - [`SignalWarmupProgress`]
@@ -144,6 +156,85 @@ Recommended implementation rules:
 - include human-readable `reason` text in the snapshot when practical
 - use `confidence` consistently so downstream hosts can compare modules
 - block aggressively on stale, gap, or degraded feed conditions when a strategy should not trade through uncertainty
+
+## Contextual Signal Contract
+
+[`ContextualSignalModule`] is the additive extension point for hosts that have
+more context than a single analytics snapshot.
+
+It does not replace [`SignalModule`]. Use it when a signal host needs to pass
+symbol identity, book state, data-quality state, timestamps, lifecycle state, or
+opaque host tags through one evaluation object.
+
+[`SignalContext`] is borrowed. This keeps the hot path allocation-light and
+avoids cloning book snapshots just to evaluate a signal.
+
+Context fields:
+
+- `analytics`: required latest [`AnalyticsSnapshot`](of_core::AnalyticsSnapshot)
+- `data_quality`: current [`DataQualityFlags`](of_core::DataQualityFlags)
+- `symbol`: optional [`SymbolId`](of_core::SymbolId)
+- `book`: optional [`BookSnapshot`](of_core::BookSnapshot)
+- `ts_exchange_ns`: optional exchange timestamp
+- `ts_recv_ns`: optional local receive/evaluation timestamp
+- `lifecycle_state`: optional host lifecycle state
+- `extension_tags`: optional borrowed host-specific key/value tags
+
+Context example:
+
+```rust
+use of_core::{AnalyticsSnapshot, DataQualityFlags, SymbolId};
+use of_signals::{SignalContext, SignalLifecycleState};
+
+let analytics = AnalyticsSnapshot {
+    delta: 150,
+    ..Default::default()
+};
+let symbol = SymbolId {
+    venue: "SIM".to_string(),
+    symbol: "ES".to_string(),
+};
+
+let ctx = SignalContext::new(&analytics, DataQualityFlags::NONE)
+    .with_symbol(&symbol)
+    .with_timestamps(Some(1_000), Some(1_010))
+    .with_lifecycle_state(SignalLifecycleState::Active);
+
+assert_eq!(ctx.symbol.unwrap().symbol, "ES");
+```
+
+Legacy adapter example:
+
+```rust
+use of_core::{AnalyticsSnapshot, DataQualityFlags, SignalState};
+use of_signals::{
+    ContextualSignalModule, DeltaMomentumSignal, LegacySignalAdapter,
+    SignalContext, DELTA_MOMENTUM_DESCRIPTOR,
+};
+
+let mut signal = LegacySignalAdapter::with_descriptor(
+    DeltaMomentumSignal::new(100),
+    &DELTA_MOMENTUM_DESCRIPTOR,
+);
+
+let analytics = AnalyticsSnapshot {
+    delta: 150,
+    ..Default::default()
+};
+let ctx = SignalContext::new(&analytics, DataQualityFlags::NONE);
+
+signal.on_context(&ctx);
+assert_eq!(signal.snapshot().state, SignalState::LongBias);
+assert_eq!(signal.descriptor().unwrap().id, "delta_momentum_v1");
+```
+
+Migration rule:
+
+- keep existing `SignalModule` implementations as-is;
+- wrap them with [`LegacySignalAdapter`] when a contextual host requires
+  [`ContextualSignalModule`];
+- implement [`ContextualSignalModule`] directly only when the signal actually
+  needs symbol, book, lifecycle, timestamp, or host-extension context.
 
 ## Signal Metadata Contract
 
