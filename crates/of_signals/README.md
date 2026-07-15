@@ -23,6 +23,8 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
   [`evaluate_signal_ensemble`]
 - Persistence/shadow: [`SignalCheckpoint`], [`SignalRunMode`],
   [`SignalShadowRecorder`], and [`SignalShadowComparisonReport`]
+- Feature/model support: [`FeatureSchema`], [`FeatureVectorView`],
+  [`SignalModelMetadata`], and [`ModelBackedSignal`]
 - Legacy adapter: [`LegacySignalAdapter`]
 - Built-in modules:
   - [`DeltaMomentumSignal`]
@@ -123,6 +125,14 @@ New additive APIs:
 - [`SignalShadowRecorder`] and [`SignalShadowComparisonReport`] compare
   production and candidate signal output for shadow deployments and A/B-style
   replay review.
+- [`FeatureSchema`] and [`FeatureVectorView`] define a standard borrowed
+  feature-vector contract for advanced analytics and optional model-backed
+  signals.
+- [`validate_feature_vector`] validates vector length, missing values, value
+  ranges, freshness, and aggregate feature quality flags.
+- [`SignalModelMetadata`] and [`ModelBackedSignal`] let optional model-backed
+  signal crates describe models and implement inference without adding heavy ML
+  dependencies to `of_signals`.
 
 This is intentionally metadata-first. Built-in signal behavior is unchanged:
 existing users still call `on_analytics`, `quality_gate`, and `snapshot` exactly
@@ -215,6 +225,20 @@ Public types:
 - [`SignalShadowComparisonConfig`]
 - [`SignalShadowComparisonReport`]
 - [`SignalShadowRecorder`]
+- [`FeatureQualityFlags`]
+- [`FeatureValueKind`]
+- [`FeatureMissingPolicy`]
+- [`FeatureDescriptor`]
+- [`FeatureSchema`]
+- [`FeatureVectorView`]
+- [`FeatureVectorValidationIssue`]
+- [`FeatureVectorValidationReport`]
+- [`SignalModelKind`]
+- [`SignalModelOutputKind`]
+- [`SignalModelMetadata`]
+- [`SignalModelInputBinding`]
+- [`SignalModelOutput`]
+- [`ModelBackedSignal`]
 - [`DeltaMomentumSignal`]
 - [`VolumeImbalanceSignal`]
 - [`CumulativeDeltaSignal`]
@@ -241,6 +265,7 @@ Public descriptor constants and functions:
 - [`evaluate_signal_ensemble`]
 - [`evaluate_signal_ensemble_explanations`]
 - [`validate_signal_checkpoint_restore`]
+- [`validate_feature_vector`]
 
 Public constructors:
 
@@ -987,6 +1012,107 @@ Operational guidance:
 - keep shadow output out of strategy/risk/OMS decisions;
 - compare shadow output asynchronously when latency isolation matters;
 - treat A/B reports as evidence for promotion, not automatic promotion logic.
+
+## Feature Vectors And Model Metadata
+
+`of_signals` exposes a dependency-free feature-vector contract for advanced
+analytics and optional model-backed signals. It does not ship an ML runtime or
+force an ONNX/TensorRT dependency into the default crate. Optional crates or
+host applications can implement inference using the metadata and traits here.
+
+Feature-vector building blocks:
+
+- [`FeatureDescriptor`] describes one ordered feature id, value kind, unit,
+  missing-value policy, range, and freshness.
+- [`FeatureSchema`] names and versions the ordered feature set consumed by a
+  signal or model.
+- [`FeatureVectorView`] borrows values and quality flags in schema order.
+- [`FeatureQualityFlags`] records missing, stale, out-of-range, imputed, and
+  degraded values.
+- [`validate_feature_vector`] checks length, missing-value policy, ranges,
+  freshness, and aggregate quality.
+
+Feature-vector example:
+
+```rust
+use of_signals::{
+    validate_feature_vector, FeatureDescriptor, FeatureQualityFlags,
+    FeatureSchema, FeatureValueKind, FeatureVectorView,
+};
+
+let schema = FeatureSchema::new("orderflow_features", "1")
+    .with_feature(
+        FeatureDescriptor::new("delta", FeatureValueKind::Integer)
+            .with_unit("contracts")
+            .with_range(-10_000.0, 10_000.0),
+    )
+    .with_feature(
+        FeatureDescriptor::new("imbalance_bps", FeatureValueKind::BasisPoints)
+            .with_unit("bps")
+            .with_range(-10_000.0, 10_000.0)
+            .with_freshness_ns(1_000),
+    );
+
+let values = [125.0, 2_500.0];
+let quality = [FeatureQualityFlags::NONE, FeatureQualityFlags::NONE];
+let view = FeatureVectorView::new(&schema, &values, &quality, 1_000);
+
+let report = validate_feature_vector(&view, Some(1_500));
+assert!(report.valid);
+assert_eq!(view.value("delta"), Some(125.0));
+```
+
+Model metadata:
+
+- [`SignalModelMetadata`] tracks model id/version, model kind, expected feature
+  schema id/version, artifact hash, training window, calibration id, output
+  kind, and determinism.
+- [`SignalModelInputBinding`] checks whether ordered model inputs exist in a
+  schema.
+- [`SignalModelOutput`] is a dependency-free output carrier for state,
+  confidence, optional score, and reason.
+- [`ModelBackedSignal`] is an optional extension trait for crates or hosts that
+  run inference.
+
+Model metadata example:
+
+```rust
+use of_signals::{
+    FeatureDescriptor, FeatureSchema, FeatureValueKind, SignalModelInputBinding,
+    SignalModelKind, SignalModelMetadata, SignalModelOutputKind,
+};
+
+let schema = FeatureSchema::new("orderflow_features", "1")
+    .with_feature(FeatureDescriptor::new("delta", FeatureValueKind::Integer))
+    .with_feature(FeatureDescriptor::new("vwap", FeatureValueKind::Price));
+
+let metadata = SignalModelMetadata::new(
+    "microstructure_model",
+    "2026-07-15",
+    "orderflow_features",
+    "1",
+)
+.with_model_kind(SignalModelKind::Onnx)
+.with_artifact_hash("sha256:abc")
+.with_output_kind(SignalModelOutputKind::DirectionalProbabilities);
+
+let binding = SignalModelInputBinding::new(
+    "features",
+    vec!["delta".to_string(), "vwap".to_string()],
+);
+
+assert!(binding.is_compatible_with(&schema));
+assert_eq!(metadata.feature_schema_id, "orderflow_features");
+```
+
+Operational guidance:
+
+- keep feature ids stable and version schema changes explicitly;
+- validate feature vectors before inference;
+- include timestamps to avoid point-in-time leakage in replay and training;
+- keep heavy model runtimes in optional crates or host applications;
+- record model metadata with shadow reports and checkpoints when promoting a
+  candidate signal.
 
 Custom descriptor example:
 

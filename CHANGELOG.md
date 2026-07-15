@@ -49,6 +49,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `CheckpointableSignal`, `SignalRunMode`, `SignalShadowRecorder`, and
   production-versus-candidate comparison reports for safe live validation
   without changing existing signal modules.
+- Additive `of_signals` feature-vector and model metadata APIs with
+  `FeatureSchema`, `FeatureVectorView`, feature-quality validation,
+  `SignalModelMetadata`, `SignalModelInputBinding`, `SignalModelOutput`, and
+  optional `ModelBackedSignal` support while keeping heavy model runtimes out of
+  default builds.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

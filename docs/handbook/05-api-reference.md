@@ -168,6 +168,20 @@ Public types:
 - `SignalShadowComparisonConfig`
 - `SignalShadowComparisonReport`
 - `SignalShadowRecorder`
+- `FeatureQualityFlags`
+- `FeatureValueKind`
+- `FeatureMissingPolicy`
+- `FeatureDescriptor`
+- `FeatureSchema`
+- `FeatureVectorView`
+- `FeatureVectorValidationIssue`
+- `FeatureVectorValidationReport`
+- `SignalModelKind`
+- `SignalModelOutputKind`
+- `SignalModelMetadata`
+- `SignalModelInputBinding`
+- `SignalModelOutput`
+- `ModelBackedSignal`
 - `DeltaMomentumSignal`
 - `VolumeImbalanceSignal`
 - `CumulativeDeltaSignal`
@@ -265,6 +279,28 @@ Checkpoint and shadow-mode functions and methods:
 - `SignalShadowComparisonReport::json_summary() -> String`
 - `SignalShadowRecorder::record(SignalShadowSample)`
 - `SignalShadowRecorder::report() -> SignalShadowComparisonReport`
+
+Feature vector and model-support functions and methods:
+
+- `FeatureQualityFlags::bits() -> u32`
+- `FeatureQualityFlags::from_bits_truncate(bits) -> FeatureQualityFlags`
+- `FeatureDescriptor::new(id, value_kind) -> FeatureDescriptor`
+- `FeatureSchema::new(id, version) -> FeatureSchema`
+- `FeatureSchema::with_feature(feature) -> FeatureSchema`
+- `FeatureSchema::feature_index(id) -> Option<usize>`
+- `FeatureSchema::feature(id) -> Option<&FeatureDescriptor>`
+- `FeatureVectorView::new(schema, values, quality, timestamp_ns) -> FeatureVectorView`
+- `FeatureVectorView::value(id) -> Option<f64>`
+- `FeatureVectorView::quality(id) -> Option<FeatureQualityFlags>`
+- `FeatureVectorView::validate(now_ns) -> FeatureVectorValidationReport`
+- `validate_feature_vector(&FeatureVectorView, now_ns) -> FeatureVectorValidationReport`
+- `SignalModelMetadata::new(model_id, model_version, feature_schema_id, feature_schema_version) -> SignalModelMetadata`
+- `SignalModelInputBinding::new(input_name, feature_ids) -> SignalModelInputBinding`
+- `SignalModelInputBinding::is_compatible_with(&FeatureSchema) -> bool`
+- `SignalModelOutput::new(state, confidence_bps) -> SignalModelOutput`
+- `ModelBackedSignal::model_metadata() -> &SignalModelMetadata`
+- `ModelBackedSignal::feature_schema() -> &FeatureSchema`
+- `ModelBackedSignal::infer_features(&FeatureVectorView) -> SignalModelOutput`
 
 ### `of_persist`
 

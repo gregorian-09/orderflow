@@ -4408,6 +4408,606 @@ fn signal_state_direction(state: SignalState) -> Option<SignalMarkoutDirection> 
     }
 }
 
+/// Quality flags attached to one feature value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct FeatureQualityFlags(u32);
+
+impl FeatureQualityFlags {
+    /// No feature-quality issues.
+    pub const NONE: Self = Self(0);
+    /// Feature value is missing.
+    pub const MISSING: Self = Self(1 << 0);
+    /// Feature value is stale relative to the schema freshness policy.
+    pub const STALE: Self = Self(1 << 1);
+    /// Feature value is outside the descriptor range.
+    pub const OUT_OF_RANGE: Self = Self(1 << 2);
+    /// Feature value was imputed.
+    pub const IMPUTED: Self = Self(1 << 3);
+    /// Feature pipeline marked the value as degraded.
+    pub const DEGRADED: Self = Self(1 << 4);
+
+    /// Returns raw flag bits.
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+
+    /// Creates flags from raw bits, ignoring unknown bits.
+    pub const fn from_bits_truncate(bits: u32) -> Self {
+        Self(bits & Self::all_bits())
+    }
+
+    /// Returns true when all `other` flags are present.
+    pub const fn contains(self, other: Self) -> bool {
+        (self.0 & other.0) == other.0
+    }
+
+    /// Returns true when any `other` flag is present.
+    pub const fn intersects(self, other: Self) -> bool {
+        (self.0 & other.0) != 0
+    }
+
+    /// Returns the union of two flag sets.
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    const fn all_bits() -> u32 {
+        Self::MISSING.0 | Self::STALE.0 | Self::OUT_OF_RANGE.0 | Self::IMPUTED.0 | Self::DEGRADED.0
+    }
+}
+
+impl BitOr for FeatureQualityFlags {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        self.union(rhs)
+    }
+}
+
+impl BitOrAssign for FeatureQualityFlags {
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = self.union(rhs);
+    }
+}
+
+/// Semantic kind for one feature value.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum FeatureValueKind {
+    /// Generic floating-point feature.
+    #[default]
+    Float,
+    /// Integer-valued feature encoded as `f64` in a vector.
+    Integer,
+    /// Boolean feature encoded as `0.0` or `1.0`.
+    Boolean,
+    /// Price-normalized feature.
+    Price,
+    /// Size/quantity feature.
+    Size,
+    /// Basis-point feature.
+    BasisPoints,
+}
+
+/// Missing-value policy for a feature descriptor.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum FeatureMissingPolicy {
+    /// Reject vectors where this feature is missing.
+    #[default]
+    Reject,
+    /// Treat missing values as zero.
+    TreatAsZero,
+    /// Use the configured default value.
+    UseDefault(f64),
+    /// Keep the value unavailable for downstream model code.
+    MarkUnavailable,
+}
+
+/// One feature in a signal/model feature schema.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub struct FeatureDescriptor {
+    /// Stable feature id.
+    pub id: String,
+    /// Feature value kind.
+    pub value_kind: FeatureValueKind,
+    /// Human-readable unit name.
+    pub unit: String,
+    /// Human-readable description.
+    pub description: String,
+    /// Missing-value handling policy.
+    pub missing_policy: FeatureMissingPolicy,
+    /// Optional minimum accepted value.
+    pub min_value: Option<f64>,
+    /// Optional maximum accepted value.
+    pub max_value: Option<f64>,
+    /// Optional freshness limit in nanoseconds.
+    pub freshness_ns: Option<u64>,
+}
+
+impl FeatureDescriptor {
+    /// Creates a feature descriptor with conservative defaults.
+    pub fn new(id: impl Into<String>, value_kind: FeatureValueKind) -> Self {
+        Self {
+            id: id.into(),
+            value_kind,
+            unit: String::new(),
+            description: String::new(),
+            missing_policy: FeatureMissingPolicy::Reject,
+            min_value: None,
+            max_value: None,
+            freshness_ns: None,
+        }
+    }
+
+    /// Returns this descriptor with unit metadata.
+    pub fn with_unit(mut self, unit: impl Into<String>) -> Self {
+        self.unit = unit.into();
+        self
+    }
+
+    /// Returns this descriptor with a description.
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = description.into();
+        self
+    }
+
+    /// Returns this descriptor with a missing-value policy.
+    pub const fn with_missing_policy(mut self, missing_policy: FeatureMissingPolicy) -> Self {
+        self.missing_policy = missing_policy;
+        self
+    }
+
+    /// Returns this descriptor with an inclusive value range.
+    pub const fn with_range(mut self, min_value: f64, max_value: f64) -> Self {
+        self.min_value = Some(min_value);
+        self.max_value = Some(max_value);
+        self
+    }
+
+    /// Returns this descriptor with a freshness limit.
+    pub const fn with_freshness_ns(mut self, freshness_ns: u64) -> Self {
+        self.freshness_ns = Some(freshness_ns);
+        self
+    }
+}
+
+/// Stable feature schema used by feature-vector and model-backed signals.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub struct FeatureSchema {
+    /// Stable schema id.
+    pub id: String,
+    /// Schema version.
+    pub version: String,
+    /// Host-defined config hash for the schema.
+    pub config_hash: u64,
+    /// Ordered feature descriptors.
+    pub features: Vec<FeatureDescriptor>,
+}
+
+impl FeatureSchema {
+    /// Creates an empty feature schema.
+    pub fn new(id: impl Into<String>, version: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            version: version.into(),
+            config_hash: 0,
+            features: Vec::new(),
+        }
+    }
+
+    /// Returns this schema with a config hash.
+    pub const fn with_config_hash(mut self, config_hash: u64) -> Self {
+        self.config_hash = config_hash;
+        self
+    }
+
+    /// Returns this schema with an appended feature descriptor.
+    pub fn with_feature(mut self, feature: FeatureDescriptor) -> Self {
+        self.features.push(feature);
+        self
+    }
+
+    /// Appends a feature descriptor.
+    pub fn push_feature(&mut self, feature: FeatureDescriptor) {
+        self.features.push(feature);
+    }
+
+    /// Returns the index for a feature id.
+    pub fn feature_index(&self, id: &str) -> Option<usize> {
+        self.features.iter().position(|feature| feature.id == id)
+    }
+
+    /// Returns a feature descriptor by id.
+    pub fn feature(&self, id: &str) -> Option<&FeatureDescriptor> {
+        self.feature_index(id)
+            .and_then(|index| self.features.get(index))
+    }
+}
+
+/// Borrowed feature vector plus schema and per-feature quality flags.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy)]
+pub struct FeatureVectorView<'a> {
+    /// Schema describing value order and semantics.
+    pub schema: &'a FeatureSchema,
+    /// Feature values in schema order.
+    pub values: &'a [f64],
+    /// Per-feature quality flags in schema order.
+    pub quality: &'a [FeatureQualityFlags],
+    /// Event/inference timestamp in nanoseconds.
+    pub timestamp_ns: u64,
+}
+
+impl<'a> FeatureVectorView<'a> {
+    /// Creates a borrowed feature vector view.
+    pub const fn new(
+        schema: &'a FeatureSchema,
+        values: &'a [f64],
+        quality: &'a [FeatureQualityFlags],
+        timestamp_ns: u64,
+    ) -> Self {
+        Self {
+            schema,
+            values,
+            quality,
+            timestamp_ns,
+        }
+    }
+
+    /// Returns a feature value by id.
+    pub fn value(&self, id: &str) -> Option<f64> {
+        self.schema
+            .feature_index(id)
+            .and_then(|index| self.values.get(index).copied())
+    }
+
+    /// Returns feature quality flags by id.
+    pub fn quality(&self, id: &str) -> Option<FeatureQualityFlags> {
+        self.schema
+            .feature_index(id)
+            .and_then(|index| self.quality.get(index).copied())
+    }
+
+    /// Validates this feature vector against its schema.
+    pub fn validate(&self, now_ns: Option<u64>) -> FeatureVectorValidationReport {
+        validate_feature_vector(self, now_ns)
+    }
+}
+
+/// One feature-vector validation issue.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub enum FeatureVectorValidationIssue {
+    /// Value/quality slices do not match schema length.
+    LengthMismatch {
+        /// Number of descriptors in the schema.
+        expected: usize,
+        /// Number of values supplied.
+        values: usize,
+        /// Number of quality entries supplied.
+        quality: usize,
+    },
+    /// A feature was missing while its descriptor requires a value.
+    MissingFeature {
+        /// Feature index.
+        index: usize,
+        /// Feature id.
+        feature_id: String,
+    },
+    /// Feature vector timestamp exceeded the descriptor freshness limit.
+    StaleFeature {
+        /// Feature index.
+        index: usize,
+        /// Feature id.
+        feature_id: String,
+        /// Observed age in nanoseconds.
+        age_ns: u64,
+        /// Accepted freshness in nanoseconds.
+        freshness_ns: u64,
+    },
+    /// Feature value was outside the accepted descriptor range.
+    OutOfRange {
+        /// Feature index.
+        index: usize,
+        /// Feature id.
+        feature_id: String,
+        /// Feature value.
+        value: f64,
+        /// Minimum accepted value.
+        min: Option<f64>,
+        /// Maximum accepted value.
+        max: Option<f64>,
+    },
+}
+
+/// Validation report for a feature vector.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub struct FeatureVectorValidationReport {
+    /// Whether validation passed.
+    pub valid: bool,
+    /// Validation issues.
+    pub issues: Vec<FeatureVectorValidationIssue>,
+    /// Aggregate quality flags observed in the vector.
+    pub aggregate_quality: FeatureQualityFlags,
+}
+
+impl FeatureVectorValidationReport {
+    /// Returns `true` when validation found issues.
+    pub const fn has_errors(&self) -> bool {
+        !self.valid
+    }
+}
+
+/// Validates a feature vector view against schema metadata.
+pub fn validate_feature_vector(
+    view: &FeatureVectorView<'_>,
+    now_ns: Option<u64>,
+) -> FeatureVectorValidationReport {
+    let expected = view.schema.features.len();
+    let mut issues = Vec::new();
+    let mut aggregate_quality = FeatureQualityFlags::NONE;
+
+    if view.values.len() != expected || view.quality.len() != expected {
+        issues.push(FeatureVectorValidationIssue::LengthMismatch {
+            expected,
+            values: view.values.len(),
+            quality: view.quality.len(),
+        });
+    }
+
+    for (index, descriptor) in view.schema.features.iter().enumerate() {
+        let quality = view
+            .quality
+            .get(index)
+            .copied()
+            .unwrap_or(FeatureQualityFlags::MISSING);
+        aggregate_quality |= quality;
+
+        if quality.contains(FeatureQualityFlags::MISSING)
+            && descriptor.missing_policy == FeatureMissingPolicy::Reject
+        {
+            issues.push(FeatureVectorValidationIssue::MissingFeature {
+                index,
+                feature_id: descriptor.id.clone(),
+            });
+        }
+
+        if let Some(value) = view.values.get(index).copied() {
+            let below_min = descriptor.min_value.is_some_and(|min| value < min);
+            let above_max = descriptor.max_value.is_some_and(|max| value > max);
+            if below_min || above_max {
+                issues.push(FeatureVectorValidationIssue::OutOfRange {
+                    index,
+                    feature_id: descriptor.id.clone(),
+                    value,
+                    min: descriptor.min_value,
+                    max: descriptor.max_value,
+                });
+                aggregate_quality |= FeatureQualityFlags::OUT_OF_RANGE;
+            }
+        }
+
+        if let (Some(now_ns), Some(freshness_ns)) = (now_ns, descriptor.freshness_ns) {
+            let age_ns = now_ns.saturating_sub(view.timestamp_ns);
+            if age_ns > freshness_ns {
+                issues.push(FeatureVectorValidationIssue::StaleFeature {
+                    index,
+                    feature_id: descriptor.id.clone(),
+                    age_ns,
+                    freshness_ns,
+                });
+                aggregate_quality |= FeatureQualityFlags::STALE;
+            }
+        }
+    }
+
+    FeatureVectorValidationReport {
+        valid: issues.is_empty(),
+        issues,
+        aggregate_quality,
+    }
+}
+
+/// Supported model artifact/runtime family.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum SignalModelKind {
+    /// Model kind is not specified.
+    #[default]
+    Unknown,
+    /// Host-provided native model implementation.
+    Native,
+    /// ONNX model artifact.
+    Onnx,
+    /// Linear model coefficients interpreted by the host.
+    Linear,
+    /// Tree or boosted-tree model artifact.
+    TreeEnsemble,
+    /// External service or process.
+    External,
+}
+
+/// Model output semantics for model-backed signals.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum SignalModelOutputKind {
+    /// Model returns directional state and confidence directly.
+    #[default]
+    DirectionalState,
+    /// Model returns up/down/flat probabilities.
+    DirectionalProbabilities,
+    /// Model returns a continuous score.
+    Score,
+}
+
+/// Metadata describing a model-backed signal artifact.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignalModelMetadata {
+    /// Stable model id.
+    pub model_id: String,
+    /// Model version.
+    pub model_version: String,
+    /// Model artifact/runtime kind.
+    pub model_kind: SignalModelKind,
+    /// Feature schema id expected by the model.
+    pub feature_schema_id: String,
+    /// Feature schema version expected by the model.
+    pub feature_schema_version: String,
+    /// Optional model artifact hash.
+    pub artifact_hash: Option<String>,
+    /// Optional training window start timestamp.
+    pub training_start_ns: Option<u64>,
+    /// Optional training window end timestamp.
+    pub training_end_ns: Option<u64>,
+    /// Optional calibration id.
+    pub calibration_id: Option<u64>,
+    /// Output semantics.
+    pub output_kind: SignalModelOutputKind,
+    /// Whether inference should be deterministic for identical input vectors.
+    pub deterministic: bool,
+}
+
+impl SignalModelMetadata {
+    /// Creates model metadata.
+    pub fn new(
+        model_id: impl Into<String>,
+        model_version: impl Into<String>,
+        feature_schema_id: impl Into<String>,
+        feature_schema_version: impl Into<String>,
+    ) -> Self {
+        Self {
+            model_id: model_id.into(),
+            model_version: model_version.into(),
+            model_kind: SignalModelKind::Unknown,
+            feature_schema_id: feature_schema_id.into(),
+            feature_schema_version: feature_schema_version.into(),
+            artifact_hash: None,
+            training_start_ns: None,
+            training_end_ns: None,
+            calibration_id: None,
+            output_kind: SignalModelOutputKind::DirectionalState,
+            deterministic: true,
+        }
+    }
+
+    /// Returns metadata with a model kind.
+    pub const fn with_model_kind(mut self, model_kind: SignalModelKind) -> Self {
+        self.model_kind = model_kind;
+        self
+    }
+
+    /// Returns metadata with artifact hash.
+    pub fn with_artifact_hash(mut self, artifact_hash: impl Into<String>) -> Self {
+        self.artifact_hash = Some(artifact_hash.into());
+        self
+    }
+
+    /// Returns metadata with training window timestamps.
+    pub const fn with_training_window(mut self, start_ns: u64, end_ns: u64) -> Self {
+        self.training_start_ns = Some(start_ns);
+        self.training_end_ns = Some(end_ns);
+        self
+    }
+
+    /// Returns metadata with calibration id.
+    pub const fn with_calibration_id(mut self, calibration_id: u64) -> Self {
+        self.calibration_id = Some(calibration_id);
+        self
+    }
+
+    /// Returns metadata with output kind.
+    pub const fn with_output_kind(mut self, output_kind: SignalModelOutputKind) -> Self {
+        self.output_kind = output_kind;
+        self
+    }
+}
+
+/// Input binding between a model and a feature schema.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignalModelInputBinding {
+    /// Model input name.
+    pub input_name: String,
+    /// Ordered feature ids required by this input.
+    pub feature_ids: Vec<String>,
+}
+
+impl SignalModelInputBinding {
+    /// Creates a model input binding.
+    pub fn new(input_name: impl Into<String>, feature_ids: Vec<String>) -> Self {
+        Self {
+            input_name: input_name.into(),
+            feature_ids,
+        }
+    }
+
+    /// Returns `true` when all bound feature ids exist in the schema.
+    pub fn is_compatible_with(&self, schema: &FeatureSchema) -> bool {
+        self.feature_ids
+            .iter()
+            .all(|feature_id| schema.feature_index(feature_id).is_some())
+    }
+}
+
+/// Output returned by model-backed signal inference.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignalModelOutput {
+    /// Signal state produced by the model.
+    pub state: SignalState,
+    /// Confidence in basis points.
+    pub confidence_bps: u16,
+    /// Optional continuous model score.
+    pub score: Option<f64>,
+    /// Human-readable model reason.
+    pub reason: String,
+}
+
+impl SignalModelOutput {
+    /// Creates a model output from state and confidence.
+    pub fn new(state: SignalState, confidence_bps: u16) -> Self {
+        Self {
+            state,
+            confidence_bps: confidence_bps.min(10_000),
+            score: None,
+            reason: String::new(),
+        }
+    }
+
+    /// Returns this output with a score.
+    pub const fn with_score(mut self, score: f64) -> Self {
+        self.score = Some(score);
+        self
+    }
+
+    /// Returns this output with reason text.
+    pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
+        self.reason = reason.into();
+        self
+    }
+}
+
+/// Optional extension trait for model-backed signal implementations.
+///
+/// This trait does not prescribe a runtime such as ONNX or TensorRT. Hosts and
+/// optional crates can implement inference while the core `of_signals` crate
+/// remains dependency-light.
+pub trait ModelBackedSignal: SignalModule {
+    /// Returns model artifact metadata.
+    fn model_metadata(&self) -> &SignalModelMetadata;
+
+    /// Returns the feature schema consumed by this model.
+    fn feature_schema(&self) -> &FeatureSchema;
+
+    /// Runs model inference over a validated feature vector.
+    fn infer_features(&mut self, features: &FeatureVectorView<'_>) -> SignalModelOutput;
+}
+
 impl SignalDescriptor {
     /// Creates static metadata for a signal module with conservative defaults.
     ///
@@ -6742,6 +7342,166 @@ mod tests {
         assert_eq!(report.state_agreements, 1);
         assert_eq!(report.samples.len(), 0);
         assert_eq!(report.production_accuracy_bps(), Some(10_000));
+    }
+
+    #[test]
+    fn feature_vector_validation_accepts_clean_vector() {
+        let schema = FeatureSchema::new("orderflow_features", "1")
+            .with_feature(
+                FeatureDescriptor::new("delta", FeatureValueKind::Integer)
+                    .with_unit("contracts")
+                    .with_range(-10_000.0, 10_000.0),
+            )
+            .with_feature(
+                FeatureDescriptor::new("imbalance_bps", FeatureValueKind::BasisPoints)
+                    .with_unit("bps")
+                    .with_range(-10_000.0, 10_000.0)
+                    .with_freshness_ns(1_000),
+            );
+        let values = [125.0, 2_500.0];
+        let quality = [FeatureQualityFlags::NONE, FeatureQualityFlags::NONE];
+        let view = FeatureVectorView::new(&schema, &values, &quality, 1_000);
+
+        let report = view.validate(Some(1_500));
+
+        assert!(report.valid);
+        assert_eq!(view.value("delta"), Some(125.0));
+        assert_eq!(
+            view.quality("imbalance_bps"),
+            Some(FeatureQualityFlags::NONE)
+        );
+        assert_eq!(report.aggregate_quality, FeatureQualityFlags::NONE);
+    }
+
+    #[test]
+    fn feature_vector_validation_reports_schema_and_quality_issues() {
+        let schema = FeatureSchema::new("orderflow_features", "1")
+            .with_feature(FeatureDescriptor::new("delta", FeatureValueKind::Integer))
+            .with_feature(
+                FeatureDescriptor::new("vwap_distance", FeatureValueKind::Price)
+                    .with_range(-10.0, 10.0)
+                    .with_freshness_ns(100),
+            );
+        let values = [25.0, 25.0];
+        let quality = [FeatureQualityFlags::MISSING];
+        let view = FeatureVectorView::new(&schema, &values, &quality, 1_000);
+
+        let report = validate_feature_vector(&view, Some(1_200));
+
+        assert!(!report.valid);
+        assert!(report.has_errors());
+        assert!(report
+            .aggregate_quality
+            .intersects(FeatureQualityFlags::MISSING | FeatureQualityFlags::OUT_OF_RANGE));
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| matches!(issue, FeatureVectorValidationIssue::LengthMismatch { .. })));
+        assert!(report.issues.iter().any(|issue| matches!(
+            issue,
+            FeatureVectorValidationIssue::MissingFeature { feature_id, .. }
+                if feature_id == "delta"
+        )));
+        assert!(report.issues.iter().any(|issue| matches!(
+            issue,
+            FeatureVectorValidationIssue::OutOfRange { feature_id, .. }
+                if feature_id == "vwap_distance"
+        )));
+        assert!(report.issues.iter().any(|issue| matches!(
+            issue,
+            FeatureVectorValidationIssue::StaleFeature { feature_id, .. }
+                if feature_id == "vwap_distance"
+        )));
+    }
+
+    #[test]
+    fn model_metadata_and_input_binding_validate_schema_compatibility() {
+        let schema = FeatureSchema::new("orderflow_features", "1")
+            .with_config_hash(42)
+            .with_feature(FeatureDescriptor::new("delta", FeatureValueKind::Integer))
+            .with_feature(FeatureDescriptor::new("vwap", FeatureValueKind::Price));
+        let metadata = SignalModelMetadata::new("model_a", "2026-07-15", "orderflow_features", "1")
+            .with_model_kind(SignalModelKind::Onnx)
+            .with_artifact_hash("sha256:abc")
+            .with_training_window(1_000, 2_000)
+            .with_calibration_id(7)
+            .with_output_kind(SignalModelOutputKind::DirectionalProbabilities);
+        let binding = SignalModelInputBinding::new("features", vec!["delta".into(), "vwap".into()]);
+        let missing =
+            SignalModelInputBinding::new("features", vec!["delta".into(), "missing".into()]);
+
+        assert_eq!(schema.feature_index("vwap"), Some(1));
+        assert!(binding.is_compatible_with(&schema));
+        assert!(!missing.is_compatible_with(&schema));
+        assert_eq!(metadata.model_kind, SignalModelKind::Onnx);
+        assert_eq!(metadata.calibration_id, Some(7));
+    }
+
+    #[test]
+    fn model_backed_signal_trait_runs_over_feature_view() {
+        struct TestModelSignal {
+            metadata: SignalModelMetadata,
+            schema: FeatureSchema,
+            snapshot: SignalSnapshot,
+        }
+
+        impl SignalModule for TestModelSignal {
+            fn on_analytics(&mut self, _ev: &AnalyticsSnapshot) {}
+
+            fn snapshot(&self) -> SignalSnapshot {
+                self.snapshot.clone()
+            }
+
+            fn quality_gate(&self, _q: DataQualityFlags) -> SignalGateDecision {
+                SignalGateDecision::Pass
+            }
+        }
+
+        impl ModelBackedSignal for TestModelSignal {
+            fn model_metadata(&self) -> &SignalModelMetadata {
+                &self.metadata
+            }
+
+            fn feature_schema(&self) -> &FeatureSchema {
+                &self.schema
+            }
+
+            fn infer_features(&mut self, features: &FeatureVectorView<'_>) -> SignalModelOutput {
+                let delta = features.value("delta").unwrap_or_default();
+                let state = if delta >= 0.0 {
+                    SignalState::LongBias
+                } else {
+                    SignalState::ShortBias
+                };
+                self.snapshot.state = state;
+                self.snapshot.confidence_bps = 7_500;
+                SignalModelOutput::new(state, 7_500)
+                    .with_score(delta)
+                    .with_reason("test_model")
+            }
+        }
+
+        let schema = FeatureSchema::new("orderflow_features", "1")
+            .with_feature(FeatureDescriptor::new("delta", FeatureValueKind::Integer));
+        let metadata = SignalModelMetadata::new("test_model", "1", "orderflow_features", "1")
+            .with_model_kind(SignalModelKind::Native);
+        let values = [5.0];
+        let quality = [FeatureQualityFlags::NONE];
+        let view = FeatureVectorView::new(&schema, &values, &quality, 10);
+        let mut signal = TestModelSignal {
+            metadata,
+            schema: schema.clone(),
+            snapshot: snapshot(SignalState::Neutral, 0),
+        };
+
+        let output = signal.infer_features(&view);
+
+        assert_eq!(signal.model_metadata().model_id, "test_model");
+        assert_eq!(signal.feature_schema().id, "orderflow_features");
+        assert_eq!(output.state, SignalState::LongBias);
+        assert_eq!(output.confidence_bps, 7_500);
+        assert_eq!(output.score, Some(5.0));
+        assert_eq!(signal.snapshot().state, SignalState::LongBias);
     }
 
     #[test]

@@ -91,6 +91,21 @@ and easy to test.
 | `SignalShadowComparisonConfig` | struct | Shadow report retention settings |
 | `SignalShadowComparisonReport` | struct | Production/candidate divergence and outcome report |
 | `SignalShadowRecorder` | struct | Incremental shadow comparison recorder |
+| `FeatureQualityFlags` | struct | Per-feature quality bitset |
+| `FeatureValueKind` | enum | Semantic feature value kind |
+| `FeatureMissingPolicy` | enum | Missing-value handling rule |
+| `FeatureDescriptor` | struct | One feature id, kind, unit, range, and freshness policy |
+| `FeatureSchema` | struct | Stable ordered feature schema |
+| `FeatureVectorView` | struct | Borrowed values and quality flags in schema order |
+| `FeatureVectorValidationIssue` | enum | One feature-vector validation issue |
+| `FeatureVectorValidationReport` | struct | Aggregate feature-vector validation report |
+| `validate_feature_vector` | function | Validates values/quality against a feature schema |
+| `SignalModelKind` | enum | Model artifact/runtime family |
+| `SignalModelOutputKind` | enum | Model output semantics |
+| `SignalModelMetadata` | struct | Model id/version/artifact/schema/training metadata |
+| `SignalModelInputBinding` | struct | Ordered model input to feature ids binding |
+| `SignalModelOutput` | struct | Dependency-free model inference output |
+| `ModelBackedSignal` | trait | Optional extension trait for model-backed signal inference |
 | `DeltaMomentumSignal` | struct | Base delta threshold module |
 | `VolumeImbalanceSignal` | struct | Session volume imbalance module |
 | `CumulativeDeltaSignal` | struct | Session cumulative delta module |
@@ -949,6 +964,111 @@ Operational guidance:
 - use markout-aware reports before promoting a candidate signal;
 - keep checkpoint restore validation and shadow promotion policy outside the
   hot signal-update path.
+
+## Feature Vectors And Model Metadata
+
+The feature-vector and model metadata APIs are dependency-free contracts for
+advanced analytics and optional model-backed signals. They intentionally do not
+ship an ML runtime. ONNX, TensorRT, service calls, or proprietary model engines
+belong in optional crates or host applications that implement the extension
+traits.
+
+### Feature Types
+
+| Type | Meaning |
+| --- | --- |
+| `FeatureQualityFlags` | `MISSING`, `STALE`, `OUT_OF_RANGE`, `IMPUTED`, and `DEGRADED` flags |
+| `FeatureValueKind` | `Float`, `Integer`, `Boolean`, `Price`, `Size`, or `BasisPoints` |
+| `FeatureMissingPolicy` | Reject, zero-fill, default-fill, or mark unavailable |
+| `FeatureDescriptor` | Stable feature id plus kind, unit, description, missing policy, range, and freshness |
+| `FeatureSchema` | Schema id/version, config hash, and ordered descriptors |
+| `FeatureVectorView` | Borrowed schema, values, quality flags, and timestamp |
+| `FeatureVectorValidationReport` | Valid flag, issues, and aggregate quality |
+
+Feature validation catches:
+
+- value/quality length mismatches;
+- missing features with `Reject` policy;
+- range violations;
+- stale vectors when `now_ns` exceeds descriptor freshness;
+- aggregate quality flags for host-level gating.
+
+```rust
+use of_signals::{
+    validate_feature_vector, FeatureDescriptor, FeatureQualityFlags,
+    FeatureSchema, FeatureValueKind, FeatureVectorView,
+};
+
+let schema = FeatureSchema::new("orderflow_features", "1")
+    .with_feature(
+        FeatureDescriptor::new("delta", FeatureValueKind::Integer)
+            .with_unit("contracts")
+            .with_range(-10_000.0, 10_000.0),
+    )
+    .with_feature(
+        FeatureDescriptor::new("imbalance_bps", FeatureValueKind::BasisPoints)
+            .with_unit("bps")
+            .with_range(-10_000.0, 10_000.0)
+            .with_freshness_ns(1_000),
+    );
+
+let values = [125.0, 2_500.0];
+let quality = [FeatureQualityFlags::NONE, FeatureQualityFlags::NONE];
+let view = FeatureVectorView::new(&schema, &values, &quality, 1_000);
+
+let report = validate_feature_vector(&view, Some(1_500));
+assert!(report.valid);
+assert_eq!(view.value("delta"), Some(125.0));
+```
+
+### Model Metadata
+
+| Type | Meaning |
+| --- | --- |
+| `SignalModelKind` | `Native`, `Onnx`, `Linear`, `TreeEnsemble`, `External`, or `Unknown` |
+| `SignalModelOutputKind` | Directional state, directional probabilities, or continuous score |
+| `SignalModelMetadata` | Model id/version, schema id/version, artifact hash, training window, calibration id, output kind, determinism |
+| `SignalModelInputBinding` | Named model input mapped to ordered feature ids |
+| `SignalModelOutput` | State, confidence, optional score, and reason |
+| `ModelBackedSignal` | Optional extension trait for signals that run inference over `FeatureVectorView` |
+
+```rust
+use of_signals::{
+    FeatureDescriptor, FeatureSchema, FeatureValueKind, SignalModelInputBinding,
+    SignalModelKind, SignalModelMetadata, SignalModelOutputKind,
+};
+
+let schema = FeatureSchema::new("orderflow_features", "1")
+    .with_feature(FeatureDescriptor::new("delta", FeatureValueKind::Integer))
+    .with_feature(FeatureDescriptor::new("vwap", FeatureValueKind::Price));
+
+let metadata = SignalModelMetadata::new(
+    "microstructure_model",
+    "2026-07-15",
+    "orderflow_features",
+    "1",
+)
+.with_model_kind(SignalModelKind::Onnx)
+.with_artifact_hash("sha256:abc")
+.with_output_kind(SignalModelOutputKind::DirectionalProbabilities);
+
+let binding = SignalModelInputBinding::new(
+    "features",
+    vec!["delta".to_string(), "vwap".to_string()],
+);
+
+assert!(binding.is_compatible_with(&schema));
+assert_eq!(metadata.model_kind, SignalModelKind::Onnx);
+```
+
+Operational guidance:
+
+- keep schema ids and feature ids stable;
+- version schema changes explicitly;
+- validate feature vectors before inference;
+- preserve event timestamps for point-in-time training and replay;
+- keep heavy model dependencies outside default `of_signals`;
+- record model metadata in checkpoints, shadow reports, and deployment review.
 
 ### `SignalInputMask`
 
