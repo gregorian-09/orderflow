@@ -37,7 +37,15 @@ and easy to test.
 | `SignalParameterDescriptor` | struct | Static metadata for one parameter |
 | `SignalOutputSemantics` | enum | How consumers should interpret output |
 | `built_in_signal_descriptors` | function | Returns all built-in signal descriptors |
+| `built_in_signal_registrations` | function | Returns built-in descriptor/factory registrations |
+| `built_in_signal_descriptors_json` | function | Returns compact descriptor JSON |
 | `describe_signal` | function | Looks up one built-in descriptor by id |
+| `SignalConfig` | struct | Borrowed signal construction config |
+| `SignalConfigParameter` | struct | Named config parameter |
+| `SignalConfigValue` | enum | Typed config value |
+| `SignalRegistration` | struct | Descriptor plus optional construction factory |
+| `SignalRegistry` | struct | Discovery, validation, construction, and JSON export |
+| `SignalRegistryError` | enum | Typed validation/construction error |
 | `DeltaMomentumSignal` | struct | Base delta threshold module |
 | `VolumeImbalanceSignal` | struct | Session volume imbalance module |
 | `CumulativeDeltaSignal` | struct | Session cumulative delta module |
@@ -339,6 +347,78 @@ assert!(descriptor.requires_input(SignalInputMask::ANALYTICS));
 
 let threshold = descriptor.parameter("threshold").unwrap();
 assert_eq!(threshold.default, Some(SignalParameterValue::Integer(100)));
+```
+
+## Registry And Config
+
+`SignalRegistry` is an additive startup/configuration API. It lets hosts
+discover signals, validate user config, construct built-in modules, filter by
+available inputs, and export descriptor metadata without changing the
+`SignalModule` trait.
+
+### Registry Types
+
+| Type | Meaning |
+| --- | --- |
+| `SignalConfig` | Borrowed signal id plus parameter slice |
+| `SignalConfigParameter` | One named config parameter |
+| `SignalConfigValue` | Integer, float, boolean, or text value |
+| `SignalRegistration` | Descriptor plus optional factory |
+| `SignalFactory` | Function pointer that builds `Box<dyn SignalModule>` |
+| `SignalRegistry` | Owned registry of signal registrations |
+| `SignalRegistryError` | Unknown id, duplicate id/parameter, type/range, or missing factory error |
+
+### Registry Operations
+
+| Method | Meaning |
+| --- | --- |
+| `SignalRegistry::with_built_ins()` | Creates a registry with bundled modules |
+| `register(...)` | Adds a custom descriptor/factory pair |
+| `registrations()` | Returns registered metadata |
+| `descriptor(id)` | Looks up one descriptor |
+| `descriptors_matching_inputs(mask)` | Filters descriptors by available context |
+| `validate_config(&config)` | Validates config without constructing |
+| `create_signal(&config)` | Constructs a boxed module from valid config |
+| `descriptors_json()` | Exports compact descriptor metadata |
+
+Validation catches:
+
+- unknown signal ids;
+- duplicate parameter names;
+- unknown parameter names;
+- parameter type mismatches;
+- configured values outside descriptor min/max bounds;
+- registrations without factories during construction.
+
+Example:
+
+```rust
+use of_core::{AnalyticsSnapshot, SignalState};
+use of_signals::{SignalConfig, SignalConfigParameter, SignalRegistry};
+
+let registry = SignalRegistry::with_built_ins();
+let params = [SignalConfigParameter::integer("threshold", 25)];
+let config = SignalConfig::with_parameters("delta_momentum_v1", &params);
+
+registry.validate_config(&config)?;
+let mut signal = registry.create_signal(&config)?;
+
+signal.on_analytics(&AnalyticsSnapshot {
+    delta: 30,
+    ..Default::default()
+});
+
+assert_eq!(signal.snapshot().state, SignalState::LongBias);
+# Ok::<(), of_signals::SignalRegistryError>(())
+```
+
+Descriptor JSON is generated without adding `serde` to `of_signals`:
+
+```rust
+use of_signals::built_in_signal_descriptors_json;
+
+let json = built_in_signal_descriptors_json();
+assert!(json.contains("\"id\":\"delta_momentum_v1\""));
 ```
 
 ### `SignalInputMask`

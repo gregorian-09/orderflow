@@ -9,6 +9,8 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
 - Contextual trait: [`ContextualSignalModule`]
 - Gate result: [`SignalGateDecision`]
 - Descriptor inventory: [`built_in_signal_descriptors`] and [`describe_signal`]
+- Registry/config: [`SignalRegistry`], [`SignalConfig`], and
+  [`built_in_signal_descriptors_json`]
 - Lifecycle helper: [`SignalLifecycle`]
 - Stabilizer: [`SignalStabilizer`]
 - Explainability: [`ExplainableSignalModule`], [`SignalExplanation`], and
@@ -86,6 +88,8 @@ New additive APIs:
   existing human-readable snapshot reason strings.
 - [`SignalExplanationMode`] lets hosts emit explanations for every evaluation
   or only when signal state transitions occur.
+- [`SignalRegistry`] supports config-time discovery, validation, construction,
+  input filtering, and descriptor JSON export for bindings/dashboards.
 
 This is intentionally metadata-first. Built-in signal behavior is unchanged:
 existing users still call `on_analytics`, `quality_gate`, and `snapshot` exactly
@@ -130,6 +134,14 @@ Public types:
 - [`SignalParameterValue`]
 - [`SignalParameterDescriptor`]
 - [`SignalDescriptor`]
+- [`SignalConfigValue`]
+- [`SignalConfigParameter`]
+- [`SignalConfig`]
+- [`SignalRegistryError`]
+- [`SignalRegistryResult`]
+- [`SignalFactory`]
+- [`SignalRegistration`]
+- [`SignalRegistry`]
 - [`DeltaMomentumSignal`]
 - [`VolumeImbalanceSignal`]
 - [`CumulativeDeltaSignal`]
@@ -148,6 +160,8 @@ Public descriptor constants and functions:
 - [`SWEEP_DETECTION_DESCRIPTOR`]
 - [`COMPOSITE_DESCRIPTOR`]
 - [`built_in_signal_descriptors`]
+- [`built_in_signal_registrations`]
+- [`built_in_signal_descriptors_json`]
 - [`describe_signal`]
 
 Public constructors:
@@ -432,6 +446,58 @@ assert!(delta.required_inputs.contains(SignalInputMask::ANALYTICS));
 let threshold = delta.parameter("threshold").unwrap();
 assert_eq!(threshold.default, Some(SignalParameterValue::Integer(100)));
 ```
+
+## Signal Registry And Config Validation
+
+[`SignalRegistry`] is a startup/configuration helper for hosts that need to
+discover signals, validate strategy config, construct built-ins, filter by
+available inputs, or export metadata to bindings and dashboards.
+
+It is not part of the per-tick hot path. Signal evaluation still happens through
+concrete modules and [`SignalModule`].
+
+Example:
+
+```rust
+use of_core::{AnalyticsSnapshot, SignalState};
+use of_signals::{
+    SignalConfig, SignalConfigParameter, SignalModule, SignalRegistry,
+};
+
+let registry = SignalRegistry::with_built_ins();
+let params = [SignalConfigParameter::integer("threshold", 25)];
+let config = SignalConfig::with_parameters("delta_momentum_v1", &params);
+
+registry.validate_config(&config)?;
+let mut signal = registry.create_signal(&config)?;
+
+signal.on_analytics(&AnalyticsSnapshot {
+    delta: 30,
+    ..Default::default()
+});
+
+assert_eq!(signal.snapshot().state, SignalState::LongBias);
+# Ok::<(), of_signals::SignalRegistryError>(())
+```
+
+Common registry operations:
+
+- [`SignalRegistry::with_built_ins`] creates a registry with all bundled
+  signals and factories.
+- [`SignalRegistry::register`] adds custom descriptor/factory pairs.
+- [`SignalRegistry::descriptor`] looks up one descriptor by stable id.
+- [`SignalRegistry::descriptors_matching_inputs`] filters descriptors by
+  available context.
+- [`SignalRegistry::validate_config`] checks unknown signals, duplicate
+  parameters, unknown parameters, type mismatches, and descriptor ranges.
+- [`SignalRegistry::create_signal`] constructs a boxed [`SignalModule`] from a
+  valid config.
+- [`SignalRegistry::descriptors_json`] exports compact descriptor metadata.
+
+The crate intentionally avoids adding `serde` to the signal core for this
+feature. JSON export is generated from static descriptor metadata so binding
+layers can expose inventory data without forcing serialization dependencies into
+every Rust user.
 
 Custom descriptor example:
 

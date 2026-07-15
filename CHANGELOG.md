@@ -26,6 +26,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `ExplainableSignalModule`. Built-in signals now expose structured diagnostic
   explanations while existing `SignalModule` and `SignalSnapshot` contracts are
   unchanged.
+- Additive `of_signals` registry/config APIs with `SignalRegistry`,
+  `SignalRegistration`, `SignalConfig`, typed config parameters,
+  `SignalRegistryError`, built-in registrations, config validation,
+  built-in construction, input filtering, and dependency-free descriptor JSON
+  export for bindings and dashboards.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

@@ -1329,6 +1329,364 @@ pub struct SignalDescriptor {
     pub checkpointable: bool,
 }
 
+/// Configuration value used when constructing a signal from a registry.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SignalConfigValue<'a> {
+    /// Signed integer configuration value.
+    Integer(i64),
+    /// Floating-point configuration value.
+    Float(f64),
+    /// Boolean configuration value.
+    Boolean(bool),
+    /// Borrowed text configuration value.
+    Text(&'a str),
+}
+
+impl SignalConfigValue<'_> {
+    /// Returns the parameter kind represented by this value.
+    pub const fn kind(self) -> SignalParameterKind {
+        match self {
+            Self::Integer(_) => SignalParameterKind::Integer,
+            Self::Float(_) => SignalParameterKind::Float,
+            Self::Boolean(_) => SignalParameterKind::Boolean,
+            Self::Text(_) => SignalParameterKind::Text,
+        }
+    }
+}
+
+/// One named parameter supplied in a signal configuration.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SignalConfigParameter<'a> {
+    /// Stable parameter name.
+    pub name: &'a str,
+    /// Supplied parameter value.
+    pub value: SignalConfigValue<'a>,
+}
+
+impl<'a> SignalConfigParameter<'a> {
+    /// Creates a named signal configuration parameter.
+    pub const fn new(name: &'a str, value: SignalConfigValue<'a>) -> Self {
+        Self { name, value }
+    }
+
+    /// Creates an integer signal configuration parameter.
+    pub const fn integer(name: &'a str, value: i64) -> Self {
+        Self::new(name, SignalConfigValue::Integer(value))
+    }
+
+    /// Creates a floating-point signal configuration parameter.
+    pub const fn float(name: &'a str, value: f64) -> Self {
+        Self::new(name, SignalConfigValue::Float(value))
+    }
+
+    /// Creates a boolean signal configuration parameter.
+    pub const fn boolean(name: &'a str, value: bool) -> Self {
+        Self::new(name, SignalConfigValue::Boolean(value))
+    }
+
+    /// Creates a text signal configuration parameter.
+    pub const fn text(name: &'a str, value: &'a str) -> Self {
+        Self::new(name, SignalConfigValue::Text(value))
+    }
+}
+
+/// Borrowed signal configuration for registry validation and construction.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SignalConfig<'a> {
+    /// Stable signal id.
+    pub id: &'a str,
+    /// Supplied configuration parameters.
+    pub parameters: &'a [SignalConfigParameter<'a>],
+}
+
+impl<'a> SignalConfig<'a> {
+    /// Creates a signal configuration with no parameters.
+    pub const fn new(id: &'a str) -> Self {
+        Self {
+            id,
+            parameters: &[],
+        }
+    }
+
+    /// Creates a signal configuration with explicit parameters.
+    pub const fn with_parameters(id: &'a str, parameters: &'a [SignalConfigParameter<'a>]) -> Self {
+        Self { id, parameters }
+    }
+
+    /// Finds a supplied parameter by name.
+    pub fn parameter(&self, name: &str) -> Option<SignalConfigValue<'a>> {
+        self.parameters
+            .iter()
+            .find(|parameter| parameter.name == name)
+            .map(|parameter| parameter.value)
+    }
+}
+
+/// Error returned by signal registry validation or construction.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub enum SignalRegistryError {
+    /// The requested signal id is not registered.
+    UnknownSignal {
+        /// Requested signal id.
+        id: String,
+    },
+    /// A signal id was registered more than once.
+    DuplicateSignal {
+        /// Duplicate signal id.
+        id: &'static str,
+    },
+    /// A configuration supplied the same parameter more than once.
+    DuplicateParameter {
+        /// Signal id being validated.
+        signal_id: &'static str,
+        /// Duplicate parameter name.
+        name: String,
+    },
+    /// A configuration supplied a parameter unknown to the signal descriptor.
+    UnknownParameter {
+        /// Signal id being validated.
+        signal_id: &'static str,
+        /// Unknown parameter name.
+        name: String,
+    },
+    /// A configuration supplied a value with the wrong type.
+    InvalidParameterType {
+        /// Signal id being validated.
+        signal_id: &'static str,
+        /// Parameter name.
+        name: &'static str,
+        /// Expected kind.
+        expected: SignalParameterKind,
+        /// Actual kind.
+        actual: SignalParameterKind,
+    },
+    /// A configuration supplied a value below the descriptor minimum.
+    ParameterBelowMinimum {
+        /// Signal id being validated.
+        signal_id: &'static str,
+        /// Parameter name.
+        name: &'static str,
+        /// Minimum allowed value.
+        min: SignalParameterValue,
+        /// Supplied value.
+        actual: SignalConfigValue<'static>,
+    },
+    /// A configuration supplied a value above the descriptor maximum.
+    ParameterAboveMaximum {
+        /// Signal id being validated.
+        signal_id: &'static str,
+        /// Parameter name.
+        name: &'static str,
+        /// Maximum allowed value.
+        max: SignalParameterValue,
+        /// Supplied value.
+        actual: SignalConfigValue<'static>,
+    },
+    /// The registered signal has no factory.
+    MissingFactory {
+        /// Signal id being constructed.
+        signal_id: &'static str,
+    },
+}
+
+impl std::fmt::Display for SignalRegistryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownSignal { id } => write!(f, "unknown signal id `{id}`"),
+            Self::DuplicateSignal { id } => write!(f, "duplicate signal id `{id}`"),
+            Self::DuplicateParameter { signal_id, name } => {
+                write!(f, "duplicate parameter `{name}` for signal `{signal_id}`")
+            }
+            Self::UnknownParameter { signal_id, name } => {
+                write!(f, "unknown parameter `{name}` for signal `{signal_id}`")
+            }
+            Self::InvalidParameterType {
+                signal_id,
+                name,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "invalid parameter type for `{signal_id}.{name}`: expected {expected:?}, got {actual:?}"
+            ),
+            Self::ParameterBelowMinimum {
+                signal_id, name, ..
+            } => write!(
+                f,
+                "parameter `{signal_id}.{name}` is below the descriptor minimum"
+            ),
+            Self::ParameterAboveMaximum {
+                signal_id, name, ..
+            } => write!(
+                f,
+                "parameter `{signal_id}.{name}` is above the descriptor maximum"
+            ),
+            Self::MissingFactory { signal_id } => {
+                write!(f, "signal `{signal_id}` has no construction factory")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SignalRegistryError {}
+
+/// Result returned by signal registry operations.
+pub type SignalRegistryResult<T> = Result<T, SignalRegistryError>;
+
+/// Factory function used by [`SignalRegistry`] to build a signal module.
+pub type SignalFactory = fn(&SignalConfig<'_>) -> SignalRegistryResult<Box<dyn SignalModule>>;
+
+/// One signal registration containing descriptor metadata and optional factory.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy)]
+pub struct SignalRegistration {
+    /// Static signal descriptor.
+    pub descriptor: &'static SignalDescriptor,
+    /// Optional factory for constructing the signal from config.
+    pub factory: Option<SignalFactory>,
+}
+
+impl SignalRegistration {
+    /// Creates a signal registration.
+    pub const fn new(
+        descriptor: &'static SignalDescriptor,
+        factory: Option<SignalFactory>,
+    ) -> Self {
+        Self {
+            descriptor,
+            factory,
+        }
+    }
+}
+
+/// Registry for discovering, validating, and constructing signal modules.
+///
+/// The registry is intended for startup/configuration paths, dashboards, and
+/// bindings. Signal evaluation remains owned by concrete modules and the
+/// `SignalModule` trait.
+#[derive(Debug, Clone)]
+pub struct SignalRegistry {
+    registrations: Vec<SignalRegistration>,
+}
+
+impl SignalRegistry {
+    /// Creates an empty signal registry.
+    pub const fn new() -> Self {
+        Self {
+            registrations: Vec::new(),
+        }
+    }
+
+    /// Creates a registry containing the built-in signal modules.
+    pub fn with_built_ins() -> Self {
+        Self {
+            registrations: built_in_signal_registrations().to_vec(),
+        }
+    }
+
+    /// Adds a signal registration.
+    pub fn register(
+        &mut self,
+        registration: SignalRegistration,
+    ) -> SignalRegistryResult<&mut Self> {
+        if self
+            .registrations
+            .iter()
+            .any(|existing| existing.descriptor.id == registration.descriptor.id)
+        {
+            return Err(SignalRegistryError::DuplicateSignal {
+                id: registration.descriptor.id,
+            });
+        }
+        self.registrations.push(registration);
+        Ok(self)
+    }
+
+    /// Returns registered signal metadata.
+    pub fn registrations(&self) -> &[SignalRegistration] {
+        &self.registrations
+    }
+
+    /// Finds a registered signal descriptor by id.
+    pub fn descriptor(&self, id: &str) -> Option<&'static SignalDescriptor> {
+        self.registration(id)
+            .map(|registration| registration.descriptor)
+    }
+
+    /// Returns descriptors whose required inputs are included in `available_inputs`.
+    pub fn descriptors_matching_inputs(
+        &self,
+        available_inputs: SignalInputMask,
+    ) -> Vec<&'static SignalDescriptor> {
+        self.registrations
+            .iter()
+            .filter_map(|registration| {
+                available_inputs
+                    .contains(registration.descriptor.required_inputs)
+                    .then_some(registration.descriptor)
+            })
+            .collect()
+    }
+
+    /// Validates a signal configuration without constructing the module.
+    pub fn validate_config(&self, config: &SignalConfig<'_>) -> SignalRegistryResult<()> {
+        let descriptor =
+            self.descriptor(config.id)
+                .ok_or_else(|| SignalRegistryError::UnknownSignal {
+                    id: config.id.to_string(),
+                })?;
+        validate_signal_config(descriptor, config)
+    }
+
+    /// Constructs a signal module from configuration.
+    pub fn create_signal(
+        &self,
+        config: &SignalConfig<'_>,
+    ) -> SignalRegistryResult<Box<dyn SignalModule>> {
+        let registration =
+            self.registration(config.id)
+                .ok_or_else(|| SignalRegistryError::UnknownSignal {
+                    id: config.id.to_string(),
+                })?;
+        self.validate_config(config)?;
+        let Some(factory) = registration.factory else {
+            return Err(SignalRegistryError::MissingFactory {
+                signal_id: registration.descriptor.id,
+            });
+        };
+        factory(config)
+    }
+
+    /// Exports registered descriptors as compact JSON for bindings and dashboards.
+    pub fn descriptors_json(&self) -> String {
+        let mut out = String::from("[");
+        for (index, registration) in self.registrations.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            push_descriptor_json(&mut out, registration.descriptor);
+        }
+        out.push(']');
+        out
+    }
+
+    fn registration(&self, id: &str) -> Option<&SignalRegistration> {
+        self.registrations
+            .iter()
+            .find(|registration| registration.descriptor.id == id)
+    }
+}
+
+impl Default for SignalRegistry {
+    fn default() -> Self {
+        Self::with_built_ins()
+    }
+}
+
 impl SignalDescriptor {
     /// Creates static metadata for a signal module with conservative defaults.
     ///
@@ -2341,9 +2699,36 @@ const BUILT_IN_SIGNAL_DESCRIPTORS: [SignalDescriptor; 7] = [
     COMPOSITE_DESCRIPTOR,
 ];
 
+const BUILT_IN_SIGNAL_REGISTRATIONS: [SignalRegistration; 7] = [
+    SignalRegistration::new(
+        &DELTA_MOMENTUM_DESCRIPTOR,
+        Some(create_delta_momentum_signal),
+    ),
+    SignalRegistration::new(
+        &VOLUME_IMBALANCE_DESCRIPTOR,
+        Some(create_volume_imbalance_signal),
+    ),
+    SignalRegistration::new(
+        &CUMULATIVE_DELTA_DESCRIPTOR,
+        Some(create_cumulative_delta_signal),
+    ),
+    SignalRegistration::new(&ABSORPTION_DESCRIPTOR, Some(create_absorption_signal)),
+    SignalRegistration::new(&EXHAUSTION_DESCRIPTOR, Some(create_exhaustion_signal)),
+    SignalRegistration::new(
+        &SWEEP_DETECTION_DESCRIPTOR,
+        Some(create_sweep_detection_signal),
+    ),
+    SignalRegistration::new(&COMPOSITE_DESCRIPTOR, Some(create_composite_signal)),
+];
+
 /// Returns descriptors for all built-in signal modules.
 pub fn built_in_signal_descriptors() -> &'static [SignalDescriptor] {
     &BUILT_IN_SIGNAL_DESCRIPTORS
+}
+
+/// Returns registrations for all built-in signal modules.
+pub fn built_in_signal_registrations() -> &'static [SignalRegistration] {
+    &BUILT_IN_SIGNAL_REGISTRATIONS
 }
 
 /// Finds a built-in signal descriptor by stable signal identifier.
@@ -2351,6 +2736,374 @@ pub fn describe_signal(id: &str) -> Option<&'static SignalDescriptor> {
     BUILT_IN_SIGNAL_DESCRIPTORS
         .iter()
         .find(|descriptor| descriptor.id == id)
+}
+
+/// Exports built-in signal descriptors as compact JSON.
+pub fn built_in_signal_descriptors_json() -> String {
+    SignalRegistry::with_built_ins().descriptors_json()
+}
+
+fn create_delta_momentum_signal(
+    config: &SignalConfig<'_>,
+) -> SignalRegistryResult<Box<dyn SignalModule>> {
+    Ok(Box::new(DeltaMomentumSignal::new(integer_parameter(
+        config,
+        &DELTA_MOMENTUM_DESCRIPTOR,
+        "threshold",
+    )?)))
+}
+
+fn create_volume_imbalance_signal(
+    config: &SignalConfig<'_>,
+) -> SignalRegistryResult<Box<dyn SignalModule>> {
+    Ok(Box::new(VolumeImbalanceSignal::new(integer_parameter(
+        config,
+        &VOLUME_IMBALANCE_DESCRIPTOR,
+        "threshold",
+    )?)))
+}
+
+fn create_cumulative_delta_signal(
+    config: &SignalConfig<'_>,
+) -> SignalRegistryResult<Box<dyn SignalModule>> {
+    Ok(Box::new(CumulativeDeltaSignal::new(integer_parameter(
+        config,
+        &CUMULATIVE_DELTA_DESCRIPTOR,
+        "threshold",
+    )?)))
+}
+
+fn create_absorption_signal(
+    config: &SignalConfig<'_>,
+) -> SignalRegistryResult<Box<dyn SignalModule>> {
+    Ok(Box::new(AbsorptionSignal::new(
+        integer_parameter(config, &ABSORPTION_DESCRIPTOR, "threshold")?,
+        integer_parameter(config, &ABSORPTION_DESCRIPTOR, "price_band")?,
+    )))
+}
+
+fn create_exhaustion_signal(
+    config: &SignalConfig<'_>,
+) -> SignalRegistryResult<Box<dyn SignalModule>> {
+    Ok(Box::new(ExhaustionSignal::new(integer_parameter(
+        config,
+        &EXHAUSTION_DESCRIPTOR,
+        "threshold",
+    )?)))
+}
+
+fn create_sweep_detection_signal(
+    config: &SignalConfig<'_>,
+) -> SignalRegistryResult<Box<dyn SignalModule>> {
+    Ok(Box::new(SweepDetectionSignal::new(
+        integer_parameter(config, &SWEEP_DETECTION_DESCRIPTOR, "threshold")?,
+        integer_parameter(config, &SWEEP_DETECTION_DESCRIPTOR, "breakout_ticks")?,
+    )))
+}
+
+fn create_composite_signal(
+    config: &SignalConfig<'_>,
+) -> SignalRegistryResult<Box<dyn SignalModule>> {
+    validate_signal_config(&COMPOSITE_DESCRIPTOR, config)?;
+    Ok(Box::new(CompositeSignal::default()))
+}
+
+fn integer_parameter(
+    config: &SignalConfig<'_>,
+    descriptor: &'static SignalDescriptor,
+    name: &'static str,
+) -> SignalRegistryResult<i64> {
+    if let Some(value) = config.parameter(name) {
+        return match value {
+            SignalConfigValue::Integer(value) => Ok(value),
+            other => Err(SignalRegistryError::InvalidParameterType {
+                signal_id: descriptor.id,
+                name,
+                expected: SignalParameterKind::Integer,
+                actual: other.kind(),
+            }),
+        };
+    }
+
+    descriptor
+        .parameter(name)
+        .and_then(|parameter| parameter.default)
+        .and_then(|value| match value {
+            SignalParameterValue::Integer(value) => Some(value),
+            SignalParameterValue::Float(_)
+            | SignalParameterValue::Boolean(_)
+            | SignalParameterValue::Text(_) => None,
+        })
+        .ok_or(SignalRegistryError::UnknownParameter {
+            signal_id: descriptor.id,
+            name: name.to_string(),
+        })
+}
+
+fn validate_signal_config(
+    descriptor: &'static SignalDescriptor,
+    config: &SignalConfig<'_>,
+) -> SignalRegistryResult<()> {
+    for (index, parameter) in config.parameters.iter().enumerate() {
+        if config.parameters[..index]
+            .iter()
+            .any(|previous| previous.name == parameter.name)
+        {
+            return Err(SignalRegistryError::DuplicateParameter {
+                signal_id: descriptor.id,
+                name: parameter.name.to_string(),
+            });
+        }
+
+        let Some(parameter_descriptor) = descriptor.parameter(parameter.name) else {
+            return Err(SignalRegistryError::UnknownParameter {
+                signal_id: descriptor.id,
+                name: parameter.name.to_string(),
+            });
+        };
+
+        if parameter.value.kind() != parameter_descriptor.kind {
+            return Err(SignalRegistryError::InvalidParameterType {
+                signal_id: descriptor.id,
+                name: parameter_descriptor.name,
+                expected: parameter_descriptor.kind,
+                actual: parameter.value.kind(),
+            });
+        }
+
+        if let Some(min) = parameter_descriptor.min {
+            if config_value_is_below(parameter.value, min) {
+                return Err(SignalRegistryError::ParameterBelowMinimum {
+                    signal_id: descriptor.id,
+                    name: parameter_descriptor.name,
+                    min,
+                    actual: config_value_to_static(parameter.value),
+                });
+            }
+        }
+
+        if let Some(max) = parameter_descriptor.max {
+            if config_value_is_above(parameter.value, max) {
+                return Err(SignalRegistryError::ParameterAboveMaximum {
+                    signal_id: descriptor.id,
+                    name: parameter_descriptor.name,
+                    max,
+                    actual: config_value_to_static(parameter.value),
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn config_value_is_below(actual: SignalConfigValue<'_>, min: SignalParameterValue) -> bool {
+    match (actual, min) {
+        (SignalConfigValue::Integer(actual), SignalParameterValue::Integer(min)) => actual < min,
+        (SignalConfigValue::Float(actual), SignalParameterValue::Float(min)) => actual < min,
+        _ => false,
+    }
+}
+
+fn config_value_is_above(actual: SignalConfigValue<'_>, max: SignalParameterValue) -> bool {
+    match (actual, max) {
+        (SignalConfigValue::Integer(actual), SignalParameterValue::Integer(max)) => actual > max,
+        (SignalConfigValue::Float(actual), SignalParameterValue::Float(max)) => actual > max,
+        _ => false,
+    }
+}
+
+fn config_value_to_static(value: SignalConfigValue<'_>) -> SignalConfigValue<'static> {
+    match value {
+        SignalConfigValue::Integer(value) => SignalConfigValue::Integer(value),
+        SignalConfigValue::Float(value) => SignalConfigValue::Float(value),
+        SignalConfigValue::Boolean(value) => SignalConfigValue::Boolean(value),
+        SignalConfigValue::Text(_) => SignalConfigValue::Text("<text>"),
+    }
+}
+
+fn push_descriptor_json(out: &mut String, descriptor: &SignalDescriptor) {
+    out.push('{');
+    push_json_field(out, "id", descriptor.id);
+    out.push(',');
+    push_json_field(out, "name", descriptor.name);
+    out.push(',');
+    push_json_field(out, "version", descriptor.version);
+    out.push(',');
+    push_json_field(out, "description", descriptor.description);
+    out.push(',');
+    out.push_str("\"required_inputs_bits\":");
+    out.push_str(&descriptor.required_inputs.bits().to_string());
+    out.push(',');
+    out.push_str("\"required_inputs\":");
+    push_input_mask_json(out, descriptor.required_inputs);
+    out.push(',');
+    out.push_str("\"warmup\":");
+    push_warmup_json(out, descriptor.warmup);
+    out.push(',');
+    out.push_str("\"parameters\":");
+    push_parameters_json(out, descriptor.parameters);
+    out.push(',');
+    push_json_field(
+        out,
+        "output_semantics",
+        output_semantics_name(descriptor.output_semantics),
+    );
+    out.push(',');
+    out.push_str("\"deterministic\":");
+    out.push_str(if descriptor.deterministic {
+        "true"
+    } else {
+        "false"
+    });
+    out.push(',');
+    out.push_str("\"checkpointable\":");
+    out.push_str(if descriptor.checkpointable {
+        "true"
+    } else {
+        "false"
+    });
+    out.push('}');
+}
+
+fn push_json_field(out: &mut String, name: &str, value: &str) {
+    push_json_string(out, name);
+    out.push(':');
+    push_json_string(out, value);
+}
+
+fn push_json_string(out: &mut String, value: &str) {
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if ch.is_control() => {
+                out.push_str("\\u");
+                out.push_str(&format!("{:04x}", ch as u32));
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+}
+
+fn push_input_mask_json(out: &mut String, mask: SignalInputMask) {
+    let inputs = [
+        (SignalInputMask::ANALYTICS, "analytics"),
+        (SignalInputMask::DATA_QUALITY, "data_quality"),
+        (SignalInputMask::BOOK, "book"),
+        (SignalInputMask::ADVANCED_ANALYTICS, "advanced_analytics"),
+        (SignalInputMask::MARKET_REGIME, "market_regime"),
+        (SignalInputMask::POSITION, "position"),
+        (SignalInputMask::RISK, "risk"),
+    ];
+    out.push('[');
+    let mut written = 0_usize;
+    for (input, name) in inputs {
+        if mask.contains(input) {
+            if written > 0 {
+                out.push(',');
+            }
+            push_json_string(out, name);
+            written += 1;
+        }
+    }
+    out.push(']');
+}
+
+fn push_warmup_json(out: &mut String, warmup: SignalWarmupRequirement) {
+    match warmup {
+        SignalWarmupRequirement::None => out.push_str("{\"kind\":\"none\"}"),
+        SignalWarmupRequirement::Events(events) => {
+            out.push_str("{\"kind\":\"events\",\"events\":");
+            out.push_str(&events.to_string());
+            out.push('}');
+        }
+        SignalWarmupRequirement::MarketTimeNs(market_time_ns) => {
+            out.push_str("{\"kind\":\"market_time_ns\",\"market_time_ns\":");
+            out.push_str(&market_time_ns.to_string());
+            out.push('}');
+        }
+        SignalWarmupRequirement::CompletedBars(completed_bars) => {
+            out.push_str("{\"kind\":\"completed_bars\",\"completed_bars\":");
+            out.push_str(&completed_bars.to_string());
+            out.push('}');
+        }
+        SignalWarmupRequirement::All(requirements) => {
+            out.push_str("{\"kind\":\"all\",\"requirements\":[");
+            for (index, requirement) in requirements.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                push_warmup_json(out, *requirement);
+            }
+            out.push_str("]}");
+        }
+    }
+}
+
+fn push_parameters_json(out: &mut String, parameters: &[SignalParameterDescriptor]) {
+    out.push('[');
+    for (index, parameter) in parameters.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push('{');
+        push_json_field(out, "name", parameter.name);
+        out.push(',');
+        push_json_field(out, "description", parameter.description);
+        out.push(',');
+        push_json_field(out, "kind", parameter_kind_name(parameter.kind));
+        out.push(',');
+        out.push_str("\"default\":");
+        push_optional_parameter_value_json(out, parameter.default);
+        out.push(',');
+        out.push_str("\"min\":");
+        push_optional_parameter_value_json(out, parameter.min);
+        out.push(',');
+        out.push_str("\"max\":");
+        push_optional_parameter_value_json(out, parameter.max);
+        out.push('}');
+    }
+    out.push(']');
+}
+
+fn push_optional_parameter_value_json(out: &mut String, value: Option<SignalParameterValue>) {
+    match value {
+        Some(value) => push_parameter_value_json(out, value),
+        None => out.push_str("null"),
+    }
+}
+
+fn push_parameter_value_json(out: &mut String, value: SignalParameterValue) {
+    match value {
+        SignalParameterValue::Integer(value) => out.push_str(&value.to_string()),
+        SignalParameterValue::Float(value) => out.push_str(&value.to_string()),
+        SignalParameterValue::Boolean(value) => out.push_str(if value { "true" } else { "false" }),
+        SignalParameterValue::Text(value) => push_json_string(out, value),
+    }
+}
+
+fn parameter_kind_name(kind: SignalParameterKind) -> &'static str {
+    match kind {
+        SignalParameterKind::Integer => "integer",
+        SignalParameterKind::Float => "float",
+        SignalParameterKind::Boolean => "boolean",
+        SignalParameterKind::Text => "text",
+    }
+}
+
+fn output_semantics_name(output_semantics: SignalOutputSemantics) -> &'static str {
+    match output_semantics {
+        SignalOutputSemantics::DirectionalBias => "directional_bias",
+        SignalOutputSemantics::CompositeBias => "composite_bias",
+        SignalOutputSemantics::Informational => "informational",
+        SignalOutputSemantics::Veto => "veto",
+    }
 }
 
 #[cfg(test)]
@@ -2567,6 +3320,118 @@ mod tests {
         assert!(SignalExplanationMode::TransitionsOnly
             .should_emit_snapshot(Some(&previous), &current_changed));
         assert!(SignalExplanationMode::TransitionsOnly.should_emit_snapshot(None, &current_same));
+    }
+
+    #[test]
+    fn signal_registry_exposes_built_in_inventory() {
+        let registry = SignalRegistry::with_built_ins();
+
+        assert_eq!(registry.registrations().len(), 7);
+        assert_eq!(
+            registry.descriptor("delta_momentum_v1").unwrap().name,
+            "Delta Momentum"
+        );
+        assert!(built_in_signal_registrations()
+            .iter()
+            .any(|registration| registration.descriptor.id == "sweep_detection_v1"));
+    }
+
+    #[test]
+    fn signal_registry_filters_by_available_inputs() {
+        let registry = SignalRegistry::with_built_ins();
+
+        let none = registry.descriptors_matching_inputs(SignalInputMask::ANALYTICS);
+        assert!(none.is_empty());
+
+        let all = registry.descriptors_matching_inputs(
+            SignalInputMask::ANALYTICS | SignalInputMask::DATA_QUALITY,
+        );
+        assert_eq!(all.len(), 7);
+    }
+
+    #[test]
+    fn signal_registry_validates_config_parameters() {
+        let registry = SignalRegistry::with_built_ins();
+        let params = [SignalConfigParameter::integer("threshold", 25)];
+        let config = SignalConfig::with_parameters("delta_momentum_v1", &params);
+
+        assert!(registry.validate_config(&config).is_ok());
+
+        let bad_params = [SignalConfigParameter::integer("unknown", 1)];
+        let bad_config = SignalConfig::with_parameters("delta_momentum_v1", &bad_params);
+        assert!(matches!(
+            registry.validate_config(&bad_config),
+            Err(SignalRegistryError::UnknownParameter { .. })
+        ));
+
+        let wrong_type = [SignalConfigParameter::boolean("threshold", true)];
+        let wrong_config = SignalConfig::with_parameters("delta_momentum_v1", &wrong_type);
+        assert!(matches!(
+            registry.validate_config(&wrong_config),
+            Err(SignalRegistryError::InvalidParameterType { .. })
+        ));
+
+        let below_min = [SignalConfigParameter::integer("threshold", -1)];
+        let below_config = SignalConfig::with_parameters("delta_momentum_v1", &below_min);
+        assert!(matches!(
+            registry.validate_config(&below_config),
+            Err(SignalRegistryError::ParameterBelowMinimum { .. })
+        ));
+
+        let duplicate_params = [
+            SignalConfigParameter::integer("threshold", 1),
+            SignalConfigParameter::integer("threshold", 2),
+        ];
+        let duplicate_config =
+            SignalConfig::with_parameters("delta_momentum_v1", &duplicate_params);
+        assert!(matches!(
+            registry.validate_config(&duplicate_config),
+            Err(SignalRegistryError::DuplicateParameter { .. })
+        ));
+    }
+
+    #[test]
+    fn signal_registry_constructs_built_in_signal_from_config() {
+        let registry = SignalRegistry::with_built_ins();
+        let params = [SignalConfigParameter::integer("threshold", 25)];
+        let config = SignalConfig::with_parameters("delta_momentum_v1", &params);
+        let mut signal = registry.create_signal(&config).expect("signal constructed");
+
+        signal.on_analytics(&AnalyticsSnapshot {
+            delta: 30,
+            ..Default::default()
+        });
+
+        let snapshot = signal.snapshot();
+        assert_eq!(snapshot.module_id, "delta_momentum_v1");
+        assert_eq!(snapshot.state, SignalState::LongBias);
+    }
+
+    #[test]
+    fn signal_registry_rejects_duplicate_registration() {
+        let mut registry = SignalRegistry::with_built_ins();
+        let result = registry.register(SignalRegistration::new(
+            &DELTA_MOMENTUM_DESCRIPTOR,
+            Some(create_delta_momentum_signal),
+        ));
+
+        assert!(matches!(
+            result,
+            Err(SignalRegistryError::DuplicateSignal {
+                id: "delta_momentum_v1"
+            })
+        ));
+    }
+
+    #[test]
+    fn signal_descriptor_json_exports_binding_inventory() {
+        let json = built_in_signal_descriptors_json();
+
+        assert!(json.starts_with('['));
+        assert!(json.contains("\"id\":\"delta_momentum_v1\""));
+        assert!(json.contains("\"required_inputs_bits\":3"));
+        assert!(json.contains("\"parameters\""));
+        assert!(json.contains("\"output_semantics\":\"directional_bias\""));
     }
 
     #[test]

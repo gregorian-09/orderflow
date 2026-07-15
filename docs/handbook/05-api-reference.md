@@ -122,6 +122,12 @@ Public types:
 - `SignalExplanation`
 - `SignalReasonCode`
 - `SignalExplanationMode`
+- `SignalConfig`
+- `SignalConfigParameter`
+- `SignalConfigValue`
+- `SignalRegistration`
+- `SignalRegistry`
+- `SignalRegistryError`
 - `DeltaMomentumSignal`
 - `VolumeImbalanceSignal`
 - `CumulativeDeltaSignal`
@@ -149,6 +155,15 @@ Public methods:
 `ExplainableSignalModule` trait methods:
 
 - `explanation() -> SignalExplanation`
+
+Registry functions and methods:
+
+- `built_in_signal_registrations() -> &'static [SignalRegistration]`
+- `built_in_signal_descriptors_json() -> String`
+- `SignalRegistry::with_built_ins() -> Self`
+- `SignalRegistry::validate_config(&SignalConfig) -> SignalRegistryResult<()>`
+- `SignalRegistry::create_signal(&SignalConfig) -> SignalRegistryResult<Box<dyn SignalModule>>`
+- `SignalRegistry::descriptors_json() -> String`
 
 ### `of_persist`
 
