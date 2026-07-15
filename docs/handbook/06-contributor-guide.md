@@ -185,6 +185,17 @@ Binding checklist:
 4. Update Java `OrderflowNative` signatures + `OrderflowEngine`.
 5. Add/refresh examples and README snippets.
 
+Native ABI test rules:
+
+- serialize tests that touch shared native callback/runtime state through the
+  crate-level FFI test guard;
+- recover the guard from mutex poisoning so one failing test does not hide the
+  original failure behind a cascade of lock errors;
+- use bounded deadlines for worker-thread or channel-drain assertions instead
+  of yield-only spins;
+- keep timeout windows short enough for CI feedback but long enough to survive
+  scheduler contention under parallel workspace tests.
+
 ## Code Quality Expectations
 
 - Keep adapter normalization deterministic and explicit.

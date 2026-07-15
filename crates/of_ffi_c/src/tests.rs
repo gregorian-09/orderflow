@@ -3,11 +3,18 @@ mod tests {
     use super::*;
     use std::ffi::CString;
     use std::ptr;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use std::time::{Duration, Instant};
 
     fn test_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn test_guard() -> MutexGuard<'static, ()> {
+        test_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     #[derive(Default)]
@@ -125,7 +132,7 @@ mod tests {
 
     #[test]
     fn analytics_snapshot_matches_golden_payload() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-analytics-golden").expect("cstring");
         let cfg = of_engine_config_t {
@@ -199,7 +206,7 @@ mod tests {
 
     #[test]
     fn signal_snapshot_matches_golden_payload() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-signal-golden").expect("cstring");
         let cfg = of_engine_config_t {
@@ -273,7 +280,7 @@ mod tests {
 
     #[test]
     fn session_candle_snapshot_matches_golden_payload() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-session-candle-golden").expect("cstring");
         let cfg = of_engine_config_t {
@@ -352,7 +359,7 @@ mod tests {
 
     #[test]
     fn interval_candle_snapshot_matches_golden_payload() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-interval-candle-golden").expect("cstring");
         let cfg = of_engine_config_t {
@@ -418,7 +425,7 @@ mod tests {
 
     #[test]
     fn health_stream_matches_golden_payload() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-health-golden").expect("cstring");
         let cfg = of_engine_config_t {
@@ -477,7 +484,7 @@ mod tests {
 
     #[test]
     fn health_stream_emits_on_state_change_only() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-health-test").expect("cstring");
         let cfg = of_engine_config_t {
@@ -554,7 +561,7 @@ mod tests {
 
     #[test]
     fn metrics_json_includes_additive_observability_fields() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-metrics-test").expect("cstring");
         let cfg = of_engine_config_t {
@@ -604,7 +611,7 @@ mod tests {
 
     #[test]
     fn health_stream_stops_after_unsubscribe() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-health-unsub-test").expect("cstring");
         let cfg = of_engine_config_t {
@@ -670,7 +677,7 @@ mod tests {
 
     #[test]
     fn unsubscribe_symbol_deactivates_matching_callbacks() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-unsub-symbol-test").expect("cstring");
         let cfg = of_engine_config_t {
@@ -751,7 +758,7 @@ mod tests {
 
     #[test]
     fn ingest_trade_updates_analytics_and_emits_callbacks() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-ingest-trade-test").expect("cstring");
         let cfg = of_engine_config_t {
@@ -827,7 +834,7 @@ mod tests {
 
     #[test]
     fn book_snapshot_returns_materialized_levels() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-book-snapshot-test").expect("cstring");
         let cfg = of_engine_config_t {
@@ -893,7 +900,7 @@ mod tests {
 
     #[test]
     fn book_snapshot_reports_required_buffer_size() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-book-buffer-size-test").expect("cstring");
         let cfg = of_engine_config_t {
@@ -963,7 +970,7 @@ mod tests {
 
     #[test]
     fn derived_analytics_snapshot_returns_session_stats() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-derived-analytics-test").expect("cstring");
         let cfg = of_engine_config_t {
@@ -1053,7 +1060,7 @@ mod tests {
 
     #[test]
     fn ingest_book_rejects_invalid_side() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-ingest-book-invalid-side").expect("cstring");
         let cfg = of_engine_config_t {
@@ -1105,7 +1112,7 @@ mod tests {
 
     #[test]
     fn external_supervisor_sequence_gap_is_propagated_to_callbacks() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-external-seq-gap").expect("cstring");
         let cfg = of_engine_config_t {
@@ -1205,7 +1212,7 @@ mod tests {
 
     #[test]
     fn book_snapshot_stream_emits_materialized_snapshot_payload() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-book-snapshot-stream").expect("cstring");
         let cfg = of_engine_config_t {
@@ -1300,7 +1307,7 @@ mod tests {
     #[cfg(feature = "tickbar")]
     #[test]
     fn bar_series_returns_completed_bars_for_tickbar_interval() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-bar-series-test").expect("cstring");
         let cfg = of_engine_config_t {
@@ -1429,7 +1436,7 @@ mod tests {
     #[test]
     fn bar_series_returns_empty_array_when_tickbar_not_configured() {
         // Test that of_get_bar_series returns "[]" when no tickbar interval was set.
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-bar-series-empty-test").expect("cstring");
         let cfg = of_engine_config_t {
@@ -1508,7 +1515,7 @@ mod tests {
 
     #[test]
     fn derived_analytics_stream_emits_session_snapshot_payload() {
-        let _guard = test_lock().lock().expect("lock");
+        let _guard = test_guard();
 
         let instance_id = CString::new("ffi-derived-stream-test").expect("cstring");
         let cfg = of_engine_config_t {
@@ -1601,7 +1608,7 @@ mod tests {
 
     #[test]
     fn execution_abi_submits_simulated_order() {
-        let _guard = test_lock().lock().expect("test lock");
+        let _guard = test_guard();
         let route = CString::new("SIM").expect("cstring");
         let account = CString::new("ACC").expect("cstring");
         let venue = CString::new("SIM").expect("cstring");
@@ -1722,7 +1729,7 @@ mod tests {
 
     #[test]
     fn execution_abi_create_multi_routes_submits_multiple_symbols() {
-        let _guard = test_lock().lock().expect("test lock");
+        let _guard = test_guard();
         let route = CString::new("SIM").expect("cstring");
         let account = CString::new("ACC").expect("cstring");
         let venue = CString::new("SIM").expect("cstring");
@@ -1858,7 +1865,7 @@ mod tests {
 
     #[test]
     fn execution_concurrent_abi_submits_and_reports() {
-        let _guard = test_lock().lock().expect("test lock");
+        let _guard = test_guard();
         let route = CString::new("SIM").expect("cstring");
         let account = CString::new("ACC").expect("cstring");
         let venue = CString::new("SIM").expect("cstring");
@@ -1941,18 +1948,10 @@ mod tests {
             reason: 0,
             text: [0; 129],
         }; 4];
-        let mut len = events.len() as u32;
-        let mut rc = of_execution_concurrent_try_recv_report(
-            engine,
-            &mut report,
-            events.as_mut_ptr(),
-            &mut len,
-        );
-        for _ in 0..100 {
-            if rc == of_error_t::OF_OK as i32 {
-                break;
-            }
-            std::thread::yield_now();
+        let mut len;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut rc;
+        loop {
             len = events.len() as u32;
             rc = of_execution_concurrent_try_recv_report(
                 engine,
@@ -1960,6 +1959,10 @@ mod tests {
                 events.as_mut_ptr(),
                 &mut len,
             );
+            if rc == of_error_t::OF_OK as i32 || Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
         }
         assert_eq!(rc, of_error_t::OF_OK as i32);
         assert_eq!(report.sequence, 1);

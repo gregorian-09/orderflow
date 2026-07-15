@@ -13,6 +13,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `built_in_signal_descriptors()`, and `describe_signal()`. Existing
   `SignalModule` implementations and built-in signal behavior are unchanged.
 
+### Fixed
+- Hardened `of_ffi_c` native ABI tests so a failed test does not poison the
+  shared FFI test lock and cascade misleading `PoisonError` failures through
+  unrelated tests.
+
 ## [0.4.0] - 2026-06-04
 ### Added
 - Broad additive analytics expansion across Rust, C, Python, and Java:
