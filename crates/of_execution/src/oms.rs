@@ -1,7 +1,7 @@
 //! Additive OMS building blocks for execution integrations.
 
 use std::collections::{HashMap, VecDeque};
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -11,11 +11,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use of_execution_core::{
-    AccountId, AmendRequest, CancelRequest, ClientOrderId, ExecutionEvent, ExecutionSymbol,
-    ExecutionText, ExecutionType, FixedAscii, OrderPrice, OrderQty, OrderRequest, OrderSide,
-    OrderState, OrderStatus, OrderType, RiskCheck, RiskContext, RiskDecision, RiskLimits,
-    RiskRejectReason, RouteId, StrategyId, TimeInForce, WalIntegrityReport, WalRecordKind,
-    WalRecordView, WalReplayCursor, WalSequence, WalSyncPolicy,
+    execution_wal_checksum, AccountId, AmendRequest, CancelRequest, ClientOrderId, ExecutionEvent,
+    ExecutionSymbol, ExecutionText, ExecutionType, FixedAscii, OrderPrice, OrderQty, OrderRequest,
+    OrderSide, OrderState, OrderStatus, OrderType, RiskCheck, RiskContext, RiskDecision,
+    RiskLimits, RiskRejectReason, RouteId, StrategyId, TimeInForce, WalIntegrityReport,
+    WalRecordKind, WalRecordView, WalReplayCursor, WalSequence, WalSyncPolicy,
 };
 
 use crate::{
@@ -850,6 +850,15 @@ impl<'a> PayloadReader<'a> {
         Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
     }
 
+    fn read_u32(&mut self) -> ExecutionResult<u32> {
+        let bytes = self.take(4)?;
+        Ok(u32::from_le_bytes(
+            bytes
+                .try_into()
+                .expect("payload reader returned four bytes"),
+        ))
+    }
+
     fn read_u64(&mut self) -> ExecutionResult<u64> {
         let bytes = self.take(8)?;
         Ok(u64::from_le_bytes(
@@ -865,6 +874,15 @@ impl<'a> PayloadReader<'a> {
             bytes
                 .try_into()
                 .expect("payload reader returned eight bytes"),
+        ))
+    }
+
+    fn read_i128(&mut self) -> ExecutionResult<i128> {
+        let bytes = self.take(16)?;
+        Ok(i128::from_le_bytes(
+            bytes
+                .try_into()
+                .expect("payload reader returned sixteen bytes"),
         ))
     }
 
@@ -912,6 +930,576 @@ fn now_ns() -> u64 {
         .unwrap_or_default()
         .as_nanos();
     u64::try_from(nanos).unwrap_or(u64::MAX)
+}
+
+const CHECKPOINT_MAGIC: u32 = 0x4b48_434f;
+const CHECKPOINT_SCHEMA_VERSION: u16 = 1;
+const CHECKPOINT_EXT: &str = "ofchk";
+
+/// Snapshot of one position included in an execution checkpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CheckpointPosition {
+    /// Position key.
+    pub key: PositionKey,
+    /// Position value.
+    pub position: Position,
+}
+
+/// Versioned OMS checkpoint payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ExecutionCheckpoint {
+    /// Checkpoint schema version.
+    pub schema_version: u16,
+    /// Caller-assigned checkpoint identifier.
+    pub checkpoint_id: u64,
+    /// Creation timestamp in nanoseconds.
+    pub created_ns: u64,
+    /// Last fully applied WAL sequence covered by this checkpoint.
+    pub last_applied_sequence: WalSequence,
+    /// Route/account/symbol configuration hash selected by the host.
+    pub route_config_hash: u64,
+    /// Open order states captured in this checkpoint.
+    pub open_orders: Vec<OrderState>,
+    /// Position snapshots captured in this checkpoint.
+    pub positions: Vec<CheckpointPosition>,
+    /// Kill-switch state at checkpoint time.
+    pub kill_switch: bool,
+    /// Deterministic checksum over the checkpoint payload.
+    pub checksum: u64,
+}
+
+impl ExecutionCheckpoint {
+    /// Creates an empty checkpoint.
+    pub fn new(checkpoint_id: u64, last_applied_sequence: WalSequence, created_ns: u64) -> Self {
+        let mut checkpoint = Self {
+            schema_version: CHECKPOINT_SCHEMA_VERSION,
+            checkpoint_id,
+            created_ns,
+            last_applied_sequence,
+            route_config_hash: 0,
+            open_orders: Vec::new(),
+            positions: Vec::new(),
+            kill_switch: false,
+            checksum: 0,
+        };
+        checkpoint.refresh_checksum();
+        checkpoint
+    }
+
+    /// Sets route configuration hash metadata.
+    pub fn with_route_config_hash(mut self, route_config_hash: u64) -> Self {
+        self.route_config_hash = route_config_hash;
+        self.refresh_checksum();
+        self
+    }
+
+    /// Sets open order states.
+    pub fn with_open_orders(mut self, open_orders: Vec<OrderState>) -> Self {
+        self.open_orders = open_orders;
+        self.refresh_checksum();
+        self
+    }
+
+    /// Sets position snapshots.
+    pub fn with_positions(mut self, positions: Vec<CheckpointPosition>) -> Self {
+        self.positions = positions;
+        self.refresh_checksum();
+        self
+    }
+
+    /// Sets kill-switch state.
+    pub fn with_kill_switch(mut self, kill_switch: bool) -> Self {
+        self.kill_switch = kill_switch;
+        self.refresh_checksum();
+        self
+    }
+
+    /// Recomputes and stores the checkpoint checksum.
+    pub fn refresh_checksum(&mut self) {
+        self.checksum = checkpoint_checksum(self);
+    }
+
+    /// Returns true when the stored checksum matches the checkpoint payload.
+    pub fn validate_checksum(&self) -> bool {
+        self.checksum == checkpoint_checksum(self)
+    }
+}
+
+/// Checkpoint creation policy vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum CheckpointPolicy {
+    /// Caller explicitly decides when to save checkpoints.
+    #[default]
+    Manual,
+    /// Save after every configured number of WAL records.
+    EveryNWalRecords(u64),
+    /// Save after the configured elapsed nanoseconds budget.
+    EveryDurationNs(u64),
+    /// Save after risk-sensitive transitions.
+    AfterRiskBoundary,
+    /// Save during clean shutdown.
+    OnShutdown,
+}
+
+/// File-backed checkpoint store configuration.
+#[derive(Debug, Clone)]
+pub struct CheckpointConfig {
+    root: PathBuf,
+    sync_on_save: bool,
+    max_retained: usize,
+    policy: CheckpointPolicy,
+}
+
+impl CheckpointConfig {
+    /// Creates checkpoint config rooted at `root`.
+    pub fn new(root: impl AsRef<Path>) -> Self {
+        Self {
+            root: root.as_ref().to_path_buf(),
+            sync_on_save: true,
+            max_retained: 8,
+            policy: CheckpointPolicy::Manual,
+        }
+    }
+
+    /// Sets whether checkpoint files are synced before atomic rename.
+    pub fn with_sync_on_save(mut self, sync_on_save: bool) -> Self {
+        self.sync_on_save = sync_on_save;
+        self
+    }
+
+    /// Sets the maximum retained checkpoints used by checkpoint-store pruning.
+    pub fn with_max_retained(mut self, max_retained: usize) -> Self {
+        self.max_retained = max_retained;
+        self
+    }
+
+    /// Sets checkpoint creation policy metadata.
+    pub fn with_policy(mut self, policy: CheckpointPolicy) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    /// Returns checkpoint root directory.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Returns whether save operations sync checkpoint files.
+    pub const fn sync_on_save(&self) -> bool {
+        self.sync_on_save
+    }
+
+    /// Returns maximum retained checkpoints.
+    pub const fn max_retained(&self) -> usize {
+        self.max_retained
+    }
+
+    /// Returns configured checkpoint policy.
+    pub const fn policy(&self) -> CheckpointPolicy {
+        self.policy
+    }
+}
+
+/// Metadata for one checkpoint file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CheckpointManifest {
+    /// Checkpoint identifier.
+    pub checkpoint_id: u64,
+    /// Last WAL sequence covered by the checkpoint.
+    pub last_applied_sequence: WalSequence,
+    /// Checkpoint creation timestamp.
+    pub created_ns: u64,
+    /// Checkpoint file path.
+    pub path: PathBuf,
+    /// Encoded checkpoint bytes.
+    pub bytes: u64,
+    /// Checkpoint checksum.
+    pub checksum: u64,
+}
+
+impl CheckpointManifest {
+    fn from_checkpoint(path: PathBuf, bytes: u64, checkpoint: &ExecutionCheckpoint) -> Self {
+        Self {
+            checkpoint_id: checkpoint.checkpoint_id,
+            last_applied_sequence: checkpoint.last_applied_sequence,
+            created_ns: checkpoint.created_ns,
+            path,
+            bytes,
+            checksum: checkpoint.checksum,
+        }
+    }
+}
+
+/// Execution checkpoint store contract.
+pub trait ExecutionCheckpointStore: Send {
+    /// Saves a checkpoint and returns installed file metadata.
+    fn save_checkpoint(
+        &mut self,
+        checkpoint: &ExecutionCheckpoint,
+    ) -> ExecutionResult<CheckpointManifest>;
+
+    /// Loads the latest valid checkpoint, if any.
+    fn load_latest(&self) -> ExecutionResult<Option<ExecutionCheckpoint>>;
+
+    /// Lists valid checkpoints.
+    fn list_checkpoints(&self) -> ExecutionResult<Vec<CheckpointManifest>>;
+
+    /// Validates a checkpoint payload.
+    fn validate_checkpoint(&self, checkpoint: &ExecutionCheckpoint) -> ExecutionResult<bool>;
+
+    /// Prunes old checkpoints according to the store policy.
+    fn prune_old(&mut self) -> ExecutionResult<usize>;
+}
+
+/// Atomic file-backed execution checkpoint store.
+#[derive(Debug, Clone)]
+pub struct FileExecutionCheckpointStore {
+    config: CheckpointConfig,
+}
+
+impl FileExecutionCheckpointStore {
+    /// Opens or creates a file-backed checkpoint store.
+    ///
+    /// # Errors
+    ///
+    /// Returns an execution journal error when the checkpoint directory cannot
+    /// be created.
+    pub fn open(config: CheckpointConfig) -> ExecutionResult<Self> {
+        fs::create_dir_all(config.root())
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        Ok(Self { config })
+    }
+
+    /// Returns checkpoint store config.
+    pub const fn config(&self) -> &CheckpointConfig {
+        &self.config
+    }
+
+    /// Builds a checkpoint path for `checkpoint`.
+    pub fn checkpoint_path(&self, checkpoint: &ExecutionCheckpoint) -> PathBuf {
+        self.config.root().join(format!(
+            "checkpoint-{:020}-{:020}.{}",
+            checkpoint.checkpoint_id, checkpoint.last_applied_sequence.0, CHECKPOINT_EXT
+        ))
+    }
+
+    fn temp_path(&self, checkpoint: &ExecutionCheckpoint) -> PathBuf {
+        self.config.root().join(format!(
+            "checkpoint-{:020}-{:020}.{}.tmp",
+            checkpoint.checkpoint_id, checkpoint.last_applied_sequence.0, CHECKPOINT_EXT
+        ))
+    }
+}
+
+impl ExecutionCheckpointStore for FileExecutionCheckpointStore {
+    fn save_checkpoint(
+        &mut self,
+        checkpoint: &ExecutionCheckpoint,
+    ) -> ExecutionResult<CheckpointManifest> {
+        let mut checkpoint = checkpoint.clone();
+        checkpoint.refresh_checksum();
+        let bytes = encode_checkpoint(&checkpoint);
+        let final_path = self.checkpoint_path(&checkpoint);
+        let tmp_path = self.temp_path(&checkpoint);
+
+        {
+            let mut file =
+                File::create(&tmp_path).map_err(|err| ExecutionError::Journal(err.to_string()))?;
+            file.write_all(&bytes)
+                .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+            file.flush()
+                .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+            if self.config.sync_on_save() {
+                file.sync_data()
+                    .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+            }
+        }
+
+        fs::rename(&tmp_path, &final_path)
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        if self.config.sync_on_save() {
+            sync_directory(self.config.root())?;
+        }
+        Ok(CheckpointManifest::from_checkpoint(
+            final_path,
+            bytes.len() as u64,
+            &checkpoint,
+        ))
+    }
+
+    fn load_latest(&self) -> ExecutionResult<Option<ExecutionCheckpoint>> {
+        let mut manifests = self.list_checkpoints()?;
+        manifests.sort_by_key(|manifest| {
+            (
+                manifest.last_applied_sequence,
+                manifest.created_ns,
+                manifest.checkpoint_id,
+            )
+        });
+        manifests
+            .last()
+            .map(|manifest| load_checkpoint_file(&manifest.path))
+            .transpose()
+    }
+
+    fn list_checkpoints(&self) -> ExecutionResult<Vec<CheckpointManifest>> {
+        let mut manifests = Vec::new();
+        if !self.config.root().exists() {
+            return Ok(manifests);
+        }
+
+        for entry in fs::read_dir(self.config.root())
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?
+        {
+            let entry = entry.map_err(|err| ExecutionError::Journal(err.to_string()))?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some(CHECKPOINT_EXT) {
+                continue;
+            }
+            let metadata = entry
+                .metadata()
+                .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+            let checkpoint = load_checkpoint_file(&path)?;
+            manifests.push(CheckpointManifest::from_checkpoint(
+                path,
+                metadata.len(),
+                &checkpoint,
+            ));
+        }
+        manifests.sort_by_key(|manifest| {
+            (
+                manifest.last_applied_sequence,
+                manifest.created_ns,
+                manifest.checkpoint_id,
+            )
+        });
+        Ok(manifests)
+    }
+
+    fn validate_checkpoint(&self, checkpoint: &ExecutionCheckpoint) -> ExecutionResult<bool> {
+        Ok(
+            checkpoint.schema_version == CHECKPOINT_SCHEMA_VERSION
+                && checkpoint.validate_checksum(),
+        )
+    }
+
+    fn prune_old(&mut self) -> ExecutionResult<usize> {
+        let manifests = self.list_checkpoints()?;
+        let retain = self.config.max_retained();
+        if retain == 0 || manifests.len() <= retain {
+            return Ok(0);
+        }
+
+        let prune_count = manifests.len() - retain;
+        for manifest in manifests.iter().take(prune_count) {
+            fs::remove_file(&manifest.path)
+                .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        }
+        if self.config.sync_on_save() {
+            sync_directory(self.config.root())?;
+        }
+        Ok(prune_count)
+    }
+}
+
+fn encode_checkpoint(checkpoint: &ExecutionCheckpoint) -> Vec<u8> {
+    let mut out = Vec::with_capacity(128 + checkpoint.open_orders.len() * 320);
+    put_payload_u32(&mut out, CHECKPOINT_MAGIC);
+    put_payload_u16(&mut out, checkpoint.schema_version);
+    put_payload_u16(&mut out, 0);
+    put_payload_u64(&mut out, checkpoint.checkpoint_id);
+    put_payload_u64(&mut out, checkpoint.created_ns);
+    put_payload_u64(&mut out, checkpoint.last_applied_sequence.0);
+    put_payload_u64(&mut out, checkpoint.route_config_hash);
+    put_payload_u8(&mut out, u8::from(checkpoint.kill_switch));
+    put_payload_u32(&mut out, checkpoint.open_orders.len() as u32);
+    put_payload_u32(&mut out, checkpoint.positions.len() as u32);
+    for state in &checkpoint.open_orders {
+        encode_order_state(state, &mut out);
+    }
+    for position in &checkpoint.positions {
+        encode_checkpoint_position(position, &mut out);
+    }
+    put_payload_u64(&mut out, checkpoint.checksum);
+    out
+}
+
+fn decode_checkpoint(bytes: &[u8]) -> ExecutionResult<ExecutionCheckpoint> {
+    let mut reader = PayloadReader::new(bytes);
+    let magic = reader.read_u32()?;
+    if magic != CHECKPOINT_MAGIC {
+        return Err(ExecutionError::Journal(
+            "invalid checkpoint magic".to_string(),
+        ));
+    }
+    let schema_version = reader.read_u16()?;
+    if schema_version != CHECKPOINT_SCHEMA_VERSION {
+        return Err(ExecutionError::Journal(format!(
+            "unsupported checkpoint schema version {schema_version}"
+        )));
+    }
+    let _reserved = reader.read_u16()?;
+    let checkpoint_id = reader.read_u64()?;
+    let created_ns = reader.read_u64()?;
+    let last_applied_sequence = WalSequence(reader.read_u64()?);
+    let route_config_hash = reader.read_u64()?;
+    let kill_switch = reader.read_u8()? != 0;
+    let order_count = reader.read_u32()? as usize;
+    let position_count = reader.read_u32()? as usize;
+    let mut open_orders = Vec::with_capacity(order_count);
+    for _ in 0..order_count {
+        open_orders.push(decode_order_state(&mut reader)?);
+    }
+    let mut positions = Vec::with_capacity(position_count);
+    for _ in 0..position_count {
+        positions.push(decode_checkpoint_position(&mut reader)?);
+    }
+    let checksum = reader.read_u64()?;
+    reader.finish()?;
+
+    let checkpoint = ExecutionCheckpoint {
+        schema_version,
+        checkpoint_id,
+        created_ns,
+        last_applied_sequence,
+        route_config_hash,
+        open_orders,
+        positions,
+        kill_switch,
+        checksum,
+    };
+    if checkpoint.validate_checksum() {
+        Ok(checkpoint)
+    } else {
+        Err(ExecutionError::Journal(
+            "checkpoint checksum mismatch".to_string(),
+        ))
+    }
+}
+
+fn load_checkpoint_file(path: &Path) -> ExecutionResult<ExecutionCheckpoint> {
+    let bytes = fs::read(path).map_err(|err| ExecutionError::Journal(err.to_string()))?;
+    decode_checkpoint(&bytes)
+}
+
+fn checkpoint_checksum(checkpoint: &ExecutionCheckpoint) -> u64 {
+    let mut cloned = checkpoint.clone();
+    cloned.checksum = 0;
+    let bytes = encode_checkpoint(&cloned);
+    execution_wal_checksum(&bytes)
+}
+
+fn encode_order_state(state: &OrderState, out: &mut Vec<u8>) {
+    put_fixed(out, &state.client_order_id);
+    put_fixed(out, &state.last_accepted_client_order_id);
+    put_fixed(out, &state.venue_order_id);
+    put_fixed(out, &state.account_id);
+    put_fixed(out, &state.route_id);
+    put_fixed(out, &state.symbol.venue);
+    put_fixed(out, &state.symbol.instrument);
+    put_payload_u8(out, state.side as u8);
+    put_payload_u8(out, state.status as u8);
+    put_payload_i64(out, state.order_qty.0);
+    put_payload_i64(out, state.cumulative_qty.0);
+    put_payload_i64(out, state.leaves_qty.0);
+    put_payload_i64(out, state.average_price.0);
+    put_payload_u64(out, state.updated_ns);
+}
+
+fn decode_order_state(reader: &mut PayloadReader<'_>) -> ExecutionResult<OrderState> {
+    let client_order_id = reader.read_fixed::<40>()?;
+    let last_accepted_client_order_id = reader.read_fixed::<40>()?;
+    let venue_order_id = reader.read_fixed::<48>()?;
+    let account_id = reader.read_fixed::<32>()?;
+    let route_id = reader.read_fixed::<32>()?;
+    let venue = reader.read_fixed::<16>()?;
+    let instrument = reader.read_fixed::<32>()?;
+    let side = order_side_from_u8(reader.read_u8()?)?;
+    let status = order_status_from_u8(reader.read_u8()?)?;
+    Ok(OrderState {
+        client_order_id,
+        last_accepted_client_order_id,
+        venue_order_id,
+        account_id,
+        route_id,
+        symbol: ExecutionSymbol { venue, instrument },
+        side,
+        status,
+        order_qty: OrderQty(reader.read_i64()?),
+        cumulative_qty: OrderQty(reader.read_i64()?),
+        leaves_qty: OrderQty(reader.read_i64()?),
+        average_price: OrderPrice(reader.read_i64()?),
+        updated_ns: reader.read_u64()?,
+    })
+}
+
+fn encode_checkpoint_position(position: &CheckpointPosition, out: &mut Vec<u8>) {
+    put_fixed(out, &position.key.account_id);
+    put_fixed(out, &position.key.strategy_id);
+    put_fixed(out, &position.key.symbol.venue);
+    put_fixed(out, &position.key.symbol.instrument);
+    put_payload_i64(out, position.position.net_qty);
+    put_payload_i64(out, position.position.buy_qty);
+    put_payload_i64(out, position.position.sell_qty);
+    put_payload_i128(out, position.position.gross_notional);
+    put_payload_i64(out, position.position.average_price);
+}
+
+fn decode_checkpoint_position(
+    reader: &mut PayloadReader<'_>,
+) -> ExecutionResult<CheckpointPosition> {
+    let account_id = reader.read_fixed::<32>()?;
+    let strategy_id = reader.read_fixed::<32>()?;
+    let venue = reader.read_fixed::<16>()?;
+    let instrument = reader.read_fixed::<32>()?;
+    Ok(CheckpointPosition {
+        key: PositionKey {
+            account_id,
+            strategy_id,
+            symbol: ExecutionSymbol { venue, instrument },
+        },
+        position: Position {
+            net_qty: reader.read_i64()?,
+            buy_qty: reader.read_i64()?,
+            sell_qty: reader.read_i64()?,
+            gross_notional: reader.read_i128()?,
+            average_price: reader.read_i64()?,
+        },
+    })
+}
+
+fn order_side_from_u8(value: u8) -> ExecutionResult<OrderSide> {
+    match value {
+        1 => Ok(OrderSide::Buy),
+        2 => Ok(OrderSide::Sell),
+        _ => Err(ExecutionError::Journal("invalid order side".to_string())),
+    }
+}
+
+fn put_payload_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put_payload_i128(out: &mut Vec<u8>, value: i128) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn sync_directory(path: &Path) -> ExecutionResult<()> {
+    #[cfg(unix)]
+    {
+        File::open(path)
+            .and_then(|file| file.sync_all())
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
 }
 
 /// Open-order reconciliation action.
@@ -1922,6 +2510,81 @@ mod tests {
 
         assert!(WalExecutionJournal::open_path(&path, WalSyncPolicy::Never).is_err());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn checkpoint_store_saves_loads_and_prunes() {
+        let root =
+            std::env::temp_dir().join(format!("orderflow-checkpoints-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut store = FileExecutionCheckpointStore::open(
+            CheckpointConfig::new(&root)
+                .with_sync_on_save(false)
+                .with_max_retained(1),
+        )
+        .unwrap();
+        let req = order("C3");
+        let mut state = OrderState::pending_new(&req);
+        state.venue_order_id = id("V3");
+        let position = CheckpointPosition {
+            key: PositionKey {
+                account_id: req.account_id,
+                strategy_id: req.strategy_id,
+                symbol: req.symbol,
+            },
+            position: Position {
+                net_qty: 10,
+                buy_qty: 10,
+                sell_qty: 0,
+                gross_notional: 50_000,
+                average_price: 5_000,
+            },
+        };
+
+        let first = ExecutionCheckpoint::new(1, WalSequence(10), 100)
+            .with_open_orders(vec![state])
+            .with_positions(vec![position])
+            .with_route_config_hash(7)
+            .with_kill_switch(true);
+        let second = ExecutionCheckpoint::new(2, WalSequence(20), 200);
+
+        let manifest = store.save_checkpoint(&first).unwrap();
+        assert_eq!(manifest.last_applied_sequence, WalSequence(10));
+        store.save_checkpoint(&second).unwrap();
+
+        let latest = store.load_latest().unwrap().unwrap();
+        assert_eq!(latest.checkpoint_id, 2);
+        assert_eq!(latest.last_applied_sequence, WalSequence(20));
+        assert!(store.validate_checkpoint(&latest).unwrap());
+
+        let checkpoints = store.list_checkpoints().unwrap();
+        assert_eq!(checkpoints.len(), 2);
+        assert_eq!(store.prune_old().unwrap(), 1);
+        assert_eq!(store.list_checkpoints().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn checkpoint_store_rejects_corrupt_checkpoint() {
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-checkpoints-corrupt-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut store = FileExecutionCheckpointStore::open(
+            CheckpointConfig::new(&root).with_sync_on_save(false),
+        )
+        .unwrap();
+        let checkpoint = ExecutionCheckpoint::new(1, WalSequence(1), 1);
+        let manifest = store.save_checkpoint(&checkpoint).unwrap();
+
+        let mut bytes = std::fs::read(&manifest.path).unwrap();
+        let last = bytes.last_mut().unwrap();
+        *last ^= 0x01;
+        std::fs::write(&manifest.path, bytes).unwrap();
+
+        assert!(store.load_latest().is_err());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

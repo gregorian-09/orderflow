@@ -59,6 +59,30 @@ bytes before accepting new records. It fails closed on corrupt frames or
 non-contiguous sequences. `replay_from(WalSequence, out)` supports bounded
 startup replay once checkpoints are added later.
 
+### Checkpoints
+
+Checkpoint types:
+
+| Type | Use |
+| --- | --- |
+| `ExecutionCheckpoint` | Versioned OMS snapshot payload |
+| `CheckpointPosition` | Position-key plus position snapshot |
+| `CheckpointConfig` | File store root, sync, retention, and policy metadata |
+| `CheckpointPolicy` | Manual/time/count/risk/shutdown policy vocabulary |
+| `CheckpointManifest` | Installed checkpoint file metadata |
+| `ExecutionCheckpointStore` | Store trait for save/load/list/validate/prune |
+| `FileExecutionCheckpointStore` | Atomic file-backed checkpoint store |
+
+`ExecutionCheckpoint` currently captures the last applied WAL sequence, route
+configuration hash, open order states, position snapshots, kill-switch state,
+and checksum. It is intentionally separate from `ExecutionEngine`; hosts decide
+when to collect a consistent snapshot and save it.
+
+`FileExecutionCheckpointStore` writes to a temporary file, flushes it,
+optionally syncs it, atomically renames it to the final checkpoint path, and
+optionally syncs the directory on Unix platforms. Loading rejects unsupported
+schema versions and checksum mismatches.
+
 ## Route Configuration
 
 `RouteConfig` binds:

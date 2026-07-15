@@ -63,6 +63,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `WalReplayResult`, binary WAL frame persistence, replay-from-sequence,
   integrity reporting, configurable sync policy, and fail-closed validation of
   existing WAL bytes while preserving the existing `ExecutionJournal` trait.
+- Additive `of_execution` checkpoint store APIs with `ExecutionCheckpoint`,
+  `CheckpointPosition`, `CheckpointConfig`, `CheckpointPolicy`,
+  `CheckpointManifest`, `ExecutionCheckpointStore`, and
+  `FileExecutionCheckpointStore` for checksum-validated, atomic file-backed OMS
+  snapshots keyed by last applied WAL sequence.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

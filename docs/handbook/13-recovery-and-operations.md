@@ -88,6 +88,27 @@ WAL sync policy is explicit:
 Production deployments should decide based on venue risk, account size, and
 host filesystem behavior.
 
+## Checkpoint Policy
+
+`FileExecutionCheckpointStore::open(CheckpointConfig::new(root))` provides the
+first durable checkpoint store. It is additive to the journal APIs and does not
+change engine runtime behavior.
+
+Checkpoint save flow:
+
+1. encode `ExecutionCheckpoint` with schema version and checksum,
+2. write bytes to a `.tmp` file in the checkpoint directory,
+3. flush the file,
+4. call `sync_data()` when `CheckpointConfig::sync_on_save()` is enabled,
+5. atomically rename the temp file to `.ofchk`,
+6. sync the parent directory on Unix when sync-on-save is enabled.
+
+The checkpoint records the last fully applied WAL sequence. Recovery tooling can
+load the latest valid checkpoint and replay WAL records after that sequence.
+Current checkpoint contents cover open orders, positions, route config hash,
+kill-switch state, and checksum. Venue reconciliation must still run before
+strategy submissions resume.
+
 ## Metrics To Export
 
 At minimum export:

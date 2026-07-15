@@ -468,6 +468,13 @@ Public journal types:
 - `WalJournalConfig`
 - `WalReplayResult`
 - `WalExecutionJournal`
+- `CheckpointPosition`
+- `ExecutionCheckpoint`
+- `CheckpointPolicy`
+- `CheckpointConfig`
+- `CheckpointManifest`
+- `ExecutionCheckpointStore` trait
+- `FileExecutionCheckpointStore`
 
 Public concurrent execution types:
 

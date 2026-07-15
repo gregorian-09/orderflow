@@ -72,6 +72,13 @@ Journaling:
 - [`WalJournalConfig`]
 - [`WalReplayResult`]
 - [`WalExecutionJournal`]
+- [`CheckpointPosition`]
+- [`ExecutionCheckpoint`]
+- [`CheckpointPolicy`]
+- [`CheckpointConfig`]
+- [`CheckpointManifest`]
+- [`ExecutionCheckpointStore`]
+- [`FileExecutionCheckpointStore`]
 
 Engine and simulation:
 
@@ -409,6 +416,50 @@ Supported sync policies come from `of_execution_core::WalSyncPolicy`:
 This first WAL journal is a single append-only file. Segment rotation,
 checkpoint markers, and recovery-plan orchestration are separate additive
 features so the compatibility boundary stays narrow.
+
+### Checkpoint store
+
+[`FileExecutionCheckpointStore`] stores versioned OMS checkpoints outside the
+hot order path. Checkpoints are written to a temporary file, flushed, optionally
+synced, and atomically renamed into place. Each checkpoint carries a checksum
+over its payload, and corrupt checkpoints are rejected on load.
+
+The first checkpoint format captures:
+
+- last fully applied WAL sequence;
+- route configuration hash selected by the host;
+- open order states;
+- position snapshots;
+- kill-switch state.
+
+```rust
+use of_execution::{
+    CheckpointConfig, ExecutionCheckpoint, ExecutionCheckpointStore,
+    FileExecutionCheckpointStore,
+};
+use of_execution_core::WalSequence;
+
+let root = std::env::temp_dir().join("orderflow-checkpoints");
+let mut store = FileExecutionCheckpointStore::open(
+    CheckpointConfig::new(&root).with_sync_on_save(false),
+)?;
+
+let checkpoint = ExecutionCheckpoint::new(1, WalSequence(42), 1_000)
+    .with_route_config_hash(7);
+
+let manifest = store.save_checkpoint(&checkpoint)?;
+assert_eq!(manifest.last_applied_sequence, WalSequence(42));
+
+let latest = store.load_latest()?.expect("checkpoint");
+assert_eq!(latest.checkpoint_id, 1);
+assert!(store.validate_checkpoint(&latest)?);
+# let _ = std::fs::remove_dir_all(root);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`CheckpointPolicy` is metadata for hosts and future checkpoint schedulers. This
+store does not start background writers or block the OMS worker automatically;
+callers decide when to construct and save snapshots.
 
 ## Concurrent Worker
 
