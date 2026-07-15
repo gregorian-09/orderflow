@@ -19,6 +19,8 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
   [`SignalReasonCode`]
 - Calibration/outcomes: [`SignalOutcomeTracker`], [`SignalCalibrationReport`],
   and [`SignalConfidenceCalibrator`]
+- Ensemble framework: [`SignalEnsemblePolicy`], [`SignalEnsembleVote`], and
+  [`evaluate_signal_ensemble`]
 - Legacy adapter: [`LegacySignalAdapter`]
 - Built-in modules:
   - [`DeltaMomentumSignal`]
@@ -104,6 +106,13 @@ New additive APIs:
 - [`SignalConfidenceCalibrator`] and [`SignalCalibrationCurve`] let hosts map
   raw heuristic confidence into calibrated basis-point confidence before
   reporting or gating.
+- [`SignalEnsemblePolicy`] evaluates reusable weighted, quorum, majority, and
+  veto-aware ensemble decisions over child snapshots without changing
+  [`CompositeSignal`].
+- [`SignalEnsembleMetrics`] exposes vote counts, weighted scores, veto counts,
+  and aggregate quality flags for dashboards, replay review, and monitoring.
+- [`SignalEnsembleExplanation`] aggregates child explanations into one
+  top-level ensemble explanation for audit and UI paths.
 
 This is intentionally metadata-first. Built-in signal behavior is unchanged:
 existing users still call `on_analytics`, `quality_gate`, and `snapshot` exactly
@@ -175,6 +184,15 @@ Public types:
 - [`SignalCalibrationBinDrift`]
 - [`SignalCalibrationDriftReport`]
 - [`SignalOutcomeTracker`]
+- [`SignalEnsembleDecisionRule`]
+- [`SignalEnsembleConflictPolicy`]
+- [`SignalEnsembleVetoPolicy`]
+- [`SignalEnsemblePolicy`]
+- [`SignalEnsembleVote`]
+- [`SignalEnsembleConflict`]
+- [`SignalEnsembleMetrics`]
+- [`SignalEnsembleDecision`]
+- [`SignalEnsembleExplanation`]
 - [`DeltaMomentumSignal`]
 - [`VolumeImbalanceSignal`]
 - [`CumulativeDeltaSignal`]
@@ -198,6 +216,8 @@ Public descriptor constants and functions:
 - [`describe_signal`]
 - [`validate_signal_replay`]
 - [`validate_signal_replay_events`]
+- [`evaluate_signal_ensemble`]
+- [`evaluate_signal_ensemble_explanations`]
 
 Public constructors:
 
@@ -712,6 +732,138 @@ Use calibration reports for research, deployment review, model governance, and
 drift monitoring. Do not treat them as an automatic trading permission system:
 the strategy host should still apply data-quality, risk, OMS, and venue-health
 gates before order submission.
+
+## Ensemble Framework
+
+[`CompositeSignal`] remains the simple built-in majority-vote module. The
+ensemble framework is a separate additive policy evaluator for strategy hosts
+that need more control over how child signal outputs become one decision.
+
+Supported policies:
+
+- [`SignalEnsembleDecisionRule::Majority`] selects the side with more
+  directional child votes.
+- [`SignalEnsembleDecisionRule::Quorum`] requires a minimum number of votes on
+  a side.
+- [`SignalEnsembleDecisionRule::Weighted`] uses confidence multiplied by child
+  weight, which lets a risk model or slower context model carry more influence.
+- [`SignalEnsembleVetoPolicy`] decides whether a blocked/veto child is ignored,
+  forces neutral, or forces blocked.
+- [`SignalEnsembleConflictPolicy`] handles long/short conflicts with neutral,
+  highest-confidence, or highest-weighted-score behavior.
+
+The hot-path input is [`SignalEnsembleVote`], a small copyable value derived
+from a [`SignalSnapshot`](of_core::SignalSnapshot). Explanation aggregation is
+separate because it owns child [`SignalExplanation`] values and is intended for
+audit/replay/UI paths.
+
+Majority example:
+
+```rust
+use of_core::SignalState;
+use of_signals::{
+    evaluate_signal_ensemble, SignalEnsemblePolicy, SignalEnsembleVote,
+};
+
+let votes = [
+    SignalEnsembleVote::new("delta_momentum_v1", SignalState::LongBias, 7_000),
+    SignalEnsembleVote::new("volume_imbalance_v1", SignalState::ShortBias, 8_000),
+    SignalEnsembleVote::new("cumulative_delta_v1", SignalState::LongBias, 6_000),
+];
+
+let decision = evaluate_signal_ensemble(
+    "ensemble_v1",
+    &votes,
+    SignalEnsemblePolicy::majority(),
+);
+
+assert_eq!(decision.snapshot.state, SignalState::LongBias);
+assert_eq!(decision.metrics.long_votes, 2);
+assert_eq!(decision.metrics.short_votes, 1);
+```
+
+Weighted and veto-aware example:
+
+```rust
+use of_core::{DataQualityFlags, SignalState};
+use of_signals::{
+    evaluate_signal_ensemble, SignalEnsemblePolicy, SignalEnsembleVote,
+    SignalEnsembleVetoPolicy,
+};
+
+let votes = [
+    SignalEnsembleVote::new("fast_signal", SignalState::LongBias, 6_000)
+        .with_weight_bps(2_000),
+    SignalEnsembleVote::new("slow_signal", SignalState::ShortBias, 9_000)
+        .with_weight_bps(10_000),
+    SignalEnsembleVote::new("risk_veto", SignalState::Blocked, 0)
+        .with_quality_flags(DataQualityFlags::STALE_FEED.bits()),
+];
+
+let blocked = evaluate_signal_ensemble(
+    "ensemble_v1",
+    &votes,
+    SignalEnsemblePolicy::weighted(8_000),
+);
+assert_eq!(blocked.snapshot.state, SignalState::Blocked);
+
+let ignored_veto = evaluate_signal_ensemble(
+    "ensemble_v1",
+    &votes,
+    SignalEnsemblePolicy::weighted(8_000)
+        .with_veto_policy(SignalEnsembleVetoPolicy::Ignore),
+);
+assert_eq!(ignored_veto.snapshot.state, SignalState::ShortBias);
+```
+
+Explanation aggregation example:
+
+```rust
+use of_core::SignalState;
+use of_signals::{
+    evaluate_signal_ensemble_explanations, SignalEnsemblePolicy,
+    SignalExplanation, SignalReasonCode,
+};
+
+let children = vec![
+    SignalExplanation::new(
+        "delta_momentum_v1",
+        SignalState::LongBias,
+        8_000,
+        0,
+        SignalReasonCode::DeltaMomentumPositive,
+        "delta_above_threshold",
+    ),
+    SignalExplanation::new(
+        "volume_imbalance_v1",
+        SignalState::LongBias,
+        7_000,
+        0,
+        SignalReasonCode::BuyVolumeImbalance,
+        "buy_volume_imbalance",
+    ),
+];
+
+let ensemble = evaluate_signal_ensemble_explanations(
+    "ensemble_v1",
+    children,
+    &[10_000, 5_000],
+    SignalEnsemblePolicy::majority(),
+);
+let explanation = ensemble.explanation();
+
+assert_eq!(ensemble.decision.snapshot.state, SignalState::LongBias);
+assert_eq!(explanation.reason_code, SignalReasonCode::EnsembleLongSelected);
+```
+
+Recommended use:
+
+- use `CompositeSignal` when a simple built-in majority signal is enough;
+- use `evaluate_signal_ensemble` when host code already owns child snapshots and
+  needs explicit policy control;
+- keep veto semantics conservative for live trading paths;
+- log [`SignalEnsembleMetrics`] when reviewing why an ensemble changed state;
+- use explanation aggregation outside the low-latency path.
 
 Custom descriptor example:
 

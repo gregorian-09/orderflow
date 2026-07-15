@@ -40,6 +40,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `SignalOutcomeTracker`, `SignalCalibrationReport`, per-regime summaries, and
   drift reports so replay/live outcomes can be checked for confidence
   calibration without changing existing signal modules.
+- Additive `of_signals` ensemble framework with `SignalEnsemblePolicy`,
+  `SignalEnsembleVote`, reusable majority/quorum/weighted rules, veto handling,
+  conflict resolution, metrics, and child-explanation aggregation. Existing
+  `CompositeSignal` behavior is unchanged.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

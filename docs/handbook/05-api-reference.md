@@ -147,6 +147,15 @@ Public types:
 - `SignalCalibrationBinDrift`
 - `SignalCalibrationDriftReport`
 - `SignalOutcomeTracker`
+- `SignalEnsembleDecisionRule`
+- `SignalEnsembleConflictPolicy`
+- `SignalEnsembleVetoPolicy`
+- `SignalEnsemblePolicy`
+- `SignalEnsembleVote`
+- `SignalEnsembleConflict`
+- `SignalEnsembleMetrics`
+- `SignalEnsembleDecision`
+- `SignalEnsembleExplanation`
 - `DeltaMomentumSignal`
 - `VolumeImbalanceSignal`
 - `CumulativeDeltaSignal`
@@ -208,6 +217,23 @@ Calibration functions and methods:
 - `SignalOutcomeTracker::extend_validation_report(&SignalValidationReport)`
 - `SignalOutcomeTracker::calibration_report() -> SignalCalibrationReport`
 - `SignalOutcomeTracker::drift_report(&SignalCalibrationReport) -> SignalCalibrationDriftReport`
+
+Ensemble functions and methods:
+
+- `SignalEnsemblePolicy::majority() -> SignalEnsemblePolicy`
+- `SignalEnsemblePolicy::quorum(min_votes) -> SignalEnsemblePolicy`
+- `SignalEnsemblePolicy::weighted(min_score_bps) -> SignalEnsemblePolicy`
+- `SignalEnsemblePolicy::with_conflict_policy(policy) -> SignalEnsemblePolicy`
+- `SignalEnsemblePolicy::with_veto_policy(policy) -> SignalEnsemblePolicy`
+- `SignalEnsemblePolicy::with_min_confidence_bps(min_confidence_bps) -> SignalEnsemblePolicy`
+- `SignalEnsembleVote::new(module_id, state, confidence_bps) -> SignalEnsembleVote`
+- `SignalEnsembleVote::from_snapshot(&SignalSnapshot) -> SignalEnsembleVote`
+- `SignalEnsembleVote::from_explanation(&SignalExplanation) -> SignalEnsembleVote`
+- `SignalEnsembleVote::with_weight_bps(weight_bps) -> SignalEnsembleVote`
+- `SignalEnsembleVote::with_veto(veto) -> SignalEnsembleVote`
+- `evaluate_signal_ensemble(module_id, votes, policy) -> SignalEnsembleDecision`
+- `evaluate_signal_ensemble_explanations(module_id, child_explanations, weights_bps, policy) -> SignalEnsembleExplanation`
+- `SignalEnsembleExplanation::explanation() -> SignalExplanation`
 
 ### `of_persist`
 
