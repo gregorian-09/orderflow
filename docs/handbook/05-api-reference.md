@@ -118,6 +118,10 @@ Public types:
 
 - `SignalGateDecision` (`Pass`, `Block`)
 - `SignalModule` trait
+- `ExplainableSignalModule` trait
+- `SignalExplanation`
+- `SignalReasonCode`
+- `SignalExplanationMode`
 - `DeltaMomentumSignal`
 - `VolumeImbalanceSignal`
 - `CumulativeDeltaSignal`
@@ -141,6 +145,10 @@ Public methods:
 - `on_analytics(&AnalyticsSnapshot)`
 - `snapshot() -> SignalSnapshot`
 - `quality_gate(DataQualityFlags) -> SignalGateDecision`
+
+`ExplainableSignalModule` trait methods:
+
+- `explanation() -> SignalExplanation`
 
 ### `of_persist`
 

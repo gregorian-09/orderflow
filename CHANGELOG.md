@@ -20,6 +20,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `DebouncePolicy`, `CooldownPolicy`, `SignalStabilizer`, and
   `StabilizedSignal` so hosts can opt into deterministic anti-flapping behavior
   without changing built-in signal outputs.
+- Additive `of_signals` explainability APIs with `SignalReasonCode`,
+  `SignalExplanation`, `SignalInputValue`, `SignalThreshold`,
+  `SignalConfidenceComponent`, `SignalExplanationMode`, and
+  `ExplainableSignalModule`. Built-in signals now expose structured diagnostic
+  explanations while existing `SignalModule` and `SignalSnapshot` contracts are
+  unchanged.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

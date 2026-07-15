@@ -26,6 +26,13 @@ and easy to test.
 | `StabilizedSignal` | struct | Requested and emitted signal pair |
 | `SignalTransitionKind` | enum | Classified transition type |
 | `SignalSuppressionReason` | enum | Reason a request was suppressed |
+| `SignalReasonCode` | enum | Stable machine-readable signal rationale |
+| `SignalInputValue` | struct | Observed input included in an explanation |
+| `SignalThreshold` | struct | Configured threshold included in an explanation |
+| `SignalConfidenceComponent` | struct | Confidence contributor included in an explanation |
+| `SignalExplanation` | struct | Structured diagnostic payload for a snapshot |
+| `SignalExplanationMode` | enum | Always-on or transition-only explanation emission |
+| `ExplainableSignalModule` | trait | Optional extension trait for structured explanations |
 | `SignalDescriptor` | struct | Static metadata for signal discovery |
 | `SignalParameterDescriptor` | struct | Static metadata for one parameter |
 | `SignalOutputSemantics` | enum | How consumers should interpret output |
@@ -62,6 +69,73 @@ and easy to test.
 - `snapshot()` should be cheap and side-effect free.
 - `quality_gate(...)` should be conservative for stale, gap, or degraded feed
   conditions when the model should not trade through uncertainty.
+
+## Explainability
+
+The explainability API is additive. It does not change `SignalModule`,
+`SignalSnapshot`, built-in constructors, or existing runtime/binding outputs.
+
+### `ExplainableSignalModule`
+
+`ExplainableSignalModule` is an optional extension trait for modules that can
+return structured diagnostics for their current snapshot.
+
+| Method | Returns | Meaning |
+| --- | --- | --- |
+| `explanation()` | `SignalExplanation` | Returns rationale, inputs, thresholds, and confidence contributors |
+
+Built-in modules implement this trait. Custom modules can implement it beside
+`SignalModule` when audit/replay consumers need more than a reason string.
+
+### `SignalExplanation`
+
+| Field | Meaning |
+| --- | --- |
+| `module_id` | Stable signal module id |
+| `state` | Explained signal state |
+| `confidence_bps` | Confidence copied from the snapshot |
+| `quality_flags` | Quality flags copied from the snapshot |
+| `reason_code` | Stable `SignalReasonCode` |
+| `reason` | Existing human-readable reason text |
+| `inputs` | Observed `SignalInputValue` entries |
+| `thresholds` | Configured `SignalThreshold` entries |
+| `confidence_components` | Optional confidence contributors |
+
+`SignalReasonCode::as_str()` returns stable snake-case values for logs,
+dashboards, and binding adapters.
+
+Example:
+
+```rust
+use of_core::{AnalyticsSnapshot, SignalState};
+use of_signals::{
+    DeltaMomentumSignal, ExplainableSignalModule, SignalModule, SignalReasonCode,
+};
+
+let mut signal = DeltaMomentumSignal::new(100);
+signal.on_analytics(&AnalyticsSnapshot {
+    delta: 125,
+    ..Default::default()
+});
+
+let explanation = signal.explanation();
+assert_eq!(explanation.state, SignalState::LongBias);
+assert_eq!(
+    explanation.reason_code,
+    SignalReasonCode::DeltaMomentumPositive
+);
+```
+
+### `SignalExplanationMode`
+
+| Variant | Meaning |
+| --- | --- |
+| `Always` | Emit an explanation for every evaluation |
+| `TransitionsOnly` | Emit only when state changes from the previous snapshot |
+
+Use transition-only mode when audit volume matters more than every intermediate
+evaluation. It is a host-side policy helper; it does not suppress or mutate the
+actual signal snapshot.
 
 ## Stabilization
 

@@ -11,6 +11,8 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
 - Descriptor inventory: [`built_in_signal_descriptors`] and [`describe_signal`]
 - Lifecycle helper: [`SignalLifecycle`]
 - Stabilizer: [`SignalStabilizer`]
+- Explainability: [`ExplainableSignalModule`], [`SignalExplanation`], and
+  [`SignalReasonCode`]
 - Legacy adapter: [`LegacySignalAdapter`]
 - Built-in modules:
   - [`DeltaMomentumSignal`]
@@ -77,6 +79,13 @@ New additive APIs:
   contextual hosts without being rewritten.
 - [`SignalStabilizer`] applies opt-in hysteresis, debounce, and cooldown
   policies to reduce signal flapping without changing built-in signal behavior.
+- [`ExplainableSignalModule`] exposes opt-in structured explanations for
+  built-in signals without changing [`SignalModule`] or
+  [`SignalSnapshot`](of_core::SignalSnapshot).
+- [`SignalReasonCode`] adds stable machine-readable rationale codes beside the
+  existing human-readable snapshot reason strings.
+- [`SignalExplanationMode`] lets hosts emit explanations for every evaluation
+  or only when signal state transitions occur.
 
 This is intentionally metadata-first. Built-in signal behavior is unchanged:
 existing users still call `on_analytics`, `quality_gate`, and `snapshot` exactly
@@ -110,6 +119,13 @@ Public types:
 - [`SignalSuppressionReason`]
 - [`StabilizedSignal`]
 - [`SignalStabilizer`]
+- [`SignalReasonCode`]
+- [`SignalInputValue`]
+- [`SignalThreshold`]
+- [`SignalConfidenceComponent`]
+- [`SignalExplanation`]
+- [`SignalExplanationMode`]
+- [`ExplainableSignalModule`]
 - [`SignalParameterKind`]
 - [`SignalParameterValue`]
 - [`SignalParameterDescriptor`]
@@ -166,6 +182,75 @@ Recommended implementation rules:
 - include human-readable `reason` text in the snapshot when practical
 - use `confidence` consistently so downstream hosts can compare modules
 - block aggressively on stale, gap, or degraded feed conditions when a strategy should not trade through uncertainty
+
+## Signal Explainability
+
+[`SignalExplanation`] is an optional diagnostic payload for audit logs,
+dashboards, replay review, and strategy debugging. It preserves the existing
+low-latency path: consumers that only need state still call `snapshot()`, while
+hosts that need structured rationale call [`ExplainableSignalModule::explanation`]
+on modules that implement the extension trait.
+
+An explanation includes:
+
+- `module_id`, `state`, `confidence_bps`, and `quality_flags` copied from the
+  explained snapshot;
+- a stable [`SignalReasonCode`] such as `DeltaMomentumPositive` or
+  `CompositeNoMajority`;
+- the existing human-readable `reason` string;
+- observed [`SignalInputValue`] entries;
+- configured [`SignalThreshold`] entries;
+- optional [`SignalConfidenceComponent`] entries.
+
+The built-in modules implement [`ExplainableSignalModule`]. Custom signal
+authors can implement it beside [`SignalModule`] when they want structured
+diagnostics without changing their runtime-facing trait contract.
+
+Example:
+
+```rust
+use of_core::{AnalyticsSnapshot, SignalState};
+use of_signals::{
+    DeltaMomentumSignal, ExplainableSignalModule, SignalModule, SignalReasonCode,
+};
+
+let mut signal = DeltaMomentumSignal::new(100);
+signal.on_analytics(&AnalyticsSnapshot {
+    delta: 125,
+    ..Default::default()
+});
+
+let explanation = signal.explanation();
+assert_eq!(explanation.state, SignalState::LongBias);
+assert_eq!(
+    explanation.reason_code,
+    SignalReasonCode::DeltaMomentumPositive
+);
+```
+
+For high-volume audit streams, use [`SignalExplanationMode::TransitionsOnly`]
+to emit explanations only when the signal state changes:
+
+```rust
+use of_core::{SignalSnapshot, SignalState};
+use of_signals::SignalExplanationMode;
+
+let previous = SignalSnapshot {
+    module_id: "delta_momentum_v1",
+    state: SignalState::Neutral,
+    confidence_bps: 500,
+    quality_flags: 0,
+    reason: "delta_inside_band".to_string(),
+};
+let current = SignalSnapshot {
+    state: SignalState::LongBias,
+    reason: "delta_above_threshold".to_string(),
+    ..previous.clone()
+};
+
+assert!(SignalExplanationMode::TransitionsOnly
+    .should_emit_snapshot(Some(&previous), &current));
+```
 
 ## Stabilization Policies
 

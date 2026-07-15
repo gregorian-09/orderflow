@@ -644,6 +644,333 @@ pub struct StabilizedSignal {
     pub transition: SignalTransitionKind,
 }
 
+/// Stable machine-readable reason for a signal output.
+///
+/// These codes are intended for audit logs, dashboards, replay review, and
+/// downstream language bindings. They complement the human-readable
+/// `SignalSnapshot::reason` string without changing that shared snapshot
+/// contract.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SignalReasonCode {
+    /// No specific reason code is available.
+    Unknown,
+    /// Latest trade delta crossed the positive momentum threshold.
+    DeltaMomentumPositive,
+    /// Latest trade delta crossed the negative momentum threshold.
+    DeltaMomentumNegative,
+    /// Latest trade delta remained inside the configured band.
+    DeltaMomentumInsideBand,
+    /// Session buy volume exceeded sell volume by the configured threshold.
+    BuyVolumeImbalance,
+    /// Session sell volume exceeded buy volume by the configured threshold.
+    SellVolumeImbalance,
+    /// Session buy/sell volume imbalance remained inside the configured band.
+    VolumeInsideBand,
+    /// Session cumulative delta crossed the positive threshold.
+    CumulativeDeltaPositive,
+    /// Session cumulative delta crossed the negative threshold.
+    CumulativeDeltaNegative,
+    /// Session cumulative delta remained inside the configured band.
+    CumulativeDeltaInsideBand,
+    /// Selling pressure was absorbed near the point of control.
+    SellAbsorptionDetected,
+    /// Buying pressure was absorbed near the point of control.
+    BuyAbsorptionDetected,
+    /// Absorption criteria were not met.
+    AbsorptionNotDetected,
+    /// Buying pressure exhausted near the point of control.
+    BuyExhaustionDetected,
+    /// Selling pressure exhausted near the point of control.
+    SellExhaustionDetected,
+    /// Exhaustion criteria were not met.
+    ExhaustionNotDetected,
+    /// Upside value-area sweep criteria were met.
+    UpsideSweepDetected,
+    /// Downside value-area sweep criteria were met.
+    DownsideSweepDetected,
+    /// Sweep criteria were not met.
+    SweepNotDetected,
+    /// Composite children voted for a long bias.
+    CompositeLongMajority,
+    /// Composite children voted for a short bias.
+    CompositeShortMajority,
+    /// Composite children did not produce a directional majority.
+    CompositeNoMajority,
+    /// Composite signal has no child modules.
+    NoChildModules,
+    /// Signal output was blocked by a data-quality or risk gate.
+    QualityBlocked,
+    /// Stabilization suppressed a transition due to hysteresis.
+    StabilizerHysteresis,
+    /// Stabilization is waiting for debounce confirmation.
+    StabilizerDebouncePending,
+    /// Stabilization suppressed a transition during cooldown.
+    StabilizerCooldownActive,
+}
+
+impl SignalReasonCode {
+    /// Returns the stable string representation of this reason code.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::DeltaMomentumPositive => "delta_momentum_positive",
+            Self::DeltaMomentumNegative => "delta_momentum_negative",
+            Self::DeltaMomentumInsideBand => "delta_momentum_inside_band",
+            Self::BuyVolumeImbalance => "buy_volume_imbalance",
+            Self::SellVolumeImbalance => "sell_volume_imbalance",
+            Self::VolumeInsideBand => "volume_inside_band",
+            Self::CumulativeDeltaPositive => "cumulative_delta_positive",
+            Self::CumulativeDeltaNegative => "cumulative_delta_negative",
+            Self::CumulativeDeltaInsideBand => "cumulative_delta_inside_band",
+            Self::SellAbsorptionDetected => "sell_absorption_detected",
+            Self::BuyAbsorptionDetected => "buy_absorption_detected",
+            Self::AbsorptionNotDetected => "absorption_not_detected",
+            Self::BuyExhaustionDetected => "buy_exhaustion_detected",
+            Self::SellExhaustionDetected => "sell_exhaustion_detected",
+            Self::ExhaustionNotDetected => "exhaustion_not_detected",
+            Self::UpsideSweepDetected => "upside_sweep_detected",
+            Self::DownsideSweepDetected => "downside_sweep_detected",
+            Self::SweepNotDetected => "sweep_not_detected",
+            Self::CompositeLongMajority => "composite_long_majority",
+            Self::CompositeShortMajority => "composite_short_majority",
+            Self::CompositeNoMajority => "composite_no_majority",
+            Self::NoChildModules => "no_child_modules",
+            Self::QualityBlocked => "quality_blocked",
+            Self::StabilizerHysteresis => "stabilizer_hysteresis",
+            Self::StabilizerDebouncePending => "stabilizer_debounce_pending",
+            Self::StabilizerCooldownActive => "stabilizer_cooldown_active",
+        }
+    }
+}
+
+impl From<SignalSuppressionReason> for SignalReasonCode {
+    fn from(reason: SignalSuppressionReason) -> Self {
+        match reason {
+            SignalSuppressionReason::None => Self::Unknown,
+            SignalSuppressionReason::Hysteresis => Self::StabilizerHysteresis,
+            SignalSuppressionReason::DebouncePending => Self::StabilizerDebouncePending,
+            SignalSuppressionReason::CooldownActive => Self::StabilizerCooldownActive,
+        }
+    }
+}
+
+/// One observed input value included in a signal explanation.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SignalInputValue {
+    /// Stable input name.
+    pub name: &'static str,
+    /// Observed input value.
+    pub value: SignalParameterValue,
+}
+
+impl SignalInputValue {
+    /// Creates an input value from a stable name and parameter-compatible value.
+    pub const fn new(name: &'static str, value: SignalParameterValue) -> Self {
+        Self { name, value }
+    }
+
+    /// Creates an integer input value.
+    pub const fn integer(name: &'static str, value: i64) -> Self {
+        Self::new(name, SignalParameterValue::Integer(value))
+    }
+
+    /// Creates a floating-point input value.
+    pub const fn float(name: &'static str, value: f64) -> Self {
+        Self::new(name, SignalParameterValue::Float(value))
+    }
+
+    /// Creates a boolean input value.
+    pub const fn boolean(name: &'static str, value: bool) -> Self {
+        Self::new(name, SignalParameterValue::Boolean(value))
+    }
+
+    /// Creates a static text input value.
+    pub const fn text(name: &'static str, value: &'static str) -> Self {
+        Self::new(name, SignalParameterValue::Text(value))
+    }
+}
+
+/// One configured threshold included in a signal explanation.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SignalThreshold {
+    /// Stable threshold name.
+    pub name: &'static str,
+    /// Configured threshold value.
+    pub value: SignalParameterValue,
+}
+
+impl SignalThreshold {
+    /// Creates a threshold from a stable name and parameter-compatible value.
+    pub const fn new(name: &'static str, value: SignalParameterValue) -> Self {
+        Self { name, value }
+    }
+
+    /// Creates an integer threshold.
+    pub const fn integer(name: &'static str, value: i64) -> Self {
+        Self::new(name, SignalParameterValue::Integer(value))
+    }
+
+    /// Creates a floating-point threshold.
+    pub const fn float(name: &'static str, value: f64) -> Self {
+        Self::new(name, SignalParameterValue::Float(value))
+    }
+
+    /// Creates a boolean threshold.
+    pub const fn boolean(name: &'static str, value: bool) -> Self {
+        Self::new(name, SignalParameterValue::Boolean(value))
+    }
+
+    /// Creates a static text threshold.
+    pub const fn text(name: &'static str, value: &'static str) -> Self {
+        Self::new(name, SignalParameterValue::Text(value))
+    }
+}
+
+/// One confidence contributor included in a signal explanation.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SignalConfidenceComponent {
+    /// Stable contributor name.
+    pub name: &'static str,
+    /// Contributor value in basis points.
+    pub value_bps: u16,
+}
+
+impl SignalConfidenceComponent {
+    /// Creates a confidence contributor.
+    pub const fn new(name: &'static str, value_bps: u16) -> Self {
+        Self { name, value_bps }
+    }
+}
+
+/// Structured diagnostic explanation for a signal snapshot.
+///
+/// Explanations are intended for audit/replay and UI paths. They can allocate
+/// for vectors and reason text; keep using `SignalSnapshot` on the tight signal
+/// hot path when only state is needed.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignalExplanation {
+    /// Stable signal module id.
+    pub module_id: &'static str,
+    /// Signal state explained by this payload.
+    pub state: SignalState,
+    /// Confidence in basis points.
+    pub confidence_bps: u16,
+    /// Quality flags attached to the explained snapshot.
+    pub quality_flags: u32,
+    /// Machine-readable reason code.
+    pub reason_code: SignalReasonCode,
+    /// Human-readable reason string.
+    pub reason: String,
+    /// Observed input values used by the decision.
+    pub inputs: Vec<SignalInputValue>,
+    /// Configured thresholds used by the decision.
+    pub thresholds: Vec<SignalThreshold>,
+    /// Confidence contributors used by the decision.
+    pub confidence_components: Vec<SignalConfidenceComponent>,
+}
+
+impl SignalExplanation {
+    /// Creates a structured explanation.
+    pub fn new(
+        module_id: &'static str,
+        state: SignalState,
+        confidence_bps: u16,
+        quality_flags: u32,
+        reason_code: SignalReasonCode,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            module_id,
+            state,
+            confidence_bps,
+            quality_flags,
+            reason_code,
+            reason: reason.into(),
+            inputs: Vec::new(),
+            thresholds: Vec::new(),
+            confidence_components: Vec::new(),
+        }
+    }
+
+    /// Creates an explanation from an existing signal snapshot.
+    pub fn from_snapshot(snapshot: &SignalSnapshot, reason_code: SignalReasonCode) -> Self {
+        Self::new(
+            snapshot.module_id,
+            snapshot.state,
+            snapshot.confidence_bps,
+            snapshot.quality_flags,
+            reason_code,
+            snapshot.reason.clone(),
+        )
+    }
+
+    /// Returns this explanation with one observed input appended.
+    pub fn with_input(mut self, input: SignalInputValue) -> Self {
+        self.inputs.push(input);
+        self
+    }
+
+    /// Returns this explanation with one configured threshold appended.
+    pub fn with_threshold(mut self, threshold: SignalThreshold) -> Self {
+        self.thresholds.push(threshold);
+        self
+    }
+
+    /// Returns this explanation with one confidence contributor appended.
+    pub fn with_confidence_component(mut self, component: SignalConfidenceComponent) -> Self {
+        self.confidence_components.push(component);
+        self
+    }
+}
+
+/// Controls whether explanations should be emitted for every evaluation or only transitions.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum SignalExplanationMode {
+    /// Emit an explanation for every evaluated snapshot.
+    #[default]
+    Always,
+    /// Emit only when the signal state differs from the previous state.
+    TransitionsOnly,
+}
+
+impl SignalExplanationMode {
+    /// Returns `true` when an explanation should be emitted for these states.
+    pub fn should_emit(
+        self,
+        previous_state: Option<SignalState>,
+        current_state: SignalState,
+    ) -> bool {
+        match self {
+            Self::Always => true,
+            Self::TransitionsOnly => previous_state != Some(current_state),
+        }
+    }
+
+    /// Returns `true` when an explanation should be emitted for these snapshots.
+    pub fn should_emit_snapshot(
+        self,
+        previous: Option<&SignalSnapshot>,
+        current: &SignalSnapshot,
+    ) -> bool {
+        self.should_emit(previous.map(|snapshot| snapshot.state), current.state)
+    }
+}
+
+/// Optional extension trait for modules that expose structured explanations.
+///
+/// This is intentionally separate from [`SignalModule`] so existing downstream
+/// implementations do not need to add a new required method.
+pub trait ExplainableSignalModule: SignalModule {
+    /// Returns a structured explanation for the current snapshot.
+    fn explanation(&self) -> SignalExplanation;
+}
+
 #[derive(Debug, Clone)]
 struct PendingSignal {
     snapshot: SignalSnapshot,
@@ -1099,6 +1426,28 @@ impl DeltaMomentumSignal {
     pub const fn descriptor(&self) -> &'static SignalDescriptor {
         &DELTA_MOMENTUM_DESCRIPTOR
     }
+
+    fn evaluate(&self) -> (SignalState, SignalReasonCode, &'static str) {
+        if self.latest.delta >= self.threshold {
+            (
+                SignalState::LongBias,
+                SignalReasonCode::DeltaMomentumPositive,
+                "delta_above_threshold",
+            )
+        } else if self.latest.delta <= -self.threshold {
+            (
+                SignalState::ShortBias,
+                SignalReasonCode::DeltaMomentumNegative,
+                "delta_below_threshold",
+            )
+        } else {
+            (
+                SignalState::Neutral,
+                SignalReasonCode::DeltaMomentumInsideBand,
+                "delta_inside_band",
+            )
+        }
+    }
 }
 
 impl Default for DeltaMomentumSignal {
@@ -1113,13 +1462,7 @@ impl SignalModule for DeltaMomentumSignal {
     }
 
     fn snapshot(&self) -> SignalSnapshot {
-        let (state, reason) = if self.latest.delta >= self.threshold {
-            (SignalState::LongBias, "delta_above_threshold")
-        } else if self.latest.delta <= -self.threshold {
-            (SignalState::ShortBias, "delta_below_threshold")
-        } else {
-            (SignalState::Neutral, "delta_inside_band")
-        };
+        let (state, _, reason) = self.evaluate();
 
         SignalSnapshot {
             module_id: "delta_momentum_v1",
@@ -1132,6 +1475,17 @@ impl SignalModule for DeltaMomentumSignal {
 
     fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
         default_quality_gate(q)
+    }
+}
+
+impl ExplainableSignalModule for DeltaMomentumSignal {
+    fn explanation(&self) -> SignalExplanation {
+        let snapshot = self.snapshot();
+        let (_, reason_code, _) = self.evaluate();
+        SignalExplanation::from_snapshot(&snapshot, reason_code)
+            .with_input(SignalInputValue::integer("delta", self.latest.delta))
+            .with_threshold(SignalThreshold::integer("threshold", self.threshold))
+            .with_confidence_component(SignalConfidenceComponent::new("base_confidence", 500))
     }
 }
 
@@ -1155,6 +1509,33 @@ impl VolumeImbalanceSignal {
     pub const fn descriptor(&self) -> &'static SignalDescriptor {
         &VOLUME_IMBALANCE_DESCRIPTOR
     }
+
+    fn imbalance(&self) -> i64 {
+        self.latest.buy_volume - self.latest.sell_volume
+    }
+
+    fn evaluate(&self) -> (SignalState, SignalReasonCode, &'static str) {
+        let imbalance = self.imbalance();
+        if imbalance >= self.threshold {
+            (
+                SignalState::LongBias,
+                SignalReasonCode::BuyVolumeImbalance,
+                "buy_volume_above_threshold",
+            )
+        } else if imbalance <= -self.threshold {
+            (
+                SignalState::ShortBias,
+                SignalReasonCode::SellVolumeImbalance,
+                "sell_volume_above_threshold",
+            )
+        } else {
+            (
+                SignalState::Neutral,
+                SignalReasonCode::VolumeInsideBand,
+                "volume_inside_band",
+            )
+        }
+    }
 }
 
 impl Default for VolumeImbalanceSignal {
@@ -1169,14 +1550,7 @@ impl SignalModule for VolumeImbalanceSignal {
     }
 
     fn snapshot(&self) -> SignalSnapshot {
-        let imbalance = self.latest.buy_volume - self.latest.sell_volume;
-        let (state, reason) = if imbalance >= self.threshold {
-            (SignalState::LongBias, "buy_volume_above_threshold")
-        } else if imbalance <= -self.threshold {
-            (SignalState::ShortBias, "sell_volume_above_threshold")
-        } else {
-            (SignalState::Neutral, "volume_inside_band")
-        };
+        let (state, _, reason) = self.evaluate();
 
         SignalSnapshot {
             module_id: "volume_imbalance_v1",
@@ -1189,6 +1563,25 @@ impl SignalModule for VolumeImbalanceSignal {
 
     fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
         default_quality_gate(q)
+    }
+}
+
+impl ExplainableSignalModule for VolumeImbalanceSignal {
+    fn explanation(&self) -> SignalExplanation {
+        let snapshot = self.snapshot();
+        let (_, reason_code, _) = self.evaluate();
+        SignalExplanation::from_snapshot(&snapshot, reason_code)
+            .with_input(SignalInputValue::integer(
+                "buy_volume",
+                self.latest.buy_volume,
+            ))
+            .with_input(SignalInputValue::integer(
+                "sell_volume",
+                self.latest.sell_volume,
+            ))
+            .with_input(SignalInputValue::integer("imbalance", self.imbalance()))
+            .with_threshold(SignalThreshold::integer("threshold", self.threshold))
+            .with_confidence_component(SignalConfidenceComponent::new("base_confidence", 550))
     }
 }
 
@@ -1212,6 +1605,28 @@ impl CumulativeDeltaSignal {
     pub const fn descriptor(&self) -> &'static SignalDescriptor {
         &CUMULATIVE_DELTA_DESCRIPTOR
     }
+
+    fn evaluate(&self) -> (SignalState, SignalReasonCode, &'static str) {
+        if self.latest.cumulative_delta >= self.threshold {
+            (
+                SignalState::LongBias,
+                SignalReasonCode::CumulativeDeltaPositive,
+                "cumulative_delta_above_threshold",
+            )
+        } else if self.latest.cumulative_delta <= -self.threshold {
+            (
+                SignalState::ShortBias,
+                SignalReasonCode::CumulativeDeltaNegative,
+                "cumulative_delta_below_threshold",
+            )
+        } else {
+            (
+                SignalState::Neutral,
+                SignalReasonCode::CumulativeDeltaInsideBand,
+                "cumulative_delta_inside_band",
+            )
+        }
+    }
 }
 
 impl Default for CumulativeDeltaSignal {
@@ -1226,13 +1641,7 @@ impl SignalModule for CumulativeDeltaSignal {
     }
 
     fn snapshot(&self) -> SignalSnapshot {
-        let (state, reason) = if self.latest.cumulative_delta >= self.threshold {
-            (SignalState::LongBias, "cumulative_delta_above_threshold")
-        } else if self.latest.cumulative_delta <= -self.threshold {
-            (SignalState::ShortBias, "cumulative_delta_below_threshold")
-        } else {
-            (SignalState::Neutral, "cumulative_delta_inside_band")
-        };
+        let (state, _, reason) = self.evaluate();
 
         SignalSnapshot {
             module_id: "cumulative_delta_v1",
@@ -1245,6 +1654,20 @@ impl SignalModule for CumulativeDeltaSignal {
 
     fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
         default_quality_gate(q)
+    }
+}
+
+impl ExplainableSignalModule for CumulativeDeltaSignal {
+    fn explanation(&self) -> SignalExplanation {
+        let snapshot = self.snapshot();
+        let (_, reason_code, _) = self.evaluate();
+        SignalExplanation::from_snapshot(&snapshot, reason_code)
+            .with_input(SignalInputValue::integer(
+                "cumulative_delta",
+                self.latest.cumulative_delta,
+            ))
+            .with_threshold(SignalThreshold::integer("threshold", self.threshold))
+            .with_confidence_component(SignalConfidenceComponent::new("base_confidence", 600))
     }
 }
 
@@ -1270,6 +1693,33 @@ impl AbsorptionSignal {
     pub const fn descriptor(&self) -> &'static SignalDescriptor {
         &ABSORPTION_DESCRIPTOR
     }
+
+    fn poc_distance(&self) -> i64 {
+        (self.latest.last_price - self.latest.point_of_control).abs()
+    }
+
+    fn evaluate(&self) -> (SignalState, SignalReasonCode, &'static str) {
+        let poc_distance = self.poc_distance();
+        if poc_distance <= self.price_band && self.latest.delta <= -self.threshold {
+            (
+                SignalState::LongBias,
+                SignalReasonCode::SellAbsorptionDetected,
+                "sell_absorption_detected",
+            )
+        } else if poc_distance <= self.price_band && self.latest.delta >= self.threshold {
+            (
+                SignalState::ShortBias,
+                SignalReasonCode::BuyAbsorptionDetected,
+                "buy_absorption_detected",
+            )
+        } else {
+            (
+                SignalState::Neutral,
+                SignalReasonCode::AbsorptionNotDetected,
+                "absorption_not_detected",
+            )
+        }
+    }
 }
 
 impl Default for AbsorptionSignal {
@@ -1284,15 +1734,7 @@ impl SignalModule for AbsorptionSignal {
     }
 
     fn snapshot(&self) -> SignalSnapshot {
-        let poc_distance = (self.latest.last_price - self.latest.point_of_control).abs();
-        let (state, reason) =
-            if poc_distance <= self.price_band && self.latest.delta <= -self.threshold {
-                (SignalState::LongBias, "sell_absorption_detected")
-            } else if poc_distance <= self.price_band && self.latest.delta >= self.threshold {
-                (SignalState::ShortBias, "buy_absorption_detected")
-            } else {
-                (SignalState::Neutral, "absorption_not_detected")
-            };
+        let (state, _, reason) = self.evaluate();
 
         SignalSnapshot {
             module_id: "absorption_v1",
@@ -1305,6 +1747,30 @@ impl SignalModule for AbsorptionSignal {
 
     fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
         default_quality_gate(q)
+    }
+}
+
+impl ExplainableSignalModule for AbsorptionSignal {
+    fn explanation(&self) -> SignalExplanation {
+        let snapshot = self.snapshot();
+        let (_, reason_code, _) = self.evaluate();
+        SignalExplanation::from_snapshot(&snapshot, reason_code)
+            .with_input(SignalInputValue::integer("delta", self.latest.delta))
+            .with_input(SignalInputValue::integer(
+                "last_price",
+                self.latest.last_price,
+            ))
+            .with_input(SignalInputValue::integer(
+                "point_of_control",
+                self.latest.point_of_control,
+            ))
+            .with_input(SignalInputValue::integer(
+                "poc_distance",
+                self.poc_distance(),
+            ))
+            .with_threshold(SignalThreshold::integer("threshold", self.threshold))
+            .with_threshold(SignalThreshold::integer("price_band", self.price_band))
+            .with_confidence_component(SignalConfidenceComponent::new("base_confidence", 575))
     }
 }
 
@@ -1328,6 +1794,32 @@ impl ExhaustionSignal {
     pub const fn descriptor(&self) -> &'static SignalDescriptor {
         &EXHAUSTION_DESCRIPTOR
     }
+
+    fn evaluate(&self) -> (SignalState, SignalReasonCode, &'static str) {
+        if self.latest.delta >= self.threshold
+            && self.latest.last_price <= self.latest.point_of_control
+        {
+            (
+                SignalState::ShortBias,
+                SignalReasonCode::BuyExhaustionDetected,
+                "buy_exhaustion_detected",
+            )
+        } else if self.latest.delta <= -self.threshold
+            && self.latest.last_price >= self.latest.point_of_control
+        {
+            (
+                SignalState::LongBias,
+                SignalReasonCode::SellExhaustionDetected,
+                "sell_exhaustion_detected",
+            )
+        } else {
+            (
+                SignalState::Neutral,
+                SignalReasonCode::ExhaustionNotDetected,
+                "exhaustion_not_detected",
+            )
+        }
+    }
 }
 
 impl Default for ExhaustionSignal {
@@ -1342,17 +1834,7 @@ impl SignalModule for ExhaustionSignal {
     }
 
     fn snapshot(&self) -> SignalSnapshot {
-        let (state, reason) = if self.latest.delta >= self.threshold
-            && self.latest.last_price <= self.latest.point_of_control
-        {
-            (SignalState::ShortBias, "buy_exhaustion_detected")
-        } else if self.latest.delta <= -self.threshold
-            && self.latest.last_price >= self.latest.point_of_control
-        {
-            (SignalState::LongBias, "sell_exhaustion_detected")
-        } else {
-            (SignalState::Neutral, "exhaustion_not_detected")
-        };
+        let (state, _, reason) = self.evaluate();
 
         SignalSnapshot {
             module_id: "exhaustion_v1",
@@ -1365,6 +1847,25 @@ impl SignalModule for ExhaustionSignal {
 
     fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
         default_quality_gate(q)
+    }
+}
+
+impl ExplainableSignalModule for ExhaustionSignal {
+    fn explanation(&self) -> SignalExplanation {
+        let snapshot = self.snapshot();
+        let (_, reason_code, _) = self.evaluate();
+        SignalExplanation::from_snapshot(&snapshot, reason_code)
+            .with_input(SignalInputValue::integer("delta", self.latest.delta))
+            .with_input(SignalInputValue::integer(
+                "last_price",
+                self.latest.last_price,
+            ))
+            .with_input(SignalInputValue::integer(
+                "point_of_control",
+                self.latest.point_of_control,
+            ))
+            .with_threshold(SignalThreshold::integer("threshold", self.threshold))
+            .with_confidence_component(SignalConfidenceComponent::new("base_confidence", 565))
     }
 }
 
@@ -1390,6 +1891,32 @@ impl SweepDetectionSignal {
     pub const fn descriptor(&self) -> &'static SignalDescriptor {
         &SWEEP_DETECTION_DESCRIPTOR
     }
+
+    fn evaluate(&self) -> (SignalState, SignalReasonCode, &'static str) {
+        if self.latest.delta >= self.threshold
+            && self.latest.last_price >= self.latest.value_area_high + self.breakout_ticks
+        {
+            (
+                SignalState::LongBias,
+                SignalReasonCode::UpsideSweepDetected,
+                "upside_sweep_detected",
+            )
+        } else if self.latest.delta <= -self.threshold
+            && self.latest.last_price <= self.latest.value_area_low - self.breakout_ticks
+        {
+            (
+                SignalState::ShortBias,
+                SignalReasonCode::DownsideSweepDetected,
+                "downside_sweep_detected",
+            )
+        } else {
+            (
+                SignalState::Neutral,
+                SignalReasonCode::SweepNotDetected,
+                "sweep_not_detected",
+            )
+        }
+    }
 }
 
 impl Default for SweepDetectionSignal {
@@ -1404,17 +1931,7 @@ impl SignalModule for SweepDetectionSignal {
     }
 
     fn snapshot(&self) -> SignalSnapshot {
-        let (state, reason) = if self.latest.delta >= self.threshold
-            && self.latest.last_price >= self.latest.value_area_high + self.breakout_ticks
-        {
-            (SignalState::LongBias, "upside_sweep_detected")
-        } else if self.latest.delta <= -self.threshold
-            && self.latest.last_price <= self.latest.value_area_low - self.breakout_ticks
-        {
-            (SignalState::ShortBias, "downside_sweep_detected")
-        } else {
-            (SignalState::Neutral, "sweep_not_detected")
-        };
+        let (state, _, reason) = self.evaluate();
 
         SignalSnapshot {
             module_id: "sweep_detection_v1",
@@ -1427,6 +1944,33 @@ impl SignalModule for SweepDetectionSignal {
 
     fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
         default_quality_gate(q)
+    }
+}
+
+impl ExplainableSignalModule for SweepDetectionSignal {
+    fn explanation(&self) -> SignalExplanation {
+        let snapshot = self.snapshot();
+        let (_, reason_code, _) = self.evaluate();
+        SignalExplanation::from_snapshot(&snapshot, reason_code)
+            .with_input(SignalInputValue::integer("delta", self.latest.delta))
+            .with_input(SignalInputValue::integer(
+                "last_price",
+                self.latest.last_price,
+            ))
+            .with_input(SignalInputValue::integer(
+                "value_area_high",
+                self.latest.value_area_high,
+            ))
+            .with_input(SignalInputValue::integer(
+                "value_area_low",
+                self.latest.value_area_low,
+            ))
+            .with_threshold(SignalThreshold::integer("threshold", self.threshold))
+            .with_threshold(SignalThreshold::integer(
+                "breakout_ticks",
+                self.breakout_ticks,
+            ))
+            .with_confidence_component(SignalConfidenceComponent::new("base_confidence", 625))
     }
 }
 
@@ -1444,6 +1988,38 @@ impl CompositeSignal {
     /// Returns static metadata for this signal type.
     pub const fn descriptor(&self) -> &'static SignalDescriptor {
         &COMPOSITE_DESCRIPTOR
+    }
+
+    fn tally_votes(&self) -> (u16, u16, u32, Vec<&'static str>, Vec<&'static str>) {
+        let mut long_votes = 0_u16;
+        let mut short_votes = 0_u16;
+        let mut confidence_sum = 0_u32;
+        let mut long_modules = Vec::new();
+        let mut short_modules = Vec::new();
+
+        for module in &self.modules {
+            let snapshot = module.snapshot();
+            confidence_sum += u32::from(snapshot.confidence_bps);
+            match snapshot.state {
+                SignalState::LongBias => {
+                    long_votes += 1;
+                    long_modules.push(snapshot.module_id);
+                }
+                SignalState::ShortBias => {
+                    short_votes += 1;
+                    short_modules.push(snapshot.module_id);
+                }
+                SignalState::Neutral | SignalState::Blocked => {}
+            }
+        }
+
+        (
+            long_votes,
+            short_votes,
+            confidence_sum,
+            long_modules,
+            short_modules,
+        )
     }
 }
 
@@ -1475,27 +2051,8 @@ impl SignalModule for CompositeSignal {
             };
         }
 
-        let mut long_votes = 0_u16;
-        let mut short_votes = 0_u16;
-        let mut confidence_sum = 0_u32;
-        let mut long_modules = Vec::new();
-        let mut short_modules = Vec::new();
-
-        for module in &self.modules {
-            let snapshot = module.snapshot();
-            confidence_sum += snapshot.confidence_bps as u32;
-            match snapshot.state {
-                SignalState::LongBias => {
-                    long_votes += 1;
-                    long_modules.push(snapshot.module_id);
-                }
-                SignalState::ShortBias => {
-                    short_votes += 1;
-                    short_modules.push(snapshot.module_id);
-                }
-                SignalState::Neutral | SignalState::Blocked => {}
-            }
-        }
+        let (long_votes, short_votes, confidence_sum, long_modules, short_modules) =
+            self.tally_votes();
 
         let (state, reason) = if long_votes > short_votes && long_votes > 0 {
             (
@@ -1530,6 +2087,48 @@ impl SignalModule for CompositeSignal {
         } else {
             SignalGateDecision::Pass
         }
+    }
+}
+
+impl ExplainableSignalModule for CompositeSignal {
+    fn explanation(&self) -> SignalExplanation {
+        let snapshot = self.snapshot();
+        let (long_votes, short_votes, confidence_sum, _, _) = self.tally_votes();
+        let reason_code = if self.modules.is_empty() {
+            SignalReasonCode::NoChildModules
+        } else {
+            match snapshot.state {
+                SignalState::LongBias => SignalReasonCode::CompositeLongMajority,
+                SignalState::ShortBias => SignalReasonCode::CompositeShortMajority,
+                SignalState::Neutral | SignalState::Blocked => {
+                    SignalReasonCode::CompositeNoMajority
+                }
+            }
+        };
+
+        let average_confidence = if self.modules.is_empty() {
+            0
+        } else {
+            (confidence_sum / self.modules.len() as u32) as u16
+        };
+
+        SignalExplanation::from_snapshot(&snapshot, reason_code)
+            .with_input(SignalInputValue::integer(
+                "module_count",
+                self.modules.len() as i64,
+            ))
+            .with_input(SignalInputValue::integer(
+                "long_votes",
+                i64::from(long_votes),
+            ))
+            .with_input(SignalInputValue::integer(
+                "short_votes",
+                i64::from(short_votes),
+            ))
+            .with_confidence_component(SignalConfidenceComponent::new(
+                "average_child_confidence",
+                average_confidence,
+            ))
     }
 }
 
@@ -1859,6 +2458,115 @@ mod tests {
         let snapshot = s.snapshot();
         assert_eq!(snapshot.module_id, "composite_v1");
         assert_eq!(snapshot.state, SignalState::LongBias);
+    }
+
+    #[test]
+    fn reason_codes_have_stable_string_values() {
+        assert_eq!(
+            SignalReasonCode::DeltaMomentumPositive.as_str(),
+            "delta_momentum_positive"
+        );
+        assert_eq!(
+            SignalReasonCode::BuyVolumeImbalance.as_str(),
+            "buy_volume_imbalance"
+        );
+        assert_eq!(
+            SignalReasonCode::from(SignalSuppressionReason::CooldownActive),
+            SignalReasonCode::StabilizerCooldownActive
+        );
+    }
+
+    #[test]
+    fn delta_momentum_explanation_reports_inputs_and_threshold() {
+        let mut signal = DeltaMomentumSignal::new(10);
+        signal.on_analytics(&AnalyticsSnapshot {
+            delta: 15,
+            ..Default::default()
+        });
+
+        let explanation = signal.explanation();
+        assert_eq!(explanation.module_id, "delta_momentum_v1");
+        assert_eq!(explanation.state, SignalState::LongBias);
+        assert_eq!(
+            explanation.reason_code,
+            SignalReasonCode::DeltaMomentumPositive
+        );
+        assert_eq!(
+            explanation.inputs,
+            vec![SignalInputValue::integer("delta", 15)]
+        );
+        assert_eq!(
+            explanation.thresholds,
+            vec![SignalThreshold::integer("threshold", 10)]
+        );
+    }
+
+    #[test]
+    fn absorption_explanation_reports_decision_context() {
+        let mut signal = AbsorptionSignal::new(20, 2);
+        signal.on_analytics(&AnalyticsSnapshot {
+            delta: -25,
+            last_price: 100,
+            point_of_control: 101,
+            ..Default::default()
+        });
+
+        let explanation = signal.explanation();
+        assert_eq!(
+            explanation.reason_code,
+            SignalReasonCode::SellAbsorptionDetected
+        );
+        assert!(explanation
+            .inputs
+            .contains(&SignalInputValue::integer("poc_distance", 1)));
+        assert!(explanation
+            .thresholds
+            .contains(&SignalThreshold::integer("price_band", 2)));
+    }
+
+    #[test]
+    fn composite_explanation_reports_vote_counts() {
+        let mut signal = CompositeSignal::new(vec![
+            Box::new(DeltaMomentumSignal::new(10)),
+            Box::new(VolumeImbalanceSignal::new(10)),
+            Box::new(CumulativeDeltaSignal::new(100)),
+        ]);
+        signal.on_analytics(&AnalyticsSnapshot {
+            delta: 20,
+            buy_volume: 30,
+            sell_volume: 10,
+            cumulative_delta: 50,
+            ..Default::default()
+        });
+
+        let explanation = signal.explanation();
+        assert_eq!(
+            explanation.reason_code,
+            SignalReasonCode::CompositeLongMajority
+        );
+        assert!(explanation
+            .inputs
+            .contains(&SignalInputValue::integer("module_count", 3)));
+        assert!(explanation
+            .inputs
+            .contains(&SignalInputValue::integer("long_votes", 2)));
+        assert!(explanation
+            .inputs
+            .contains(&SignalInputValue::integer("short_votes", 0)));
+    }
+
+    #[test]
+    fn transition_only_explanation_mode_emits_on_state_change() {
+        let previous = snapshot(SignalState::Neutral, 500);
+        let current_same = snapshot(SignalState::Neutral, 500);
+        let current_changed = snapshot(SignalState::LongBias, 600);
+
+        assert!(SignalExplanationMode::Always.should_emit_snapshot(Some(&previous), &current_same));
+        assert!(!SignalExplanationMode::TransitionsOnly
+            .should_emit_snapshot(Some(&previous), &current_same));
+        assert!(SignalExplanationMode::TransitionsOnly
+            .should_emit_snapshot(Some(&previous), &current_changed));
+        assert!(SignalExplanationMode::TransitionsOnly.should_emit_snapshot(None, &current_same));
     }
 
     #[test]
