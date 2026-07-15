@@ -31,6 +31,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `SignalRegistryError`, built-in registrations, config validation,
   built-in construction, input filtering, and dependency-free descriptor JSON
   export for bindings and dashboards.
+- Additive `of_signals` replay validation harness with `SignalValidationConfig`,
+  `SignalValidationHarness`, `SignalValidationReport`, markout labels,
+  optional timestamp-order warnings, confidence filtering, retained samples, and
+  dependency-free JSON summaries for notebook/Python-style workflows.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

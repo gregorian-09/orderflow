@@ -46,6 +46,15 @@ and easy to test.
 | `SignalRegistration` | struct | Descriptor plus optional construction factory |
 | `SignalRegistry` | struct | Discovery, validation, construction, and JSON export |
 | `SignalRegistryError` | enum | Typed validation/construction error |
+| `SignalMarkoutDirection` | enum | Future markout label for validation |
+| `SignalReplayEvent` | struct | Analytics snapshot plus optional timestamp |
+| `SignalValidationConfig` | struct | Replay validation settings |
+| `SignalValidationWarning` | enum | Validation warnings |
+| `SignalValidationSample` | struct | One scored replay sample |
+| `SignalValidationReport` | struct | Aggregate validation report |
+| `SignalValidationHarness` | struct | Configured replay validation runner |
+| `validate_signal_replay` | function | Validates a signal over analytics snapshots |
+| `validate_signal_replay_events` | function | Validates a signal over timestamped replay events |
 | `DeltaMomentumSignal` | struct | Base delta threshold module |
 | `VolumeImbalanceSignal` | struct | Session volume imbalance module |
 | `CumulativeDeltaSignal` | struct | Session cumulative delta module |
@@ -420,6 +429,72 @@ use of_signals::built_in_signal_descriptors_json;
 let json = built_in_signal_descriptors_json();
 assert!(json.contains("\"id\":\"delta_momentum_v1\""));
 ```
+
+## Replay Validation Harness
+
+The validation harness is an additive research/replay API. It evaluates a
+signal over ordered analytics snapshots and scores directional outputs against
+future event-horizon markout labels.
+
+The harness avoids lookahead in its own sequencing:
+
+1. feed the current snapshot into the signal;
+2. capture the signal output;
+3. compute the future markout label after the output has been captured.
+
+Use timestamped `SignalReplayEvent` inputs when the replay source can provide
+exchange timestamps. The harness warns when timestamps move backward.
+
+### Validation Types
+
+| Type | Meaning |
+| --- | --- |
+| `SignalMarkoutDirection` | `Up`, `Down`, or `Flat` future price label |
+| `SignalReplayEvent` | Borrowed analytics snapshot plus optional exchange timestamp |
+| `SignalValidationConfig` | Horizon, flat threshold, confidence filter, sample retention, timestamp checks |
+| `SignalValidationWarning` | Empty input, zero horizon, missing markout, or non-monotonic timestamp |
+| `SignalValidationSample` | One event-level prediction/label pair |
+| `SignalValidationReport` | Aggregate counts, accuracy, coverage, retained samples, warnings |
+| `SignalValidationHarness` | Reusable configured validator |
+
+Example:
+
+```rust
+use of_core::AnalyticsSnapshot;
+use of_signals::{validate_signal_replay, DeltaMomentumSignal, SignalValidationConfig};
+
+let mut signal = DeltaMomentumSignal::new(10);
+let events = vec![
+    AnalyticsSnapshot {
+        delta: 20,
+        last_price: 100,
+        ..Default::default()
+    },
+    AnalyticsSnapshot {
+        delta: 20,
+        last_price: 110,
+        ..Default::default()
+    },
+];
+
+let report = validate_signal_replay(
+    &mut signal,
+    &events,
+    SignalValidationConfig::new(1).with_store_samples(true),
+);
+
+assert_eq!(report.labeled_events, 1);
+assert_eq!(report.directional_accuracy_bps(), Some(10_000));
+```
+
+Useful report methods:
+
+| Method | Meaning |
+| --- | --- |
+| `directional_accuracy_bps()` | Correct directional predictions divided by scored directional predictions |
+| `label_coverage_bps()` | Events with labels divided by evaluated events |
+| `has_warnings()` | Whether validation emitted warnings |
+| `json_summary()` | Compact JSON summary for notebooks, Python, dashboards, or CI artifacts |
 
 ### `SignalInputMask`
 

@@ -11,6 +11,8 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
 - Descriptor inventory: [`built_in_signal_descriptors`] and [`describe_signal`]
 - Registry/config: [`SignalRegistry`], [`SignalConfig`], and
   [`built_in_signal_descriptors_json`]
+- Validation: [`SignalValidationHarness`], [`SignalValidationConfig`], and
+  [`validate_signal_replay`]
 - Lifecycle helper: [`SignalLifecycle`]
 - Stabilizer: [`SignalStabilizer`]
 - Explainability: [`ExplainableSignalModule`], [`SignalExplanation`], and
@@ -90,6 +92,9 @@ New additive APIs:
   or only when signal state transitions occur.
 - [`SignalRegistry`] supports config-time discovery, validation, construction,
   input filtering, and descriptor JSON export for bindings/dashboards.
+- [`SignalValidationHarness`] supports replay-based signal validation with
+  event-horizon markout labels, monotonic timestamp warnings, confidence
+  filters, retained samples, and compact JSON summaries.
 
 This is intentionally metadata-first. Built-in signal behavior is unchanged:
 existing users still call `on_analytics`, `quality_gate`, and `snapshot` exactly
@@ -142,6 +147,13 @@ Public types:
 - [`SignalFactory`]
 - [`SignalRegistration`]
 - [`SignalRegistry`]
+- [`SignalMarkoutDirection`]
+- [`SignalReplayEvent`]
+- [`SignalValidationConfig`]
+- [`SignalValidationWarning`]
+- [`SignalValidationSample`]
+- [`SignalValidationReport`]
+- [`SignalValidationHarness`]
 - [`DeltaMomentumSignal`]
 - [`VolumeImbalanceSignal`]
 - [`CumulativeDeltaSignal`]
@@ -163,6 +175,8 @@ Public descriptor constants and functions:
 - [`built_in_signal_registrations`]
 - [`built_in_signal_descriptors_json`]
 - [`describe_signal`]
+- [`validate_signal_replay`]
+- [`validate_signal_replay_events`]
 
 Public constructors:
 
@@ -498,6 +512,69 @@ The crate intentionally avoids adding `serde` to the signal core for this
 feature. JSON export is generated from static descriptor metadata so binding
 layers can expose inventory data without forcing serialization dependencies into
 every Rust user.
+
+## Replay Signal Validation
+
+[`SignalValidationHarness`] validates a signal against ordered analytics
+snapshots. It is designed for research, replay review, CI checks, and notebook
+workflows, not for the live per-tick decision path.
+
+The harness sequence is explicit:
+
+1. feed the current [`AnalyticsSnapshot`](of_core::AnalyticsSnapshot) into the
+   signal;
+2. capture the current [`SignalSnapshot`](of_core::SignalSnapshot);
+3. compute a future event-horizon markout label only for scoring.
+
+That keeps future prices out of signal evaluation and reduces lookahead-bias
+risk in validation code. When timestamp metadata is available, use
+[`SignalReplayEvent`] and [`validate_signal_replay_events`] to warn on
+non-monotonic replay ordering.
+
+Example:
+
+```rust
+use of_core::AnalyticsSnapshot;
+use of_signals::{
+    validate_signal_replay, DeltaMomentumSignal, SignalValidationConfig,
+};
+
+let mut signal = DeltaMomentumSignal::new(10);
+let events = vec![
+    AnalyticsSnapshot {
+        delta: 20,
+        last_price: 100,
+        ..Default::default()
+    },
+    AnalyticsSnapshot {
+        delta: 20,
+        last_price: 110,
+        ..Default::default()
+    },
+];
+
+let config = SignalValidationConfig::new(1).with_store_samples(true);
+let report = validate_signal_replay(&mut signal, &events, config);
+
+assert_eq!(report.labeled_events, 1);
+assert_eq!(report.directional_accuracy_bps(), Some(10_000));
+assert!(report.json_summary().contains("\"evaluated_events\":2"));
+```
+
+Validation concepts:
+
+- [`SignalMarkoutDirection`] labels future price movement as `Up`, `Down`, or
+  `Flat`.
+- [`SignalValidationConfig::markout_horizon_events`] controls the future event
+  offset used for labels.
+- [`SignalValidationConfig::flat_price_threshold`] prevents tiny price changes
+  from being counted as directional.
+- [`SignalValidationConfig::min_confidence_bps`] filters weak directional
+  predictions from accuracy scoring.
+- [`SignalValidationConfig::store_samples`] retains per-event
+  [`SignalValidationSample`] values for deeper review.
+- [`SignalValidationReport::json_summary`] returns dependency-free JSON for
+  Python, notebooks, dashboards, or CI artifacts.
 
 Custom descriptor example:
 

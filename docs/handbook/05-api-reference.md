@@ -128,6 +128,13 @@ Public types:
 - `SignalRegistration`
 - `SignalRegistry`
 - `SignalRegistryError`
+- `SignalMarkoutDirection`
+- `SignalReplayEvent`
+- `SignalValidationConfig`
+- `SignalValidationWarning`
+- `SignalValidationSample`
+- `SignalValidationReport`
+- `SignalValidationHarness`
 - `DeltaMomentumSignal`
 - `VolumeImbalanceSignal`
 - `CumulativeDeltaSignal`
@@ -164,6 +171,13 @@ Registry functions and methods:
 - `SignalRegistry::validate_config(&SignalConfig) -> SignalRegistryResult<()>`
 - `SignalRegistry::create_signal(&SignalConfig) -> SignalRegistryResult<Box<dyn SignalModule>>`
 - `SignalRegistry::descriptors_json() -> String`
+
+Validation functions and methods:
+
+- `validate_signal_replay(&mut impl SignalModule, &[AnalyticsSnapshot], SignalValidationConfig) -> SignalValidationReport`
+- `validate_signal_replay_events(&mut impl SignalModule, &[SignalReplayEvent], SignalValidationConfig) -> SignalValidationReport`
+- `SignalValidationHarness::validate_signal(...) -> SignalValidationReport`
+- `SignalValidationReport::json_summary() -> String`
 
 ### `of_persist`
 
