@@ -7,6 +7,8 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
 
 - Trait: [`SignalModule`]
 - Gate result: [`SignalGateDecision`]
+- Descriptor inventory: [`built_in_signal_descriptors`] and [`describe_signal`]
+- Lifecycle helper: [`SignalLifecycle`]
 - Built-in modules:
   - [`DeltaMomentumSignal`]
   - [`VolumeImbalanceSignal`]
@@ -40,12 +42,56 @@ Version policy:
 - execution crates publish as `0.1.0` and depend on their own execution-domain
   contracts, not on this signal trait.
 
+## Unreleased Additive Metadata And Lifecycle APIs
+
+The crate now exposes production-oriented signal metadata and lifecycle helpers
+without changing the existing [`SignalModule`] contract.
+
+New additive APIs:
+
+- [`SignalDescriptor`] describes a signal id, version, input requirements,
+  warmup policy, parameters, output semantics, determinism, and checkpoint
+  support.
+- [`SignalInputMask`] declares whether a signal needs analytics, data quality,
+  book state, advanced analytics, market-regime, position, or risk context.
+- [`SignalWarmupRequirement`] and [`SignalWarmupProgress`] define when a signal
+  has enough observed data to become active.
+- [`SignalLifecycle`] tracks warmup progress and explicit lifecycle states such
+  as `WarmingUp`, `Active`, `Degraded`, `Blocked`, `CoolingDown`, and
+  `Disabled`.
+- [`SignalOutputSemantics`] lets dashboards and strategy hosts distinguish
+  directional, composite, informational, and veto-style outputs.
+- [`SignalParameterDescriptor`] and [`SignalParameterValue`] document built-in
+  signal constructor parameters.
+- [`built_in_signal_descriptors()`] returns metadata for every built-in signal.
+- [`describe_signal`] looks up one built-in descriptor by stable signal id.
+
+This is intentionally metadata-first. Built-in signal behavior is unchanged:
+existing users still call `on_analytics`, `quality_gate`, and `snapshot` exactly
+as before.
+
+Custom signal authors can construct descriptors with [`SignalDescriptor::new`]
+and parameter metadata with [`SignalParameterDescriptor::new`] or
+[`SignalParameterDescriptor::integer`]. Those constructors keep the public
+structs future-compatible while still allowing downstream crates to describe
+their own modules.
+
 ## Public API Inventory
 
 Public types:
 
 - [`SignalGateDecision`]
 - [`SignalModule`]
+- [`SignalInputMask`]
+- [`SignalLifecycleState`]
+- [`SignalWarmupProgress`]
+- [`SignalWarmupRequirement`]
+- [`SignalLifecycle`]
+- [`SignalOutputSemantics`]
+- [`SignalParameterKind`]
+- [`SignalParameterValue`]
+- [`SignalParameterDescriptor`]
+- [`SignalDescriptor`]
 - [`DeltaMomentumSignal`]
 - [`VolumeImbalanceSignal`]
 - [`CumulativeDeltaSignal`]
@@ -53,6 +99,18 @@ Public types:
 - [`ExhaustionSignal`]
 - [`SweepDetectionSignal`]
 - [`CompositeSignal`]
+
+Public descriptor constants and functions:
+
+- [`DELTA_MOMENTUM_DESCRIPTOR`]
+- [`VOLUME_IMBALANCE_DESCRIPTOR`]
+- [`CUMULATIVE_DELTA_DESCRIPTOR`]
+- [`ABSORPTION_DESCRIPTOR`]
+- [`EXHAUSTION_DESCRIPTOR`]
+- [`SWEEP_DETECTION_DESCRIPTOR`]
+- [`COMPOSITE_DESCRIPTOR`]
+- [`built_in_signal_descriptors`]
+- [`describe_signal`]
 
 Public constructors:
 
@@ -86,6 +144,113 @@ Recommended implementation rules:
 - include human-readable `reason` text in the snapshot when practical
 - use `confidence` consistently so downstream hosts can compare modules
 - block aggressively on stale, gap, or degraded feed conditions when a strategy should not trade through uncertainty
+
+## Signal Metadata Contract
+
+[`SignalDescriptor`] is a read-only description of a signal module. It does not
+construct or mutate a signal. Use it when an application needs to show users
+which signals are compiled in, validate configuration, build dashboard labels,
+or document strategy requirements.
+
+Important fields:
+
+- `id` should match the `SignalSnapshot::module_id` emitted by the signal.
+- `version` is the descriptor/schema version for the signal definition.
+- `required_inputs` declares the context needed by the signal.
+- `warmup` declares when output should be considered production-ready.
+- `parameters` describes constructor/configuration inputs.
+- `output_semantics` tells consumers how to interpret the output.
+- `deterministic` records whether replay should match live behavior for the
+  same ordered inputs.
+- `checkpointable` records whether the current signal implementation exposes
+  restorable state.
+
+Descriptor lookup example:
+
+```rust
+use of_signals::{
+    built_in_signal_descriptors, describe_signal, SignalInputMask,
+    SignalParameterValue,
+};
+
+let descriptors = built_in_signal_descriptors();
+assert!(descriptors.len() >= 7);
+
+let delta = describe_signal("delta_momentum_v1").unwrap();
+assert!(delta.required_inputs.contains(SignalInputMask::ANALYTICS));
+
+let threshold = delta.parameter("threshold").unwrap();
+assert_eq!(threshold.default, Some(SignalParameterValue::Integer(100)));
+```
+
+Custom descriptor example:
+
+```rust
+use of_signals::{
+    SignalDescriptor, SignalInputMask, SignalOutputSemantics,
+    SignalParameterDescriptor, SignalWarmupRequirement,
+};
+
+const PARAMS: &[SignalParameterDescriptor] = &[
+    SignalParameterDescriptor::integer(
+        "lookback_events",
+        "Number of events used by the custom signal.",
+        Some(32),
+        Some(1),
+        Some(10_000),
+    ),
+];
+
+let descriptor = SignalDescriptor::new(
+    "custom_signal_v1",
+    "Custom Signal",
+    "1",
+    "Example custom signal descriptor.",
+)
+.with_required_inputs(SignalInputMask::ANALYTICS | SignalInputMask::DATA_QUALITY)
+.with_warmup(SignalWarmupRequirement::Events(32))
+.with_parameters(PARAMS)
+.with_output_semantics(SignalOutputSemantics::DirectionalBias)
+.with_checkpointable(true);
+
+assert_eq!(descriptor.id, "custom_signal_v1");
+```
+
+## Signal Lifecycle And Warmup
+
+[`SignalLifecycle`] is a small utility for production wrappers that need to
+avoid using a signal before enough data has arrived.
+
+It is not automatically wired into existing built-ins because that would change
+runtime behavior. Instead, it gives host applications and future contextual
+signal wrappers a deterministic lifecycle model.
+
+Lifecycle example:
+
+```rust
+use of_signals::{
+    SignalLifecycle, SignalLifecycleState, SignalWarmupRequirement,
+};
+
+let mut lifecycle = SignalLifecycle::new(SignalWarmupRequirement::Events(2));
+assert_eq!(lifecycle.state(), SignalLifecycleState::WarmingUp);
+
+lifecycle.record_event();
+assert_eq!(lifecycle.state(), SignalLifecycleState::WarmingUp);
+
+lifecycle.record_event();
+assert_eq!(lifecycle.state(), SignalLifecycleState::Active);
+```
+
+Lifecycle states:
+
+- `Initializing`: object exists but is not evaluating yet.
+- `WarmingUp`: data is flowing, but the warmup requirement is not met.
+- `Active`: output can be consumed normally.
+- `Degraded`: output exists but should be treated cautiously.
+- `Blocked`: output must not be used for trading decisions.
+- `CoolingDown`: output is intentionally suppressing rapid transitions.
+- `Disabled`: evaluation is configured off.
 
 ## Constructor Parameter Reference
 

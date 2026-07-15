@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+### Added
+- Additive `of_signals` metadata and lifecycle APIs:
+  `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
+  `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,
+  signal parameter metadata, output semantics, built-in descriptor constants,
+  `built_in_signal_descriptors()`, and `describe_signal()`. Existing
+  `SignalModule` implementations and built-in signal behavior are unchanged.
 
 ## [0.4.0] - 2026-06-04
 ### Added

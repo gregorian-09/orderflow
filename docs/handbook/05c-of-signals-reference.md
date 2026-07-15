@@ -11,6 +11,16 @@ and easy to test.
 | --- | --- | --- |
 | `SignalGateDecision` | enum | Quality gate result |
 | `SignalModule` | trait | Signal extension point |
+| `SignalInputMask` | struct | Bitset of inputs required by a signal |
+| `SignalLifecycleState` | enum | Production lifecycle state |
+| `SignalWarmupProgress` | struct | Counters used to evaluate warmup |
+| `SignalWarmupRequirement` | enum | Warmup policy for a signal |
+| `SignalLifecycle` | struct | Small lifecycle/warmup helper |
+| `SignalDescriptor` | struct | Static metadata for signal discovery |
+| `SignalParameterDescriptor` | struct | Static metadata for one parameter |
+| `SignalOutputSemantics` | enum | How consumers should interpret output |
+| `built_in_signal_descriptors` | function | Returns all built-in signal descriptors |
+| `describe_signal` | function | Looks up one built-in descriptor by id |
 | `DeltaMomentumSignal` | struct | Base delta threshold module |
 | `VolumeImbalanceSignal` | struct | Session volume imbalance module |
 | `CumulativeDeltaSignal` | struct | Session cumulative delta module |
@@ -42,6 +52,110 @@ and easy to test.
 - `snapshot()` should be cheap and side-effect free.
 - `quality_gate(...)` should be conservative for stale, gap, or degraded feed
   conditions when the model should not trade through uncertainty.
+
+## Metadata And Lifecycle
+
+The metadata and lifecycle APIs are additive. They do not change
+`SignalModule`, built-in constructors, or existing signal outputs.
+
+### `SignalDescriptor`
+
+`SignalDescriptor` describes a signal for discovery, configuration validation,
+dashboards, bindings, and documentation.
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Stable signal id, matching `SignalSnapshot::module_id` |
+| `name` | Human-readable name |
+| `version` | Descriptor/schema version for the signal definition |
+| `description` | Human-readable description |
+| `required_inputs` | `SignalInputMask` declaring required context |
+| `warmup` | `SignalWarmupRequirement` before production use |
+| `parameters` | Static parameter metadata |
+| `output_semantics` | Directional, composite, informational, or veto output |
+| `deterministic` | Whether replay should match live for the same ordered inputs |
+| `checkpointable` | Whether the implementation exposes restorable signal state |
+
+Built-in descriptors:
+
+| Constant | Signal id |
+| --- | --- |
+| `DELTA_MOMENTUM_DESCRIPTOR` | `delta_momentum_v1` |
+| `VOLUME_IMBALANCE_DESCRIPTOR` | `volume_imbalance_v1` |
+| `CUMULATIVE_DELTA_DESCRIPTOR` | `cumulative_delta_v1` |
+| `ABSORPTION_DESCRIPTOR` | `absorption_v1` |
+| `EXHAUSTION_DESCRIPTOR` | `exhaustion_v1` |
+| `SWEEP_DETECTION_DESCRIPTOR` | `sweep_detection_v1` |
+| `COMPOSITE_DESCRIPTOR` | `composite_v1` |
+
+External signal authors can construct descriptors with `SignalDescriptor::new`
+and parameter metadata with `SignalParameterDescriptor::new` or
+`SignalParameterDescriptor::integer`. Use the `with_*` descriptor methods to
+attach required inputs, warmup, parameters, output semantics, and capability
+flags. This keeps descriptor structs future-compatible while still allowing
+downstream crates to describe custom signals.
+
+Example:
+
+```rust
+use of_signals::{describe_signal, SignalInputMask, SignalParameterValue};
+
+let descriptor = describe_signal("delta_momentum_v1").unwrap();
+assert!(descriptor.requires_input(SignalInputMask::ANALYTICS));
+
+let threshold = descriptor.parameter("threshold").unwrap();
+assert_eq!(threshold.default, Some(SignalParameterValue::Integer(100)));
+```
+
+### `SignalInputMask`
+
+`SignalInputMask` is a compact bitset for required signal context.
+
+| Constant | Meaning |
+| --- | --- |
+| `NONE` | No declared inputs |
+| `ANALYTICS` | Requires `AnalyticsSnapshot` |
+| `DATA_QUALITY` | Requires `DataQualityFlags` |
+| `BOOK` | Requires reconstructed book state |
+| `ADVANCED_ANALYTICS` | Requires advanced analytics or feature vectors |
+| `MARKET_REGIME` | Requires market-regime context |
+| `POSITION` | Requires current position context |
+| `RISK` | Requires risk or OMS gating context |
+
+Use `contains`, `intersects`, `union`, `bits`, or `from_bits_truncate` when
+bridging this metadata into config files or bindings.
+
+### `SignalLifecycle`
+
+`SignalLifecycle` tracks warmup progress and explicit production states without
+changing signal logic.
+
+| State | Meaning |
+| --- | --- |
+| `Initializing` | Object exists but is not evaluating yet |
+| `WarmingUp` | Inputs are flowing but warmup is incomplete |
+| `Active` | Output can be consumed normally |
+| `Degraded` | Output exists but should be treated cautiously |
+| `Blocked` | Output must not be used for trading decisions |
+| `CoolingDown` | Rapid transitions are intentionally suppressed |
+| `Disabled` | Evaluation is configured off |
+
+Warmup requirements can be based on event count, market time, completed bars, or
+an `All(...)` composite requirement.
+
+Example:
+
+```rust
+use of_signals::{SignalLifecycle, SignalLifecycleState, SignalWarmupRequirement};
+
+let mut lifecycle = SignalLifecycle::new(SignalWarmupRequirement::Events(2));
+assert_eq!(lifecycle.state(), SignalLifecycleState::WarmingUp);
+
+lifecycle.record_event();
+lifecycle.record_event();
+
+assert_eq!(lifecycle.state(), SignalLifecycleState::Active);
+```
 
 ## Built-in Modules
 
