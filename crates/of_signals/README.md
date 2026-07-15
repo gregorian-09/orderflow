@@ -21,6 +21,8 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
   and [`SignalConfidenceCalibrator`]
 - Ensemble framework: [`SignalEnsemblePolicy`], [`SignalEnsembleVote`], and
   [`evaluate_signal_ensemble`]
+- Persistence/shadow: [`SignalCheckpoint`], [`SignalRunMode`],
+  [`SignalShadowRecorder`], and [`SignalShadowComparisonReport`]
 - Legacy adapter: [`LegacySignalAdapter`]
 - Built-in modules:
   - [`DeltaMomentumSignal`]
@@ -113,6 +115,14 @@ New additive APIs:
   and aggregate quality flags for dashboards, replay review, and monitoring.
 - [`SignalEnsembleExplanation`] aggregates child explanations into one
   top-level ensemble explanation for audit and UI paths.
+- [`SignalCheckpoint`] and [`validate_signal_checkpoint_restore`] provide
+  versioned restore validation metadata without requiring a serialization
+  dependency in the signal core.
+- [`SignalRunMode`] and [`SignalRunModeDecision`] define active, shadow,
+  record-only, and disabled behavior for production hosts.
+- [`SignalShadowRecorder`] and [`SignalShadowComparisonReport`] compare
+  production and candidate signal output for shadow deployments and A/B-style
+  replay review.
 
 This is intentionally metadata-first. Built-in signal behavior is unchanged:
 existing users still call `on_analytics`, `quality_gate`, and `snapshot` exactly
@@ -193,6 +203,18 @@ Public types:
 - [`SignalEnsembleMetrics`]
 - [`SignalEnsembleDecision`]
 - [`SignalEnsembleExplanation`]
+- [`SignalCheckpoint`]
+- [`SignalCheckpointRestorePolicy`]
+- [`SignalCheckpointValidationIssue`]
+- [`SignalCheckpointValidationReport`]
+- [`SignalCheckpointRestoreError`]
+- [`CheckpointableSignal`]
+- [`SignalRunMode`]
+- [`SignalRunModeDecision`]
+- [`SignalShadowSample`]
+- [`SignalShadowComparisonConfig`]
+- [`SignalShadowComparisonReport`]
+- [`SignalShadowRecorder`]
 - [`DeltaMomentumSignal`]
 - [`VolumeImbalanceSignal`]
 - [`CumulativeDeltaSignal`]
@@ -218,6 +240,7 @@ Public descriptor constants and functions:
 - [`validate_signal_replay_events`]
 - [`evaluate_signal_ensemble`]
 - [`evaluate_signal_ensemble_explanations`]
+- [`validate_signal_checkpoint_restore`]
 
 Public constructors:
 
@@ -864,6 +887,106 @@ Recommended use:
 - keep veto semantics conservative for live trading paths;
 - log [`SignalEnsembleMetrics`] when reviewing why an ensemble changed state;
 - use explanation aggregation outside the low-latency path.
+
+## Persistence And Shadow Mode
+
+Production hosts often need deterministic signal restarts and safe live testing
+for candidate signals. `of_signals` now exposes the primitives for that without
+forcing persistence, serialization, threading, or OMS responsibilities into the
+signal crate.
+
+Checkpointing:
+
+- [`SignalCheckpoint`] stores versioned checkpoint metadata plus opaque
+  signal-owned payload bytes.
+- [`SignalCheckpointRestorePolicy`] describes what a host expects before
+  restore is allowed.
+- [`validate_signal_checkpoint_restore`] checks schema version, signal id,
+  signal version, config hash, symbol, calibration id, and timestamp ordering.
+- [`CheckpointableSignal`] is an optional extension trait for custom signal
+  implementations that can save and restore state.
+
+Checkpoint example:
+
+```rust
+use of_core::SignalState;
+use of_signals::{
+    validate_signal_checkpoint_restore, SignalCheckpoint,
+    SignalCheckpointRestorePolicy,
+};
+
+let checkpoint = SignalCheckpoint::new(
+    "custom_signal_v1",
+    "1",
+    SignalState::LongBias,
+)
+.with_config_hash(42)
+.with_timestamps(1_000, 2_000)
+.with_payload(vec![1, 2, 3]);
+
+let policy = SignalCheckpointRestorePolicy::new()
+    .with_signal("custom_signal_v1", "1")
+    .with_config_hash(42)
+    .with_min_last_update_ns(1_500);
+
+let report = validate_signal_checkpoint_restore(&checkpoint, &policy);
+assert!(report.valid);
+```
+
+Run modes:
+
+- [`SignalRunMode::Active`] computes output and allows strategy/risk consumers
+  to use it.
+- [`SignalRunMode::Shadow`] computes and records output but marks it
+  non-trading.
+- [`SignalRunMode::RecordOnly`] records inputs/features but lets hosts skip an
+  expensive candidate signal.
+- [`SignalRunMode::Disabled`] does not evaluate or record.
+
+Shadow comparison example:
+
+```rust
+use of_core::{SignalSnapshot, SignalState};
+use of_signals::{
+    SignalMarkoutDirection, SignalShadowComparisonConfig, SignalShadowRecorder,
+    SignalShadowSample,
+};
+
+let production = SignalSnapshot {
+    module_id: "production_v1",
+    state: SignalState::LongBias,
+    confidence_bps: 6_000,
+    quality_flags: 0,
+    reason: "prod_long".to_string(),
+};
+let candidate = SignalSnapshot {
+    module_id: "candidate_v2",
+    state: SignalState::ShortBias,
+    confidence_bps: 8_000,
+    quality_flags: 0,
+    reason: "candidate_short".to_string(),
+};
+
+let mut recorder = SignalShadowRecorder::new(
+    SignalShadowComparisonConfig::new().with_store_samples(true),
+);
+recorder.record(
+    SignalShadowSample::compare(0, production, candidate)
+        .with_markout(SignalMarkoutDirection::Down),
+);
+
+let report = recorder.report();
+assert_eq!(report.state_disagreements, 1);
+assert_eq!(report.candidate_accuracy_bps(), Some(10_000));
+```
+
+Operational guidance:
+
+- validate checkpoint metadata before calling custom restore code;
+- fail closed and warm up from live/replay data when validation fails;
+- keep shadow output out of strategy/risk/OMS decisions;
+- compare shadow output asynchronously when latency isolation matters;
+- treat A/B reports as evidence for promotion, not automatic promotion logic.
 
 Custom descriptor example:
 

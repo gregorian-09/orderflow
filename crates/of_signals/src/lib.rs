@@ -3631,6 +3631,783 @@ fn ensemble_decision(
     }
 }
 
+/// Current schema version for signal checkpoints.
+pub const SIGNAL_CHECKPOINT_SCHEMA_VERSION: u16 = 1;
+
+/// Versioned signal checkpoint metadata and payload.
+///
+/// The core type is intentionally generic: the signal crate validates stable
+/// identity/config metadata, while individual signal implementations own their
+/// payload encoding.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct SignalCheckpoint {
+    /// Checkpoint schema version.
+    pub schema_version: u16,
+    /// Stable signal module id.
+    pub module_id: String,
+    /// Signal implementation or descriptor version.
+    pub signal_version: String,
+    /// Host-defined signal configuration hash.
+    pub config_hash: u64,
+    /// Optional symbol associated with the checkpoint.
+    pub symbol: Option<SymbolId>,
+    /// Last emitted state captured in the checkpoint.
+    pub state: SignalState,
+    /// Last emitted confidence in basis points.
+    pub confidence_bps: u16,
+    /// Last emitted quality flags.
+    pub quality_flags: u32,
+    /// Last emitted reason text.
+    pub reason: String,
+    /// Optional lifecycle state captured by the host.
+    pub lifecycle_state: Option<SignalLifecycleState>,
+    /// Optional calibration artifact id used by the signal.
+    pub calibration_id: Option<u64>,
+    /// Checkpoint creation timestamp in nanoseconds.
+    pub created_at_ns: u64,
+    /// Last signal update timestamp represented by this checkpoint.
+    pub last_update_ns: u64,
+    /// Opaque signal-owned payload bytes.
+    pub payload: Vec<u8>,
+}
+
+impl SignalCheckpoint {
+    /// Creates checkpoint metadata for a signal state.
+    pub fn new(
+        module_id: impl Into<String>,
+        signal_version: impl Into<String>,
+        state: SignalState,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_CHECKPOINT_SCHEMA_VERSION,
+            module_id: module_id.into(),
+            signal_version: signal_version.into(),
+            config_hash: 0,
+            symbol: None,
+            state,
+            confidence_bps: 0,
+            quality_flags: 0,
+            reason: String::new(),
+            lifecycle_state: None,
+            calibration_id: None,
+            created_at_ns: 0,
+            last_update_ns: 0,
+            payload: Vec::new(),
+        }
+    }
+
+    /// Creates checkpoint metadata from a signal snapshot.
+    pub fn from_snapshot(snapshot: &SignalSnapshot, signal_version: impl Into<String>) -> Self {
+        Self {
+            schema_version: SIGNAL_CHECKPOINT_SCHEMA_VERSION,
+            module_id: snapshot.module_id.to_string(),
+            signal_version: signal_version.into(),
+            config_hash: 0,
+            symbol: None,
+            state: snapshot.state,
+            confidence_bps: snapshot.confidence_bps.min(10_000),
+            quality_flags: snapshot.quality_flags,
+            reason: snapshot.reason.clone(),
+            lifecycle_state: None,
+            calibration_id: None,
+            created_at_ns: 0,
+            last_update_ns: 0,
+            payload: Vec::new(),
+        }
+    }
+
+    /// Returns this checkpoint with a configuration hash.
+    pub const fn with_config_hash(mut self, config_hash: u64) -> Self {
+        self.config_hash = config_hash;
+        self
+    }
+
+    /// Returns this checkpoint with a symbol.
+    pub fn with_symbol(mut self, symbol: SymbolId) -> Self {
+        self.symbol = Some(symbol);
+        self
+    }
+
+    /// Returns this checkpoint with lifecycle state.
+    pub const fn with_lifecycle_state(mut self, lifecycle_state: SignalLifecycleState) -> Self {
+        self.lifecycle_state = Some(lifecycle_state);
+        self
+    }
+
+    /// Returns this checkpoint with calibration id.
+    pub const fn with_calibration_id(mut self, calibration_id: u64) -> Self {
+        self.calibration_id = Some(calibration_id);
+        self
+    }
+
+    /// Returns this checkpoint with creation and last-update timestamps.
+    pub const fn with_timestamps(mut self, created_at_ns: u64, last_update_ns: u64) -> Self {
+        self.created_at_ns = created_at_ns;
+        self.last_update_ns = last_update_ns;
+        self
+    }
+
+    /// Returns this checkpoint with opaque payload bytes.
+    pub fn with_payload(mut self, payload: Vec<u8>) -> Self {
+        self.payload = payload;
+        self
+    }
+}
+
+/// Restore-time validation policy for a signal checkpoint.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignalCheckpointRestorePolicy {
+    /// Expected signal module id.
+    pub expected_module_id: Option<String>,
+    /// Expected signal implementation/descriptor version.
+    pub expected_signal_version: Option<String>,
+    /// Expected config hash.
+    pub expected_config_hash: Option<u64>,
+    /// Expected symbol.
+    pub expected_symbol: Option<SymbolId>,
+    /// Minimum accepted checkpoint schema version.
+    pub min_schema_version: u16,
+    /// Maximum accepted checkpoint schema version.
+    pub max_schema_version: u16,
+    /// Minimum accepted last-update timestamp.
+    pub min_last_update_ns: Option<u64>,
+    /// Expected calibration artifact id.
+    pub expected_calibration_id: Option<u64>,
+}
+
+impl SignalCheckpointRestorePolicy {
+    /// Creates a restore policy that accepts the current checkpoint schema.
+    pub const fn new() -> Self {
+        Self {
+            expected_module_id: None,
+            expected_signal_version: None,
+            expected_config_hash: None,
+            expected_symbol: None,
+            min_schema_version: SIGNAL_CHECKPOINT_SCHEMA_VERSION,
+            max_schema_version: SIGNAL_CHECKPOINT_SCHEMA_VERSION,
+            min_last_update_ns: None,
+            expected_calibration_id: None,
+        }
+    }
+
+    /// Returns this policy with expected signal identity.
+    pub fn with_signal(mut self, module_id: impl Into<String>, version: impl Into<String>) -> Self {
+        self.expected_module_id = Some(module_id.into());
+        self.expected_signal_version = Some(version.into());
+        self
+    }
+
+    /// Returns this policy with an expected config hash.
+    pub const fn with_config_hash(mut self, config_hash: u64) -> Self {
+        self.expected_config_hash = Some(config_hash);
+        self
+    }
+
+    /// Returns this policy with an expected symbol.
+    pub fn with_symbol(mut self, symbol: SymbolId) -> Self {
+        self.expected_symbol = Some(symbol);
+        self
+    }
+
+    /// Returns this policy with an accepted schema version range.
+    pub const fn with_schema_range(
+        mut self,
+        min_schema_version: u16,
+        max_schema_version: u16,
+    ) -> Self {
+        self.min_schema_version = min_schema_version;
+        self.max_schema_version = max_schema_version;
+        self
+    }
+
+    /// Returns this policy with a minimum last-update timestamp.
+    pub const fn with_min_last_update_ns(mut self, min_last_update_ns: u64) -> Self {
+        self.min_last_update_ns = Some(min_last_update_ns);
+        self
+    }
+
+    /// Returns this policy with an expected calibration id.
+    pub const fn with_calibration_id(mut self, calibration_id: u64) -> Self {
+        self.expected_calibration_id = Some(calibration_id);
+        self
+    }
+}
+
+impl Default for SignalCheckpointRestorePolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// One restore validation issue for a signal checkpoint.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignalCheckpointValidationIssue {
+    /// Checkpoint schema version was outside the accepted range.
+    SchemaVersionOutOfRange {
+        /// Minimum accepted schema version.
+        min: u16,
+        /// Maximum accepted schema version.
+        max: u16,
+        /// Actual checkpoint schema version.
+        actual: u16,
+    },
+    /// Signal module id did not match.
+    ModuleIdMismatch {
+        /// Expected module id.
+        expected: String,
+        /// Actual module id.
+        actual: String,
+    },
+    /// Signal version did not match.
+    SignalVersionMismatch {
+        /// Expected signal version.
+        expected: String,
+        /// Actual signal version.
+        actual: String,
+    },
+    /// Signal config hash did not match.
+    ConfigHashMismatch {
+        /// Expected config hash.
+        expected: u64,
+        /// Actual config hash.
+        actual: u64,
+    },
+    /// Symbol did not match.
+    SymbolMismatch {
+        /// Expected symbol.
+        expected: SymbolId,
+        /// Actual symbol.
+        actual: Option<SymbolId>,
+    },
+    /// Calibration id did not match.
+    CalibrationMismatch {
+        /// Expected calibration id.
+        expected: u64,
+        /// Actual calibration id.
+        actual: Option<u64>,
+    },
+    /// Checkpoint timestamp was older than allowed.
+    NonMonotonicTimestamp {
+        /// Minimum accepted last-update timestamp.
+        min_last_update_ns: u64,
+        /// Actual checkpoint last-update timestamp.
+        checkpoint_last_update_ns: u64,
+    },
+}
+
+/// Restore validation report for a signal checkpoint.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignalCheckpointValidationReport {
+    /// Whether restore validation passed.
+    pub valid: bool,
+    /// Validation issues.
+    pub issues: Vec<SignalCheckpointValidationIssue>,
+}
+
+impl SignalCheckpointValidationReport {
+    /// Returns `true` when validation failed.
+    pub const fn has_errors(&self) -> bool {
+        !self.valid
+    }
+}
+
+/// Error returned by checkpoint-aware signal restore operations.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignalCheckpointRestoreError {
+    /// Checkpoint metadata failed restore validation.
+    InvalidCheckpoint(SignalCheckpointValidationReport),
+    /// Checkpoint payload is not supported by this signal implementation.
+    UnsupportedPayload,
+}
+
+/// Optional extension trait for signals that support checkpoint restore.
+///
+/// This is intentionally separate from [`SignalModule`] so existing downstream
+/// signal implementations remain source-compatible.
+pub trait CheckpointableSignal: SignalModule {
+    /// Returns a checkpoint for the current signal state.
+    fn checkpoint(&self) -> SignalCheckpoint;
+
+    /// Restores signal state from a previously validated checkpoint.
+    fn restore_checkpoint(
+        &mut self,
+        checkpoint: &SignalCheckpoint,
+    ) -> Result<(), SignalCheckpointRestoreError>;
+}
+
+/// Validates checkpoint metadata against a restore policy.
+pub fn validate_signal_checkpoint_restore(
+    checkpoint: &SignalCheckpoint,
+    policy: &SignalCheckpointRestorePolicy,
+) -> SignalCheckpointValidationReport {
+    let mut issues = Vec::new();
+
+    if checkpoint.schema_version < policy.min_schema_version
+        || checkpoint.schema_version > policy.max_schema_version
+    {
+        issues.push(SignalCheckpointValidationIssue::SchemaVersionOutOfRange {
+            min: policy.min_schema_version,
+            max: policy.max_schema_version,
+            actual: checkpoint.schema_version,
+        });
+    }
+
+    if let Some(expected) = &policy.expected_module_id {
+        if checkpoint.module_id != *expected {
+            issues.push(SignalCheckpointValidationIssue::ModuleIdMismatch {
+                expected: expected.clone(),
+                actual: checkpoint.module_id.clone(),
+            });
+        }
+    }
+
+    if let Some(expected) = &policy.expected_signal_version {
+        if checkpoint.signal_version != *expected {
+            issues.push(SignalCheckpointValidationIssue::SignalVersionMismatch {
+                expected: expected.clone(),
+                actual: checkpoint.signal_version.clone(),
+            });
+        }
+    }
+
+    if let Some(expected) = policy.expected_config_hash {
+        if checkpoint.config_hash != expected {
+            issues.push(SignalCheckpointValidationIssue::ConfigHashMismatch {
+                expected,
+                actual: checkpoint.config_hash,
+            });
+        }
+    }
+
+    if let Some(expected) = &policy.expected_symbol {
+        if checkpoint.symbol.as_ref() != Some(expected) {
+            issues.push(SignalCheckpointValidationIssue::SymbolMismatch {
+                expected: expected.clone(),
+                actual: checkpoint.symbol.clone(),
+            });
+        }
+    }
+
+    if let Some(expected) = policy.expected_calibration_id {
+        if checkpoint.calibration_id != Some(expected) {
+            issues.push(SignalCheckpointValidationIssue::CalibrationMismatch {
+                expected,
+                actual: checkpoint.calibration_id,
+            });
+        }
+    }
+
+    if let Some(min_last_update_ns) = policy.min_last_update_ns {
+        if checkpoint.last_update_ns < min_last_update_ns {
+            issues.push(SignalCheckpointValidationIssue::NonMonotonicTimestamp {
+                min_last_update_ns,
+                checkpoint_last_update_ns: checkpoint.last_update_ns,
+            });
+        }
+    }
+
+    SignalCheckpointValidationReport {
+        valid: issues.is_empty(),
+        issues,
+    }
+}
+
+/// Runtime mode for a signal in production or validation hosts.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum SignalRunMode {
+    /// Output can be consumed by strategy and risk code.
+    #[default]
+    Active,
+    /// Output is computed and recorded, but must not affect trading decisions.
+    Shadow,
+    /// Inputs/features are recorded, but the expensive signal may be skipped.
+    RecordOnly,
+    /// Signal is not evaluated or recorded.
+    Disabled,
+}
+
+/// Evaluation and publication behavior implied by a run mode.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SignalRunModeDecision {
+    /// Run mode that produced this decision.
+    pub mode: SignalRunMode,
+    /// Whether the signal should be evaluated.
+    pub evaluate: bool,
+    /// Whether signal output may affect trading decisions.
+    pub publish_for_trading: bool,
+    /// Whether input/features should be recorded.
+    pub record_input: bool,
+    /// Whether output should be recorded.
+    pub record_output: bool,
+}
+
+impl SignalRunModeDecision {
+    /// Creates a behavior decision from a run mode.
+    pub const fn from_mode(mode: SignalRunMode) -> Self {
+        match mode {
+            SignalRunMode::Active => Self {
+                mode,
+                evaluate: true,
+                publish_for_trading: true,
+                record_input: true,
+                record_output: true,
+            },
+            SignalRunMode::Shadow => Self {
+                mode,
+                evaluate: true,
+                publish_for_trading: false,
+                record_input: true,
+                record_output: true,
+            },
+            SignalRunMode::RecordOnly => Self {
+                mode,
+                evaluate: false,
+                publish_for_trading: false,
+                record_input: true,
+                record_output: false,
+            },
+            SignalRunMode::Disabled => Self {
+                mode,
+                evaluate: false,
+                publish_for_trading: false,
+                record_input: false,
+                record_output: false,
+            },
+        }
+    }
+}
+
+/// One production-versus-candidate shadow comparison sample.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct SignalShadowSample {
+    /// Event index where both signals were compared.
+    pub event_index: usize,
+    /// Optional exchange timestamp.
+    pub ts_exchange_ns: Option<u64>,
+    /// Production signal snapshot.
+    pub production: SignalSnapshot,
+    /// Candidate/shadow signal snapshot.
+    pub candidate: SignalSnapshot,
+    /// Production run mode.
+    pub production_mode: SignalRunMode,
+    /// Candidate run mode.
+    pub candidate_mode: SignalRunMode,
+    /// Whether production and candidate states differ.
+    pub disagreement: bool,
+    /// Candidate confidence minus production confidence.
+    pub confidence_delta_bps: i32,
+    /// Optional future markout label.
+    pub markout_direction: Option<SignalMarkoutDirection>,
+    /// Whether production matched the markout label.
+    pub production_correct: Option<bool>,
+    /// Whether candidate matched the markout label.
+    pub candidate_correct: Option<bool>,
+}
+
+impl SignalShadowSample {
+    /// Creates a shadow comparison sample.
+    pub fn compare(
+        event_index: usize,
+        production: SignalSnapshot,
+        candidate: SignalSnapshot,
+    ) -> Self {
+        let disagreement = production.state != candidate.state;
+        let confidence_delta_bps =
+            i32::from(candidate.confidence_bps) - i32::from(production.confidence_bps);
+        Self {
+            event_index,
+            ts_exchange_ns: None,
+            production,
+            candidate,
+            production_mode: SignalRunMode::Active,
+            candidate_mode: SignalRunMode::Shadow,
+            disagreement,
+            confidence_delta_bps,
+            markout_direction: None,
+            production_correct: None,
+            candidate_correct: None,
+        }
+    }
+
+    /// Returns this sample with an exchange timestamp.
+    pub const fn with_ts_exchange_ns(mut self, ts_exchange_ns: u64) -> Self {
+        self.ts_exchange_ns = Some(ts_exchange_ns);
+        self
+    }
+
+    /// Returns this sample with explicit run modes.
+    pub const fn with_modes(
+        mut self,
+        production_mode: SignalRunMode,
+        candidate_mode: SignalRunMode,
+    ) -> Self {
+        self.production_mode = production_mode;
+        self.candidate_mode = candidate_mode;
+        self
+    }
+
+    /// Returns this sample scored against a future markout label.
+    pub fn with_markout(mut self, markout_direction: SignalMarkoutDirection) -> Self {
+        self.markout_direction = Some(markout_direction);
+        self.production_correct = score_direction(
+            signal_state_direction(self.production.state),
+            markout_direction,
+        );
+        self.candidate_correct = score_direction(
+            signal_state_direction(self.candidate.state),
+            markout_direction,
+        );
+        self
+    }
+}
+
+/// Configuration for shadow comparison reports.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SignalShadowComparisonConfig {
+    /// Whether retained samples should be included in the report.
+    pub store_samples: bool,
+}
+
+impl SignalShadowComparisonConfig {
+    /// Creates shadow comparison config.
+    pub const fn new() -> Self {
+        Self {
+            store_samples: false,
+        }
+    }
+
+    /// Returns config with sample retention changed.
+    pub const fn with_store_samples(mut self, store_samples: bool) -> Self {
+        self.store_samples = store_samples;
+        self
+    }
+}
+
+impl Default for SignalShadowComparisonConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Report comparing production and shadow/candidate signal output.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct SignalShadowComparisonReport {
+    /// Report configuration.
+    pub config: SignalShadowComparisonConfig,
+    /// Total samples inspected.
+    pub total_samples: usize,
+    /// Samples where both snapshots were compared.
+    pub compared_samples: usize,
+    /// Samples where production and candidate states matched.
+    pub state_agreements: usize,
+    /// Samples where production and candidate states differed.
+    pub state_disagreements: usize,
+    /// Production directional predictions.
+    pub production_directional: usize,
+    /// Candidate directional predictions.
+    pub candidate_directional: usize,
+    /// Samples where both sides were directional.
+    pub both_directional: usize,
+    /// Samples where production was correct.
+    pub production_correct: usize,
+    /// Samples where candidate was correct.
+    pub candidate_correct: usize,
+    /// Samples where production was correct and candidate was not.
+    pub production_only_correct: usize,
+    /// Samples where candidate was correct and production was not.
+    pub candidate_only_correct: usize,
+    /// Average candidate-minus-production confidence delta.
+    pub average_confidence_delta_bps: i32,
+    /// Retained samples.
+    pub samples: Vec<SignalShadowSample>,
+}
+
+impl SignalShadowComparisonReport {
+    /// Builds a comparison report from shadow samples.
+    pub fn from_samples(
+        samples: &[SignalShadowSample],
+        config: SignalShadowComparisonConfig,
+    ) -> Self {
+        build_shadow_comparison_report(samples, config)
+    }
+
+    /// Returns state agreement rate in basis points.
+    pub fn agreement_bps(&self) -> Option<u16> {
+        ratio_bps(self.state_agreements, self.compared_samples)
+    }
+
+    /// Returns production directional accuracy in basis points.
+    pub fn production_accuracy_bps(&self) -> Option<u16> {
+        ratio_bps(self.production_correct, self.production_directional)
+    }
+
+    /// Returns candidate directional accuracy in basis points.
+    pub fn candidate_accuracy_bps(&self) -> Option<u16> {
+        ratio_bps(self.candidate_correct, self.candidate_directional)
+    }
+
+    /// Exports a compact JSON summary.
+    pub fn json_summary(&self) -> String {
+        let mut out = String::from("{");
+        out.push_str("\"total_samples\":");
+        out.push_str(&self.total_samples.to_string());
+        out.push(',');
+        out.push_str("\"compared_samples\":");
+        out.push_str(&self.compared_samples.to_string());
+        out.push(',');
+        out.push_str("\"state_disagreements\":");
+        out.push_str(&self.state_disagreements.to_string());
+        out.push(',');
+        out.push_str("\"agreement_bps\":");
+        push_optional_u16_json(&mut out, self.agreement_bps());
+        out.push(',');
+        out.push_str("\"production_accuracy_bps\":");
+        push_optional_u16_json(&mut out, self.production_accuracy_bps());
+        out.push(',');
+        out.push_str("\"candidate_accuracy_bps\":");
+        push_optional_u16_json(&mut out, self.candidate_accuracy_bps());
+        out.push(',');
+        out.push_str("\"candidate_only_correct\":");
+        out.push_str(&self.candidate_only_correct.to_string());
+        out.push(',');
+        out.push_str("\"production_only_correct\":");
+        out.push_str(&self.production_only_correct.to_string());
+        out.push(',');
+        out.push_str("\"average_confidence_delta_bps\":");
+        out.push_str(&self.average_confidence_delta_bps.to_string());
+        out.push('}');
+        out
+    }
+}
+
+/// Incremental recorder for shadow-mode signal comparisons.
+#[derive(Debug, Clone)]
+pub struct SignalShadowRecorder {
+    config: SignalShadowComparisonConfig,
+    samples: Vec<SignalShadowSample>,
+}
+
+impl SignalShadowRecorder {
+    /// Creates an empty shadow recorder.
+    pub fn new(config: SignalShadowComparisonConfig) -> Self {
+        Self {
+            config,
+            samples: Vec::new(),
+        }
+    }
+
+    /// Returns recorder configuration.
+    pub const fn config(&self) -> SignalShadowComparisonConfig {
+        self.config
+    }
+
+    /// Returns recorded samples.
+    pub fn samples(&self) -> &[SignalShadowSample] {
+        &self.samples
+    }
+
+    /// Records one shadow comparison sample.
+    pub fn record(&mut self, sample: SignalShadowSample) {
+        self.samples.push(sample);
+    }
+
+    /// Builds a comparison report.
+    pub fn report(&self) -> SignalShadowComparisonReport {
+        SignalShadowComparisonReport::from_samples(&self.samples, self.config)
+    }
+
+    /// Clears recorded samples.
+    pub fn clear(&mut self) {
+        self.samples.clear();
+    }
+}
+
+impl Default for SignalShadowRecorder {
+    fn default() -> Self {
+        Self::new(SignalShadowComparisonConfig::default())
+    }
+}
+
+fn build_shadow_comparison_report(
+    samples: &[SignalShadowSample],
+    config: SignalShadowComparisonConfig,
+) -> SignalShadowComparisonReport {
+    let mut report = SignalShadowComparisonReport {
+        config,
+        total_samples: samples.len(),
+        compared_samples: 0,
+        state_agreements: 0,
+        state_disagreements: 0,
+        production_directional: 0,
+        candidate_directional: 0,
+        both_directional: 0,
+        production_correct: 0,
+        candidate_correct: 0,
+        production_only_correct: 0,
+        candidate_only_correct: 0,
+        average_confidence_delta_bps: 0,
+        samples: Vec::new(),
+    };
+
+    let mut confidence_delta_sum = 0_i64;
+    for sample in samples {
+        report.compared_samples += 1;
+        confidence_delta_sum += i64::from(sample.confidence_delta_bps);
+        if sample.disagreement {
+            report.state_disagreements += 1;
+        } else {
+            report.state_agreements += 1;
+        }
+
+        let production_directional = signal_state_direction(sample.production.state).is_some();
+        let candidate_directional = signal_state_direction(sample.candidate.state).is_some();
+        report.production_directional += usize::from(production_directional);
+        report.candidate_directional += usize::from(candidate_directional);
+        report.both_directional += usize::from(production_directional && candidate_directional);
+
+        if sample.production_correct == Some(true) {
+            report.production_correct += 1;
+        }
+        if sample.candidate_correct == Some(true) {
+            report.candidate_correct += 1;
+        }
+        if sample.production_correct == Some(true) && sample.candidate_correct == Some(false) {
+            report.production_only_correct += 1;
+        }
+        if sample.candidate_correct == Some(true) && sample.production_correct == Some(false) {
+            report.candidate_only_correct += 1;
+        }
+    }
+
+    if report.compared_samples > 0 {
+        report.average_confidence_delta_bps =
+            (confidence_delta_sum / report.compared_samples as i64) as i32;
+    }
+    if config.store_samples {
+        report.samples = samples.to_vec();
+    }
+
+    report
+}
+
+fn signal_state_direction(state: SignalState) -> Option<SignalMarkoutDirection> {
+    match state {
+        SignalState::LongBias => Some(SignalMarkoutDirection::Up),
+        SignalState::ShortBias => Some(SignalMarkoutDirection::Down),
+        SignalState::Neutral | SignalState::Blocked => None,
+    }
+}
+
 impl SignalDescriptor {
     /// Creates static metadata for a signal module with conservative defaults.
     ///
@@ -5829,6 +6606,142 @@ mod tests {
                 "average_child_confidence",
                 7_500
             )));
+    }
+
+    #[test]
+    fn signal_checkpoint_restore_validation_accepts_matching_metadata() {
+        let symbol = SymbolId {
+            venue: "SIM".to_string(),
+            symbol: "ES".to_string(),
+        };
+        let checkpoint =
+            SignalCheckpoint::from_snapshot(&snapshot(SignalState::LongBias, 7_000), "1")
+                .with_config_hash(42)
+                .with_symbol(symbol.clone())
+                .with_calibration_id(7)
+                .with_timestamps(1_000, 2_000)
+                .with_payload(vec![1, 2, 3]);
+        let policy = SignalCheckpointRestorePolicy::new()
+            .with_signal("test_signal_v1", "1")
+            .with_config_hash(42)
+            .with_symbol(symbol)
+            .with_calibration_id(7)
+            .with_min_last_update_ns(1_500);
+
+        let report = validate_signal_checkpoint_restore(&checkpoint, &policy);
+
+        assert!(report.valid);
+        assert!(report.issues.is_empty());
+        assert_eq!(checkpoint.payload, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn signal_checkpoint_restore_validation_reports_mismatches() {
+        let checkpoint = SignalCheckpoint::new("candidate_signal_v1", "2", SignalState::Neutral)
+            .with_config_hash(10)
+            .with_timestamps(0, 500);
+        let policy = SignalCheckpointRestorePolicy::new()
+            .with_signal("production_signal_v1", "1")
+            .with_config_hash(11)
+            .with_min_last_update_ns(1_000);
+
+        let report = validate_signal_checkpoint_restore(&checkpoint, &policy);
+
+        assert!(!report.valid);
+        assert!(report.has_errors());
+        assert!(report.issues.iter().any(|issue| matches!(
+            issue,
+            SignalCheckpointValidationIssue::ModuleIdMismatch { .. }
+        )));
+        assert!(report.issues.iter().any(|issue| matches!(
+            issue,
+            SignalCheckpointValidationIssue::SignalVersionMismatch { .. }
+        )));
+        assert!(report.issues.iter().any(|issue| matches!(
+            issue,
+            SignalCheckpointValidationIssue::ConfigHashMismatch { .. }
+        )));
+        assert!(report.issues.iter().any(|issue| matches!(
+            issue,
+            SignalCheckpointValidationIssue::NonMonotonicTimestamp { .. }
+        )));
+    }
+
+    #[test]
+    fn signal_run_modes_encode_shadow_safety_behavior() {
+        let active = SignalRunModeDecision::from_mode(SignalRunMode::Active);
+        let shadow = SignalRunModeDecision::from_mode(SignalRunMode::Shadow);
+        let record_only = SignalRunModeDecision::from_mode(SignalRunMode::RecordOnly);
+        let disabled = SignalRunModeDecision::from_mode(SignalRunMode::Disabled);
+
+        assert!(active.evaluate);
+        assert!(active.publish_for_trading);
+        assert!(shadow.evaluate);
+        assert!(!shadow.publish_for_trading);
+        assert!(shadow.record_output);
+        assert!(!record_only.evaluate);
+        assert!(record_only.record_input);
+        assert!(!record_only.record_output);
+        assert!(!disabled.evaluate);
+        assert!(!disabled.record_input);
+    }
+
+    #[test]
+    fn shadow_comparison_report_scores_candidate_against_production() {
+        let production = snapshot(SignalState::LongBias, 6_000);
+        let candidate = snapshot(SignalState::ShortBias, 8_000);
+        let samples = [
+            SignalShadowSample::compare(0, production, candidate)
+                .with_ts_exchange_ns(1_000)
+                .with_markout(SignalMarkoutDirection::Down),
+            SignalShadowSample::compare(
+                1,
+                snapshot(SignalState::Neutral, 3_000),
+                snapshot(SignalState::LongBias, 7_000),
+            )
+            .with_markout(SignalMarkoutDirection::Up),
+        ];
+
+        let report = SignalShadowComparisonReport::from_samples(
+            &samples,
+            SignalShadowComparisonConfig::new().with_store_samples(true),
+        );
+
+        assert_eq!(report.total_samples, 2);
+        assert_eq!(report.state_disagreements, 2);
+        assert_eq!(report.production_directional, 1);
+        assert_eq!(report.candidate_directional, 2);
+        assert_eq!(report.production_correct, 0);
+        assert_eq!(report.candidate_correct, 2);
+        assert_eq!(report.candidate_only_correct, 1);
+        assert_eq!(report.average_confidence_delta_bps, 3_000);
+        assert_eq!(report.agreement_bps(), Some(0));
+        assert_eq!(report.candidate_accuracy_bps(), Some(10_000));
+        assert_eq!(report.samples.len(), 2);
+        assert!(report
+            .json_summary()
+            .contains("\"candidate_accuracy_bps\":10000"));
+    }
+
+    #[test]
+    fn shadow_recorder_builds_report_without_retaining_samples_by_default() {
+        let mut recorder = SignalShadowRecorder::default();
+        recorder.record(
+            SignalShadowSample::compare(
+                0,
+                snapshot(SignalState::LongBias, 7_000),
+                snapshot(SignalState::LongBias, 8_000),
+            )
+            .with_markout(SignalMarkoutDirection::Up),
+        );
+
+        let report = recorder.report();
+
+        assert_eq!(recorder.samples().len(), 1);
+        assert_eq!(report.compared_samples, 1);
+        assert_eq!(report.state_agreements, 1);
+        assert_eq!(report.samples.len(), 0);
+        assert_eq!(report.production_accuracy_bps(), Some(10_000));
     }
 
     #[test]

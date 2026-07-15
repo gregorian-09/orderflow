@@ -156,6 +156,18 @@ Public types:
 - `SignalEnsembleMetrics`
 - `SignalEnsembleDecision`
 - `SignalEnsembleExplanation`
+- `SignalCheckpoint`
+- `SignalCheckpointRestorePolicy`
+- `SignalCheckpointValidationIssue`
+- `SignalCheckpointValidationReport`
+- `SignalCheckpointRestoreError`
+- `CheckpointableSignal`
+- `SignalRunMode`
+- `SignalRunModeDecision`
+- `SignalShadowSample`
+- `SignalShadowComparisonConfig`
+- `SignalShadowComparisonReport`
+- `SignalShadowRecorder`
 - `DeltaMomentumSignal`
 - `VolumeImbalanceSignal`
 - `CumulativeDeltaSignal`
@@ -234,6 +246,25 @@ Ensemble functions and methods:
 - `evaluate_signal_ensemble(module_id, votes, policy) -> SignalEnsembleDecision`
 - `evaluate_signal_ensemble_explanations(module_id, child_explanations, weights_bps, policy) -> SignalEnsembleExplanation`
 - `SignalEnsembleExplanation::explanation() -> SignalExplanation`
+
+Checkpoint and shadow-mode functions and methods:
+
+- `SignalCheckpoint::new(module_id, signal_version, state) -> SignalCheckpoint`
+- `SignalCheckpoint::from_snapshot(&SignalSnapshot, signal_version) -> SignalCheckpoint`
+- `SignalCheckpointRestorePolicy::new() -> SignalCheckpointRestorePolicy`
+- `validate_signal_checkpoint_restore(&SignalCheckpoint, &SignalCheckpointRestorePolicy) -> SignalCheckpointValidationReport`
+- `CheckpointableSignal::checkpoint() -> SignalCheckpoint`
+- `CheckpointableSignal::restore_checkpoint(&SignalCheckpoint) -> Result<(), SignalCheckpointRestoreError>`
+- `SignalRunModeDecision::from_mode(SignalRunMode) -> SignalRunModeDecision`
+- `SignalShadowSample::compare(event_index, production, candidate) -> SignalShadowSample`
+- `SignalShadowSample::with_markout(markout_direction) -> SignalShadowSample`
+- `SignalShadowComparisonReport::from_samples(samples, config) -> SignalShadowComparisonReport`
+- `SignalShadowComparisonReport::agreement_bps() -> Option<u16>`
+- `SignalShadowComparisonReport::production_accuracy_bps() -> Option<u16>`
+- `SignalShadowComparisonReport::candidate_accuracy_bps() -> Option<u16>`
+- `SignalShadowComparisonReport::json_summary() -> String`
+- `SignalShadowRecorder::record(SignalShadowSample)`
+- `SignalShadowRecorder::report() -> SignalShadowComparisonReport`
 
 ### `of_persist`
 

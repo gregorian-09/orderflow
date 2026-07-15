@@ -78,6 +78,19 @@ and easy to test.
 | `SignalEnsembleExplanation` | struct | Top-level decision plus child explanations |
 | `evaluate_signal_ensemble` | function | Evaluates child votes under an ensemble policy |
 | `evaluate_signal_ensemble_explanations` | function | Evaluates and aggregates child explanations |
+| `SignalCheckpoint` | struct | Versioned checkpoint metadata plus signal-owned payload |
+| `SignalCheckpointRestorePolicy` | struct | Restore-time identity/config/schema validation policy |
+| `SignalCheckpointValidationIssue` | enum | One checkpoint restore validation failure |
+| `SignalCheckpointValidationReport` | struct | Aggregate checkpoint restore validation report |
+| `SignalCheckpointRestoreError` | enum | Restore error for checkpoint-aware signals |
+| `CheckpointableSignal` | trait | Optional checkpoint/restore extension trait |
+| `validate_signal_checkpoint_restore` | function | Validates checkpoint metadata before restore |
+| `SignalRunMode` | enum | Active, shadow, record-only, or disabled mode |
+| `SignalRunModeDecision` | struct | Evaluation/publication behavior for a run mode |
+| `SignalShadowSample` | struct | One production-versus-candidate comparison |
+| `SignalShadowComparisonConfig` | struct | Shadow report retention settings |
+| `SignalShadowComparisonReport` | struct | Production/candidate divergence and outcome report |
+| `SignalShadowRecorder` | struct | Incremental shadow comparison recorder |
 | `DeltaMomentumSignal` | struct | Base delta threshold module |
 | `VolumeImbalanceSignal` | struct | Session volume imbalance module |
 | `CumulativeDeltaSignal` | struct | Session cumulative delta module |
@@ -806,6 +819,136 @@ Operational guidance:
 - log `SignalEnsembleMetrics` beside final snapshots for replay debugging;
 - combine this API with calibration reports when deciding which child weights
   should be trusted in each market regime.
+
+## Persistence And Shadow Mode
+
+Signal persistence and shadow-mode primitives are additive host-side APIs. They
+do not alter `SignalModule`, built-in signal constructors, runtime behavior, or
+the OMS boundary.
+
+### Checkpoint Types
+
+| Type | Meaning |
+| --- | --- |
+| `SignalCheckpoint` | Schema version, signal identity, config hash, optional symbol/calibration id, last snapshot metadata, timestamps, and opaque payload |
+| `SignalCheckpointRestorePolicy` | Expected schema/version/config/symbol/calibration/timestamp constraints |
+| `SignalCheckpointValidationIssue` | Specific restore validation failure |
+| `SignalCheckpointValidationReport` | `valid` flag plus all validation issues |
+| `SignalCheckpointRestoreError` | Error type for checkpoint-aware custom signals |
+| `CheckpointableSignal` | Optional extension trait for custom checkpoint/restore support |
+
+`SignalCheckpoint` intentionally leaves payload bytes opaque. The signal crate
+validates stable metadata; each signal implementation owns its state encoding.
+
+```rust
+use of_core::SignalState;
+use of_signals::{
+    validate_signal_checkpoint_restore, SignalCheckpoint,
+    SignalCheckpointRestorePolicy,
+};
+
+let checkpoint = SignalCheckpoint::new(
+    "custom_signal_v1",
+    "1",
+    SignalState::LongBias,
+)
+.with_config_hash(42)
+.with_timestamps(1_000, 2_000)
+.with_payload(vec![1, 2, 3]);
+
+let policy = SignalCheckpointRestorePolicy::new()
+    .with_signal("custom_signal_v1", "1")
+    .with_config_hash(42)
+    .with_min_last_update_ns(1_500);
+
+let report = validate_signal_checkpoint_restore(&checkpoint, &policy);
+assert!(report.valid);
+```
+
+Restore validation checks:
+
+- checkpoint schema version range;
+- signal module id;
+- signal version;
+- config hash;
+- symbol compatibility;
+- calibration id;
+- monotonic last-update timestamp.
+
+Fail closed when restore validation fails. A host should warm the signal from
+replay or live data rather than restoring incompatible state.
+
+### Run Modes
+
+| Mode | Evaluate | Trading output | Record input | Record output |
+| --- | --- | --- | --- | --- |
+| `Active` | yes | yes | yes | yes |
+| `Shadow` | yes | no | yes | yes |
+| `RecordOnly` | no | no | yes | no |
+| `Disabled` | no | no | no | no |
+
+`SignalRunModeDecision::from_mode(...)` converts a mode into explicit booleans
+so hosts do not accidentally let a shadow signal affect trading.
+
+### Shadow Comparison
+
+Shadow comparison reports compare a production signal snapshot with a candidate
+snapshot under the same event stream. They can measure divergence immediately
+and can score relative correctness once future markout labels are available.
+
+```rust
+use of_core::{SignalSnapshot, SignalState};
+use of_signals::{
+    SignalMarkoutDirection, SignalShadowComparisonConfig, SignalShadowRecorder,
+    SignalShadowSample,
+};
+
+let production = SignalSnapshot {
+    module_id: "production_v1",
+    state: SignalState::LongBias,
+    confidence_bps: 6_000,
+    quality_flags: 0,
+    reason: "prod_long".to_string(),
+};
+let candidate = SignalSnapshot {
+    module_id: "candidate_v2",
+    state: SignalState::ShortBias,
+    confidence_bps: 8_000,
+    quality_flags: 0,
+    reason: "candidate_short".to_string(),
+};
+
+let mut recorder = SignalShadowRecorder::new(
+    SignalShadowComparisonConfig::new().with_store_samples(true),
+);
+recorder.record(
+    SignalShadowSample::compare(0, production, candidate)
+        .with_markout(SignalMarkoutDirection::Down),
+);
+
+let report = recorder.report();
+assert_eq!(report.state_disagreements, 1);
+assert_eq!(report.candidate_accuracy_bps(), Some(10_000));
+```
+
+Useful report methods:
+
+| Method | Meaning |
+| --- | --- |
+| `agreement_bps()` | State agreement rate |
+| `production_accuracy_bps()` | Production directional accuracy when markouts exist |
+| `candidate_accuracy_bps()` | Candidate directional accuracy when markouts exist |
+| `json_summary()` | Compact dependency-free JSON summary |
+
+Operational guidance:
+
+- shadow output must be recorded separately from active production output;
+- shadow output must not flow into strategy, risk, or OMS order decisions;
+- use asynchronous comparison when candidate latency should not affect
+  production;
+- use markout-aware reports before promoting a candidate signal;
+- keep checkpoint restore validation and shadow promotion policy outside the
+  hot signal-update path.
 
 ### `SignalInputMask`
 

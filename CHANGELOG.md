@@ -44,6 +44,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `SignalEnsembleVote`, reusable majority/quorum/weighted rules, veto handling,
   conflict resolution, metrics, and child-explanation aggregation. Existing
   `CompositeSignal` behavior is unchanged.
+- Additive `of_signals` checkpoint and shadow-mode primitives with
+  `SignalCheckpoint`, restore validation policies/reports,
+  `CheckpointableSignal`, `SignalRunMode`, `SignalShadowRecorder`, and
+  production-versus-candidate comparison reports for safe live validation
+  without changing existing signal modules.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the
