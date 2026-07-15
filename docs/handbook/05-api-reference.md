@@ -135,6 +135,18 @@ Public types:
 - `SignalValidationSample`
 - `SignalValidationReport`
 - `SignalValidationHarness`
+- `SignalCalibrationConfig`
+- `SignalConfidenceCalibrator`
+- `IdentitySignalCalibrator`
+- `SignalCalibrationPoint`
+- `SignalCalibrationCurve`
+- `SignalOutcomeRecord`
+- `SignalCalibrationBin`
+- `SignalRegimeSummary`
+- `SignalCalibrationReport`
+- `SignalCalibrationBinDrift`
+- `SignalCalibrationDriftReport`
+- `SignalOutcomeTracker`
 - `DeltaMomentumSignal`
 - `VolumeImbalanceSignal`
 - `CumulativeDeltaSignal`
@@ -178,6 +190,24 @@ Validation functions and methods:
 - `validate_signal_replay_events(&mut impl SignalModule, &[SignalReplayEvent], SignalValidationConfig) -> SignalValidationReport`
 - `SignalValidationHarness::validate_signal(...) -> SignalValidationReport`
 - `SignalValidationReport::json_summary() -> String`
+
+Calibration functions and methods:
+
+- `SignalCalibrationConfig::new(bin_width_bps) -> SignalCalibrationConfig`
+- `SignalCalibrationPoint::new(raw_confidence_bps, calibrated_confidence_bps) -> SignalCalibrationPoint`
+- `SignalCalibrationCurve::new(points) -> SignalCalibrationCurve`
+- `SignalConfidenceCalibrator::calibrate_confidence_bps(raw_confidence_bps) -> u16`
+- `SignalOutcomeRecord::new(module_id, state, confidence_bps, predicted_direction, markout_direction, correct) -> SignalOutcomeRecord`
+- `SignalOutcomeRecord::from_validation_sample(&SignalValidationSample) -> SignalOutcomeRecord`
+- `SignalCalibrationReport::from_records(&[SignalOutcomeRecord], SignalCalibrationConfig) -> SignalCalibrationReport`
+- `SignalCalibrationReport::from_validation_report(&SignalValidationReport, SignalCalibrationConfig) -> SignalCalibrationReport`
+- `SignalCalibrationReport::accuracy_bps() -> Option<u16>`
+- `SignalCalibrationReport::json_summary() -> String`
+- `SignalCalibrationDriftReport::compare(&baseline, &current, threshold_bps) -> SignalCalibrationDriftReport`
+- `SignalOutcomeTracker::record(SignalOutcomeRecord)`
+- `SignalOutcomeTracker::extend_validation_report(&SignalValidationReport)`
+- `SignalOutcomeTracker::calibration_report() -> SignalCalibrationReport`
+- `SignalOutcomeTracker::drift_report(&SignalCalibrationReport) -> SignalCalibrationDriftReport`
 
 ### `of_persist`
 

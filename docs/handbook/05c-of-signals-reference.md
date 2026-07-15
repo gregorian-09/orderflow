@@ -55,6 +55,18 @@ and easy to test.
 | `SignalValidationHarness` | struct | Configured replay validation runner |
 | `validate_signal_replay` | function | Validates a signal over analytics snapshots |
 | `validate_signal_replay_events` | function | Validates a signal over timestamped replay events |
+| `SignalCalibrationConfig` | struct | Confidence-bin and drift settings |
+| `SignalConfidenceCalibrator` | trait | Maps raw confidence into calibrated confidence |
+| `IdentitySignalCalibrator` | struct | Pass-through confidence calibrator |
+| `SignalCalibrationPoint` | struct | One calibration curve point |
+| `SignalCalibrationCurve` | struct | Piecewise-linear confidence calibration curve |
+| `SignalOutcomeRecord` | struct | One realized prediction/markout outcome |
+| `SignalCalibrationBin` | struct | Per-confidence-bin calibration summary |
+| `SignalRegimeSummary` | struct | Per-regime calibration summary |
+| `SignalCalibrationReport` | struct | Aggregate confidence calibration report |
+| `SignalCalibrationBinDrift` | struct | Per-bin baseline/current comparison |
+| `SignalCalibrationDriftReport` | struct | Expected calibration error drift report |
+| `SignalOutcomeTracker` | struct | Incremental outcome recorder and reporter |
 | `DeltaMomentumSignal` | struct | Base delta threshold module |
 | `VolumeImbalanceSignal` | struct | Session volume imbalance module |
 | `CumulativeDeltaSignal` | struct | Session cumulative delta module |
@@ -495,6 +507,147 @@ Useful report methods:
 | `label_coverage_bps()` | Events with labels divided by evaluated events |
 | `has_warnings()` | Whether validation emitted warnings |
 | `json_summary()` | Compact JSON summary for notebooks, Python, dashboards, or CI artifacts |
+
+## Calibration And Outcome Tracking
+
+Calibration reports are additive research and monitoring APIs. They do not
+change `SignalModule`, built-in constructors, signal snapshots, registry
+factories, runtime behavior, or binding ABI.
+
+The goal is to measure whether signal confidence aligns with realized
+directional outcomes. A signal can be directionally accurate but poorly
+calibrated if its confidence is systematically too high or too low for the
+observed markout accuracy.
+
+### Calibration Types
+
+| Type | Meaning |
+| --- | --- |
+| `SignalCalibrationConfig` | Confidence bin width, minimum samples per bin, and drift alert threshold |
+| `SignalConfidenceCalibrator` | Trait for mapping raw confidence basis points to calibrated confidence basis points |
+| `IdentitySignalCalibrator` | Default pass-through calibrator |
+| `SignalCalibrationPoint` | One raw-to-calibrated confidence point |
+| `SignalCalibrationCurve` | Piecewise-linear calibrator over sorted points |
+| `SignalOutcomeRecord` | Module id, state, confidence, prediction, markout label, correctness, and optional regime |
+| `SignalCalibrationBin` | Samples, correct count, average confidence, accuracy, and absolute calibration error for one bin |
+| `SignalRegimeSummary` | Samples, correct count, average confidence, and accuracy by regime label |
+| `SignalCalibrationReport` | Aggregate record counts, ECE, bins, and regime summaries |
+| `SignalCalibrationBinDrift` | Baseline/current sample counts and accuracy delta for one bin |
+| `SignalCalibrationDriftReport` | Baseline/current ECE comparison and significance flag |
+| `SignalOutcomeTracker` | Incremental recorder that can emit calibration and drift reports |
+
+### Report Semantics
+
+| Field | Meaning |
+| --- | --- |
+| `total_records` | All inspected outcome records |
+| `scored_records` | Records with `correct: Some(...)` |
+| `ignored_records` | Records not eligible for calibration scoring |
+| `correct_records` | Correct scored directional predictions |
+| `expected_calibration_error_bps` | Weighted average bin gap between accuracy and confidence |
+| `bins` | Confidence-bin summaries |
+| `regimes` | Optional per-regime summaries |
+
+The ECE calculation uses populated bins that satisfy
+`min_samples_per_bin`. Empty or under-sampled bins do not contribute to the
+weighted error, which avoids making sparse bins look more certain than they are.
+
+### Replay-To-Calibration Example
+
+```rust
+use of_core::AnalyticsSnapshot;
+use of_signals::{
+    validate_signal_replay, DeltaMomentumSignal, SignalCalibrationConfig,
+    SignalCalibrationReport, SignalValidationConfig,
+};
+
+let mut signal = DeltaMomentumSignal::new(10);
+let events = vec![
+    AnalyticsSnapshot {
+        delta: 20,
+        last_price: 100,
+        ..Default::default()
+    },
+    AnalyticsSnapshot {
+        delta: -20,
+        last_price: 90,
+        ..Default::default()
+    },
+    AnalyticsSnapshot {
+        delta: -20,
+        last_price: 80,
+        ..Default::default()
+    },
+];
+
+let validation = validate_signal_replay(
+    &mut signal,
+    &events,
+    SignalValidationConfig::new(1).with_store_samples(true),
+);
+let calibration = SignalCalibrationReport::from_validation_report(
+    &validation,
+    SignalCalibrationConfig::new(1_000),
+);
+
+assert_eq!(calibration.scored_records, 2);
+assert_eq!(calibration.accuracy_bps(), Some(5_000));
+```
+
+### Calibrator Example
+
+```rust
+use of_signals::{
+    SignalCalibrationCurve, SignalCalibrationPoint, SignalConfidenceCalibrator,
+};
+
+let curve = SignalCalibrationCurve::new(vec![
+    SignalCalibrationPoint::new(0, 0),
+    SignalCalibrationPoint::new(5_000, 4_000),
+    SignalCalibrationPoint::new(10_000, 9_000),
+]);
+
+assert_eq!(curve.calibrate_confidence_bps(7_500), 6_500);
+```
+
+Use the tracker for online or batch monitoring when the host has already
+resolved realized outcomes:
+
+```rust
+use of_signals::{
+    SignalCalibrationConfig, SignalMarkoutDirection, SignalOutcomeRecord,
+    SignalOutcomeTracker,
+};
+
+let mut tracker = SignalOutcomeTracker::new(SignalCalibrationConfig::default());
+tracker.record(
+    SignalOutcomeRecord::new(
+        "delta_momentum_v1",
+        of_core::SignalState::LongBias,
+        8_000,
+        Some(SignalMarkoutDirection::Up),
+        SignalMarkoutDirection::Up,
+        Some(true),
+    )
+    .with_regime("trend"),
+);
+
+let report = tracker.calibration_report();
+assert_eq!(report.scored_records, 1);
+assert_eq!(report.regimes[0].regime, "trend");
+```
+
+Operational guidance:
+
+- retain validation samples with `with_store_samples(true)` when calibration
+  analysis is required;
+- set `min_samples_per_bin` high enough for the deployment venue and symbol
+  before trusting ECE in production;
+- compare current reports against a baseline with
+  `SignalCalibrationDriftReport::compare` or
+  `SignalOutcomeTracker::drift_report`;
+- use per-regime summaries when market regime, session, or symbol behavior
+  changes signal reliability.
 
 ### `SignalInputMask`
 

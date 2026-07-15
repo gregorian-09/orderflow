@@ -35,6 +35,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `SignalValidationHarness`, `SignalValidationReport`, markout labels,
   optional timestamp-order warnings, confidence filtering, retained samples, and
   dependency-free JSON summaries for notebook/Python-style workflows.
+- Additive `of_signals` calibration and outcome-tracking APIs with
+  `SignalConfidenceCalibrator`, `SignalCalibrationCurve`,
+  `SignalOutcomeTracker`, `SignalCalibrationReport`, per-regime summaries, and
+  drift reports so replay/live outcomes can be checked for confidence
+  calibration without changing existing signal modules.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

@@ -17,6 +17,8 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
 - Stabilizer: [`SignalStabilizer`]
 - Explainability: [`ExplainableSignalModule`], [`SignalExplanation`], and
   [`SignalReasonCode`]
+- Calibration/outcomes: [`SignalOutcomeTracker`], [`SignalCalibrationReport`],
+  and [`SignalConfidenceCalibrator`]
 - Legacy adapter: [`LegacySignalAdapter`]
 - Built-in modules:
   - [`DeltaMomentumSignal`]
@@ -95,6 +97,13 @@ New additive APIs:
 - [`SignalValidationHarness`] supports replay-based signal validation with
   event-horizon markout labels, monotonic timestamp warnings, confidence
   filters, retained samples, and compact JSON summaries.
+- [`SignalOutcomeTracker`] records realized signal outcomes for calibration
+  review, per-regime summaries, and baseline/current drift checks.
+- [`SignalCalibrationReport`] calculates confidence-bin accuracy and expected
+  calibration error without adding serialization or ML dependencies.
+- [`SignalConfidenceCalibrator`] and [`SignalCalibrationCurve`] let hosts map
+  raw heuristic confidence into calibrated basis-point confidence before
+  reporting or gating.
 
 This is intentionally metadata-first. Built-in signal behavior is unchanged:
 existing users still call `on_analytics`, `quality_gate`, and `snapshot` exactly
@@ -154,6 +163,18 @@ Public types:
 - [`SignalValidationSample`]
 - [`SignalValidationReport`]
 - [`SignalValidationHarness`]
+- [`SignalCalibrationConfig`]
+- [`SignalConfidenceCalibrator`]
+- [`IdentitySignalCalibrator`]
+- [`SignalCalibrationPoint`]
+- [`SignalCalibrationCurve`]
+- [`SignalOutcomeRecord`]
+- [`SignalCalibrationBin`]
+- [`SignalRegimeSummary`]
+- [`SignalCalibrationReport`]
+- [`SignalCalibrationBinDrift`]
+- [`SignalCalibrationDriftReport`]
+- [`SignalOutcomeTracker`]
 - [`DeltaMomentumSignal`]
 - [`VolumeImbalanceSignal`]
 - [`CumulativeDeltaSignal`]
@@ -187,6 +208,11 @@ Public constructors:
 - [`ExhaustionSignal::new`]
 - [`SweepDetectionSignal::new`]
 - [`CompositeSignal::new`]
+- [`SignalCalibrationConfig::new`]
+- [`SignalCalibrationPoint::new`]
+- [`SignalCalibrationCurve::new`]
+- [`SignalOutcomeRecord::new`]
+- [`SignalOutcomeTracker::new`]
 
 [`SignalModule`] trait methods:
 
@@ -575,6 +601,117 @@ Validation concepts:
   [`SignalValidationSample`] values for deeper review.
 - [`SignalValidationReport::json_summary`] returns dependency-free JSON for
   Python, notebooks, dashboards, or CI artifacts.
+
+## Calibration And Outcome Tracking
+
+[`SignalOutcomeTracker`] converts retained validation samples or live/post-trade
+outcome records into calibration reports. This helps operators answer a
+different question from raw accuracy: when a signal says it is 70% confident,
+does it behave like a 70% signal over realized markouts?
+
+The implementation is intentionally lightweight:
+
+- confidence values are basis points (`0..=10_000`), matching the existing
+  [`SignalSnapshot`](of_core::SignalSnapshot) convention;
+- [`SignalCalibrationReport`] uses binned empirical accuracy and expected
+  calibration error (ECE);
+- [`SignalCalibrationCurve`] can map raw heuristic confidence into calibrated
+  confidence before reporting;
+- [`SignalCalibrationDriftReport`] compares a current report to a baseline;
+- [`SignalRegimeSummary`] keeps per-regime accuracy and confidence summaries;
+- no ML, dataframe, or serialization dependency is added to the signal hot
+  path.
+
+Example from replay validation:
+
+```rust
+use of_core::AnalyticsSnapshot;
+use of_signals::{
+    validate_signal_replay, DeltaMomentumSignal, SignalCalibrationConfig,
+    SignalCalibrationReport, SignalValidationConfig,
+};
+
+let mut signal = DeltaMomentumSignal::new(10);
+let events = vec![
+    AnalyticsSnapshot {
+        delta: 20,
+        last_price: 100,
+        ..Default::default()
+    },
+    AnalyticsSnapshot {
+        delta: -20,
+        last_price: 90,
+        ..Default::default()
+    },
+    AnalyticsSnapshot {
+        delta: -20,
+        last_price: 80,
+        ..Default::default()
+    },
+];
+
+let validation = validate_signal_replay(
+    &mut signal,
+    &events,
+    SignalValidationConfig::new(1).with_store_samples(true),
+);
+let calibration = SignalCalibrationReport::from_validation_report(
+    &validation,
+    SignalCalibrationConfig::new(1_000),
+);
+
+assert_eq!(calibration.scored_records, 2);
+assert_eq!(calibration.accuracy_bps(), Some(5_000));
+assert!(calibration.expected_calibration_error_bps > 0);
+```
+
+Example with an explicit tracker and drift comparison:
+
+```rust
+use of_signals::{
+    SignalCalibrationConfig, SignalCalibrationDriftReport,
+    SignalMarkoutDirection, SignalOutcomeRecord, SignalOutcomeTracker,
+};
+
+let config = SignalCalibrationConfig::new(1_000)
+    .with_min_samples_per_bin(1)
+    .with_drift_alert_threshold_bps(500);
+let mut baseline_tracker = SignalOutcomeTracker::new(config);
+baseline_tracker.record(
+    SignalOutcomeRecord::new(
+        "delta_momentum_v1",
+        of_core::SignalState::LongBias,
+        8_000,
+        Some(SignalMarkoutDirection::Up),
+        SignalMarkoutDirection::Up,
+        Some(true),
+    )
+    .with_regime("trend"),
+);
+
+let baseline = baseline_tracker.calibration_report();
+let mut current_tracker = SignalOutcomeTracker::new(config);
+current_tracker.record(
+    SignalOutcomeRecord::new(
+        "delta_momentum_v1",
+        of_core::SignalState::LongBias,
+        8_000,
+        Some(SignalMarkoutDirection::Up),
+        SignalMarkoutDirection::Down,
+        Some(false),
+    )
+    .with_regime("trend"),
+);
+
+let drift: SignalCalibrationDriftReport =
+    current_tracker.drift_report(&baseline);
+assert!(drift.significant);
+```
+
+Use calibration reports for research, deployment review, model governance, and
+drift monitoring. Do not treat them as an automatic trading permission system:
+the strategy host should still apply data-quality, risk, OMS, and venue-health
+gates before order submission.
 
 Custom descriptor example:
 
