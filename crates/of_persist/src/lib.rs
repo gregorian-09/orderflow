@@ -177,6 +177,135 @@ pub struct MarketDataWalReplayResult {
     pub last_sequence: Option<MarketDataWalSequence>,
 }
 
+/// Filter for deterministic market-data WAL replay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct MarketDataWalReplayFilter {
+    /// Inclusive lower WAL sequence bound.
+    pub from_sequence: Option<MarketDataWalSequence>,
+    /// Inclusive upper WAL sequence bound.
+    pub to_sequence: Option<MarketDataWalSequence>,
+    /// Inclusive lower provider sequence bound.
+    pub from_provider_sequence: Option<u64>,
+    /// Inclusive upper provider sequence bound.
+    pub to_provider_sequence: Option<u64>,
+    /// Inclusive lower normalized event sequence bound.
+    pub from_event_sequence: Option<u64>,
+    /// Inclusive upper normalized event sequence bound.
+    pub to_event_sequence: Option<u64>,
+    /// Inclusive lower exchange timestamp bound.
+    pub from_ts_exchange_ns: Option<u64>,
+    /// Inclusive upper exchange timestamp bound.
+    pub to_ts_exchange_ns: Option<u64>,
+    /// Inclusive lower receive timestamp bound.
+    pub from_ts_recv_ns: Option<u64>,
+    /// Inclusive upper receive timestamp bound.
+    pub to_ts_recv_ns: Option<u64>,
+    /// Optional record kind filter.
+    pub kind: Option<MarketDataWalRecordKind>,
+}
+
+impl MarketDataWalReplayFilter {
+    /// Creates an empty filter that matches every record.
+    pub const fn new() -> Self {
+        Self {
+            from_sequence: None,
+            to_sequence: None,
+            from_provider_sequence: None,
+            to_provider_sequence: None,
+            from_event_sequence: None,
+            to_event_sequence: None,
+            from_ts_exchange_ns: None,
+            to_ts_exchange_ns: None,
+            from_ts_recv_ns: None,
+            to_ts_recv_ns: None,
+            kind: None,
+        }
+    }
+
+    /// Sets an inclusive WAL sequence range.
+    pub const fn with_sequence_range(
+        mut self,
+        from_sequence: Option<MarketDataWalSequence>,
+        to_sequence: Option<MarketDataWalSequence>,
+    ) -> Self {
+        self.from_sequence = from_sequence;
+        self.to_sequence = to_sequence;
+        self
+    }
+
+    /// Sets an inclusive provider sequence range.
+    pub const fn with_provider_sequence_range(
+        mut self,
+        from_provider_sequence: Option<u64>,
+        to_provider_sequence: Option<u64>,
+    ) -> Self {
+        self.from_provider_sequence = from_provider_sequence;
+        self.to_provider_sequence = to_provider_sequence;
+        self
+    }
+
+    /// Sets an inclusive normalized event sequence range.
+    pub const fn with_event_sequence_range(
+        mut self,
+        from_event_sequence: Option<u64>,
+        to_event_sequence: Option<u64>,
+    ) -> Self {
+        self.from_event_sequence = from_event_sequence;
+        self.to_event_sequence = to_event_sequence;
+        self
+    }
+
+    /// Sets an inclusive exchange timestamp range.
+    pub const fn with_exchange_time_range(
+        mut self,
+        from_ts_exchange_ns: Option<u64>,
+        to_ts_exchange_ns: Option<u64>,
+    ) -> Self {
+        self.from_ts_exchange_ns = from_ts_exchange_ns;
+        self.to_ts_exchange_ns = to_ts_exchange_ns;
+        self
+    }
+
+    /// Sets an inclusive receive timestamp range.
+    pub const fn with_receive_time_range(
+        mut self,
+        from_ts_recv_ns: Option<u64>,
+        to_ts_recv_ns: Option<u64>,
+    ) -> Self {
+        self.from_ts_recv_ns = from_ts_recv_ns;
+        self.to_ts_recv_ns = to_ts_recv_ns;
+        self
+    }
+
+    /// Sets an exact record kind filter.
+    pub const fn with_kind(mut self, kind: Option<MarketDataWalRecordKind>) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    fn matches(self, record: &MarketDataWalRecordHeader) -> bool {
+        range_contains(self.from_sequence, self.to_sequence, record.sequence)
+            && range_contains(
+                self.from_provider_sequence,
+                self.to_provider_sequence,
+                record.provider_sequence,
+            )
+            && range_contains(
+                self.from_event_sequence,
+                self.to_event_sequence,
+                record.event_sequence,
+            )
+            && range_contains(
+                self.from_ts_exchange_ns,
+                self.to_ts_exchange_ns,
+                record.ts_exchange_ns,
+            )
+            && range_contains(self.from_ts_recv_ns, self.to_ts_recv_ns, record.ts_recv_ns)
+            && self.kind.is_none_or(|kind| kind == record.kind)
+    }
+}
+
 /// Integrity report for a normalized market-data WAL file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -1761,6 +1890,15 @@ impl MarketDataWal {
         replay_market_data_wal(&self.path, out)
     }
 
+    /// Replays records matching `filter` into `out`.
+    pub fn replay_filtered(
+        &self,
+        filter: MarketDataWalReplayFilter,
+        out: &mut Vec<MarketDataWalRecord>,
+    ) -> PersistResult<MarketDataWalReplayResult> {
+        replay_market_data_wal_filtered(&self.path, filter, out)
+    }
+
     /// Inspects a WAL path for integrity without materializing payloads.
     pub fn inspect_path(path: impl AsRef<Path>) -> PersistResult<MarketDataWalIntegrityReport> {
         Ok(scan_market_data_wal(path.as_ref(), false)?.report)
@@ -1771,6 +1909,16 @@ impl MarketDataWal {
 struct MarketDataWalScan {
     report: MarketDataWalIntegrityReport,
     previous_checksum: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MarketDataWalRecordHeader {
+    sequence: MarketDataWalSequence,
+    kind: MarketDataWalRecordKind,
+    provider_sequence: u64,
+    event_sequence: u64,
+    ts_exchange_ns: u64,
+    ts_recv_ns: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1815,8 +1963,16 @@ fn replay_market_data_wal(
     path: &Path,
     out: &mut Vec<MarketDataWalRecord>,
 ) -> PersistResult<MarketDataWalReplayResult> {
+    replay_market_data_wal_filtered(path, MarketDataWalReplayFilter::new(), out)
+}
+
+fn replay_market_data_wal_filtered(
+    path: &Path,
+    filter: MarketDataWalReplayFilter,
+    out: &mut Vec<MarketDataWalRecord>,
+) -> PersistResult<MarketDataWalReplayResult> {
     let before = out.len();
-    let scan = scan_market_data_wal_into(path, Some(out))?;
+    let scan = scan_market_data_wal_into(path, Some((out, filter)))?;
     let records = out.len().saturating_sub(before);
     Ok(MarketDataWalReplayResult {
         records,
@@ -1832,7 +1988,7 @@ fn replay_market_data_wal(
 fn scan_market_data_wal(path: &Path, materialize: bool) -> PersistResult<MarketDataWalScan> {
     if materialize {
         let mut records = Vec::new();
-        scan_market_data_wal_into(path, Some(&mut records))
+        scan_market_data_wal_into(path, Some((&mut records, MarketDataWalReplayFilter::new())))
     } else {
         scan_market_data_wal_into(path, None)
     }
@@ -1840,7 +1996,7 @@ fn scan_market_data_wal(path: &Path, materialize: bool) -> PersistResult<MarketD
 
 fn scan_market_data_wal_into(
     path: &Path,
-    mut out: Option<&mut Vec<MarketDataWalRecord>>,
+    mut out: Option<(&mut Vec<MarketDataWalRecord>, MarketDataWalReplayFilter)>,
 ) -> PersistResult<MarketDataWalScan> {
     if !path.exists() {
         return Ok(MarketDataWalScan {
@@ -1885,15 +2041,18 @@ fn scan_market_data_wal_into(
                 "invalid market-data WAL record kind",
             )
         })?;
-        let sequence = read_u64(&header[8..16]);
-        if sequence != expected_sequence {
+        let record_header = MarketDataWalRecordHeader {
+            sequence: MarketDataWalSequence(read_u64(&header[8..16])),
+            kind,
+            provider_sequence: read_u64(&header[16..24]),
+            event_sequence: read_u64(&header[24..32]),
+            ts_exchange_ns: read_u64(&header[32..40]),
+            ts_recv_ns: read_u64(&header[40..48]),
+        };
+        if record_header.sequence.0 != expected_sequence {
             scan.report.valid = false;
             scan.report.sequence_failures = scan.report.sequence_failures.saturating_add(1);
         }
-        let provider_sequence = read_u64(&header[16..24]);
-        let event_sequence = read_u64(&header[24..32]);
-        let ts_exchange_ns = read_u64(&header[32..40]);
-        let ts_recv_ns = read_u64(&header[40..48]);
         let payload_len = read_u32(&header[48..52]) as usize;
         let expected_checksum = read_u32(&header[52..56]);
         let previous_checksum = read_u32(&header[56..60]);
@@ -1916,25 +2075,27 @@ fn scan_market_data_wal_into(
             scan.report.valid = false;
             scan.report.checksum_failures = scan.report.checksum_failures.saturating_add(1);
         }
-        if let Some(records) = out.as_deref_mut() {
-            records.push(MarketDataWalRecord {
-                sequence: MarketDataWalSequence(sequence),
-                kind,
-                provider_sequence,
-                event_sequence,
-                ts_exchange_ns,
-                ts_recv_ns,
-                payload,
-            });
+        if let Some((records, filter)) = out.as_mut() {
+            if filter.matches(&record_header) {
+                (*records).push(MarketDataWalRecord {
+                    sequence: record_header.sequence,
+                    kind: record_header.kind,
+                    provider_sequence: record_header.provider_sequence,
+                    event_sequence: record_header.event_sequence,
+                    ts_exchange_ns: record_header.ts_exchange_ns,
+                    ts_recv_ns: record_header.ts_recv_ns,
+                    payload,
+                });
+            }
         }
         scan.report.records = scan.report.records.saturating_add(1);
         scan.report.bytes = scan
             .report
             .bytes
             .saturating_add((MARKET_DATA_WAL_HEADER_LEN + payload_len) as u64);
-        scan.report.last_sequence = Some(MarketDataWalSequence(sequence));
+        scan.report.last_sequence = Some(record_header.sequence);
         scan.previous_checksum = expected_checksum;
-        expected_sequence = sequence.saturating_add(1);
+        expected_sequence = record_header.sequence.0.saturating_add(1);
     }
     Ok(scan)
 }
@@ -1962,6 +2123,10 @@ fn market_data_wal_checksum(frame: &[u8]) -> u32 {
         hash = hash.wrapping_mul(0x01000193);
     }
     hash
+}
+
+fn range_contains<T: Ord + Copy>(from: Option<T>, to: Option<T>, value: T) -> bool {
+    from.is_none_or(|from| value >= from) && to.is_none_or(|to| value <= to)
 }
 
 fn read_u16(bytes: &[u8]) -> u16 {
@@ -2896,6 +3061,103 @@ mod tests {
         assert_eq!(records[0].payload, b"trade");
         assert_eq!(records[1].kind, MarketDataWalRecordKind::BookUpdate);
         assert_eq!(records[1].payload, b"book");
+    }
+
+    #[test]
+    fn market_data_wal_replays_filtered_records() {
+        let root = temp_dir("persist_market_data_wal_filtered");
+        let path = root.join("normalized.wal");
+        let mut wal = MarketDataWal::open(MarketDataWalConfig::new(&path)).expect("open wal");
+        wal.append_record(
+            MarketDataWalRecordKind::TradePrint,
+            10,
+            100,
+            1_000,
+            2_000,
+            b"t1",
+        )
+        .expect("append first");
+        wal.append_record(
+            MarketDataWalRecordKind::BookUpdate,
+            11,
+            101,
+            1_100,
+            2_100,
+            b"b1",
+        )
+        .expect("append second");
+        wal.append_record(
+            MarketDataWalRecordKind::TradePrint,
+            12,
+            102,
+            1_200,
+            2_200,
+            b"t2",
+        )
+        .expect("append third");
+
+        let filter = MarketDataWalReplayFilter::new()
+            .with_sequence_range(
+                Some(MarketDataWalSequence(2)),
+                Some(MarketDataWalSequence(3)),
+            )
+            .with_kind(Some(MarketDataWalRecordKind::TradePrint));
+        let mut records = Vec::new();
+        let replay = wal
+            .replay_filtered(filter, &mut records)
+            .expect("filtered replay");
+
+        assert_eq!(replay.records, 1);
+        assert_eq!(records[0].sequence, MarketDataWalSequence(3));
+        assert_eq!(records[0].payload, b"t2");
+    }
+
+    #[test]
+    fn market_data_wal_replay_filter_matches_provider_and_time_ranges() {
+        let root = temp_dir("persist_market_data_wal_filtered_ranges");
+        let path = root.join("normalized.wal");
+        let mut wal = MarketDataWal::open(MarketDataWalConfig::new(&path)).expect("open wal");
+        wal.append_record(
+            MarketDataWalRecordKind::TradePrint,
+            20,
+            200,
+            5_000,
+            6_000,
+            b"t1",
+        )
+        .expect("append first");
+        wal.append_record(
+            MarketDataWalRecordKind::TradePrint,
+            21,
+            201,
+            5_100,
+            6_100,
+            b"t2",
+        )
+        .expect("append second");
+        wal.append_record(
+            MarketDataWalRecordKind::TradePrint,
+            22,
+            202,
+            5_200,
+            6_200,
+            b"t3",
+        )
+        .expect("append third");
+
+        let filter = MarketDataWalReplayFilter::new()
+            .with_provider_sequence_range(Some(21), Some(22))
+            .with_event_sequence_range(Some(201), Some(202))
+            .with_exchange_time_range(Some(5_100), Some(5_200))
+            .with_receive_time_range(Some(6_100), Some(6_100));
+        let mut records = Vec::new();
+        let replay = wal
+            .replay_filtered(filter, &mut records)
+            .expect("filtered replay");
+
+        assert_eq!(replay.records, 1);
+        assert_eq!(records[0].provider_sequence, 21);
+        assert_eq!(records[0].ts_recv_ns, 6_100);
     }
 
     #[test]

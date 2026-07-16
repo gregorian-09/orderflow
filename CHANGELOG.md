@@ -48,6 +48,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added additive `of_persist` market-data recovery planner helpers that classify
   checkpoint/WAL restore states into clean, degraded, snapshot-gated, or
   fail-closed host actions.
+- Added additive `of_persist` WAL replay filters for deterministic replay by
+  WAL sequence, provider sequence, normalized event sequence, timestamps, and
+  record kind.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

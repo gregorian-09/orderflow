@@ -18,6 +18,7 @@ production capture paths.
 - [`MarketDataWalRecord`] - decoded WAL replay record.
 - [`MarketDataWalSequence`] - monotonic writer sequence.
 - [`MarketDataWalReplayResult`] - replay summary.
+- [`MarketDataWalReplayFilter`] - deterministic WAL replay selector.
 - [`MarketDataWalIntegrityReport`] - checksum and sequence validation summary.
 - [`MarketDataWalMetrics`] - append/sync counters.
 - [`MarketDataCheckpointId`] - monotonic checkpoint identifier.
@@ -72,6 +73,9 @@ What changes for persistence users:
 - recovery planner helpers classify checkpoint/WAL restore states into clean,
   degraded, snapshot-gated, or fail-closed plans without forcing runtime
   integration;
+- WAL replay filters select records by WAL sequence, provider sequence,
+  normalized event sequence, exchange/receive timestamp, and record kind while
+  preserving existing unfiltered replay behavior;
 - production deployments should keep market-data replay files and execution
   command/event journals correlated by strategy id, session id, and timestamp.
 
@@ -96,6 +100,7 @@ Public types:
 - [`MarketDataWalConfig`]
 - [`MarketDataWalRecord`]
 - [`MarketDataWalReplayResult`]
+- [`MarketDataWalReplayFilter`]
 - [`MarketDataWalIntegrityReport`]
 - [`MarketDataWalMetrics`]
 - [`MarketDataCheckpointId`]
@@ -148,7 +153,15 @@ Public methods:
 - [`MarketDataWal::metrics`]
 - [`MarketDataWal::append_record`]
 - [`MarketDataWal::replay`]
+- [`MarketDataWal::replay_filtered`]
 - [`MarketDataWal::inspect_path`]
+- [`MarketDataWalReplayFilter::new`]
+- [`MarketDataWalReplayFilter::with_sequence_range`]
+- [`MarketDataWalReplayFilter::with_provider_sequence_range`]
+- [`MarketDataWalReplayFilter::with_event_sequence_range`]
+- [`MarketDataWalReplayFilter::with_exchange_time_range`]
+- [`MarketDataWalReplayFilter::with_receive_time_range`]
+- [`MarketDataWalReplayFilter::with_kind`]
 - [`MarketDataCheckpointConfig::new`]
 - [`MarketDataCheckpointConfig::with_retain_last`]
 - [`MarketDataCheckpointConfig::with_sync_on_save`]
@@ -287,6 +300,8 @@ records, broken checksum links, invalid record kinds, and truncated tails fail
 closed through [`PersistError::Io`] with `InvalidData`. [`MarketDataWal::replay`]
 materializes decoded [`MarketDataWalRecord`] values, and
 [`MarketDataWal::inspect_path`] validates a file without returning payloads.
+[`MarketDataWal::replay_filtered`] scans in the same deterministic order and
+only materializes records matching [`MarketDataWalReplayFilter`].
 
 Sync policy is intentionally small in this first foundation:
 
@@ -295,6 +310,26 @@ Sync policy is intentionally small in this first foundation:
 
 Segment rotation, async writer queues, raw provider capture, and cold-store
 export remain higher-level integration work.
+
+## WAL Replay Filters
+
+[`MarketDataWalReplayFilter`] lets replay tools narrow a WAL scan without
+changing the append format or the existing unfiltered [`MarketDataWal::replay`]
+API.
+
+Filters are inclusive and can be combined:
+
+- WAL sequence range;
+- provider-native sequence range;
+- normalized event sequence range;
+- exchange timestamp range;
+- receive timestamp range;
+- exact [`MarketDataWalRecordKind`].
+
+The scanner still validates every complete frame in order and reports bytes
+consumed from the scan. Only matching records are pushed into the caller-owned
+output vector, which avoids retaining unrelated payloads during sequence- or
+time-bounded recovery and research workflows.
 
 ## Market-Data Checkpoints
 

@@ -21,6 +21,7 @@ foundation for lower-latency production capture paths.
 | `MarketDataWalConfig` | struct | Binary WAL path and sync configuration |
 | `MarketDataWalRecord` | struct | Decoded binary WAL replay record |
 | `MarketDataWalReplayResult` | struct | Binary WAL replay summary |
+| `MarketDataWalReplayFilter` | struct | Deterministic binary WAL replay selector |
 | `MarketDataWalIntegrityReport` | struct | Checksum/sequence integrity report |
 | `MarketDataWalMetrics` | struct | Binary WAL append/sync counters |
 | `MarketDataCheckpointId` | newtype | Monotonic checkpoint identifier |
@@ -175,6 +176,7 @@ It is additive and does not change `RollingStore` JSONL semantics.
 | `metrics()` | `MarketDataWalMetrics` | Returns append/sync counters |
 | `append_record(...)` | `PersistResult<MarketDataWalSequence>` | Appends one binary frame |
 | `replay(out)` | `PersistResult<MarketDataWalReplayResult>` | Replays decoded records into `out` |
+| `replay_filtered(filter, out)` | `PersistResult<MarketDataWalReplayResult>` | Replays matching decoded records into `out` |
 | `inspect_path(path)` | `PersistResult<MarketDataWalIntegrityReport>` | Validates a WAL file without materializing payloads |
 
 ### Frame contract
@@ -187,6 +189,24 @@ validate before append state is initialized.
 The first implementation is intentionally single-file. Segment rotation,
 bounded async writer queues, raw provider-message capture, and cold research
 export remain separate integration layers.
+
+### Replay filters
+
+`MarketDataWalReplayFilter` is additive and leaves unfiltered replay unchanged.
+All bounds are inclusive.
+
+| Method | Meaning |
+| --- | --- |
+| `MarketDataWalReplayFilter::new()` | Creates a filter that matches all records |
+| `with_sequence_range(from, to)` | Filters by WAL sequence |
+| `with_provider_sequence_range(from, to)` | Filters by provider-native sequence |
+| `with_event_sequence_range(from, to)` | Filters by normalized event sequence |
+| `with_exchange_time_range(from, to)` | Filters by exchange timestamp |
+| `with_receive_time_range(from, to)` | Filters by receive timestamp |
+| `with_kind(kind)` | Filters by exact record kind |
+
+Filtered replay still scans and validates frames in deterministic file order.
+Only matching payloads are materialized into the caller-provided vector.
 
 ## `FileMarketDataCheckpointStore`
 
