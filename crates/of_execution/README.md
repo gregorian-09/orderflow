@@ -72,6 +72,11 @@ Journaling:
 - [`WalJournalConfig`]
 - [`WalReplayResult`]
 - [`WalExecutionJournal`]
+- [`WalSegmentConfig`]
+- [`WalSegmentMetadata`]
+- [`WalSegmentManifest`]
+- [`WalSegmentIntegrityReport`]
+- [`SegmentedWalExecutionJournal`]
 - [`CheckpointPosition`]
 - [`ExecutionCheckpoint`]
 - [`CheckpointPolicy`]
@@ -413,8 +418,66 @@ Supported sync policies come from `of_execution_core::WalSyncPolicy`:
 - `Manual`
 - `OnRiskBoundary`
 
-This first WAL journal is a single append-only file. Segment rotation,
-checkpoint markers, and recovery-plan orchestration are separate additive
+### Segmented WAL journal
+
+[`SegmentedWalExecutionJournal`] uses the same binary WAL frames and
+[`ExecutionJournal`] model as [`WalExecutionJournal`], but stores records in an
+ordered segment directory:
+
+```text
+execution-wal/
+  manifest
+  wal-000000000001.ofwal
+  wal-000000000002.ofwal
+```
+
+The journal rotates before appending a normal command/event record when either
+`WalSegmentConfig::max_segment_bytes()` or
+`WalSegmentConfig::max_segment_records()` would be exceeded. Rotation appends a
+`SegmentSeal` WAL frame to the old segment, opens the next segment file, and
+updates the manifest. Seal frames consume WAL sequence numbers so checksum and
+sequence validation remain continuous across files, but replay skips them and
+returns only [`JournalRecord`] values.
+
+```rust
+use of_execution::{
+    ExecutionJournal, JournalCommandKind, SegmentedWalExecutionJournal,
+    WalSegmentConfig,
+};
+use of_execution_core::{ClientOrderId, WalSequence, WalSyncPolicy};
+
+let root = std::env::temp_dir().join("execution-wal");
+let mut journal = SegmentedWalExecutionJournal::open(
+    WalSegmentConfig::new(&root)
+        .with_sync_policy(WalSyncPolicy::EveryNRecords(64))
+        .with_max_segment_records(1_000_000)
+        .with_max_segment_bytes(64 * 1024 * 1024),
+)?;
+
+journal.record_command(
+    JournalCommandKind::Submit,
+    ClientOrderId::new("C1")?,
+    1_000,
+)?;
+journal.sync()?;
+
+let manifest = journal.manifest();
+assert!(manifest.active_segment().is_some());
+
+let mut replayed = Vec::new();
+let replay = journal.replay_from(WalSequence(1), &mut replayed)?;
+assert_eq!(replay.records, replayed.len());
+# let _ = std::fs::remove_dir_all(root);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Recovery does not trust the manifest as source of truth. Opening the journal
+scans `wal-*.ofwal` files in segment-id order, validates checksums and
+sequences across segment boundaries, reconstructs the manifest, and fails
+closed on corrupt or non-contiguous data. The manifest is an operator inventory
+and discovery aid.
+
+Checkpoint markers and recovery-plan orchestration remain separate additive
 features so the compatibility boundary stays narrow.
 
 ### Checkpoint store

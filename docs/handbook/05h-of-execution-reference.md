@@ -47,17 +47,37 @@ in the OMS helper layer provides an append-only text file implementation.
 `WalExecutionJournal` provides an additive binary WAL implementation backed by
 `of_execution_core` WAL frames, sequence numbers, checksums, and configurable
 sync policy.
+`SegmentedWalExecutionJournal` extends that WAL model across ordered segment
+files without changing the `ExecutionJournal` trait.
 
 | Journal | Use |
 | --- | --- |
 | `InMemoryJournal` | Tests, simulation, volatile embedded hosts |
 | `FileExecutionJournal` | Human-readable append-only text journal |
 | `WalExecutionJournal` | Binary append-only WAL with integrity validation |
+| `SegmentedWalExecutionJournal` | Binary WAL directory with manifest, rotation, segment seals, and cross-segment integrity validation |
 
 `WalExecutionJournal::open(WalJournalConfig::new(path))` validates existing WAL
 bytes before accepting new records. It fails closed on corrupt frames or
 non-contiguous sequences. `replay_from(WalSequence, out)` supports bounded
 startup replay once checkpoints are added later.
+
+Segmented WAL types:
+
+| Type | Use |
+| --- | --- |
+| `WalSegmentConfig` | Root directory, sync policy, byte rotation threshold, and record rotation threshold |
+| `WalSegmentMetadata` | Segment id, file path, first/last sequence, byte count, record count, seal state, and timestamps |
+| `WalSegmentManifest` | Ordered segment inventory with active/first/last helpers |
+| `WalSegmentIntegrityReport` | Aggregate cross-segment integrity summary |
+| `SegmentedWalExecutionJournal` | `ExecutionJournal` implementation backed by rotated binary WAL segment files |
+
+`SegmentedWalExecutionJournal::open(WalSegmentConfig::new(root))` scans
+`wal-*.ofwal` files in segment-id order and reconstructs the manifest from the
+frames themselves. The manifest is useful for operators and discovery, but
+recovery validates the segment files directly. Rotation writes a `SegmentSeal`
+frame, opens the next segment, and continues the same monotonic WAL sequence.
+Replay skips seal frames while still validating their checksum links.
 
 ### Checkpoints
 

@@ -468,6 +468,11 @@ Public journal types:
 - `WalJournalConfig`
 - `WalReplayResult`
 - `WalExecutionJournal`
+- `WalSegmentConfig`
+- `WalSegmentMetadata`
+- `WalSegmentManifest`
+- `WalSegmentIntegrityReport`
+- `SegmentedWalExecutionJournal`
 - `CheckpointPosition`
 - `ExecutionCheckpoint`
 - `CheckpointPolicy`

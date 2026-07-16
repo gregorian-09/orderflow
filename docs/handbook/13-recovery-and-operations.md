@@ -88,6 +88,52 @@ WAL sync policy is explicit:
 Production deployments should decide based on venue risk, account size, and
 host filesystem behavior.
 
+## Segmented WAL Policy
+
+`SegmentedWalExecutionJournal::open(WalSegmentConfig::new(root))` is the
+rotated binary WAL option for production-style OMS deployments. It stores
+frames under a directory:
+
+```text
+execution-wal/
+  manifest
+  wal-000000000001.ofwal
+  wal-000000000002.ofwal
+```
+
+Segment rotation is controlled by:
+
+- `WalSegmentConfig::with_max_segment_bytes(bytes)`;
+- `WalSegmentConfig::with_max_segment_records(records)`;
+- explicit `SegmentedWalExecutionJournal::rotate_segment()`.
+
+Rotation appends a `SegmentSeal` WAL frame to the old file and starts the next
+segment id. The seal frame is part of the checksum and sequence chain, but it
+does not replay as a command or execution event.
+
+Recovery rules:
+
+- scan segment files by numeric segment id;
+- validate every frame checksum;
+- validate `previous_checksum` links across segment boundaries;
+- validate monotonic WAL sequence continuity;
+- rebuild the manifest from segment bytes;
+- fail closed on corrupt frames, checksum mismatches, or sequence gaps.
+
+The `manifest` file is an operator inventory. It is not trusted as the source
+of truth during recovery because the active segment can be newer than the last
+manifest write under relaxed sync policies.
+
+Low-latency guidance:
+
+- use `WalSyncPolicy::EveryNRecords` or `EveryDurationNs` for group-commit
+  behavior when the venue/account risk allows it;
+- call `sync()` at explicit risk boundaries if using `Manual`;
+- rotate by bytes to bound recovery and retention units;
+- rotate by record count when predictable replay batch sizes matter;
+- keep the WAL directory on low-latency local storage and archive sealed
+  segments off the hot path.
+
 ## Checkpoint Policy
 
 `FileExecutionCheckpointStore::open(CheckpointConfig::new(root))` provides the

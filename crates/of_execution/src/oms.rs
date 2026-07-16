@@ -15,7 +15,7 @@ use of_execution_core::{
     ExecutionSymbol, ExecutionText, ExecutionType, FixedAscii, OrderPrice, OrderQty, OrderRequest,
     OrderSide, OrderState, OrderStatus, OrderType, RiskCheck, RiskContext, RiskDecision,
     RiskLimits, RiskRejectReason, RouteId, StrategyId, TimeInForce, WalIntegrityReport,
-    WalRecordKind, WalRecordView, WalReplayCursor, WalSequence, WalSyncPolicy,
+    WalRecordKind, WalRecordView, WalReplayCursor, WalSegmentId, WalSequence, WalSyncPolicy,
 };
 
 use crate::{
@@ -388,6 +388,166 @@ pub struct WalReplayResult {
     pub last_sequence: Option<WalSequence>,
 }
 
+/// Configuration for [`SegmentedWalExecutionJournal`].
+#[derive(Debug, Clone)]
+pub struct WalSegmentConfig {
+    root: PathBuf,
+    sync_policy: WalSyncPolicy,
+    max_segment_bytes: u64,
+    max_segment_records: u64,
+}
+
+impl WalSegmentConfig {
+    /// Creates a segmented WAL config rooted at `root`.
+    pub fn new(root: impl AsRef<Path>) -> Self {
+        Self {
+            root: root.as_ref().to_path_buf(),
+            sync_policy: WalSyncPolicy::EveryRecord,
+            max_segment_bytes: 64 * 1024 * 1024,
+            max_segment_records: 1_000_000,
+        }
+    }
+
+    /// Sets the durability sync policy.
+    pub fn with_sync_policy(mut self, sync_policy: WalSyncPolicy) -> Self {
+        self.sync_policy = sync_policy;
+        self
+    }
+
+    /// Sets the segment rotation threshold in bytes.
+    pub fn with_max_segment_bytes(mut self, max_segment_bytes: u64) -> Self {
+        self.max_segment_bytes = max_segment_bytes.max(1);
+        self
+    }
+
+    /// Sets the segment rotation threshold in WAL records.
+    pub fn with_max_segment_records(mut self, max_segment_records: u64) -> Self {
+        self.max_segment_records = max_segment_records.max(1);
+        self
+    }
+
+    /// Returns the segmented WAL root directory.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Returns the configured sync policy.
+    pub const fn sync_policy(&self) -> WalSyncPolicy {
+        self.sync_policy
+    }
+
+    /// Returns the segment rotation threshold in bytes.
+    pub const fn max_segment_bytes(&self) -> u64 {
+        self.max_segment_bytes
+    }
+
+    /// Returns the segment rotation threshold in WAL records.
+    pub const fn max_segment_records(&self) -> u64 {
+        self.max_segment_records
+    }
+}
+
+/// Metadata for one execution WAL segment file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct WalSegmentMetadata {
+    /// Segment identifier.
+    pub segment_id: WalSegmentId,
+    /// Segment file path.
+    pub path: PathBuf,
+    /// First WAL sequence observed in the segment.
+    pub first_sequence: Option<WalSequence>,
+    /// Last WAL sequence observed in the segment.
+    pub last_sequence: Option<WalSequence>,
+    /// Number of WAL frames in the segment.
+    pub records: u64,
+    /// Number of encoded bytes in the segment.
+    pub bytes: u64,
+    /// True when the segment ends with a segment-seal marker.
+    pub sealed: bool,
+    /// Segment creation timestamp in nanoseconds.
+    pub created_ns: u64,
+    /// Last metadata update timestamp in nanoseconds.
+    pub updated_ns: u64,
+}
+
+impl WalSegmentMetadata {
+    fn empty(segment_id: WalSegmentId, path: PathBuf, timestamp_ns: u64) -> Self {
+        Self {
+            segment_id,
+            path,
+            first_sequence: None,
+            last_sequence: None,
+            records: 0,
+            bytes: 0,
+            sealed: false,
+            created_ns: timestamp_ns,
+            updated_ns: timestamp_ns,
+        }
+    }
+
+    fn observe(&mut self, sequence: WalSequence, bytes: u64, kind: WalRecordKind, now_ns: u64) {
+        self.first_sequence.get_or_insert(sequence);
+        self.last_sequence = Some(sequence);
+        self.records = self.records.saturating_add(1);
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.sealed = kind == WalRecordKind::SegmentSeal;
+        self.updated_ns = now_ns;
+    }
+}
+
+/// Manifest inventory for a segmented execution WAL.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct WalSegmentManifest {
+    /// Segment metadata ordered by segment id.
+    pub segments: Vec<WalSegmentMetadata>,
+}
+
+impl WalSegmentManifest {
+    /// Returns the currently active segment metadata.
+    pub fn active_segment(&self) -> Option<&WalSegmentMetadata> {
+        self.segments.last()
+    }
+
+    /// Returns the first WAL sequence in the manifest.
+    pub fn first_sequence(&self) -> Option<WalSequence> {
+        self.segments
+            .iter()
+            .find_map(|segment| segment.first_sequence)
+    }
+
+    /// Returns the last WAL sequence in the manifest.
+    pub fn last_sequence(&self) -> Option<WalSequence> {
+        self.segments
+            .iter()
+            .rev()
+            .find_map(|segment| segment.last_sequence)
+    }
+}
+
+/// Integrity summary for a segmented execution WAL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct WalSegmentIntegrityReport {
+    /// Number of segment files inspected.
+    pub segments: usize,
+    /// Number of valid WAL frames decoded.
+    pub records: u64,
+    /// Number of encoded bytes consumed.
+    pub bytes: u64,
+    /// First decoded WAL sequence.
+    pub first_sequence: Option<WalSequence>,
+    /// Last decoded WAL sequence.
+    pub last_sequence: Option<WalSequence>,
+    /// Number of checksum-link failures.
+    pub checksum_failures: u64,
+    /// Number of sequence gaps or regressions.
+    pub sequence_failures: u64,
+    /// True when all inspected segments decoded cleanly.
+    pub valid: bool,
+}
+
 /// Binary append-only execution WAL journal.
 ///
 /// This journal implements the existing [`ExecutionJournal`] trait. It records
@@ -587,6 +747,361 @@ impl ExecutionJournal for WalExecutionJournal {
     }
 }
 
+/// Segmented binary execution WAL journal.
+///
+/// This journal is additive to [`WalExecutionJournal`]. It stores WAL frames in
+/// ordered segment files under a root directory, writes an operator-readable
+/// manifest after metadata changes, and preserves the same [`ExecutionJournal`]
+/// replay model.
+#[derive(Debug)]
+pub struct SegmentedWalExecutionJournal {
+    config: WalSegmentConfig,
+    manifest: WalSegmentManifest,
+    file: File,
+    next_sequence: WalSequence,
+    previous_checksum: u64,
+    records_since_sync: u32,
+    last_sync_ns: u64,
+    scratch: Vec<u8>,
+    frame_scratch: Vec<u8>,
+}
+
+impl SegmentedWalExecutionJournal {
+    /// Opens or creates a segmented binary WAL-backed execution journal.
+    ///
+    /// Existing segment files are scanned in segment-id order and checksum
+    /// links are validated across segment boundaries before the journal accepts
+    /// new records.
+    ///
+    /// # Errors
+    ///
+    /// Returns an execution journal error when the directory cannot be opened,
+    /// a segment cannot be read, or existing WAL bytes fail validation.
+    pub fn open(config: WalSegmentConfig) -> ExecutionResult<Self> {
+        fs::create_dir_all(config.root())
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+
+        let (manifest, next_sequence, previous_checksum) = load_segment_manifest(&config)?;
+        let active_id = manifest
+            .active_segment()
+            .map(|segment| {
+                if segment.sealed {
+                    WalSegmentId(segment.segment_id.0.saturating_add(1))
+                } else {
+                    segment.segment_id
+                }
+            })
+            .unwrap_or(WalSegmentId(1));
+        let active_path = segment_path(config.root(), active_id);
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .read(true)
+            .open(&active_path)
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+
+        let mut journal = Self {
+            config,
+            manifest,
+            file,
+            next_sequence,
+            previous_checksum,
+            records_since_sync: 0,
+            last_sync_ns: now_ns(),
+            scratch: Vec::with_capacity(256),
+            frame_scratch: Vec::with_capacity(384),
+        };
+
+        let needs_active_segment = journal
+            .manifest
+            .active_segment()
+            .is_none_or(|segment| segment.segment_id != active_id);
+        if needs_active_segment {
+            journal.manifest.segments.push(WalSegmentMetadata::empty(
+                active_id,
+                active_path,
+                journal.last_sync_ns,
+            ));
+        }
+        write_segment_manifest(journal.config.root(), &journal.manifest)?;
+        Ok(journal)
+    }
+
+    /// Opens a segmented WAL at `root` with a durability sync policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an execution journal error when the WAL cannot be opened or its
+    /// existing segments fail validation.
+    pub fn open_root(root: impl AsRef<Path>, sync_policy: WalSyncPolicy) -> ExecutionResult<Self> {
+        Self::open(WalSegmentConfig::new(root).with_sync_policy(sync_policy))
+    }
+
+    /// Returns the segmented WAL root directory.
+    pub fn root(&self) -> &Path {
+        self.config.root()
+    }
+
+    /// Returns the configured sync policy.
+    pub const fn sync_policy(&self) -> WalSyncPolicy {
+        self.config.sync_policy()
+    }
+
+    /// Returns the next sequence that will be assigned.
+    pub const fn next_sequence(&self) -> WalSequence {
+        self.next_sequence
+    }
+
+    /// Returns the current manifest snapshot.
+    pub fn manifest(&self) -> &WalSegmentManifest {
+        &self.manifest
+    }
+
+    /// Flushes and syncs the active segment file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an execution journal error when the OS reports a flush/sync
+    /// failure.
+    pub fn sync(&mut self) -> ExecutionResult<()> {
+        self.file
+            .flush()
+            .and_then(|()| self.file.sync_data())
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        write_segment_manifest(self.config.root(), &self.manifest)?;
+        self.records_since_sync = 0;
+        self.last_sync_ns = now_ns();
+        Ok(())
+    }
+
+    /// Rotates to a new empty WAL segment.
+    ///
+    /// A seal marker is appended to the current active segment before the new
+    /// file is opened. The marker consumes a WAL sequence and is skipped by
+    /// journal replay.
+    ///
+    /// # Errors
+    ///
+    /// Returns an execution journal error when the current segment cannot be
+    /// sealed, the manifest cannot be written, or the new segment cannot be
+    /// opened.
+    pub fn rotate_segment(&mut self) -> ExecutionResult<WalSegmentMetadata> {
+        if self
+            .manifest
+            .active_segment()
+            .is_some_and(|segment| segment.records > 0 && !segment.sealed)
+        {
+            self.append_record(WalRecordKind::SegmentSeal, now_ns())?;
+            self.sync()?;
+        }
+
+        let next_id = self
+            .manifest
+            .active_segment()
+            .map(|segment| WalSegmentId(segment.segment_id.0.saturating_add(1)))
+            .unwrap_or(WalSegmentId(1));
+        let path = segment_path(self.config.root(), next_id);
+        self.file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .read(true)
+            .open(&path)
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        let metadata = WalSegmentMetadata::empty(next_id, path, now_ns());
+        self.manifest.segments.push(metadata.clone());
+        write_segment_manifest(self.config.root(), &self.manifest)?;
+        Ok(metadata)
+    }
+
+    /// Returns an aggregate integrity report across all segment files.
+    ///
+    /// # Errors
+    ///
+    /// Returns an execution journal error when a segment cannot be read.
+    pub fn integrity_report(&self) -> ExecutionResult<WalSegmentIntegrityReport> {
+        let mut previous_checksum = 0;
+        let mut expected_sequence = WalSequence(1);
+        let mut report = WalSegmentIntegrityReport {
+            segments: self.manifest.segments.len(),
+            valid: true,
+            ..WalSegmentIntegrityReport::default()
+        };
+
+        for segment in &self.manifest.segments {
+            match scan_segment_file(&segment.path, previous_checksum, Some(expected_sequence)) {
+                Ok(scan) => {
+                    report.records = report.records.saturating_add(scan.records);
+                    report.bytes = report.bytes.saturating_add(scan.bytes);
+                    if report.first_sequence.is_none() {
+                        report.first_sequence = scan.first_sequence;
+                    }
+                    report.last_sequence = scan.last_sequence.or(report.last_sequence);
+                    previous_checksum = scan.previous_checksum;
+                    expected_sequence = scan.next_sequence;
+                }
+                Err(err) => {
+                    let message = err.to_string();
+                    if message.contains("sequence") {
+                        report.sequence_failures = report.sequence_failures.saturating_add(1);
+                    } else {
+                        report.checksum_failures = report.checksum_failures.saturating_add(1);
+                    }
+                    report.valid = false;
+                    return Ok(report);
+                }
+            }
+        }
+        Ok(report)
+    }
+
+    /// Replays records with sequence greater than or equal to `sequence`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an execution journal error when any segment cannot be read,
+    /// decoded, or mapped back into a journal record.
+    pub fn replay_from(
+        &self,
+        sequence: WalSequence,
+        out: &mut Vec<JournalRecord>,
+    ) -> ExecutionResult<WalReplayResult> {
+        let start = out.len();
+        let mut result = WalReplayResult::default();
+        let mut previous_checksum = 0;
+        let mut expected_sequence = WalSequence(1);
+
+        for segment in &self.manifest.segments {
+            let bytes =
+                fs::read(&segment.path).map_err(|err| ExecutionError::Journal(err.to_string()))?;
+            let mut cursor = WalReplayCursor::new(&bytes).with_strict_sequence(false);
+            while let Some(record) = cursor.next_record().map_err(wal_error)? {
+                validate_wal_sequence(record.header.sequence, expected_sequence)?;
+                validate_wal_link(&record, previous_checksum)?;
+                previous_checksum = record.header.header_checksum;
+                expected_sequence = record.header.sequence.next();
+                result.bytes = result.bytes.saturating_add(record.encoded_len() as u64);
+                if record.header.sequence < sequence {
+                    continue;
+                }
+                if let Some(journal_record) = decode_wal_payload(&record)? {
+                    out.push(journal_record);
+                    result.records = out.len().saturating_sub(start);
+                    result.first_sequence.get_or_insert(record.header.sequence);
+                    result.last_sequence = Some(record.header.sequence);
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    fn append_record(&mut self, kind: WalRecordKind, timestamp_ns: u64) -> ExecutionResult<()> {
+        let encoded_len = {
+            let payload = &self.scratch;
+            let header = WalRecordView::new(kind, self.next_sequence, timestamp_ns, payload)
+                .map_err(wal_error)?
+                .header
+                .with_previous_checksum(self.previous_checksum);
+            WalRecordView::from_header(header, payload)
+                .map_err(wal_error)?
+                .encoded_len() as u64
+        };
+        if kind != WalRecordKind::SegmentSeal && self.should_rotate_before(encoded_len) {
+            self.rotate_segment()?;
+        }
+
+        let payload = &self.scratch;
+        let header = WalRecordView::new(kind, self.next_sequence, timestamp_ns, payload)
+            .map_err(wal_error)?
+            .header
+            .with_previous_checksum(self.previous_checksum);
+        let record = WalRecordView::from_header(header, payload).map_err(wal_error)?;
+        self.frame_scratch.clear();
+        self.frame_scratch.resize(record.encoded_len(), 0);
+        record
+            .encode_into(&mut self.frame_scratch)
+            .map_err(wal_error)?;
+
+        self.file
+            .write_all(&self.frame_scratch)
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        self.previous_checksum = record.header.header_checksum;
+        self.next_sequence = self.next_sequence.next();
+        self.records_since_sync = self.records_since_sync.saturating_add(1);
+        if let Some(active) = self.manifest.segments.last_mut() {
+            active.observe(
+                record.header.sequence,
+                record.encoded_len() as u64,
+                kind,
+                now_ns(),
+            );
+        }
+        self.maybe_sync(kind)
+    }
+
+    fn should_rotate_before(&self, next_record_bytes: u64) -> bool {
+        self.manifest.active_segment().is_some_and(|segment| {
+            segment.records > 0
+                && (segment.records >= self.config.max_segment_records()
+                    || segment.bytes.saturating_add(next_record_bytes)
+                        > self.config.max_segment_bytes())
+        })
+    }
+
+    fn maybe_sync(&mut self, kind: WalRecordKind) -> ExecutionResult<()> {
+        match self.config.sync_policy() {
+            WalSyncPolicy::Never | WalSyncPolicy::Manual => Ok(()),
+            WalSyncPolicy::EveryRecord => self.sync(),
+            WalSyncPolicy::EveryNRecords(records) => {
+                if records > 0 && self.records_since_sync >= records {
+                    self.sync()
+                } else {
+                    Ok(())
+                }
+            }
+            WalSyncPolicy::EveryDurationNs(duration_ns) => {
+                if duration_ns > 0 && now_ns().saturating_sub(self.last_sync_ns) >= duration_ns {
+                    self.sync()
+                } else {
+                    Ok(())
+                }
+            }
+            WalSyncPolicy::OnRiskBoundary => {
+                if is_risk_boundary_wal_kind(kind) {
+                    self.sync()
+                } else {
+                    Ok(())
+                }
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+impl ExecutionJournal for SegmentedWalExecutionJournal {
+    fn record_command(
+        &mut self,
+        kind: JournalCommandKind,
+        id: ClientOrderId,
+        ts_ns: u64,
+    ) -> ExecutionResult<()> {
+        self.scratch.clear();
+        encode_command_payload(kind, id, ts_ns, &mut self.scratch);
+        self.append_record(command_wal_kind(kind), ts_ns)
+    }
+
+    fn record_event(&mut self, event: &ExecutionEvent) -> ExecutionResult<()> {
+        self.scratch.clear();
+        encode_event_payload(event, &mut self.scratch);
+        self.append_record(event_wal_kind(event), event.ts_recv_ns)
+    }
+
+    fn replay(&self, out: &mut Vec<JournalRecord>) -> ExecutionResult<usize> {
+        let start = out.len();
+        let _ = self.replay_from(WalSequence(1), out)?;
+        Ok(out.len().saturating_sub(start))
+    }
+}
+
 const WAL_PAYLOAD_VERSION: u16 = 1;
 
 fn scan_wal_file(path: &Path) -> ExecutionResult<(WalSequence, u64)> {
@@ -611,6 +1126,166 @@ fn scan_wal_file(path: &Path) -> ExecutionResult<(WalSequence, u64)> {
         previous_checksum = record.header.header_checksum;
     }
     Ok((next_sequence, previous_checksum))
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct SegmentScan {
+    first_sequence: Option<WalSequence>,
+    last_sequence: Option<WalSequence>,
+    next_sequence: WalSequence,
+    previous_checksum: u64,
+    records: u64,
+    bytes: u64,
+    sealed: bool,
+}
+
+fn load_segment_manifest(
+    config: &WalSegmentConfig,
+) -> ExecutionResult<(WalSegmentManifest, WalSequence, u64)> {
+    let segment_ids = list_segment_ids(config.root())?;
+    if segment_ids.is_empty() {
+        return Ok((WalSegmentManifest::default(), WalSequence(1), 0));
+    }
+
+    let mut manifest = WalSegmentManifest::default();
+    let mut expected_sequence = WalSequence(1);
+    let mut previous_checksum = 0;
+    for segment_id in segment_ids {
+        let path = segment_path(config.root(), segment_id);
+        let scan = scan_segment_file(&path, previous_checksum, Some(expected_sequence))?;
+        let updated_ns = now_ns();
+        manifest.segments.push(WalSegmentMetadata {
+            segment_id,
+            path,
+            first_sequence: scan.first_sequence,
+            last_sequence: scan.last_sequence,
+            records: scan.records,
+            bytes: scan.bytes,
+            sealed: scan.sealed,
+            created_ns: updated_ns,
+            updated_ns,
+        });
+        expected_sequence = scan.next_sequence;
+        previous_checksum = scan.previous_checksum;
+    }
+
+    Ok((manifest, expected_sequence, previous_checksum))
+}
+
+fn scan_segment_file(
+    path: &Path,
+    initial_previous_checksum: u64,
+    initial_expected_sequence: Option<WalSequence>,
+) -> ExecutionResult<SegmentScan> {
+    let bytes = fs::read(path).map_err(|err| ExecutionError::Journal(err.to_string()))?;
+    if bytes.is_empty() {
+        return Ok(SegmentScan {
+            next_sequence: initial_expected_sequence.unwrap_or(WalSequence(1)),
+            previous_checksum: initial_previous_checksum,
+            ..SegmentScan::default()
+        });
+    }
+
+    let mut cursor = WalReplayCursor::new(&bytes).with_strict_sequence(false);
+    let mut scan = SegmentScan {
+        next_sequence: initial_expected_sequence.unwrap_or(WalSequence(1)),
+        previous_checksum: initial_previous_checksum,
+        ..SegmentScan::default()
+    };
+    while let Some(record) = cursor.next_record().map_err(wal_error)? {
+        validate_wal_sequence(record.header.sequence, scan.next_sequence)?;
+        validate_wal_link(&record, scan.previous_checksum)?;
+        let _ = decode_wal_payload(&record)?;
+        scan.first_sequence.get_or_insert(record.header.sequence);
+        scan.last_sequence = Some(record.header.sequence);
+        scan.next_sequence = record.header.sequence.next();
+        scan.previous_checksum = record.header.header_checksum;
+        scan.records = scan.records.saturating_add(1);
+        scan.bytes = cursor.offset() as u64;
+        scan.sealed = record.header.kind == WalRecordKind::SegmentSeal;
+    }
+    Ok(scan)
+}
+
+fn validate_wal_sequence(actual: WalSequence, expected: WalSequence) -> ExecutionResult<()> {
+    if actual == expected {
+        Ok(())
+    } else if actual < expected {
+        Err(ExecutionError::Journal(format!(
+            "WAL sequence regression: expected {}, actual {}",
+            expected.0, actual.0
+        )))
+    } else {
+        Err(ExecutionError::Journal(format!(
+            "WAL sequence gap: expected {}, actual {}",
+            expected.0, actual.0
+        )))
+    }
+}
+
+fn list_segment_ids(root: &Path) -> ExecutionResult<Vec<WalSegmentId>> {
+    let mut ids = Vec::new();
+    if !root.exists() {
+        return Ok(ids);
+    }
+    for entry in fs::read_dir(root).map_err(|err| ExecutionError::Journal(err.to_string()))? {
+        let entry = entry.map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        let path = entry.path();
+        if let Some(id) = parse_segment_id(&path) {
+            ids.push(id);
+        }
+    }
+    ids.sort_unstable_by_key(|id| id.0);
+    Ok(ids)
+}
+
+fn parse_segment_id(path: &Path) -> Option<WalSegmentId> {
+    let file_name = path.file_name()?.to_str()?;
+    let digits = file_name.strip_prefix("wal-")?.strip_suffix(".ofwal")?;
+    digits.parse::<u64>().ok().map(WalSegmentId)
+}
+
+fn segment_path(root: &Path, segment_id: WalSegmentId) -> PathBuf {
+    root.join(format!("wal-{:012}.ofwal", segment_id.0))
+}
+
+fn write_segment_manifest(root: &Path, manifest: &WalSegmentManifest) -> ExecutionResult<()> {
+    let final_path = root.join("manifest");
+    let tmp_path = root.join("manifest.tmp");
+    let mut bytes = Vec::with_capacity(manifest.segments.len().saturating_mul(128));
+    bytes.extend_from_slice(b"version=1\n");
+    for segment in &manifest.segments {
+        let file_name = segment
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        bytes.extend_from_slice(
+            format!(
+                "{}|{}|{}|{}|{}|{}|{}|{}|{}\n",
+                segment.segment_id.0,
+                file_name,
+                segment.first_sequence.map_or(0, |sequence| sequence.0),
+                segment.last_sequence.map_or(0, |sequence| sequence.0),
+                segment.records,
+                segment.bytes,
+                u8::from(segment.sealed),
+                segment.created_ns,
+                segment.updated_ns
+            )
+            .as_bytes(),
+        );
+    }
+    {
+        let mut file =
+            File::create(&tmp_path).map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        file.write_all(&bytes)
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        file.flush()
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+    }
+    fs::rename(&tmp_path, &final_path).map_err(|err| ExecutionError::Journal(err.to_string()))?;
+    Ok(())
 }
 
 fn replay_wal_bytes(
@@ -2510,6 +3185,159 @@ mod tests {
 
         assert!(WalExecutionJournal::open_path(&path, WalSyncPolicy::Never).is_err());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn segmented_wal_rotates_and_replays_across_segments() {
+        let root =
+            std::env::temp_dir().join(format!("orderflow-segmented-wal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut journal = SegmentedWalExecutionJournal::open(
+            WalSegmentConfig::new(&root)
+                .with_sync_policy(WalSyncPolicy::Never)
+                .with_max_segment_records(2),
+        )
+        .unwrap();
+
+        let req1 = order("C1");
+        let req2 = order("C2");
+        journal
+            .record_command(
+                JournalCommandKind::Submit,
+                req1.client_order_id,
+                req1.ts_recv_ns,
+            )
+            .unwrap();
+        journal
+            .record_event(&ExecutionEvent::accepted(&req1, id("V1")))
+            .unwrap();
+        journal
+            .record_command(
+                JournalCommandKind::Submit,
+                req2.client_order_id,
+                req2.ts_recv_ns,
+            )
+            .unwrap();
+        journal.sync().unwrap();
+
+        assert_eq!(journal.next_sequence(), WalSequence(5));
+        assert_eq!(journal.manifest().segments.len(), 2);
+        assert!(journal.manifest().segments[0].sealed);
+        assert_eq!(
+            journal.manifest().segments[0].last_sequence,
+            Some(WalSequence(3))
+        );
+        assert_eq!(
+            journal.manifest().segments[1].first_sequence,
+            Some(WalSequence(4))
+        );
+
+        let report = journal.integrity_report().unwrap();
+        assert!(report.valid);
+        assert_eq!(report.segments, 2);
+        assert_eq!(report.records, 4);
+
+        let mut replayed = Vec::new();
+        assert_eq!(journal.replay(&mut replayed).unwrap(), 3);
+        assert!(matches!(replayed[0], JournalRecord::Command { .. }));
+        assert!(matches!(replayed[1], JournalRecord::Event(_)));
+        assert!(matches!(replayed[2], JournalRecord::Command { .. }));
+
+        let mut tail = Vec::new();
+        let replay = journal.replay_from(WalSequence(4), &mut tail).unwrap();
+        assert_eq!(replay.records, 1);
+        assert_eq!(replay.first_sequence, Some(WalSequence(4)));
+        assert!(matches!(tail[0], JournalRecord::Command { .. }));
+        assert!(root.join("manifest").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn segmented_wal_reopens_and_continues_after_sealed_segment() {
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-segmented-wal-reopen-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        {
+            let mut journal = SegmentedWalExecutionJournal::open(
+                WalSegmentConfig::new(&root).with_sync_policy(WalSyncPolicy::Never),
+            )
+            .unwrap();
+            let req = order("C1");
+            journal
+                .record_command(
+                    JournalCommandKind::Submit,
+                    req.client_order_id,
+                    req.ts_recv_ns,
+                )
+                .unwrap();
+            journal.rotate_segment().unwrap();
+            journal.sync().unwrap();
+            assert_eq!(journal.next_sequence(), WalSequence(3));
+            assert_eq!(journal.manifest().segments.len(), 2);
+        }
+
+        let mut journal = SegmentedWalExecutionJournal::open(
+            WalSegmentConfig::new(&root).with_sync_policy(WalSyncPolicy::Never),
+        )
+        .unwrap();
+        assert_eq!(journal.next_sequence(), WalSequence(3));
+        let req = order("C2");
+        journal
+            .record_command(
+                JournalCommandKind::Submit,
+                req.client_order_id,
+                req.ts_recv_ns,
+            )
+            .unwrap();
+
+        let mut replayed = Vec::new();
+        assert_eq!(journal.replay(&mut replayed).unwrap(), 2);
+        assert_eq!(journal.manifest().segments.len(), 2);
+        assert_eq!(
+            journal.manifest().segments[1].first_sequence,
+            Some(WalSequence(3))
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn segmented_wal_fails_closed_on_corrupt_segment() {
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-segmented-wal-corrupt-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        {
+            let mut journal = SegmentedWalExecutionJournal::open(
+                WalSegmentConfig::new(&root)
+                    .with_sync_policy(WalSyncPolicy::Never)
+                    .with_max_segment_records(1),
+            )
+            .unwrap();
+            let req = order("C1");
+            journal
+                .record_command(
+                    JournalCommandKind::Submit,
+                    req.client_order_id,
+                    req.ts_recv_ns,
+                )
+                .unwrap();
+            journal.sync().unwrap();
+        }
+
+        let segment_path = root.join("wal-000000000001.ofwal");
+        let mut bytes = std::fs::read(&segment_path).unwrap();
+        let last = bytes.last_mut().unwrap();
+        *last ^= 0x01;
+        std::fs::write(&segment_path, bytes).unwrap();
+
+        assert!(SegmentedWalExecutionJournal::open(
+            WalSegmentConfig::new(&root).with_sync_policy(WalSyncPolicy::Never)
+        )
+        .is_err());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -68,6 +68,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `CheckpointManifest`, `ExecutionCheckpointStore`, and
   `FileExecutionCheckpointStore` for checksum-validated, atomic file-backed OMS
   snapshots keyed by last applied WAL sequence.
+- Additive `of_execution` segmented WAL APIs with `WalSegmentConfig`,
+  `WalSegmentMetadata`, `WalSegmentManifest`, `WalSegmentIntegrityReport`, and
+  `SegmentedWalExecutionJournal` for rotated binary OMS WAL directories with
+  segment seals, manifest inventory, cross-segment checksum validation, and
+  replay through the existing `ExecutionJournal` model.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the
