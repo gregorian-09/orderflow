@@ -99,6 +99,7 @@ Engine and simulation:
 - [`ExecutionEngine`]
 - [`ExecutionMetrics`]
 - [`ExecutionRunbookSnapshot`]
+- [`ExecutionAuditBundleManifest`]
 - [`SimExecutionAdapter`]
 - [`simulated_engine`]
 - [`simulated_engine_with_routes`]
@@ -191,6 +192,14 @@ open versus terminal local orders, core execution counters, whether every
 new-order route is blocked, and whether the engine deserves operator attention.
 The snapshot is factual only: hosts still own permissions, escalation, and
 operator command execution.
+
+[`ExecutionEngine::audit_bundle_manifest`] returns an
+[`ExecutionAuditBundleManifest`] for incident export workflows. It combines the
+runbook snapshot with journal command/event counts and execution metrics, so a
+host can package WAL segments, checkpoints, configs, reconciliation reports, and
+adapter health consistently without adding export work to the order path. Use
+[`ExecutionEngine::audit_bundle_manifest_at`] in deterministic replay tests when
+the bundle timestamp must be fixed.
 
 ## Adapter Contract
 

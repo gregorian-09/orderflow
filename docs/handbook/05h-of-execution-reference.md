@@ -21,6 +21,14 @@ operator attention is required. It does not mutate state and does not execute
 operator actions; host applications still enforce permissions and decide
 whether to pause, reconcile, cancel, or recover.
 
+`ExecutionAuditBundleManifest` is the first audit-bundle export primitive.
+`ExecutionEngine::audit_bundle_manifest()` combines the runbook snapshot,
+execution metrics, and journal command/event counts into a small manifest that
+operators can attach to incident exports. The engine does not choose filesystem
+layout or copy WAL/checkpoint files; hosts own packaging and access control.
+Use `audit_bundle_manifest_at(generated_ns)` for deterministic tests and replay
+drills.
+
 ## Core Traits
 
 ### `ExecutionAdapter`
@@ -221,6 +229,8 @@ Important behaviors:
 3. Call `submit`, `cancel`, `amend`, `poll`, or `recover_open_orders`.
 4. Read `order_state`, `metrics`, `health`, `runbook_snapshot`, or
    `replay_journal`.
+5. For incident response, call `audit_bundle_manifest` before packaging local
+   WAL, checkpoint, config, reconciliation, and adapter-health artifacts.
 
 ### Submit Path
 

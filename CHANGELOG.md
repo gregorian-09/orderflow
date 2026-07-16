@@ -18,6 +18,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   additive `adapters` array while preserving existing flat metrics fields.
 - Added `ExecutionRunbookSnapshot` and `ExecutionEngine::runbook_snapshot()` for
   read-only OMS operator dashboards and incident runbooks.
+- Added `ExecutionAuditBundleManifest` plus
+  `ExecutionEngine::audit_bundle_manifest()` and
+  `ExecutionEngine::audit_bundle_manifest_at(...)` for read-only OMS incident
+  export inventories.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

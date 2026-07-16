@@ -13,7 +13,7 @@ use std::sync::mpsc::{
 };
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use of_execution_core::{
     AccountId, AmendRequest, BasicRiskGate, CancelRequest, ClientOrderId, ExecutionCoreError,
@@ -530,6 +530,48 @@ impl ExecutionRunbookSnapshot {
     /// Returns true when the engine can accept at least one new-order route.
     pub const fn can_submit_new_orders(self) -> bool {
         !self.new_submissions_blocked
+    }
+}
+
+/// Read-only manifest describing the current execution incident bundle inputs.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ExecutionAuditBundleManifest {
+    /// Manifest schema version.
+    pub schema_version: u16,
+    /// Manifest creation timestamp in Unix nanoseconds.
+    pub generated_ns: u64,
+    /// Operator runbook snapshot captured with the manifest.
+    pub runbook: ExecutionRunbookSnapshot,
+    /// Configured route count.
+    pub route_count: usize,
+    /// Enabled route count.
+    pub enabled_route_count: usize,
+    /// Locally known non-terminal order count.
+    pub open_order_count: usize,
+    /// Locally known terminal order count.
+    pub terminal_order_count: usize,
+    /// Journal records visible through the configured journal.
+    pub journal_record_count: usize,
+    /// Journal command records visible through the configured journal.
+    pub journal_command_count: usize,
+    /// Journal execution-event records visible through the configured journal.
+    pub journal_event_count: usize,
+    /// Execution metrics captured with the manifest.
+    pub metrics: ExecutionMetrics,
+    /// True when the engine can accept at least one new-order route.
+    pub submissions_enabled: bool,
+    /// True when an operator should inspect the bundle before resuming flow.
+    pub operator_attention_required: bool,
+}
+
+impl ExecutionAuditBundleManifest {
+    /// Current manifest schema version.
+    pub const SCHEMA_VERSION: u16 = 1;
+
+    /// Returns true when the manifest indicates operator review is needed.
+    pub const fn requires_operator_review(self) -> bool {
+        self.operator_attention_required
     }
 }
 
@@ -1069,6 +1111,53 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
             new_submissions_blocked,
             operator_attention_required,
         }
+    }
+
+    /// Returns an audit-bundle manifest with a wall-clock creation timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns journal errors from the configured execution journal.
+    pub fn audit_bundle_manifest(&self) -> ExecutionResult<ExecutionAuditBundleManifest> {
+        self.audit_bundle_manifest_at(unix_ts_nanos())
+    }
+
+    /// Returns an audit-bundle manifest with a caller-provided timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns journal errors from the configured execution journal.
+    pub fn audit_bundle_manifest_at(
+        &self,
+        generated_ns: u64,
+    ) -> ExecutionResult<ExecutionAuditBundleManifest> {
+        let mut records = Vec::new();
+        self.journal.replay(&mut records)?;
+        let journal_command_count = records
+            .iter()
+            .filter(|record| matches!(record, JournalRecord::Command { .. }))
+            .count();
+        let journal_event_count = records
+            .iter()
+            .filter(|record| matches!(record, JournalRecord::Event(_)))
+            .count();
+        let runbook = self.runbook_snapshot();
+
+        Ok(ExecutionAuditBundleManifest {
+            schema_version: ExecutionAuditBundleManifest::SCHEMA_VERSION,
+            generated_ns,
+            runbook,
+            route_count: runbook.route_count,
+            enabled_route_count: runbook.enabled_route_count,
+            open_order_count: runbook.open_order_count,
+            terminal_order_count: runbook.terminal_order_count,
+            journal_record_count: records.len(),
+            journal_command_count,
+            journal_event_count,
+            metrics: self.metrics,
+            submissions_enabled: runbook.can_submit_new_orders(),
+            operator_attention_required: runbook.operator_attention_required,
+        })
     }
 
     /// Returns an order state by client id.
@@ -1762,6 +1851,14 @@ fn route_reject(reason: RiskRejectReason, text: &str) -> of_execution_core::Risk
     of_execution_core::RiskDecision::reject(reason, text)
 }
 
+fn unix_ts_nanos() -> u64 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    u64::try_from(nanos).unwrap_or(u64::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1865,6 +1962,32 @@ mod tests {
         assert!(snapshot.new_submissions_blocked);
         assert!(!snapshot.can_submit_new_orders());
         assert!(snapshot.operator_attention_required);
+    }
+
+    #[test]
+    fn audit_bundle_manifest_counts_journal_and_runbook_inputs() {
+        let mut engine = simulated_engine(route());
+        engine.start().unwrap();
+        let mut out = ExecutionEventBuffer::with_capacity(8);
+        engine.submit(order(), &mut out).unwrap();
+
+        let manifest = engine.audit_bundle_manifest_at(123).unwrap();
+        assert_eq!(
+            manifest.schema_version,
+            ExecutionAuditBundleManifest::SCHEMA_VERSION
+        );
+        assert_eq!(manifest.generated_ns, 123);
+        assert_eq!(manifest.route_count, 1);
+        assert_eq!(manifest.enabled_route_count, 1);
+        assert_eq!(manifest.open_order_count, 0);
+        assert_eq!(manifest.terminal_order_count, 1);
+        assert_eq!(manifest.journal_record_count, 3);
+        assert_eq!(manifest.journal_command_count, 1);
+        assert_eq!(manifest.journal_event_count, 2);
+        assert_eq!(manifest.metrics.submitted, 1);
+        assert_eq!(manifest.runbook.submitted, 1);
+        assert!(manifest.submissions_enabled);
+        assert!(!manifest.requires_operator_review());
     }
 
     #[test]
