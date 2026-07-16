@@ -90,15 +90,17 @@ files:
 
 | Layer | API |
 | --- | --- |
-| C | `of_execution_wal_integrity_report(path, out_report)` |
-| Python | `inspect_execution_wal(path, library_path=None)` |
-| Java | `OrderflowExecutionEngine.inspectWal(nativePath, walPath)` |
+| C | `of_execution_wal_integrity_report(path, out_report)` and `of_execution_segmented_wal_integrity_report(root, out_report)` |
+| Python | `inspect_execution_wal(path, library_path=None)` and `inspect_execution_segmented_wal(root, library_path=None)` |
+| Java | `OrderflowExecutionEngine.inspectWal(nativePath, walPath)` and `OrderflowExecutionEngine.inspectSegmentedWal(nativePath, walRoot)` |
 
 This diagnostic is intentionally offline/operator-oriented. It does not create
 an execution engine, does not submit orders, and does not mutate OMS state. It
 reads WAL bytes, reports valid records and byte position, optional first/last
 sequence, checksum failures, sequence failures, truncated-tail status, and an
-overall validity flag.
+overall validity flag. Use the segmented APIs for rotated production WAL roots;
+they validate `wal-*.ofwal` files in segment-id order and preserve the same
+cross-segment checksum and sequence rules used by replay.
 
 ### Checkpoints
 

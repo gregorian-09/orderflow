@@ -401,6 +401,7 @@ analytics runtime.
 | `ExecutionHealth` | Connected/degraded/sequence health snapshot |
 | `ExecutionMetrics` | Submitted/cancelled/amended/events/risk/adapter/recovery counters |
 | `ExecutionWalIntegrityReport` | Offline WAL scan summary for operator diagnostics |
+| `ExecutionSegmentedWalIntegrityReport` | Offline segmented WAL directory scan summary |
 | `ConcurrentExecutionConfig` | Command/report/event-buffer capacities |
 | `ExecutionCommandReport` | Concurrent command result, sequence, result code, and events |
 
@@ -437,20 +438,23 @@ analytics runtime.
 | Signature | Description |
 |---|---|
 | `inspect_execution_wal(path, library_path=None)` | Inspects a single execution WAL file without creating an execution engine |
+| `inspect_execution_segmented_wal(root, library_path=None)` | Inspects a segmented execution WAL directory without creating an execution engine |
 
 #### WAL integrity diagnostic
 
-Use `inspect_execution_wal()` before recovery drills, after crash restart, or in
-an operations health check to verify a single binary OMS WAL file. It reads the
-file outside the order path and returns counts, byte position, optional sequence
-range, checksum/sequence failure counts, and validity flags.
+Use `inspect_execution_wal()` and `inspect_execution_segmented_wal()` before
+recovery drills, after crash restart, or in an operations health check. Both
+helpers read bytes outside the order path and return counts, byte position,
+optional sequence range, checksum/sequence failure counts, and validity flags.
+Use the segmented helper for production rotated WAL roots.
 
 ```python
-from orderflow import inspect_execution_wal
+from orderflow import inspect_execution_segmented_wal, inspect_execution_wal
 
-report = inspect_execution_wal("execution-wal/wal-000000000001.ofwal")
-if not report.valid:
-    raise RuntimeError(f"unsafe WAL: {report}")
+single = inspect_execution_wal("execution-wal/wal-000000000001.ofwal")
+segmented = inspect_execution_segmented_wal("execution-wal")
+if not single.valid or not segmented.valid:
+    raise RuntimeError("unsafe execution WAL")
 ```
 
 ## Usage Patterns

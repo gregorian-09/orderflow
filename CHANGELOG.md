@@ -86,9 +86,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   open-order snapshots without mutating local state or sending cancels.
 - Additive execution WAL integrity diagnostics across the C ABI, Python, and
   Java bindings: `of_execution_wal_integrity_report`,
-  `inspect_execution_wal`, and `OrderflowExecutionEngine.inspectWal` expose
-  offline single-file WAL scans without changing existing execution handles or
-  order-path APIs.
+  `of_execution_segmented_wal_integrity_report`, `inspect_execution_wal`,
+  `inspect_execution_segmented_wal`, `OrderflowExecutionEngine.inspectWal`,
+  and `OrderflowExecutionEngine.inspectSegmentedWal` expose offline WAL scans
+  without changing existing execution handles or order-path APIs.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

@@ -42,6 +42,7 @@ from ._ffi import (
     OfExecutionOrderRequest,
     OfExecutionOrderState,
     OfExecutionRouteConfig,
+    OfExecutionSegmentedWalIntegrityReport,
     OfExecutionWalIntegrityReport,
     OfExternalFeedPolicy,
     OfSymbol,
@@ -340,6 +341,20 @@ class ExecutionWalIntegrityReport:
 
 
 @dataclass(frozen=True)
+class ExecutionSegmentedWalIntegrityReport:
+    """Segmented execution WAL integrity report for offline diagnostics."""
+
+    segments: int
+    records: int
+    bytes: int
+    first_sequence: Optional[int]
+    last_sequence: Optional[int]
+    checksum_failures: int
+    sequence_failures: int
+    valid: bool
+
+
+@dataclass(frozen=True)
 class ConcurrentExecutionConfig:
     """Concurrent execution worker queue configuration."""
 
@@ -388,6 +403,41 @@ def inspect_execution_wal(
         checksum_failures=int(report.checksum_failures),
         sequence_failures=int(report.sequence_failures),
         truncated_tail=bool(report.truncated_tail),
+        valid=bool(report.valid),
+    )
+
+
+def inspect_execution_segmented_wal(
+    root: str,
+    library_path: Optional[str] = None,
+) -> ExecutionSegmentedWalIntegrityReport:
+    """Inspects a segmented execution WAL directory without opening it.
+
+    Args:
+        root: UTF-8 filesystem path to a segmented WAL root directory.
+        library_path: Optional explicit path to ``libof_ffi_c``.
+
+    Returns:
+        A typed integrity report with segment count, decoded record counts,
+        byte position, sequence range, failure counters, and validity flag.
+    """
+    ffi = OrderflowLib(library_path=library_path)
+    report = OfExecutionSegmentedWalIntegrityReport()
+    encoded_root = str(root).encode("utf-8")
+    rc = ffi.lib.of_execution_segmented_wal_integrity_report(
+        encoded_root, ctypes.byref(report)
+    )
+    if int(rc) != 0:
+        exc = _ERROR_MAP.get(int(rc), OrderflowError)
+        raise exc(f"of_execution_segmented_wal_integrity_report failed with code {rc}")
+    return ExecutionSegmentedWalIntegrityReport(
+        segments=int(report.segments),
+        records=int(report.records),
+        bytes=int(report.bytes),
+        first_sequence=int(report.first_sequence) if report.has_first_sequence else None,
+        last_sequence=int(report.last_sequence) if report.has_last_sequence else None,
+        checksum_failures=int(report.checksum_failures),
+        sequence_failures=int(report.sequence_failures),
         valid=bool(report.valid),
     )
 

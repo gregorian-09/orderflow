@@ -948,6 +948,21 @@ impl SegmentedWalExecutionJournal {
         self.metrics
     }
 
+    /// Inspects a segmented WAL root without opening it for append.
+    ///
+    /// This helper is intended for operator diagnostics and binding layers. It
+    /// scans `wal-*.ofwal` files in segment-id order, validates checksum links
+    /// and sequence continuity, and returns a report instead of creating a new
+    /// active segment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an execution journal error when the root cannot be listed or a
+    /// segment file cannot be read.
+    pub fn inspect_root(root: impl AsRef<Path>) -> ExecutionResult<WalSegmentIntegrityReport> {
+        inspect_segmented_wal_root(root.as_ref())
+    }
+
     /// Flushes and syncs the active segment file.
     ///
     /// # Errors
@@ -1285,6 +1300,50 @@ fn load_segment_manifest(
     }
 
     Ok((manifest, expected_sequence, previous_checksum))
+}
+
+fn inspect_segmented_wal_root(root: &Path) -> ExecutionResult<WalSegmentIntegrityReport> {
+    if !root.exists() {
+        return Err(ExecutionError::Journal(format!(
+            "segmented WAL root does not exist: {}",
+            root.display()
+        )));
+    }
+    let segment_ids = list_segment_ids(root)?;
+    let mut report = WalSegmentIntegrityReport {
+        segments: segment_ids.len(),
+        valid: true,
+        ..WalSegmentIntegrityReport::default()
+    };
+    let mut expected_sequence = WalSequence(1);
+    let mut previous_checksum = 0;
+
+    for segment_id in segment_ids {
+        let path = segment_path(root, segment_id);
+        match scan_segment_file(&path, previous_checksum, Some(expected_sequence)) {
+            Ok(scan) => {
+                report.records = report.records.saturating_add(scan.records);
+                report.bytes = report.bytes.saturating_add(scan.bytes);
+                if report.first_sequence.is_none() {
+                    report.first_sequence = scan.first_sequence;
+                }
+                report.last_sequence = scan.last_sequence.or(report.last_sequence);
+                expected_sequence = scan.next_sequence;
+                previous_checksum = scan.previous_checksum;
+            }
+            Err(err) => {
+                let message = err.to_string();
+                if message.contains("sequence") {
+                    report.sequence_failures = report.sequence_failures.saturating_add(1);
+                } else {
+                    report.checksum_failures = report.checksum_failures.saturating_add(1);
+                }
+                report.valid = false;
+                break;
+            }
+        }
+    }
+    Ok(report)
 }
 
 fn scan_segment_file(
@@ -4172,6 +4231,52 @@ mod tests {
             WalSegmentConfig::new(&root).with_sync_policy(WalSyncPolicy::Never)
         )
         .is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn segmented_wal_inspect_root_reports_valid_and_corrupt_segments() {
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-segmented-wal-inspect-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        {
+            let mut journal = SegmentedWalExecutionJournal::open(
+                WalSegmentConfig::new(&root)
+                    .with_sync_policy(WalSyncPolicy::Never)
+                    .with_max_segment_records(1),
+            )
+            .unwrap();
+            let req = order("C1");
+            journal
+                .record_command(
+                    JournalCommandKind::Submit,
+                    req.client_order_id,
+                    req.ts_recv_ns,
+                )
+                .unwrap();
+            journal.sync().unwrap();
+        }
+
+        let report = SegmentedWalExecutionJournal::inspect_root(&root).unwrap();
+        assert!(report.valid);
+        assert_eq!(report.segments, 1);
+        assert_eq!(report.records, 1);
+        assert_eq!(report.first_sequence, Some(WalSequence(1)));
+        assert_eq!(report.last_sequence, Some(WalSequence(1)));
+
+        let segment_path = root.join("wal-000000000001.ofwal");
+        let mut bytes = std::fs::read(&segment_path).unwrap();
+        let last = bytes.last_mut().unwrap();
+        *last ^= 0x01;
+        std::fs::write(&segment_path, bytes).unwrap();
+
+        let report = SegmentedWalExecutionJournal::inspect_root(&root).unwrap();
+        assert!(!report.valid);
+        assert_eq!(report.segments, 1);
+        assert_eq!(report.checksum_failures, 1);
+
         let _ = std::fs::remove_dir_all(&root);
     }
 

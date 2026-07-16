@@ -1791,6 +1791,73 @@ mod tests {
     }
 
     #[test]
+    fn execution_segmented_wal_integrity_report_scans_directory() {
+        let _guard = test_guard();
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-ffi-segmented-wal-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        {
+            let mut journal = of_execution::SegmentedWalExecutionJournal::open(
+                of_execution::WalSegmentConfig::new(&root)
+                    .with_sync_policy(of_execution_core::WalSyncPolicy::Never)
+                    .with_max_segment_records(1),
+            )
+            .expect("segmented wal");
+            let client_order_id = of_execution_core::ClientOrderId::new("C1").expect("client id");
+            of_execution::ExecutionJournal::record_command(
+                &mut journal,
+                of_execution::JournalCommandKind::Submit,
+                client_order_id,
+                1,
+            )
+                .expect("record command");
+            journal.sync().expect("sync");
+        }
+
+        let root_c = CString::new(root.to_string_lossy().as_bytes()).expect("cstring");
+        let mut report = of_execution_segmented_wal_integrity_report_t {
+            segments: 0,
+            records: 0,
+            bytes: 0,
+            first_sequence: 0,
+            last_sequence: 0,
+            checksum_failures: 0,
+            sequence_failures: 0,
+            has_first_sequence: 0,
+            has_last_sequence: 0,
+            valid: 0,
+        };
+        assert_eq!(
+            of_execution_segmented_wal_integrity_report(root_c.as_ptr(), &mut report),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(report.valid, 1);
+        assert_eq!(report.segments, 1);
+        assert_eq!(report.records, 1);
+        assert_eq!(report.first_sequence, 1);
+        assert_eq!(report.last_sequence, 1);
+        assert_eq!(report.has_first_sequence, 1);
+        assert_eq!(report.has_last_sequence, 1);
+
+        let segment_path = root.join("wal-000000000001.ofwal");
+        let mut bytes = std::fs::read(&segment_path).expect("read segment");
+        let last = bytes.last_mut().expect("segment byte");
+        *last ^= 0x01;
+        std::fs::write(&segment_path, bytes).expect("write corrupt segment");
+
+        assert_eq!(
+            of_execution_segmented_wal_integrity_report(root_c.as_ptr(), &mut report),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(report.valid, 0);
+        assert_eq!(report.checksum_failures, 1);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn execution_abi_create_multi_routes_submits_multiple_symbols() {
         let _guard = test_guard();
         let route = CString::new("SIM").expect("cstring");

@@ -40,6 +40,7 @@ from .api import (
     ExecutionMetrics,
     ExecutionOrderState,
     ExecutionOrderType,
+    ExecutionSegmentedWalIntegrityReport,
     ExecutionSide,
     ExecutionTimeInForce,
     ExecutionWalIntegrityReport,
@@ -54,6 +55,7 @@ from .api import (
     Side,
     StreamKind,
     Symbol,
+    inspect_execution_segmented_wal,
     inspect_execution_wal,
 )
 
@@ -73,6 +75,7 @@ __all__ = [
     "ExecutionMetrics",
     "ExecutionOrderState",
     "ExecutionOrderType",
+    "ExecutionSegmentedWalIntegrityReport",
     "ExecutionSide",
     "ExecutionTimeInForce",
     "ExecutionWalIntegrityReport",
@@ -88,5 +91,6 @@ __all__ = [
     "Side",
     "StreamKind",
     "Symbol",
+    "inspect_execution_segmented_wal",
     "inspect_execution_wal",
 ]

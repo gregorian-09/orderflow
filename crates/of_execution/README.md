@@ -505,6 +505,13 @@ sequences across segment boundaries, reconstructs the manifest, and fails
 closed on corrupt or non-contiguous data. The manifest is an operator inventory
 and discovery aid.
 
+Use `SegmentedWalExecutionJournal::inspect_root(root)` when an operator or
+binding needs a read-only integrity report without creating a new active
+segment. The report returns segment count, valid record/byte counts, optional
+sequence range, checksum failures, sequence failures, and a `valid` flag. It is
+intended for recovery drills, restart checks, and archival validation outside
+the order-submission path.
+
 Checkpoint marker records remain a separate additive feature so the
 compatibility boundary stays narrow.
 

@@ -367,6 +367,30 @@ typedef struct {
   uint8_t valid;
 } of_execution_wal_integrity_report_t;
 
+/** Segmented execution WAL integrity snapshot for operator diagnostics. */
+typedef struct {
+  /** Number of segment files inspected. */
+  uint64_t segments;
+  /** Number of valid WAL frames decoded before the first fatal frame error. */
+  uint64_t records;
+  /** Number of encoded bytes consumed by valid records. */
+  uint64_t bytes;
+  /** First decoded WAL sequence; meaningful when has_first_sequence is non-zero. */
+  uint64_t first_sequence;
+  /** Last decoded WAL sequence; meaningful when has_last_sequence is non-zero. */
+  uint64_t last_sequence;
+  /** Number of checksum failures encountered. */
+  uint64_t checksum_failures;
+  /** Number of strict sequence failures encountered. */
+  uint64_t sequence_failures;
+  /** Non-zero when first_sequence is meaningful. */
+  uint8_t has_first_sequence;
+  /** Non-zero when last_sequence is meaningful. */
+  uint8_t has_last_sequence;
+  /** Non-zero when all inspected segments decoded cleanly. */
+  uint8_t valid;
+} of_execution_segmented_wal_integrity_report_t;
+
 /** Concurrent execution worker configuration. */
 typedef struct {
   /** Bounded command queue capacity; 0 uses default. */
@@ -397,6 +421,8 @@ const char* of_build_info(void);
 uint32_t of_execution_api_version(void);
 /** Inspects an execution WAL file and writes an integrity report. */
 int32_t of_execution_wal_integrity_report(const char* path, of_execution_wal_integrity_report_t* out_report);
+/** Inspects a segmented execution WAL root and writes an integrity report. */
+int32_t of_execution_segmented_wal_integrity_report(const char* root, of_execution_segmented_wal_integrity_report_t* out_report);
 
 /** Creates a simulated execution engine instance. */
 int32_t of_execution_engine_create(const of_execution_route_config_t* cfg, of_execution_engine_t** out_engine);

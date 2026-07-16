@@ -141,15 +141,21 @@ The `manifest` file is an operator inventory. It is not trusted as the source
 of truth during recovery because the active segment can be newer than the last
 manifest write under relaxed sync policies.
 
-Single-file WAL integrity can be inspected through the binding-facing
-diagnostic APIs:
+WAL integrity can be inspected through the binding-facing diagnostic APIs:
 
 - C: `of_execution_wal_integrity_report(path, out_report)`;
 - Python: `inspect_execution_wal(path, library_path=None)`;
 - Java: `OrderflowExecutionEngine.inspectWal(nativePath, walPath)`.
+- C segmented root: `of_execution_segmented_wal_integrity_report(root, out_report)`;
+- Python segmented root:
+  `inspect_execution_segmented_wal(root, library_path=None)`;
+- Java segmented root:
+  `OrderflowExecutionEngine.inspectSegmentedWal(nativePath, walRoot)`.
 
-Run this diagnostic before a recovery drill, after crash restart, and before
-archiving a WAL segment. The function reports corrupt or truncated bytes as a
+Run these diagnostics before a recovery drill, after crash restart, and before
+archiving WAL data. Use the segmented-root diagnostic for production rotated
+WAL directories because it validates segment files in order and checks
+cross-segment continuity. The functions report corrupt or truncated bytes as a
 successful call with `valid = false`; missing or unreadable files return an I/O
 error. Treat `valid = false` as a fail-closed condition for live submissions
 until an operator has reconciled state with the venue.

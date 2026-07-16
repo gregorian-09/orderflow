@@ -85,6 +85,35 @@ public final class OrderflowExecutionEngine implements AutoCloseable {
         );
     }
 
+    /**
+     * Inspects a segmented execution WAL directory without creating an execution engine.
+     *
+     * @param nativePath native library path, or null/blank for default debug path
+     * @param walRoot UTF-8 path to the segmented WAL root directory
+     * @return typed segmented WAL integrity report
+     */
+    public static ExecutionSegmentedWalIntegrityReport inspectSegmentedWal(String nativePath, String walRoot) {
+        String libPath = nativePath == null || nativePath.isBlank() ? defaultLibraryPath() : nativePath;
+        OrderflowNative nativeLib = OrderflowNative.load(libPath);
+        OfExecutionSegmentedWalIntegrityReport report = new OfExecutionSegmentedWalIntegrityReport();
+        check(
+            nativeLib.of_execution_segmented_wal_integrity_report(walRoot, report),
+            "of_execution_segmented_wal_integrity_report",
+            List.of()
+        );
+        report.read();
+        return new ExecutionSegmentedWalIntegrityReport(
+            report.segments,
+            report.records,
+            report.bytes,
+            report.has_first_sequence != 0 ? report.first_sequence : null,
+            report.has_last_sequence != 0 ? report.last_sequence : null,
+            report.checksum_failures,
+            report.sequence_failures,
+            report.valid != 0
+        );
+    }
+
     /** Starts execution adapter/session. */
     public void start() {
         requireEngine();

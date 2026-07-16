@@ -409,6 +409,7 @@ analytics runtime.
 | `ExecutionHealth` | Connected/degraded/sequence health snapshot |
 | `ExecutionMetrics` | Submitted/cancelled/amended/events/risk/adapter/recovery counters |
 | `ExecutionWalIntegrityReport` | Offline WAL scan summary for operator diagnostics |
+| `ExecutionSegmentedWalIntegrityReport` | Offline segmented WAL directory scan summary |
 | `ConcurrentExecutionConfig` | Command/report/event-buffer capacities |
 | `ExecutionCommandReport` | Concurrent command result, sequence, result code, and events |
 
@@ -429,6 +430,7 @@ analytics runtime.
 | `ExecutionHealth executionHealth()` | Returns execution health |
 | `ExecutionMetrics executionMetrics()` | Returns execution metrics |
 | `static ExecutionWalIntegrityReport inspectWal(String nativePath, String walPath)` | Inspects a single execution WAL file without creating an execution engine |
+| `static ExecutionSegmentedWalIntegrityReport inspectSegmentedWal(String nativePath, String walRoot)` | Inspects a segmented execution WAL directory without creating an execution engine |
 
 #### `ConcurrentOrderflowExecutionEngine`
 
@@ -445,20 +447,24 @@ analytics runtime.
 
 #### WAL integrity diagnostic
 
-Use `OrderflowExecutionEngine.inspectWal()` before recovery drills, after crash
-restart, or in an operations health check to verify a single binary OMS WAL
-file. It reads the file outside the order path and returns counts, byte
-position, optional sequence range, checksum/sequence failure counts, and
-validity flags.
+Use `OrderflowExecutionEngine.inspectWal()` and
+`OrderflowExecutionEngine.inspectSegmentedWal()` before recovery drills, after
+crash restart, or in an operations health check. Both helpers read bytes
+outside the order path and return counts, byte position, optional sequence
+range, checksum/sequence failure counts, and validity flags. Use the segmented
+helper for production rotated WAL roots.
 
 ```java
+import com.orderflow.bindings.ExecutionSegmentedWalIntegrityReport;
 import com.orderflow.bindings.ExecutionWalIntegrityReport;
 import com.orderflow.bindings.OrderflowExecutionEngine;
 
 ExecutionWalIntegrityReport report =
     OrderflowExecutionEngine.inspectWal(null, "execution-wal/wal-000000000001.ofwal");
-if (!report.valid) {
-    throw new IllegalStateException("unsafe WAL: " + report.bytes);
+ExecutionSegmentedWalIntegrityReport segmented =
+    OrderflowExecutionEngine.inspectSegmentedWal(null, "execution-wal");
+if (!report.valid || !segmented.valid) {
+    throw new IllegalStateException("unsafe execution WAL");
 }
 ```
 

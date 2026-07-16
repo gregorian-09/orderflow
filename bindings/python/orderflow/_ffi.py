@@ -314,6 +314,23 @@ class OfExecutionWalIntegrityReport(ctypes.Structure):
     ]
 
 
+class OfExecutionSegmentedWalIntegrityReport(ctypes.Structure):
+    """ctypes mirror of `of_execution_segmented_wal_integrity_report_t`."""
+
+    _fields_ = [
+        ("segments", c_uint64),
+        ("records", c_uint64),
+        ("bytes", c_uint64),
+        ("first_sequence", c_uint64),
+        ("last_sequence", c_uint64),
+        ("checksum_failures", c_uint64),
+        ("sequence_failures", c_uint64),
+        ("has_first_sequence", c_uint8),
+        ("has_last_sequence", c_uint8),
+        ("valid", c_uint8),
+    ]
+
+
 class OfExecutionConcurrentConfig(ctypes.Structure):
     """ctypes mirror of `of_execution_concurrent_config_t`."""
 
@@ -405,6 +422,12 @@ class OrderflowLib:
             ctypes.POINTER(OfExecutionWalIntegrityReport),
         ]
         lib.of_execution_wal_integrity_report.restype = c_int32
+
+        lib.of_execution_segmented_wal_integrity_report.argtypes = [
+            c_char_p,
+            ctypes.POINTER(OfExecutionSegmentedWalIntegrityReport),
+        ]
+        lib.of_execution_segmented_wal_integrity_report.restype = c_int32
 
         lib.of_execution_engine_create.argtypes = [
             ctypes.POINTER(OfExecutionRouteConfig),

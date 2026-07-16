@@ -16,7 +16,7 @@ use of_execution::{
     simulated_engine_with_routes, AllowAllRiskGate, ConcurrentExecutionConfig,
     ConcurrentExecutionEngine, ConcurrentExecutionError, ExecutionCommand, ExecutionCommandKind,
     ExecutionCommandReport, ExecutionEngine, ExecutionError, ExecutionEventBuffer, InMemoryJournal,
-    RouteConfig, SimExecutionAdapter,
+    RouteConfig, SegmentedWalExecutionJournal, SimExecutionAdapter, WalSegmentIntegrityReport,
 };
 use of_execution_core::{
     AmendRequest, CancelRequest, ExecutionEvent, ExecutionSymbol, FixedAscii, OrderPrice, OrderQty,
@@ -477,6 +477,33 @@ pub struct of_execution_wal_integrity_report_t {
     pub valid: u8,
 }
 
+/// Segmented execution WAL integrity report returned by
+/// [`of_execution_segmented_wal_integrity_report`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct of_execution_segmented_wal_integrity_report_t {
+    /// Number of segment files inspected.
+    pub segments: u64,
+    /// Number of valid WAL frames decoded before the first fatal frame error.
+    pub records: u64,
+    /// Number of encoded bytes consumed by valid records.
+    pub bytes: u64,
+    /// First decoded WAL sequence, valid when `has_first_sequence != 0`.
+    pub first_sequence: u64,
+    /// Last decoded WAL sequence, valid when `has_last_sequence != 0`.
+    pub last_sequence: u64,
+    /// Number of checksum failures encountered.
+    pub checksum_failures: u64,
+    /// Number of strict sequence failures encountered.
+    pub sequence_failures: u64,
+    /// Non-zero when `first_sequence` is meaningful.
+    pub has_first_sequence: u8,
+    /// Non-zero when `last_sequence` is meaningful.
+    pub has_last_sequence: u8,
+    /// Non-zero when all inspected segments decoded cleanly.
+    pub valid: u8,
+}
+
 /// Concurrent execution worker configuration.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -596,6 +623,28 @@ pub extern "C" fn of_execution_wal_integrity_report(
     let report = WalIntegrityReport::inspect(&bytes, true);
     unsafe {
         *out_report = wal_integrity_report_to_ffi(report);
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Inspects a segmented execution WAL root and writes an integrity report.
+#[no_mangle]
+pub extern "C" fn of_execution_segmented_wal_integrity_report(
+    root: *const c_char,
+    out_report: *mut of_execution_segmented_wal_integrity_report_t,
+) -> i32 {
+    if root.is_null() || out_report.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let Some(root) = non_empty_string(root) else {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    };
+    let report = match SegmentedWalExecutionJournal::inspect_root(root) {
+        Ok(report) => report,
+        Err(_) => return of_error_t::OF_ERR_IO as i32,
+    };
+    unsafe {
+        *out_report = segmented_wal_integrity_report_to_ffi(report);
     }
     of_error_t::OF_OK as i32
 }
@@ -2358,6 +2407,23 @@ fn wal_integrity_report_to_ffi(report: WalIntegrityReport) -> of_execution_wal_i
         has_first_sequence: u8::from(report.first_sequence.is_some()),
         has_last_sequence: u8::from(report.last_sequence.is_some()),
         truncated_tail: u8::from(report.truncated_tail),
+        valid: u8::from(report.valid),
+    }
+}
+
+fn segmented_wal_integrity_report_to_ffi(
+    report: WalSegmentIntegrityReport,
+) -> of_execution_segmented_wal_integrity_report_t {
+    of_execution_segmented_wal_integrity_report_t {
+        segments: report.segments as u64,
+        records: report.records,
+        bytes: report.bytes,
+        first_sequence: report.first_sequence.map_or(0, |sequence| sequence.0),
+        last_sequence: report.last_sequence.map_or(0, |sequence| sequence.0),
+        checksum_failures: report.checksum_failures,
+        sequence_failures: report.sequence_failures,
+        has_first_sequence: u8::from(report.first_sequence.is_some()),
+        has_last_sequence: u8::from(report.last_sequence.is_some()),
         valid: u8::from(report.valid),
     }
 }
