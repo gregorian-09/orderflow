@@ -254,6 +254,12 @@ pub struct BinanceAdapter {
     parse_errors: u64,
     dropped_events: u64,
     backpressure_events: u64,
+    parse_latency_samples: u64,
+    parse_latency_total_ns: u64,
+    parse_latency_max_ns: u64,
+    normalization_latency_samples: u64,
+    normalization_latency_total_ns: u64,
+    normalization_latency_max_ns: u64,
     duplicate_depth_updates: u64,
     out_of_order_depth_updates: u64,
     gap_count: u64,
@@ -291,6 +297,12 @@ impl BinanceAdapter {
             parse_errors: 0,
             dropped_events: 0,
             backpressure_events: 0,
+            parse_latency_samples: 0,
+            parse_latency_total_ns: 0,
+            parse_latency_max_ns: 0,
+            normalization_latency_samples: 0,
+            normalization_latency_total_ns: 0,
+            normalization_latency_max_ns: 0,
             duplicate_depth_updates: 0,
             out_of_order_depth_updates: 0,
             gap_count: 0,
@@ -387,6 +399,22 @@ impl BinanceAdapter {
         true
     }
 
+    fn record_parse_latency(&mut self, elapsed: Duration) {
+        let elapsed_ns = duration_ns(elapsed);
+        self.parse_latency_samples = self.parse_latency_samples.saturating_add(1);
+        self.parse_latency_total_ns = self.parse_latency_total_ns.saturating_add(elapsed_ns);
+        self.parse_latency_max_ns = self.parse_latency_max_ns.max(elapsed_ns);
+    }
+
+    fn record_normalization_latency(&mut self, elapsed: Duration) {
+        let elapsed_ns = duration_ns(elapsed);
+        self.normalization_latency_samples = self.normalization_latency_samples.saturating_add(1);
+        self.normalization_latency_total_ns = self
+            .normalization_latency_total_ns
+            .saturating_add(elapsed_ns);
+        self.normalization_latency_max_ns = self.normalization_latency_max_ns.max(elapsed_ns);
+    }
+
     fn send_binance_subscribe(&mut self, symbol: &SymbolId) -> AdapterResult<()> {
         let sym = symbol.symbol.to_ascii_lowercase();
         let payload = format!(
@@ -433,8 +461,10 @@ impl BinanceAdapter {
             return;
         }
         if payload.contains("\"e\":\"aggTrade\"") {
+            let normalization_started = Instant::now();
             if let Some(trade) = parse_agg_trade(payload, &mut self.seq) {
                 self.push_event(RawEvent::Trade(trade));
+                self.record_normalization_latency(normalization_started.elapsed());
                 self.last_market_data_at = Some(Instant::now());
                 self.healthy_since.get_or_insert_with(Instant::now);
             } else {
@@ -501,12 +531,15 @@ impl BinanceAdapter {
                 .unwrap_or_else(Self::now_ns);
             let ts_recv_ns = Self::now_ns();
             let mut accepted_depth_event = false;
+            let mut candidate_depth_events = 0u64;
+            let normalization_started = Instant::now();
 
             for (level, (price, size)) in extract_depth_pairs(payload, "b")
                 .into_iter()
                 .take(depth_limit)
                 .enumerate()
             {
+                candidate_depth_events = candidate_depth_events.saturating_add(1);
                 accepted_depth_event |= self.push_event(RawEvent::Book(BookUpdate {
                     symbol: sym_id.clone(),
                     side: Side::Bid,
@@ -528,6 +561,7 @@ impl BinanceAdapter {
                 .take(depth_limit)
                 .enumerate()
             {
+                candidate_depth_events = candidate_depth_events.saturating_add(1);
                 accepted_depth_event |= self.push_event(RawEvent::Book(BookUpdate {
                     symbol: sym_id.clone(),
                     side: Side::Ask,
@@ -543,6 +577,9 @@ impl BinanceAdapter {
                     ts_exchange_ns,
                     ts_recv_ns,
                 }));
+            }
+            if candidate_depth_events != 0 {
+                self.record_normalization_latency(normalization_started.elapsed());
             }
             self.last_market_data_at = Some(Instant::now());
             if accepted_depth_event {
@@ -725,7 +762,9 @@ impl MarketDataAdapter for BinanceAdapter {
                 }
             }
             for msg in inbound {
+                let parse_started = Instant::now();
                 self.parse_live_message(&msg);
+                self.record_parse_latency(parse_started.elapsed());
             }
             self.maybe_clear_degraded();
         }
@@ -752,6 +791,12 @@ impl MarketDataAdapter for BinanceAdapter {
         let queue_depth = self.queue.len();
         let endpoint = redact_endpoint(&self.cfg.endpoint);
         let depth_update_ids = format_depth_update_ids(&self.depth_state);
+        let parse_latency_avg_ns =
+            average_ns(self.parse_latency_total_ns, self.parse_latency_samples);
+        let normalization_latency_avg_ns = average_ns(
+            self.normalization_latency_total_ns,
+            self.normalization_latency_samples,
+        );
         AdapterHealth {
             connected: self.connected
                 && match &self.transport {
@@ -761,7 +806,7 @@ impl MarketDataAdapter for BinanceAdapter {
             degraded: self.degraded,
             last_error: self.last_error.clone(),
             protocol_info: Some(format!(
-                "provider=binance;market=crypto;mode={mode};endpoint={endpoint};reconnect_attempt={};subscribed={};messages_received={};normalized_events={};parse_errors={};dropped_events={};backpressure_events={};duplicate_depth_updates={};out_of_order_depth_updates={};gap_count={};snapshot_rebuild_count={};queue_depth={queue_depth};max_queue_depth={};last_update_ids={depth_update_ids};last_message_age_ms={last_message_age_ms};last_market_data_age_ms={last_market_data_age_ms}",
+                "provider=binance;market=crypto;mode={mode};endpoint={endpoint};reconnect_attempt={};subscribed={};messages_received={};normalized_events={};parse_errors={};dropped_events={};backpressure_events={};parse_latency_samples={};parse_latency_avg_ns={parse_latency_avg_ns};parse_latency_max_ns={};normalization_latency_samples={};normalization_latency_avg_ns={normalization_latency_avg_ns};normalization_latency_max_ns={};duplicate_depth_updates={};out_of_order_depth_updates={};gap_count={};snapshot_rebuild_count={};queue_depth={queue_depth};max_queue_depth={};last_update_ids={depth_update_ids};last_message_age_ms={last_message_age_ms};last_market_data_age_ms={last_market_data_age_ms}",
                 self.reconnect_attempt,
                 self.subscribed.len(),
                 self.messages_received,
@@ -769,6 +814,10 @@ impl MarketDataAdapter for BinanceAdapter {
                 self.parse_errors,
                 self.dropped_events,
                 self.backpressure_events,
+                self.parse_latency_samples,
+                self.parse_latency_max_ns,
+                self.normalization_latency_samples,
+                self.normalization_latency_max_ns,
                 self.duplicate_depth_updates,
                 self.out_of_order_depth_updates,
                 self.gap_count,
@@ -1144,6 +1193,14 @@ fn parse_agg_trade(raw: &str, seq: &mut u64) -> Option<TradePrint> {
     })
 }
 
+fn duration_ns(elapsed: Duration) -> u64 {
+    u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
+}
+
+fn average_ns(total_ns: u64, samples: u64) -> u64 {
+    total_ns.checked_div(samples).unwrap_or(0)
+}
+
 fn redact_endpoint(endpoint: &str) -> String {
     let Some((scheme, rest)) = endpoint.split_once("://") else {
         return "<redacted>".to_string();
@@ -1318,6 +1375,13 @@ mod tests {
             .protocol_info
             .unwrap_or_default()
             .contains("last_update_ids=BTCUSDT:160"));
+        let protocol = adapter.health().protocol_info.unwrap_or_default();
+        assert!(protocol.contains("parse_latency_samples=3"));
+        assert!(protocol.contains("parse_latency_avg_ns="));
+        assert!(protocol.contains("parse_latency_max_ns="));
+        assert!(protocol.contains("normalization_latency_samples=2"));
+        assert!(protocol.contains("normalization_latency_avg_ns="));
+        assert!(protocol.contains("normalization_latency_max_ns="));
     }
 
     #[test]

@@ -153,7 +153,8 @@ Current provider notes:
   - health metadata includes reconnect attempt, subscription count, message/data
     ages, parse errors, normalized event count, duplicate depth updates, gap
     count, snapshot rebuild count, dropped/backpressure events, per-symbol last
-    update ids, queue depth, max queue depth, and a redacted endpoint with URL
+    update ids, queue depth, max queue depth, parse latency samples/avg/max,
+    normalization latency samples/avg/max, and a redacted endpoint with URL
     userinfo/query/fragment removed
 
 ## Trait Contract

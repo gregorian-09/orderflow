@@ -64,6 +64,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added opt-in Binance adapter pending event queue bounds with dropped-event and
   backpressure health counters while preserving the default unbounded queue
   behavior.
+- Added Binance adapter parse and normalization latency health metrics with
+  aggregate sample, average, and max nanosecond fields.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

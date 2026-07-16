@@ -217,6 +217,8 @@ offline examples.
 - Exposes Binance health metadata for messages received, normalized events,
   parse errors, dropped events, backpressure events, duplicate depth updates,
   gap count, snapshot rebuild count, queue depth, and max queue depth.
+- Reports parse latency and normalization latency as aggregate sample,
+  average-nanosecond, and max-nanosecond health fields.
 - Reports per-symbol last depth update ids and redacts endpoint userinfo,
   query strings, and fragments before health metadata is emitted.
 
