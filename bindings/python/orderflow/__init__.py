@@ -42,6 +42,7 @@ from .api import (
     ExecutionOrderType,
     ExecutionSide,
     ExecutionTimeInForce,
+    ExecutionWalIntegrityReport,
     ExternalFeedPolicy,
     OrderRequest,
     OrderflowArgError,
@@ -53,6 +54,7 @@ from .api import (
     Side,
     StreamKind,
     Symbol,
+    inspect_execution_wal,
 )
 
 __all__ = [
@@ -73,6 +75,7 @@ __all__ = [
     "ExecutionOrderType",
     "ExecutionSide",
     "ExecutionTimeInForce",
+    "ExecutionWalIntegrityReport",
     "ExternalFeedPolicy",
     "OfAnalyticsConfig",
     "OrderRequest",
@@ -85,4 +88,5 @@ __all__ = [
     "Side",
     "StreamKind",
     "Symbol",
+    "inspect_execution_wal",
 ]

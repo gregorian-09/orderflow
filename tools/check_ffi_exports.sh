@@ -25,6 +25,7 @@ expected_symbols=(
   of_api_version
   of_build_info
   of_execution_api_version
+  of_execution_wal_integrity_report
   of_execution_engine_create
   of_execution_engine_create_multi
   of_execution_engine_start

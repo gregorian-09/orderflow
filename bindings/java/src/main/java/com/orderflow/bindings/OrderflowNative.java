@@ -21,6 +21,8 @@ public interface OrderflowNative extends Library {
     String of_build_info();
     /** Returns execution ABI version. */
     int of_execution_api_version();
+    /** Inspects execution WAL file integrity. */
+    int of_execution_wal_integrity_report(String path, OfExecutionWalIntegrityReport outReport);
 
     /** Creates execution engine instance. */
     int of_execution_engine_create(OfExecutionRouteConfig cfg, PointerByReference outEngine);

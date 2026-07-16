@@ -408,6 +408,7 @@ analytics runtime.
 | `ExecutionOrderState` | Current native order state for one client order id |
 | `ExecutionHealth` | Connected/degraded/sequence health snapshot |
 | `ExecutionMetrics` | Submitted/cancelled/amended/events/risk/adapter/recovery counters |
+| `ExecutionWalIntegrityReport` | Offline WAL scan summary for operator diagnostics |
 | `ConcurrentExecutionConfig` | Command/report/event-buffer capacities |
 | `ExecutionCommandReport` | Concurrent command result, sequence, result code, and events |
 
@@ -427,6 +428,7 @@ analytics runtime.
 | `ExecutionOrderState orderState(String clientOrderId)` | Returns current order state |
 | `ExecutionHealth executionHealth()` | Returns execution health |
 | `ExecutionMetrics executionMetrics()` | Returns execution metrics |
+| `static ExecutionWalIntegrityReport inspectWal(String nativePath, String walPath)` | Inspects a single execution WAL file without creating an execution engine |
 
 #### `ConcurrentOrderflowExecutionEngine`
 
@@ -440,6 +442,25 @@ analytics runtime.
 | `long pollExecution()` | Queues poll and returns command sequence |
 | `Optional<ExecutionCommandReport> tryRecvReport()` | Receives a command report without blocking |
 | `long stop()` | Queues worker stop and returns command sequence |
+
+#### WAL integrity diagnostic
+
+Use `OrderflowExecutionEngine.inspectWal()` before recovery drills, after crash
+restart, or in an operations health check to verify a single binary OMS WAL
+file. It reads the file outside the order path and returns counts, byte
+position, optional sequence range, checksum/sequence failure counts, and
+validity flags.
+
+```java
+import com.orderflow.bindings.ExecutionWalIntegrityReport;
+import com.orderflow.bindings.OrderflowExecutionEngine;
+
+ExecutionWalIntegrityReport report =
+    OrderflowExecutionEngine.inspectWal(null, "execution-wal/wal-000000000001.ofwal");
+if (!report.valid) {
+    throw new IllegalStateException("unsafe WAL: " + report.bytes);
+}
+```
 
 ## Usage Patterns
 

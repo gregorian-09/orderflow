@@ -1728,6 +1728,69 @@ mod tests {
     }
 
     #[test]
+    fn execution_wal_integrity_report_handles_empty_and_corrupt_files() {
+        let _guard = test_guard();
+        let empty_path =
+            std::env::temp_dir().join(format!("orderflow-ffi-empty-wal-{}.ofwal", std::process::id()));
+        let corrupt_path =
+            std::env::temp_dir().join(format!("orderflow-ffi-corrupt-wal-{}.ofwal", std::process::id()));
+        let missing_path =
+            std::env::temp_dir().join(format!("orderflow-ffi-missing-wal-{}.ofwal", std::process::id()));
+        let _ = std::fs::remove_file(&empty_path);
+        let _ = std::fs::remove_file(&corrupt_path);
+        let _ = std::fs::remove_file(&missing_path);
+
+        let mut report = of_execution_wal_integrity_report_t {
+            records: 99,
+            bytes: 99,
+            first_sequence: 99,
+            last_sequence: 99,
+            checksum_failures: 99,
+            sequence_failures: 99,
+            has_first_sequence: 1,
+            has_last_sequence: 1,
+            truncated_tail: 1,
+            valid: 0,
+        };
+        assert_eq!(
+            of_execution_wal_integrity_report(ptr::null(), &mut report),
+            of_error_t::OF_ERR_INVALID_ARG as i32
+        );
+
+        let missing = CString::new(missing_path.to_string_lossy().as_bytes()).expect("cstring");
+        assert_eq!(
+            of_execution_wal_integrity_report(missing.as_ptr(), &mut report),
+            of_error_t::OF_ERR_IO as i32
+        );
+
+        std::fs::write(&empty_path, []).expect("write empty wal");
+        let empty = CString::new(empty_path.to_string_lossy().as_bytes()).expect("cstring");
+        assert_eq!(
+            of_execution_wal_integrity_report(empty.as_ptr(), &mut report),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(report.records, 0);
+        assert_eq!(report.bytes, 0);
+        assert_eq!(report.has_first_sequence, 0);
+        assert_eq!(report.has_last_sequence, 0);
+        assert_eq!(report.truncated_tail, 0);
+        assert_eq!(report.valid, 1);
+
+        std::fs::write(&corrupt_path, [1_u8, 2, 3]).expect("write corrupt wal");
+        let corrupt = CString::new(corrupt_path.to_string_lossy().as_bytes()).expect("cstring");
+        assert_eq!(
+            of_execution_wal_integrity_report(corrupt.as_ptr(), &mut report),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(report.records, 0);
+        assert_eq!(report.valid, 0);
+        assert_eq!(report.truncated_tail, 1);
+
+        let _ = std::fs::remove_file(&empty_path);
+        let _ = std::fs::remove_file(&corrupt_path);
+    }
+
+    #[test]
     fn execution_abi_create_multi_routes_submits_multiple_symbols() {
         let _guard = test_guard();
         let route = CString::new("SIM").expect("cstring");

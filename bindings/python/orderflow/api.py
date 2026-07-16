@@ -42,6 +42,7 @@ from ._ffi import (
     OfExecutionOrderRequest,
     OfExecutionOrderState,
     OfExecutionRouteConfig,
+    OfExecutionWalIntegrityReport,
     OfExternalFeedPolicy,
     OfSymbol,
     OfTrade,
@@ -325,6 +326,20 @@ class ExecutionMetrics:
 
 
 @dataclass(frozen=True)
+class ExecutionWalIntegrityReport:
+    """Execution WAL integrity report for offline operator diagnostics."""
+
+    records: int
+    bytes: int
+    first_sequence: Optional[int]
+    last_sequence: Optional[int]
+    checksum_failures: int
+    sequence_failures: int
+    truncated_tail: bool
+    valid: bool
+
+
+@dataclass(frozen=True)
 class ConcurrentExecutionConfig:
     """Concurrent execution worker queue configuration."""
 
@@ -342,6 +357,39 @@ class ExecutionCommandReport:
     result_code: int
     event_count: int
     events: list[ExecutionEvent]
+
+
+def inspect_execution_wal(
+    path: str,
+    library_path: Optional[str] = None,
+) -> ExecutionWalIntegrityReport:
+    """Inspects an execution WAL file without creating an execution engine.
+
+    Args:
+        path: UTF-8 filesystem path to a single execution WAL file.
+        library_path: Optional explicit path to ``libof_ffi_c``.
+
+    Returns:
+        A typed integrity report with decoded record counts, byte position,
+        sequence range, failure counters, and validity flags.
+    """
+    ffi = OrderflowLib(library_path=library_path)
+    report = OfExecutionWalIntegrityReport()
+    encoded_path = str(path).encode("utf-8")
+    rc = ffi.lib.of_execution_wal_integrity_report(encoded_path, ctypes.byref(report))
+    if int(rc) != 0:
+        exc = _ERROR_MAP.get(int(rc), OrderflowError)
+        raise exc(f"of_execution_wal_integrity_report failed with code {rc}")
+    return ExecutionWalIntegrityReport(
+        records=int(report.records),
+        bytes=int(report.bytes),
+        first_sequence=int(report.first_sequence) if report.has_first_sequence else None,
+        last_sequence=int(report.last_sequence) if report.has_last_sequence else None,
+        checksum_failures=int(report.checksum_failures),
+        sequence_failures=int(report.sequence_failures),
+        truncated_tail=bool(report.truncated_tail),
+        valid=bool(report.valid),
+    )
 
 
 class ExecutionEngine:

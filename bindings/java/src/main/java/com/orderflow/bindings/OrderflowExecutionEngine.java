@@ -56,6 +56,35 @@ public final class OrderflowExecutionEngine implements AutoCloseable {
         return nativeLib.of_execution_api_version();
     }
 
+    /**
+     * Inspects a single execution WAL file without creating an execution engine.
+     *
+     * @param nativePath native library path, or null/blank for default debug path
+     * @param walPath UTF-8 path to the WAL file
+     * @return typed WAL integrity report
+     */
+    public static ExecutionWalIntegrityReport inspectWal(String nativePath, String walPath) {
+        String libPath = nativePath == null || nativePath.isBlank() ? defaultLibraryPath() : nativePath;
+        OrderflowNative nativeLib = OrderflowNative.load(libPath);
+        OfExecutionWalIntegrityReport report = new OfExecutionWalIntegrityReport();
+        check(
+            nativeLib.of_execution_wal_integrity_report(walPath, report),
+            "of_execution_wal_integrity_report",
+            List.of()
+        );
+        report.read();
+        return new ExecutionWalIntegrityReport(
+            report.records,
+            report.bytes,
+            report.has_first_sequence != 0 ? report.first_sequence : null,
+            report.has_last_sequence != 0 ? report.last_sequence : null,
+            report.checksum_failures,
+            report.sequence_failures,
+            report.truncated_tail != 0,
+            report.valid != 0
+        );
+    }
+
     /** Starts execution adapter/session. */
     public void start() {
         requireEngine();

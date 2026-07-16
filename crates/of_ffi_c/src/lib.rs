@@ -21,7 +21,7 @@ use of_execution::{
 use of_execution_core::{
     AmendRequest, CancelRequest, ExecutionEvent, ExecutionSymbol, FixedAscii, OrderPrice, OrderQty,
     OrderRequest, OrderSide, OrderState, OrderType, RiskLimits, StrategyId, TimeInForce,
-    VenueOrderId,
+    VenueOrderId, WalIntegrityReport,
 };
 use of_runtime::{
     build_default_engine, load_engine_config_from_path, DefaultEngine, EngineConfig,
@@ -450,6 +450,33 @@ pub struct of_execution_metrics_t {
     pub recovered: u64,
 }
 
+/// Execution WAL integrity report returned by
+/// [`of_execution_wal_integrity_report`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct of_execution_wal_integrity_report_t {
+    /// Number of valid WAL frames decoded before the first fatal frame error.
+    pub records: u64,
+    /// Number of encoded bytes consumed by valid records.
+    pub bytes: u64,
+    /// First decoded WAL sequence, valid when `has_first_sequence != 0`.
+    pub first_sequence: u64,
+    /// Last decoded WAL sequence, valid when `has_last_sequence != 0`.
+    pub last_sequence: u64,
+    /// Number of checksum failures encountered.
+    pub checksum_failures: u64,
+    /// Number of strict sequence failures encountered.
+    pub sequence_failures: u64,
+    /// Non-zero when `first_sequence` is meaningful.
+    pub has_first_sequence: u8,
+    /// Non-zero when `last_sequence` is meaningful.
+    pub has_last_sequence: u8,
+    /// Non-zero when the input ended with a partial frame.
+    pub truncated_tail: u8,
+    /// Non-zero when all bytes decoded cleanly.
+    pub valid: u8,
+}
+
 /// Concurrent execution worker configuration.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -548,6 +575,29 @@ pub extern "C" fn of_build_info() -> *const c_char {
 #[no_mangle]
 pub extern "C" fn of_execution_api_version() -> u32 {
     EXECUTION_API_VERSION
+}
+
+/// Inspects an execution WAL file and writes a non-panicking integrity report.
+#[no_mangle]
+pub extern "C" fn of_execution_wal_integrity_report(
+    path: *const c_char,
+    out_report: *mut of_execution_wal_integrity_report_t,
+) -> i32 {
+    if path.is_null() || out_report.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let Some(path) = non_empty_string(path) else {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    };
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(_) => return of_error_t::OF_ERR_IO as i32,
+    };
+    let report = WalIntegrityReport::inspect(&bytes, true);
+    unsafe {
+        *out_report = wal_integrity_report_to_ffi(report);
+    }
+    of_error_t::OF_OK as i32
 }
 
 /// Creates a simulated execution engine and stores it in `out_engine`.
@@ -2294,6 +2344,21 @@ fn write_optional_u64(ptr: *mut u64, value: u64) {
         unsafe {
             *ptr = value;
         }
+    }
+}
+
+fn wal_integrity_report_to_ffi(report: WalIntegrityReport) -> of_execution_wal_integrity_report_t {
+    of_execution_wal_integrity_report_t {
+        records: report.records,
+        bytes: report.bytes,
+        first_sequence: report.first_sequence.map_or(0, |sequence| sequence.0),
+        last_sequence: report.last_sequence.map_or(0, |sequence| sequence.0),
+        checksum_failures: report.checksum_failures,
+        sequence_failures: report.sequence_failures,
+        has_first_sequence: u8::from(report.first_sequence.is_some()),
+        has_last_sequence: u8::from(report.last_sequence.is_some()),
+        truncated_tail: u8::from(report.truncated_tail),
+        valid: u8::from(report.valid),
     }
 }
 

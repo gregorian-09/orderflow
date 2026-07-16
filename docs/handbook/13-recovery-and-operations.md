@@ -141,6 +141,19 @@ The `manifest` file is an operator inventory. It is not trusted as the source
 of truth during recovery because the active segment can be newer than the last
 manifest write under relaxed sync policies.
 
+Single-file WAL integrity can be inspected through the binding-facing
+diagnostic APIs:
+
+- C: `of_execution_wal_integrity_report(path, out_report)`;
+- Python: `inspect_execution_wal(path, library_path=None)`;
+- Java: `OrderflowExecutionEngine.inspectWal(nativePath, walPath)`.
+
+Run this diagnostic before a recovery drill, after crash restart, and before
+archiving a WAL segment. The function reports corrupt or truncated bytes as a
+successful call with `valid = false`; missing or unreadable files return an I/O
+error. Treat `valid = false` as a fail-closed condition for live submissions
+until an operator has reconciled state with the venue.
+
 Low-latency guidance:
 
 - use `WalSyncPolicy::EveryNRecords` or `EveryDurationNs` for group-commit

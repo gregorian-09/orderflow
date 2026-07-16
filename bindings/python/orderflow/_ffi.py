@@ -297,6 +297,23 @@ class OfExecutionMetrics(ctypes.Structure):
     ]
 
 
+class OfExecutionWalIntegrityReport(ctypes.Structure):
+    """ctypes mirror of `of_execution_wal_integrity_report_t`."""
+
+    _fields_ = [
+        ("records", c_uint64),
+        ("bytes", c_uint64),
+        ("first_sequence", c_uint64),
+        ("last_sequence", c_uint64),
+        ("checksum_failures", c_uint64),
+        ("sequence_failures", c_uint64),
+        ("has_first_sequence", c_uint8),
+        ("has_last_sequence", c_uint8),
+        ("truncated_tail", c_uint8),
+        ("valid", c_uint8),
+    ]
+
+
 class OfExecutionConcurrentConfig(ctypes.Structure):
     """ctypes mirror of `of_execution_concurrent_config_t`."""
 
@@ -382,6 +399,12 @@ class OrderflowLib:
 
         lib.of_execution_api_version.argtypes = []
         lib.of_execution_api_version.restype = c_uint32
+
+        lib.of_execution_wal_integrity_report.argtypes = [
+            c_char_p,
+            ctypes.POINTER(OfExecutionWalIntegrityReport),
+        ]
+        lib.of_execution_wal_integrity_report.restype = c_int32
 
         lib.of_execution_engine_create.argtypes = [
             ctypes.POINTER(OfExecutionRouteConfig),

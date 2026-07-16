@@ -400,6 +400,7 @@ analytics runtime.
 | `ExecutionOrderState` | Current native order state for one client order id |
 | `ExecutionHealth` | Connected/degraded/sequence health snapshot |
 | `ExecutionMetrics` | Submitted/cancelled/amended/events/risk/adapter/recovery counters |
+| `ExecutionWalIntegrityReport` | Offline WAL scan summary for operator diagnostics |
 | `ConcurrentExecutionConfig` | Command/report/event-buffer capacities |
 | `ExecutionCommandReport` | Concurrent command result, sequence, result code, and events |
 
@@ -430,6 +431,27 @@ analytics runtime.
 | `poll_execution()` | Queues poll and returns command sequence |
 | `try_recv_report()` | Returns `ExecutionCommandReport` or `None` without blocking |
 | `stop()` | Queues worker stop and returns command sequence |
+
+#### Top-level execution helpers
+
+| Signature | Description |
+|---|---|
+| `inspect_execution_wal(path, library_path=None)` | Inspects a single execution WAL file without creating an execution engine |
+
+#### WAL integrity diagnostic
+
+Use `inspect_execution_wal()` before recovery drills, after crash restart, or in
+an operations health check to verify a single binary OMS WAL file. It reads the
+file outside the order path and returns counts, byte position, optional sequence
+range, checksum/sequence failure counts, and validity flags.
+
+```python
+from orderflow import inspect_execution_wal
+
+report = inspect_execution_wal("execution-wal/wal-000000000001.ofwal")
+if not report.valid:
+    raise RuntimeError(f"unsafe WAL: {report}")
+```
 
 ## Usage Patterns
 

@@ -85,6 +85,21 @@ return `WalJournalMetrics`. The snapshot tracks successful frames and bytes,
 write latency, sync latency, write/sync failures, segment rotations, and
 manifest writes. Hosts should export this snapshot outside the hot path.
 
+The C ABI and bindings expose a path-based integrity diagnostic for single WAL
+files:
+
+| Layer | API |
+| --- | --- |
+| C | `of_execution_wal_integrity_report(path, out_report)` |
+| Python | `inspect_execution_wal(path, library_path=None)` |
+| Java | `OrderflowExecutionEngine.inspectWal(nativePath, walPath)` |
+
+This diagnostic is intentionally offline/operator-oriented. It does not create
+an execution engine, does not submit orders, and does not mutate OMS state. It
+reads WAL bytes, reports valid records and byte position, optional first/last
+sequence, checksum failures, sequence failures, truncated-tail status, and an
+overall validity flag.
+
 ### Checkpoints
 
 Checkpoint types:
