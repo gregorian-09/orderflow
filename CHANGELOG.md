@@ -45,6 +45,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added additive `of_persist` market-data checkpoint store helpers with opaque
   payloads, WAL sequence anchors, validation, latest-checkpoint loading, and
   retention pruning for bounded production recovery.
+- Added additive `of_persist` market-data recovery planner helpers that classify
+  checkpoint/WAL restore states into clean, degraded, snapshot-gated, or
+  fail-closed host actions.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

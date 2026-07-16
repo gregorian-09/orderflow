@@ -30,6 +30,12 @@ foundation for lower-latency production capture paths.
 | `MarketDataCheckpointManifest` | struct | Checkpoint metadata without payload bytes |
 | `MarketDataCheckpointValidation` | struct | Checkpoint integrity report |
 | `FileMarketDataCheckpointStore` | struct | File-backed checkpoint store |
+| `MarketDataRecoveryStatus` | enum | Recovery classification |
+| `MarketDataRecoveryAction` | enum | Host action selected by recovery planning |
+| `MarketDataRecoveryPolicy` | struct | Fail-closed or replay-from-start recovery policy |
+| `MarketDataRecoveryInput` | struct | Checkpoint and WAL integrity inputs |
+| `MarketDataRecoveryPlan` | struct | Deterministic recovery decision |
+| `plan_market_data_recovery` | function | Builds a recovery plan from policy and inputs |
 | `MarketDataPersistenceMode` | enum | Production writer mode vocabulary |
 | `MarketDataPersistenceFailureAction` | enum | Host action when persistence degrades |
 | `MarketDataPersistencePolicy` | struct | Production persistence policy |
@@ -245,6 +251,54 @@ A production recovery flow should:
 2. restore the opaque payload into the host-owned book/analytics/signal state,
 3. replay WAL records after `checkpoint.wal_sequence`,
 4. validate sequence continuity before allowing strategy submission.
+
+## Market-Data Recovery Planner
+
+The recovery planner turns checkpoint metadata and WAL integrity inspection into
+an ordered host plan. It is pure and does not touch the filesystem.
+
+### Policy
+
+| Method | Returns | Meaning |
+| --- | --- | --- |
+| `MarketDataRecoveryPolicy::fail_closed()` | `MarketDataRecoveryPolicy` | Requires checkpoints and aborts on gaps/corruption by default |
+| `MarketDataRecoveryPolicy::replay_from_wal_start()` | `MarketDataRecoveryPolicy` | Allows recovery from WAL sequence `1` when no checkpoint exists |
+| `with_require_checkpoint(bool)` | `MarketDataRecoveryPolicy` | Sets whether a checkpoint is mandatory |
+| `with_allow_truncated_tail(bool)` | `MarketDataRecoveryPolicy` | Sets whether an incomplete tail can recover in degraded mode |
+| `with_allow_sequence_gaps(bool)` | `MarketDataRecoveryPolicy` | Sets whether sequence gaps can recover in degraded mode |
+| `with_request_snapshot_on_gap(bool)` | `MarketDataRecoveryPolicy` | Sets whether allowed gaps require provider snapshot reconciliation |
+| `with_disable_trading_until_clean(bool)` | `MarketDataRecoveryPolicy` | Sets whether degraded recovery keeps strategy submission disabled |
+
+### Inputs and plan
+
+| Item | Meaning |
+| --- | --- |
+| `MarketDataRecoveryInput::new(checkpoint, wal_integrity)` | Bundles selected checkpoint metadata and WAL integrity report |
+| `plan_market_data_recovery(policy, input)` | Returns a deterministic recovery plan |
+| `MarketDataRecoveryPlan::is_impossible()` | Returns true when recovery selected `AbortRecovery` |
+
+### Plan fields
+
+| Field | Meaning |
+| --- | --- |
+| `status` | Clean, missing-checkpoint, gap, corrupt, truncated, snapshot-required, or impossible classification |
+| `checkpoint_sequence` | WAL sequence restored by the selected checkpoint |
+| `replay_from_sequence` | First WAL sequence to replay |
+| `replay_to_sequence` | Last known WAL sequence from inspection |
+| `requires_fresh_snapshot` | Whether provider snapshot reconciliation is required |
+| `trading_enabled` | Whether strategy order submission can resume under this plan |
+| `actions` | Ordered host actions such as restore, replay, request snapshot, disable trading, resume, or abort |
+
+### Recovery behavior
+
+- Missing checkpoint aborts under `fail_closed`.
+- Checksum/header corruption aborts.
+- Sequence gaps abort unless `allow_sequence_gaps` is true.
+- Allowed gaps can require fresh provider snapshots.
+- Truncated tails abort unless `allow_truncated_tail` is true.
+- Clean recovery enables trading.
+- Degraded recovery keeps trading disabled when
+  `disable_trading_until_clean` is true.
 
 ## Production Persistence Policy And Health
 

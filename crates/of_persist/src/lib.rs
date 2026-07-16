@@ -953,6 +953,343 @@ impl FileMarketDataCheckpointStore {
     }
 }
 
+/// Recovery status for market-data checkpoint plus WAL restore planning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum MarketDataRecoveryStatus {
+    /// WAL and checkpoint inputs permit deterministic recovery.
+    #[default]
+    CleanReplay,
+    /// No checkpoint is available.
+    NoCheckpoint,
+    /// WAL contains sequence gaps after the selected checkpoint.
+    ReplayWithGaps,
+    /// WAL contains checksum, magic, version, or checksum-link failures.
+    CorruptWal,
+    /// WAL ends with an incomplete frame.
+    TruncatedWalTail,
+    /// Host must request a fresh provider snapshot before strategy submission.
+    NeedsFreshSnapshot,
+    /// Recovery policy cannot safely restore this stream.
+    Impossible,
+}
+
+/// Host action selected by market-data recovery planning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum MarketDataRecoveryAction {
+    /// Restore the selected checkpoint payload.
+    RestoreCheckpoint,
+    /// Replay WAL records after the checkpoint sequence.
+    ReplayWalTail,
+    /// Request a fresh provider book snapshot before live processing resumes.
+    RequestFreshSnapshot,
+    /// Mark the recovered stream degraded.
+    MarkDegraded,
+    /// Keep strategy order submission disabled.
+    DisableTrading,
+    /// Resume market-data processing.
+    ResumeMarketData,
+    /// Abort recovery for this stream.
+    AbortRecovery,
+}
+
+/// Policy for deterministic market-data checkpoint/WAL recovery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MarketDataRecoveryPolicy {
+    /// Require a checkpoint before replaying WAL records.
+    pub require_checkpoint: bool,
+    /// Allow recovery from a WAL that ends with a truncated tail.
+    pub allow_truncated_tail: bool,
+    /// Allow recovery when WAL sequence gaps are detected.
+    pub allow_sequence_gaps: bool,
+    /// Request a fresh provider snapshot when gaps are detected.
+    pub request_snapshot_on_gap: bool,
+    /// Disable trading unless recovery is fully clean.
+    pub disable_trading_until_clean: bool,
+}
+
+impl MarketDataRecoveryPolicy {
+    /// Creates a fail-closed recovery policy.
+    pub const fn fail_closed() -> Self {
+        Self {
+            require_checkpoint: true,
+            allow_truncated_tail: false,
+            allow_sequence_gaps: false,
+            request_snapshot_on_gap: true,
+            disable_trading_until_clean: true,
+        }
+    }
+
+    /// Creates a policy that can rebuild from WAL without a checkpoint.
+    pub const fn replay_from_wal_start() -> Self {
+        Self {
+            require_checkpoint: false,
+            allow_truncated_tail: false,
+            allow_sequence_gaps: false,
+            request_snapshot_on_gap: true,
+            disable_trading_until_clean: true,
+        }
+    }
+
+    /// Sets whether checkpoints are required.
+    pub const fn with_require_checkpoint(mut self, require_checkpoint: bool) -> Self {
+        self.require_checkpoint = require_checkpoint;
+        self
+    }
+
+    /// Sets whether truncated WAL tails are recoverable.
+    pub const fn with_allow_truncated_tail(mut self, allow_truncated_tail: bool) -> Self {
+        self.allow_truncated_tail = allow_truncated_tail;
+        self
+    }
+
+    /// Sets whether WAL sequence gaps are recoverable.
+    pub const fn with_allow_sequence_gaps(mut self, allow_sequence_gaps: bool) -> Self {
+        self.allow_sequence_gaps = allow_sequence_gaps;
+        self
+    }
+
+    /// Sets whether gaps should request a fresh provider snapshot.
+    pub const fn with_request_snapshot_on_gap(mut self, request_snapshot_on_gap: bool) -> Self {
+        self.request_snapshot_on_gap = request_snapshot_on_gap;
+        self
+    }
+
+    /// Sets whether strategy submission remains disabled unless replay is clean.
+    pub const fn with_disable_trading_until_clean(
+        mut self,
+        disable_trading_until_clean: bool,
+    ) -> Self {
+        self.disable_trading_until_clean = disable_trading_until_clean;
+        self
+    }
+}
+
+impl Default for MarketDataRecoveryPolicy {
+    fn default() -> Self {
+        Self::fail_closed()
+    }
+}
+
+/// Inputs for market-data recovery planning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MarketDataRecoveryInput {
+    /// Selected checkpoint manifest, when one is available.
+    pub checkpoint: Option<MarketDataCheckpointManifest>,
+    /// WAL integrity report from [`MarketDataWal::inspect_path`].
+    pub wal_integrity: MarketDataWalIntegrityReport,
+}
+
+impl MarketDataRecoveryInput {
+    /// Creates recovery input from checkpoint metadata and WAL integrity.
+    pub const fn new(
+        checkpoint: Option<MarketDataCheckpointManifest>,
+        wal_integrity: MarketDataWalIntegrityReport,
+    ) -> Self {
+        Self {
+            checkpoint,
+            wal_integrity,
+        }
+    }
+}
+
+/// Deterministic recovery plan for one venue/symbol stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MarketDataRecoveryPlan {
+    /// Overall recovery classification.
+    pub status: MarketDataRecoveryStatus,
+    /// Checkpoint sequence used as replay anchor.
+    pub checkpoint_sequence: Option<MarketDataWalSequence>,
+    /// First WAL sequence the host should replay.
+    pub replay_from_sequence: Option<MarketDataWalSequence>,
+    /// Last WAL sequence known from integrity inspection.
+    pub replay_to_sequence: Option<MarketDataWalSequence>,
+    /// True when provider snapshot reconciliation is required.
+    pub requires_fresh_snapshot: bool,
+    /// True when strategy order submission can resume under this plan.
+    pub trading_enabled: bool,
+    /// Ordered host actions.
+    pub actions: Vec<MarketDataRecoveryAction>,
+}
+
+impl MarketDataRecoveryPlan {
+    /// Returns true when recovery cannot safely continue.
+    pub fn is_impossible(&self) -> bool {
+        self.actions
+            .contains(&MarketDataRecoveryAction::AbortRecovery)
+    }
+}
+
+/// Builds a deterministic recovery plan from checkpoint and WAL integrity.
+pub fn plan_market_data_recovery(
+    policy: MarketDataRecoveryPolicy,
+    input: &MarketDataRecoveryInput,
+) -> MarketDataRecoveryPlan {
+    let checkpoint_sequence = input
+        .checkpoint
+        .as_ref()
+        .map(|checkpoint| checkpoint.wal_sequence);
+    let replay_from_sequence = checkpoint_sequence
+        .map(|sequence| MarketDataWalSequence(sequence.0.saturating_add(1)))
+        .or_else(|| (!policy.require_checkpoint).then_some(MarketDataWalSequence(1)));
+    let replay_to_sequence = input.wal_integrity.last_sequence;
+
+    if checkpoint_sequence.is_none() && policy.require_checkpoint {
+        return impossible_recovery_plan(
+            MarketDataRecoveryStatus::NoCheckpoint,
+            checkpoint_sequence,
+            replay_from_sequence,
+            replay_to_sequence,
+        );
+    }
+    if input.wal_integrity.checksum_failures > 0 {
+        return impossible_recovery_plan(
+            MarketDataRecoveryStatus::CorruptWal,
+            checkpoint_sequence,
+            replay_from_sequence,
+            replay_to_sequence,
+        );
+    }
+    if input.wal_integrity.truncated_tail {
+        if input.wal_integrity.checksum_failures == 0
+            && input.wal_integrity.sequence_failures == 0
+            && policy.allow_truncated_tail
+        {
+            return degraded_recovery_plan(
+                policy,
+                MarketDataRecoveryStatus::TruncatedWalTail,
+                checkpoint_sequence,
+                replay_from_sequence,
+                replay_to_sequence,
+                false,
+            );
+        }
+        return impossible_recovery_plan(
+            MarketDataRecoveryStatus::TruncatedWalTail,
+            checkpoint_sequence,
+            replay_from_sequence,
+            replay_to_sequence,
+        );
+    }
+    if input.wal_integrity.sequence_failures > 0 {
+        if !policy.allow_sequence_gaps {
+            return impossible_recovery_plan(
+                MarketDataRecoveryStatus::ReplayWithGaps,
+                checkpoint_sequence,
+                replay_from_sequence,
+                replay_to_sequence,
+            );
+        }
+        return degraded_recovery_plan(
+            policy,
+            if policy.request_snapshot_on_gap {
+                MarketDataRecoveryStatus::NeedsFreshSnapshot
+            } else {
+                MarketDataRecoveryStatus::ReplayWithGaps
+            },
+            checkpoint_sequence,
+            replay_from_sequence,
+            replay_to_sequence,
+            policy.request_snapshot_on_gap,
+        );
+    }
+    if !input.wal_integrity.valid {
+        return impossible_recovery_plan(
+            MarketDataRecoveryStatus::CorruptWal,
+            checkpoint_sequence,
+            replay_from_sequence,
+            replay_to_sequence,
+        );
+    }
+    clean_recovery_plan(
+        checkpoint_sequence,
+        replay_from_sequence,
+        replay_to_sequence,
+    )
+}
+
+fn clean_recovery_plan(
+    checkpoint_sequence: Option<MarketDataWalSequence>,
+    replay_from_sequence: Option<MarketDataWalSequence>,
+    replay_to_sequence: Option<MarketDataWalSequence>,
+) -> MarketDataRecoveryPlan {
+    let mut actions = Vec::new();
+    if checkpoint_sequence.is_some() {
+        actions.push(MarketDataRecoveryAction::RestoreCheckpoint);
+    }
+    if replay_from_sequence.is_some() {
+        actions.push(MarketDataRecoveryAction::ReplayWalTail);
+    }
+    actions.push(MarketDataRecoveryAction::ResumeMarketData);
+    MarketDataRecoveryPlan {
+        status: MarketDataRecoveryStatus::CleanReplay,
+        checkpoint_sequence,
+        replay_from_sequence,
+        replay_to_sequence,
+        requires_fresh_snapshot: false,
+        trading_enabled: true,
+        actions,
+    }
+}
+
+fn degraded_recovery_plan(
+    policy: MarketDataRecoveryPolicy,
+    status: MarketDataRecoveryStatus,
+    checkpoint_sequence: Option<MarketDataWalSequence>,
+    replay_from_sequence: Option<MarketDataWalSequence>,
+    replay_to_sequence: Option<MarketDataWalSequence>,
+    requires_fresh_snapshot: bool,
+) -> MarketDataRecoveryPlan {
+    let mut actions = Vec::new();
+    if checkpoint_sequence.is_some() {
+        actions.push(MarketDataRecoveryAction::RestoreCheckpoint);
+    }
+    if replay_from_sequence.is_some() {
+        actions.push(MarketDataRecoveryAction::ReplayWalTail);
+    }
+    if requires_fresh_snapshot {
+        actions.push(MarketDataRecoveryAction::RequestFreshSnapshot);
+    }
+    actions.push(MarketDataRecoveryAction::MarkDegraded);
+    if policy.disable_trading_until_clean {
+        actions.push(MarketDataRecoveryAction::DisableTrading);
+    }
+    actions.push(MarketDataRecoveryAction::ResumeMarketData);
+    MarketDataRecoveryPlan {
+        status,
+        checkpoint_sequence,
+        replay_from_sequence,
+        replay_to_sequence,
+        requires_fresh_snapshot,
+        trading_enabled: !policy.disable_trading_until_clean && !requires_fresh_snapshot,
+        actions,
+    }
+}
+
+fn impossible_recovery_plan(
+    status: MarketDataRecoveryStatus,
+    checkpoint_sequence: Option<MarketDataWalSequence>,
+    replay_from_sequence: Option<MarketDataWalSequence>,
+    replay_to_sequence: Option<MarketDataWalSequence>,
+) -> MarketDataRecoveryPlan {
+    MarketDataRecoveryPlan {
+        status,
+        checkpoint_sequence,
+        replay_from_sequence,
+        replay_to_sequence,
+        requires_fresh_snapshot: false,
+        trading_enabled: false,
+        actions: vec![
+            MarketDataRecoveryAction::DisableTrading,
+            MarketDataRecoveryAction::AbortRecovery,
+        ],
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct MarketDataCheckpointFrameInput<'a> {
     id: MarketDataCheckpointId,
@@ -2776,6 +3113,129 @@ mod tests {
     }
 
     #[test]
+    fn market_data_recovery_plan_replays_from_checkpoint() {
+        let checkpoint = test_checkpoint_manifest(MarketDataWalSequence(10));
+        let input = MarketDataRecoveryInput::new(
+            Some(checkpoint),
+            test_wal_report(true, Some(MarketDataWalSequence(15))),
+        );
+
+        let plan = plan_market_data_recovery(MarketDataRecoveryPolicy::fail_closed(), &input);
+
+        assert_eq!(plan.status, MarketDataRecoveryStatus::CleanReplay);
+        assert_eq!(plan.replay_from_sequence, Some(MarketDataWalSequence(11)));
+        assert_eq!(plan.replay_to_sequence, Some(MarketDataWalSequence(15)));
+        assert!(plan.trading_enabled);
+        assert_eq!(
+            plan.actions,
+            vec![
+                MarketDataRecoveryAction::RestoreCheckpoint,
+                MarketDataRecoveryAction::ReplayWalTail,
+                MarketDataRecoveryAction::ResumeMarketData,
+            ]
+        );
+    }
+
+    #[test]
+    fn market_data_recovery_plan_requires_checkpoint_by_default() {
+        let input = MarketDataRecoveryInput::new(
+            None,
+            test_wal_report(true, Some(MarketDataWalSequence(2))),
+        );
+
+        let plan = plan_market_data_recovery(MarketDataRecoveryPolicy::fail_closed(), &input);
+
+        assert_eq!(plan.status, MarketDataRecoveryStatus::NoCheckpoint);
+        assert!(plan.is_impossible());
+        assert!(!plan.trading_enabled);
+    }
+
+    #[test]
+    fn market_data_recovery_plan_rebuilds_from_wal_start_when_allowed() {
+        let input = MarketDataRecoveryInput::new(
+            None,
+            test_wal_report(true, Some(MarketDataWalSequence(3))),
+        );
+
+        let plan =
+            plan_market_data_recovery(MarketDataRecoveryPolicy::replay_from_wal_start(), &input);
+
+        assert_eq!(plan.status, MarketDataRecoveryStatus::CleanReplay);
+        assert_eq!(plan.replay_from_sequence, Some(MarketDataWalSequence(1)));
+        assert!(plan.trading_enabled);
+        assert_eq!(
+            plan.actions,
+            vec![
+                MarketDataRecoveryAction::ReplayWalTail,
+                MarketDataRecoveryAction::ResumeMarketData,
+            ]
+        );
+    }
+
+    #[test]
+    fn market_data_recovery_plan_requests_snapshot_on_allowed_gap() {
+        let mut report = test_wal_report(false, Some(MarketDataWalSequence(20)));
+        report.sequence_failures = 1;
+        let input = MarketDataRecoveryInput::new(
+            Some(test_checkpoint_manifest(MarketDataWalSequence(10))),
+            report,
+        );
+        let policy = MarketDataRecoveryPolicy::fail_closed().with_allow_sequence_gaps(true);
+
+        let plan = plan_market_data_recovery(policy, &input);
+
+        assert_eq!(plan.status, MarketDataRecoveryStatus::NeedsFreshSnapshot);
+        assert!(plan.requires_fresh_snapshot);
+        assert!(!plan.trading_enabled);
+        assert!(plan
+            .actions
+            .contains(&MarketDataRecoveryAction::RequestFreshSnapshot));
+        assert!(!plan.is_impossible());
+    }
+
+    #[test]
+    fn market_data_recovery_plan_allows_truncated_tail_by_policy() {
+        let mut report = test_wal_report(false, Some(MarketDataWalSequence(4)));
+        report.truncated_tail = true;
+        let input = MarketDataRecoveryInput::new(
+            Some(test_checkpoint_manifest(MarketDataWalSequence(2))),
+            report,
+        );
+        let policy = MarketDataRecoveryPolicy::fail_closed().with_allow_truncated_tail(true);
+
+        let plan = plan_market_data_recovery(policy, &input);
+
+        assert_eq!(plan.status, MarketDataRecoveryStatus::TruncatedWalTail);
+        assert!(!plan.is_impossible());
+        assert!(!plan.trading_enabled);
+        assert!(plan
+            .actions
+            .contains(&MarketDataRecoveryAction::MarkDegraded));
+    }
+
+    #[test]
+    fn market_data_recovery_plan_aborts_on_checksum_corruption() {
+        let mut report = test_wal_report(false, Some(MarketDataWalSequence(4)));
+        report.checksum_failures = 1;
+        let input = MarketDataRecoveryInput::new(
+            Some(test_checkpoint_manifest(MarketDataWalSequence(2))),
+            report,
+        );
+
+        let plan = plan_market_data_recovery(MarketDataRecoveryPolicy::fail_closed(), &input);
+
+        assert_eq!(plan.status, MarketDataRecoveryStatus::CorruptWal);
+        assert!(plan.is_impossible());
+        assert_eq!(
+            plan.actions,
+            vec![
+                MarketDataRecoveryAction::DisableTrading,
+                MarketDataRecoveryAction::AbortRecovery,
+            ]
+        );
+    }
+
+    #[test]
     fn market_data_persistence_policy_reports_enabled_modes() {
         let disabled = MarketDataPersistencePolicy::default();
         let strict = MarketDataPersistencePolicy::inline_strict();
@@ -2933,5 +3393,35 @@ mod tests {
         ));
         fs::create_dir_all(&path).expect("temp dir");
         path
+    }
+
+    fn test_checkpoint_manifest(
+        wal_sequence: MarketDataWalSequence,
+    ) -> MarketDataCheckpointManifest {
+        MarketDataCheckpointManifest {
+            id: MarketDataCheckpointId(1),
+            kind: MarketDataCheckpointKind::BookAndAnalytics,
+            venue: "CME".to_owned(),
+            symbol: "ESZ6".to_owned(),
+            wal_sequence,
+            provider_sequence: 0,
+            event_sequence: 0,
+            created_ns: 0,
+            payload_version: 1,
+            payload_bytes: 0,
+            checksum: 0,
+            path: PathBuf::from("checkpoint.ofmc"),
+        }
+    }
+
+    fn test_wal_report(
+        valid: bool,
+        last_sequence: Option<MarketDataWalSequence>,
+    ) -> MarketDataWalIntegrityReport {
+        MarketDataWalIntegrityReport {
+            valid,
+            last_sequence,
+            ..MarketDataWalIntegrityReport::default()
+        }
     }
 }

@@ -27,6 +27,11 @@ production capture paths.
 - [`MarketDataCheckpointManifest`] - checkpoint metadata without payload bytes.
 - [`MarketDataCheckpointValidation`] - checkpoint integrity report.
 - [`FileMarketDataCheckpointStore`] - file-backed checkpoint store.
+- [`MarketDataRecoveryStatus`] - recovery classification.
+- [`MarketDataRecoveryAction`] - host action selected by recovery planning.
+- [`MarketDataRecoveryPolicy`] - fail-closed or replay-from-start recovery policy.
+- [`MarketDataRecoveryInput`] - checkpoint and WAL integrity inputs.
+- [`MarketDataRecoveryPlan`] - deterministic recovery decision.
 - [`MarketDataPersistenceMode`] - production writer mode vocabulary.
 - [`MarketDataPersistenceFailureAction`] - host action when persistence degrades.
 - [`MarketDataPersistencePolicy`] - configured persistence mode and failure action.
@@ -64,6 +69,9 @@ What changes for persistence users:
 - market-data checkpoint helpers persist opaque book, analytics, signal,
   sequence, or runtime state with WAL sequence anchors so recovery can replay
   from the latest valid checkpoint instead of the whole session;
+- recovery planner helpers classify checkpoint/WAL restore states into clean,
+  degraded, snapshot-gated, or fail-closed plans without forcing runtime
+  integration;
 - production deployments should keep market-data replay files and execution
   command/event journals correlated by strategy id, session id, and timestamp.
 
@@ -97,6 +105,11 @@ Public types:
 - [`MarketDataCheckpointManifest`]
 - [`MarketDataCheckpointValidation`]
 - [`FileMarketDataCheckpointStore`]
+- [`MarketDataRecoveryStatus`]
+- [`MarketDataRecoveryAction`]
+- [`MarketDataRecoveryPolicy`]
+- [`MarketDataRecoveryInput`]
+- [`MarketDataRecoveryPlan`]
 - [`MarketDataPersistenceMode`]
 - [`MarketDataPersistenceFailureAction`]
 - [`MarketDataPersistencePolicy`]
@@ -156,6 +169,16 @@ Public methods:
 - [`FileMarketDataCheckpointStore::list_checkpoints`]
 - [`FileMarketDataCheckpointStore::validate_checkpoint`]
 - [`FileMarketDataCheckpointStore::prune_old`]
+- [`MarketDataRecoveryPolicy::fail_closed`]
+- [`MarketDataRecoveryPolicy::replay_from_wal_start`]
+- [`MarketDataRecoveryPolicy::with_require_checkpoint`]
+- [`MarketDataRecoveryPolicy::with_allow_truncated_tail`]
+- [`MarketDataRecoveryPolicy::with_allow_sequence_gaps`]
+- [`MarketDataRecoveryPolicy::with_request_snapshot_on_gap`]
+- [`MarketDataRecoveryPolicy::with_disable_trading_until_clean`]
+- [`MarketDataRecoveryInput::new`]
+- [`MarketDataRecoveryPlan::is_impossible`]
+- [`plan_market_data_recovery`]
 - [`MarketDataPersistencePolicy::disabled`]
 - [`MarketDataPersistencePolicy::inline_strict`]
 - [`MarketDataPersistencePolicy::bounded_async`]
@@ -311,6 +334,39 @@ Retention is explicit:
 Recovery-oriented hosts should load the latest valid checkpoint, restore the
 opaque payload into their domain state, then replay WAL records with sequence
 greater than `checkpoint.wal_sequence`.
+
+## Market-Data Recovery Planner
+
+[`plan_market_data_recovery`] is a pure policy helper for production restore
+flows. It combines an optional checkpoint manifest with a
+[`MarketDataWalIntegrityReport`] and returns a [`MarketDataRecoveryPlan`] with
+explicit host actions.
+
+The planner distinguishes:
+
+- clean replay from checkpoint;
+- clean replay from WAL start when policy permits it;
+- missing checkpoint under fail-closed policy;
+- checksum or header corruption;
+- truncated WAL tail;
+- sequence-gap replay;
+- sequence-gap replay requiring a fresh provider snapshot.
+
+[`MarketDataRecoveryPolicy::fail_closed`] is the conservative default: require a
+checkpoint, reject truncated tails, reject sequence gaps, request snapshots for
+gaps when gaps are explicitly allowed, and keep trading disabled unless replay is
+clean. [`MarketDataRecoveryPolicy::replay_from_wal_start`] lets research or
+bootstrap tools recover from sequence `1` when no checkpoint exists.
+
+The planner does not open files, spawn workers, mutate runtime state, or replay
+payloads. Hosts should use it after checkpoint lookup and WAL inspection, then
+execute the returned actions in order:
+
+- restore checkpoint payload when present;
+- replay WAL tail from `replay_from_sequence` to `replay_to_sequence`;
+- request fresh provider snapshot when `requires_fresh_snapshot` is true;
+- keep trading disabled when `trading_enabled` is false;
+- abort when `MarketDataRecoveryPlan::is_impossible()` is true.
 
 ## Production Persistence Policy And Health
 
