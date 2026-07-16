@@ -59,6 +59,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added Binance adapter depth update-id continuity tracking with duplicate
   depth-update suppression, gap degradation, snapshot rebuild counters, and
   expanded health metadata.
+- Added Binance adapter health hardening with redacted endpoint metadata and
+  deterministic per-symbol last depth update-id reporting.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

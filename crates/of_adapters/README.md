@@ -146,7 +146,8 @@ Current provider notes:
   - reconnect replays active subscriptions automatically
   - health metadata includes reconnect attempt, subscription count, message/data
     ages, parse errors, normalized event count, duplicate depth updates, gap
-    count, snapshot rebuild count, and queue depth
+    count, snapshot rebuild count, per-symbol last update ids, queue depth, and
+    a redacted endpoint with URL userinfo/query/fragment removed
 
 ## Trait Contract
 

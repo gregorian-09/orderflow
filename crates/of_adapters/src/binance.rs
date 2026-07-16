@@ -698,6 +698,8 @@ impl MarketDataAdapter for BinanceAdapter {
             .map(|t| t.elapsed().as_millis() as u64)
             .unwrap_or(0);
         let queue_depth = self.queue.len();
+        let endpoint = redact_endpoint(&self.cfg.endpoint);
+        let depth_update_ids = format_depth_update_ids(&self.depth_state);
         AdapterHealth {
             connected: self.connected
                 && match &self.transport {
@@ -707,8 +709,7 @@ impl MarketDataAdapter for BinanceAdapter {
             degraded: self.degraded,
             last_error: self.last_error.clone(),
             protocol_info: Some(format!(
-                "provider=binance;market=crypto;mode={mode};endpoint={};reconnect_attempt={};subscribed={};messages_received={};normalized_events={};parse_errors={};duplicate_depth_updates={};out_of_order_depth_updates={};gap_count={};snapshot_rebuild_count={};queue_depth={queue_depth};last_message_age_ms={last_message_age_ms};last_market_data_age_ms={last_market_data_age_ms}",
-                self.cfg.endpoint,
+                "provider=binance;market=crypto;mode={mode};endpoint={endpoint};reconnect_attempt={};subscribed={};messages_received={};normalized_events={};parse_errors={};duplicate_depth_updates={};out_of_order_depth_updates={};gap_count={};snapshot_rebuild_count={};queue_depth={queue_depth};last_update_ids={depth_update_ids};last_message_age_ms={last_message_age_ms};last_market_data_age_ms={last_market_data_age_ms}",
                 self.reconnect_attempt,
                 self.subscribed.len(),
                 self.messages_received,
@@ -1088,6 +1089,36 @@ fn parse_agg_trade(raw: &str, seq: &mut u64) -> Option<TradePrint> {
     })
 }
 
+fn redact_endpoint(endpoint: &str) -> String {
+    let Some((scheme, rest)) = endpoint.split_once("://") else {
+        return "<redacted>".to_string();
+    };
+    let authority_and_path = rest.split_once('?').map_or(rest, |(before, _)| before);
+    let authority_and_path = authority_and_path
+        .split_once('#')
+        .map_or(authority_and_path, |(before, _)| before);
+    let without_userinfo = authority_and_path
+        .rsplit_once('@')
+        .map_or(authority_and_path, |(_, after)| after);
+    format!("{scheme}://{without_userinfo}")
+}
+
+fn format_depth_update_ids(depth_state: &HashMap<SymbolId, BinanceDepthState>) -> String {
+    if depth_state.is_empty() {
+        return "-".to_string();
+    }
+    let mut entries = depth_state
+        .iter()
+        .filter_map(|(symbol, state)| {
+            state
+                .last_update_id
+                .map(|last| format!("{}:{}", symbol.symbol, last))
+        })
+        .collect::<Vec<_>>();
+    entries.sort_unstable();
+    entries.join(",")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1150,6 +1181,51 @@ mod tests {
     }
 
     #[test]
+    fn redacts_endpoint_userinfo_and_query_from_health() {
+        let endpoint = "wss://user:secret-token@test.live/ws?listenKey=super-secret#frag";
+        let adapter = BinanceAdapter::from_config(&cfg(endpoint)).expect("cfg");
+
+        let protocol = adapter.health().protocol_info.unwrap_or_default();
+
+        assert!(protocol.contains("endpoint=wss://test.live/ws"));
+        assert!(!protocol.contains("secret-token"));
+        assert!(!protocol.contains("listenKey"));
+        assert!(!protocol.contains("super-secret"));
+        assert_eq!(
+            redact_endpoint("wss://user:secret-token@test.live/ws?listenKey=super-secret#frag"),
+            "wss://test.live/ws"
+        );
+    }
+
+    #[test]
+    fn formats_depth_update_ids_deterministically() {
+        let mut depth_state = HashMap::new();
+        depth_state.insert(
+            SymbolId {
+                venue: "BINANCE".to_string(),
+                symbol: "ETHUSDT".to_string(),
+            },
+            BinanceDepthState {
+                last_update_id: Some(42),
+            },
+        );
+        depth_state.insert(
+            SymbolId {
+                venue: "BINANCE".to_string(),
+                symbol: "BTCUSDT".to_string(),
+            },
+            BinanceDepthState {
+                last_update_id: Some(7),
+            },
+        );
+
+        assert_eq!(
+            format_depth_update_ids(&depth_state),
+            "BTCUSDT:7,ETHUSDT:42"
+        );
+    }
+
+    #[test]
     fn live_mode_parses_trade_depth_and_ack_messages() {
         let mut adapter = BinanceAdapter::from_config(&cfg("ws://test.live/ws")).expect("cfg");
         adapter.connect().expect("connect");
@@ -1182,6 +1258,11 @@ mod tests {
             .protocol_info
             .unwrap_or_default()
             .contains("subscribed=1"));
+        assert!(adapter
+            .health()
+            .protocol_info
+            .unwrap_or_default()
+            .contains("last_update_ids=BTCUSDT:160"));
     }
 
     #[test]

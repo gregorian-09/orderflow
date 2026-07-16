@@ -212,6 +212,8 @@ offline examples.
 - Exposes Binance health metadata for messages received, normalized events,
   parse errors, duplicate depth updates, gap count, snapshot rebuild count, and
   queue depth.
+- Reports per-symbol last depth update ids and redacts endpoint userinfo,
+  query strings, and fragments before health metadata is emitted.
 
 ## Choosing `of_adapters`
 
