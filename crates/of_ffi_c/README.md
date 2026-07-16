@@ -12,7 +12,7 @@ It is the native interface used by Python (`ctypes`), Java (JNA), and any C-comp
 - Metrics, adapter discovery, and memory management:
   `of_get_metrics_json`, `of_get_adapter_inventory_json`,
   `of_get_active_adapter_status_json`, `of_get_signal_descriptors_json`,
-  `of_string_free`
+  `of_get_signal_explanation_json`, `of_string_free`
 
 The machine-readable ABI inventory lives in `bindings/api_manifest.toml`.
 Maintainers should update it whenever they add a C ABI symbol. The manifest is
@@ -51,6 +51,8 @@ New execution ABI concepts:
   export validation and binding parity checks
 - `of_get_signal_descriptors_json`: allocated JSON inventory for built-in
   signal descriptors, requirements, parameters, and output semantics
+- `of_get_signal_explanation_json`: allocated JSON explanation for the latest
+  signal emitted for one symbol
 
 The execution ABI is additive and intentionally separate from the market-data
 engine ABI. That separation lets C, Python, Java, and other FFI users adopt OMS
@@ -104,6 +106,7 @@ Exported C functions:
 - `of_get_adapter_inventory_json`
 - `of_get_active_adapter_status_json`
 - `of_get_signal_descriptors_json`
+- `of_get_signal_explanation_json`
 - `of_string_free`
 - `of_engine_poll_once`
 

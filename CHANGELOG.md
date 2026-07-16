@@ -113,6 +113,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `of_get_signal_descriptors_json`, Python `signal_descriptors()`, and Java
   `OrderflowEngine.signalDescriptors()` expose built-in signal metadata without
   changing signal evaluation or OMS routing behavior.
+- Additive signal explanation bridge with `SignalModule::latest_explanation()`
+  default hook, `SignalExplanation::to_json()`, per-symbol runtime explanation
+  cache, `of_get_signal_explanation_json`, Python
+  `Engine.signal_explanation(symbol)`, and Java
+  `OrderflowEngine.signalExplanation(symbol)` for audit/dashboard diagnostics
+  without changing existing signal snapshots.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

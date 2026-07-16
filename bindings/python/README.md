@@ -42,6 +42,8 @@ Highlights:
   connecting a feed
 - signal descriptor discovery through `signal_descriptors()` and
   `Engine.signal_descriptors()` for dashboard/configuration inventory
+- signal explanation discovery through `Engine.signal_explanation(symbol)` for
+  audit and dashboard diagnostics
 - native C ABI inventory validation through `bindings/api_manifest.toml` so
   future low-level `ctypes` declarations can be checked against `orderflow.h`
 - analytics-to-execution examples in this README and the handbook
@@ -110,6 +112,11 @@ for descriptor in inventory.get("signals", []):
 The descriptor inventory is read-only metadata. It helps dashboards and config
 tools list built-in signals, required inputs, warmup, parameters, and output
 semantics without constructing a live strategy or submitting orders.
+
+After a signal has evaluated for a symbol, `Engine.signal_explanation(symbol)`
+returns the latest explanation payload with reason code, observed inputs,
+thresholds, and confidence contributors. This is a diagnostics surface; order
+submission decisions should still flow through explicit strategy/risk/OMS code.
 
 ## Architecture
 

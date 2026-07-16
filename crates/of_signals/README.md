@@ -92,8 +92,11 @@ New additive APIs:
 - [`SignalStabilizer`] applies opt-in hysteresis, debounce, and cooldown
   policies to reduce signal flapping without changing built-in signal behavior.
 - [`ExplainableSignalModule`] exposes opt-in structured explanations for
-  built-in signals without changing [`SignalModule`] or
-  [`SignalSnapshot`](of_core::SignalSnapshot).
+  built-in signals without requiring existing [`SignalModule`] implementations
+  to do anything. [`SignalModule::latest_explanation`] returns `None` by
+  default, and built-ins that support explanations override it.
+- [`SignalExplanation::to_json`] exports compact dependency-free JSON for
+  bindings, dashboards, replay audit, and diagnostics.
 - [`SignalReasonCode`] adds stable machine-readable rationale codes beside the
   existing human-readable snapshot reason strings.
 - [`SignalExplanationMode`] lets hosts emit explanations for every evaluation

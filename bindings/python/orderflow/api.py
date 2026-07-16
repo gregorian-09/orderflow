@@ -1413,6 +1413,18 @@ class Engine:
             self._ffi.lib.of_get_signal_descriptors_json,
         )
 
+    def signal_explanation(self, symbol: Symbol) -> Dict[str, Any]:
+        """Returns latest signal explanation JSON decoded as dict."""
+        self._require_handle()
+        c_symbol = self._to_c_symbol(symbol)
+        return _allocated_json_call(
+            self._ffi,
+            "of_get_signal_explanation_json",
+            lambda out, out_len: self._ffi.lib.of_get_signal_explanation_json(
+                self._engine, ctypes.byref(c_symbol), out, out_len
+            ),
+        )
+
     def _snapshot_call(self, fn, symbol: Symbol, *extra_args) -> Dict[str, Any]:
         self._require_handle()
         c_symbol = self._to_c_symbol(symbol)

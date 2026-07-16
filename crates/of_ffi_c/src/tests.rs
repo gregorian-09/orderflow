@@ -273,6 +273,30 @@ mod tests {
             "{\"module\":\"delta_momentum_v1\",\"state\":\"neutral\",\"confidence_bps\":500,\"quality_flags\":0,\"reason\":\"delta_inside_band\"}"
         );
 
+        let mut explanation_out: *const c_char = ptr::null();
+        let mut explanation_len = 0u32;
+        assert_eq!(
+            of_get_signal_explanation_json(
+                engine,
+                &ffi_symbol as *const of_symbol_t,
+                &mut explanation_out as *mut *const c_char,
+                &mut explanation_len as *mut u32,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        let explanation = unsafe {
+            String::from_utf8_lossy(std::slice::from_raw_parts(
+                explanation_out.cast::<u8>(),
+                explanation_len as usize,
+            ))
+            .to_string()
+        };
+        assert!(explanation.contains("\"module_id\":\"delta_momentum_v1\""));
+        assert!(explanation.contains("\"state\":\"neutral\""));
+        assert!(explanation.contains("\"reason_code\":\"delta_momentum_inside_band\""));
+        assert!(explanation.contains("\"inputs\":[{\"name\":\"delta\",\"value\":9}]"));
+        of_string_free(explanation_out);
+
         assert_eq!(of_unsubscribe(sub), of_error_t::OF_OK as i32);
         assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
         of_engine_destroy(engine);

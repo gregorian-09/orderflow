@@ -2293,6 +2293,31 @@ pub extern "C" fn of_get_signal_descriptors_json(
     allocate_json_string(signal_descriptor_inventory_json(), out_json, out_len)
 }
 
+/// Allocates and returns latest signal explanation JSON for `symbol`.
+#[no_mangle]
+pub extern "C" fn of_get_signal_explanation_json(
+    engine: *mut of_engine,
+    symbol: *const of_symbol_t,
+    out_json: *mut *const c_char,
+    out_len: *mut u32,
+) -> i32 {
+    if engine.is_null() || out_json.is_null() || out_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+
+    let (symbol, _) = match symbol_from_ffi(symbol) {
+        Ok(v) => v,
+        Err(e) => return e as i32,
+    };
+
+    let engine = unsafe { &mut *engine };
+    let explanation = engine
+        .inner
+        .signal_explanation_json(&symbol)
+        .unwrap_or_else(|| "{}".to_string());
+    allocate_json_string(explanation, out_json, out_len)
+}
+
 fn allocate_json_string(payload: String, out_json: *mut *const c_char, out_len: *mut u32) -> i32 {
     let c = match CString::new(payload) {
         Ok(c) => c,

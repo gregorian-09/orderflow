@@ -30,7 +30,7 @@ use of_core::{
     VolatilitySignatureSnapshot, VolatilitySnapshot, VpinSnapshot, VpinTracker,
 };
 use of_persist::{RetentionPolicy, RollingStore};
-use of_signals::{SignalGateDecision, SignalModule};
+use of_signals::{SignalExplanation, SignalGateDecision, SignalModule, SignalReasonCode};
 
 use crate::config::config_hash;
 use crate::validate_startup_config;
@@ -429,6 +429,7 @@ pub struct Engine<A: MarketDataAdapter, S: SignalModule> {
     books: HashMap<SymbolId, BookState>,
     analytics: HashMap<SymbolId, AnalyticsAccumulator>,
     latest_signals: HashMap<SymbolId, SignalSnapshot>,
+    latest_signal_explanations: HashMap<SymbolId, String>,
     processed_events: u64,
     persistence: Option<RollingStore>,
     audit: Option<AuditLog>,
@@ -523,6 +524,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             books: HashMap::new(),
             analytics: HashMap::new(),
             latest_signals: HashMap::new(),
+            latest_signal_explanations: HashMap::new(),
             processed_events: 0,
             persistence: None,
             audit: None,
@@ -693,6 +695,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             self.signal_module.on_analytics(&snap);
             self.latest_signals
                 .insert(symbol.clone(), self.signal_module.snapshot());
+            self.cache_signal_explanation(&symbol, None);
         }
         self.audit_event(
             "session_reset",
@@ -1246,6 +1249,11 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         self.latest_signals.get(symbol).cloned()
     }
 
+    /// Returns latest signal explanation JSON for symbol if available.
+    pub fn signal_explanation_json(&self, symbol: &SymbolId) -> Option<String> {
+        self.latest_signal_explanations.get(symbol).cloned()
+    }
+
     /// Returns static descriptor for the configured adapter provider.
     pub fn adapter_descriptor(&self) -> AdapterDescriptor {
         describe_adapter(self.cfg.adapter.provider.clone())
@@ -1779,6 +1787,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                         ),
                     )?;
                 }
+                self.cache_signal_explanation(&symbol, Some(&signal));
                 self.latest_signals.insert(symbol.clone(), signal);
 
                 // Spread decomposition
@@ -1834,6 +1843,25 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         }
 
         Ok(())
+    }
+
+    fn cache_signal_explanation(&mut self, symbol: &SymbolId, emitted: Option<&SignalSnapshot>) {
+        let explanation = match emitted {
+            Some(snapshot) if snapshot.state == SignalState::Blocked => Some(
+                SignalExplanation::from_snapshot(snapshot, SignalReasonCode::QualityBlocked),
+            ),
+            _ => self.signal_module.latest_explanation(),
+        };
+
+        match explanation {
+            Some(explanation) => {
+                self.latest_signal_explanations
+                    .insert(symbol.clone(), explanation.to_json());
+            }
+            None => {
+                self.latest_signal_explanations.remove(symbol);
+            }
+        }
     }
 
     fn audit_event(&self, event: &str, details_json: &str) -> Result<(), RuntimeError> {

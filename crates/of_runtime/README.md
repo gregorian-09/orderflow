@@ -104,6 +104,7 @@ Public `Engine<A, S>` methods:
 - [`Engine::interval_candle_snapshot`]
 - [`Engine::book_snapshot`]
 - [`Engine::signal_snapshot`]
+- [`Engine::signal_explanation_json`]
 - [`Engine::adapter_descriptor`]
 - [`Engine::adapter_status`]
 - [`Engine::adapter_inventory_json`]
@@ -194,6 +195,8 @@ Return behavior:
 - [`signal_descriptor_inventory_json`] and
   [`Engine::signal_descriptor_inventory_json`] expose built-in signal metadata
   as read-only JSON for dashboards, config tools, and bindings.
+- [`Engine::signal_explanation_json`] returns the latest per-symbol signal
+  explanation JSON when the configured signal module exposes one.
 - [`Engine::adapter_status`] returns the typed Rust form for hosts that do not
   need JSON.
 - [`Engine::current_quality_flags_bits`] exposes the current runtime quality bitset directly for low-allocation callers.

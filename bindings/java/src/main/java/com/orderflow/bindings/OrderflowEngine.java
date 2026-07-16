@@ -437,6 +437,17 @@ public final class OrderflowEngine implements AutoCloseable {
     }
 
     /**
+     * Returns latest signal explanation as JSON string.
+     *
+     * @param symbol target symbol
+     * @return JSON explanation payload, or empty object when no signal has evaluated yet
+     */
+    public String signalExplanation(Symbol symbol) {
+        requireEngine();
+        return allocatedSignalExplanationJson(nativeLib, engine, toNativeSymbol(symbol));
+    }
+
+    /**
      * Returns completed bar series JSON array for a symbol.
      *
      * <p>Requires the native library to be built with the {@code tickbar} feature.
@@ -616,6 +627,25 @@ public final class OrderflowEngine implements AutoCloseable {
             throw new OrderflowException("unknown allocated JSON function: " + fn);
         }
         check(rc, fn);
+        Pointer p = out.getValue();
+        if (p == null) {
+            return "{}";
+        }
+        try {
+            return p.getString(0, StandardCharsets.UTF_8.name());
+        } finally {
+            nativeLib.of_string_free(p);
+        }
+    }
+
+    private static String allocatedSignalExplanationJson(
+            OrderflowNative nativeLib,
+            Pointer engine,
+            OfSymbol symbol) {
+        PointerByReference out = new PointerByReference();
+        IntByReference outLen = new IntByReference(0);
+        int rc = nativeLib.of_get_signal_explanation_json(engine, symbol, out, outLen);
+        check(rc, "of_get_signal_explanation_json");
         Pointer p = out.getValue();
         if (p == null) {
             return "{}";

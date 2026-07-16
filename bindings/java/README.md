@@ -49,6 +49,8 @@ Highlights:
   connecting a feed
 - signal descriptor discovery through `OrderflowEngine.signalDescriptors(...)`
   and `engine.signalDescriptors()` for dashboard/configuration inventory
+- signal explanation discovery through `engine.signalExplanation(symbol)` for
+  audit and dashboard diagnostics
 - native C ABI inventory validation through `bindings/api_manifest.toml` so
   future JNA declarations can be checked against `orderflow.h`
 - analytics-to-execution examples in this README and the handbook
@@ -114,6 +116,11 @@ System.out.println(inventory);
 The descriptor inventory is read-only metadata. It helps dashboards and config
 tools list built-in signals, required inputs, warmup, parameters, and output
 semantics without constructing a live strategy or submitting orders.
+
+After a signal has evaluated for a symbol, `engine.signalExplanation(symbol)`
+returns the latest explanation payload with reason code, observed inputs,
+thresholds, and confidence contributors. This is a diagnostics surface; order
+submission decisions should still flow through explicit strategy/risk/OMS code.
 
 ## Java Version
 

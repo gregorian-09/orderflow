@@ -135,6 +135,7 @@ signals, book state, persistence, health reporting, and external ingest flows.
 | `interval_candle_snapshot(symbol, window_ns)` | `Option<IntervalCandleSnapshot>` | Rolling-window candle snapshot |
 | `book_snapshot(symbol)` | `Option<BookSnapshot>` | Materialized book snapshot |
 | `signal_snapshot(symbol)` | `Option<SignalSnapshot>` | Current signal snapshot |
+| `signal_explanation_json(symbol)` | `Option<String>` | Latest signal explanation JSON |
 
 ### Health, metrics, and diagnostics
 
@@ -190,6 +191,8 @@ Important rules:
   adapter health, `health_seq`, and circuit-breaker state.
 - `signal_descriptor_inventory_json()` is the built-in signal catalog used by
   dashboards, config tools, and binding discovery helpers.
+- `signal_explanation_json(symbol)` is the latest per-symbol signal
+  explanation cache for audit and dashboard paths.
 - JSON field names are treated as stable once published.
 - New fields are added additively rather than replacing existing fields.
 - Aggregate fields such as `adapter_total_count`, `adapter_healthy_count`, and

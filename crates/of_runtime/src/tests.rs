@@ -46,6 +46,14 @@ mod tests {
 
         let signal = engine.signal_snapshot(&symbol).expect("signal missing");
         assert_eq!(signal.state, SignalState::LongBias);
+
+        let explanation = engine
+            .signal_explanation_json(&symbol)
+            .expect("signal explanation missing");
+        assert!(explanation.contains("\"module_id\":\"delta_momentum_v1\""));
+        assert!(explanation.contains("\"state\":\"long_bias\""));
+        assert!(explanation.contains("\"reason_code\":\"delta_momentum_positive\""));
+        assert!(explanation.contains("\"inputs\":[{\"name\":\"delta\",\"value\":10}]"));
     }
 
     #[test]

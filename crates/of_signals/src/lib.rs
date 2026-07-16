@@ -23,6 +23,14 @@ pub trait SignalModule: Send + Sync {
     fn snapshot(&self) -> SignalSnapshot;
     /// Applies module-specific data-quality gate.
     fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision;
+    /// Returns a structured explanation when the module supports one.
+    ///
+    /// The default keeps existing downstream implementations source-compatible.
+    /// Hosts should keep using [`SignalModule::snapshot`] on hot paths and call
+    /// this only for audit, replay, dashboard, or diagnostic flows.
+    fn latest_explanation(&self) -> Option<SignalExplanation> {
+        None
+    }
 }
 
 /// Context passed to contextual signal modules.
@@ -937,6 +945,17 @@ impl SignalExplanation {
     pub fn with_confidence_component(mut self, component: SignalConfidenceComponent) -> Self {
         self.confidence_components.push(component);
         self
+    }
+
+    /// Serializes this explanation as compact dependency-free JSON.
+    ///
+    /// The JSON payload is intended for bindings, dashboards, and audit logs.
+    /// Field additions are additive; existing field names are stable once
+    /// published.
+    pub fn to_json(&self) -> String {
+        let mut out = String::new();
+        push_explanation_json(&mut out, self);
+        out
     }
 }
 
@@ -5155,6 +5174,10 @@ impl SignalModule for DeltaMomentumSignal {
     fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
         default_quality_gate(q)
     }
+
+    fn latest_explanation(&self) -> Option<SignalExplanation> {
+        Some(<Self as ExplainableSignalModule>::explanation(self))
+    }
 }
 
 impl ExplainableSignalModule for DeltaMomentumSignal {
@@ -5242,6 +5265,10 @@ impl SignalModule for VolumeImbalanceSignal {
 
     fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
         default_quality_gate(q)
+    }
+
+    fn latest_explanation(&self) -> Option<SignalExplanation> {
+        Some(<Self as ExplainableSignalModule>::explanation(self))
     }
 }
 
@@ -5333,6 +5360,10 @@ impl SignalModule for CumulativeDeltaSignal {
 
     fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
         default_quality_gate(q)
+    }
+
+    fn latest_explanation(&self) -> Option<SignalExplanation> {
+        Some(<Self as ExplainableSignalModule>::explanation(self))
     }
 }
 
@@ -5426,6 +5457,10 @@ impl SignalModule for AbsorptionSignal {
 
     fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
         default_quality_gate(q)
+    }
+
+    fn latest_explanation(&self) -> Option<SignalExplanation> {
+        Some(<Self as ExplainableSignalModule>::explanation(self))
     }
 }
 
@@ -5527,6 +5562,10 @@ impl SignalModule for ExhaustionSignal {
     fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
         default_quality_gate(q)
     }
+
+    fn latest_explanation(&self) -> Option<SignalExplanation> {
+        Some(<Self as ExplainableSignalModule>::explanation(self))
+    }
 }
 
 impl ExplainableSignalModule for ExhaustionSignal {
@@ -5623,6 +5662,10 @@ impl SignalModule for SweepDetectionSignal {
 
     fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
         default_quality_gate(q)
+    }
+
+    fn latest_explanation(&self) -> Option<SignalExplanation> {
+        Some(<Self as ExplainableSignalModule>::explanation(self))
     }
 }
 
@@ -5766,6 +5809,10 @@ impl SignalModule for CompositeSignal {
         } else {
             SignalGateDecision::Pass
         }
+    }
+
+    fn latest_explanation(&self) -> Option<SignalExplanation> {
+        Some(<Self as ExplainableSignalModule>::explanation(self))
     }
 }
 
@@ -6287,6 +6334,33 @@ fn push_descriptor_json(out: &mut String, descriptor: &SignalDescriptor) {
     out.push('}');
 }
 
+fn push_explanation_json(out: &mut String, explanation: &SignalExplanation) {
+    out.push('{');
+    push_json_field(out, "module_id", explanation.module_id);
+    out.push(',');
+    push_json_field(out, "state", signal_state_name(explanation.state));
+    out.push(',');
+    out.push_str("\"confidence_bps\":");
+    out.push_str(&explanation.confidence_bps.to_string());
+    out.push(',');
+    out.push_str("\"quality_flags\":");
+    out.push_str(&explanation.quality_flags.to_string());
+    out.push(',');
+    push_json_field(out, "reason_code", explanation.reason_code.as_str());
+    out.push(',');
+    push_json_field(out, "reason", &explanation.reason);
+    out.push(',');
+    out.push_str("\"inputs\":");
+    push_input_values_json(out, &explanation.inputs);
+    out.push(',');
+    out.push_str("\"thresholds\":");
+    push_thresholds_json(out, &explanation.thresholds);
+    out.push(',');
+    out.push_str("\"confidence_components\":");
+    push_confidence_components_json(out, &explanation.confidence_components);
+    out.push('}');
+}
+
 fn push_json_field(out: &mut String, name: &str, value: &str) {
     push_json_string(out, name);
     out.push(':');
@@ -6393,6 +6467,54 @@ fn push_parameters_json(out: &mut String, parameters: &[SignalParameterDescripto
     out.push(']');
 }
 
+fn push_input_values_json(out: &mut String, inputs: &[SignalInputValue]) {
+    out.push('[');
+    for (index, input) in inputs.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push('{');
+        push_json_field(out, "name", input.name);
+        out.push(',');
+        out.push_str("\"value\":");
+        push_parameter_value_json(out, input.value);
+        out.push('}');
+    }
+    out.push(']');
+}
+
+fn push_thresholds_json(out: &mut String, thresholds: &[SignalThreshold]) {
+    out.push('[');
+    for (index, threshold) in thresholds.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push('{');
+        push_json_field(out, "name", threshold.name);
+        out.push(',');
+        out.push_str("\"value\":");
+        push_parameter_value_json(out, threshold.value);
+        out.push('}');
+    }
+    out.push(']');
+}
+
+fn push_confidence_components_json(out: &mut String, components: &[SignalConfidenceComponent]) {
+    out.push('[');
+    for (index, component) in components.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push('{');
+        push_json_field(out, "name", component.name);
+        out.push(',');
+        out.push_str("\"value_bps\":");
+        out.push_str(&component.value_bps.to_string());
+        out.push('}');
+    }
+    out.push(']');
+}
+
 fn push_optional_parameter_value_json(out: &mut String, value: Option<SignalParameterValue>) {
     match value {
         Some(value) => push_parameter_value_json(out, value),
@@ -6406,6 +6528,15 @@ fn push_parameter_value_json(out: &mut String, value: SignalParameterValue) {
         SignalParameterValue::Float(value) => out.push_str(&value.to_string()),
         SignalParameterValue::Boolean(value) => out.push_str(if value { "true" } else { "false" }),
         SignalParameterValue::Text(value) => push_json_string(out, value),
+    }
+}
+
+fn signal_state_name(state: SignalState) -> &'static str {
+    match state {
+        SignalState::Neutral => "neutral",
+        SignalState::LongBias => "long_bias",
+        SignalState::ShortBias => "short_bias",
+        SignalState::Blocked => "blocked",
     }
 }
 
@@ -6456,6 +6587,47 @@ mod tests {
             correct,
             regime: None,
         }
+    }
+
+    #[test]
+    fn signal_explanation_json_exports_audit_payload() {
+        let explanation = SignalExplanation::new(
+            "test_signal_v1",
+            SignalState::LongBias,
+            7_500,
+            DataQualityFlags::SEQUENCE_GAP.bits(),
+            SignalReasonCode::DeltaMomentumPositive,
+            "delta_above_threshold",
+        )
+        .with_input(SignalInputValue::integer("delta", 125))
+        .with_threshold(SignalThreshold::integer("threshold", 100))
+        .with_confidence_component(SignalConfidenceComponent::new("base", 7_500));
+
+        let json = explanation.to_json();
+        assert!(json.contains("\"module_id\":\"test_signal_v1\""));
+        assert!(json.contains("\"state\":\"long_bias\""));
+        assert!(json.contains("\"reason_code\":\"delta_momentum_positive\""));
+        assert!(json.contains("\"inputs\":[{\"name\":\"delta\",\"value\":125}]"));
+        assert!(json.contains("\"thresholds\":[{\"name\":\"threshold\",\"value\":100}]"));
+        assert!(json.contains("\"confidence_components\":[{\"name\":\"base\",\"value_bps\":7500}]"));
+
+        struct SnapshotOnlySignal;
+        impl SignalModule for SnapshotOnlySignal {
+            fn on_analytics(&mut self, _ev: &AnalyticsSnapshot) {}
+
+            fn snapshot(&self) -> SignalSnapshot {
+                snapshot(SignalState::Neutral, 0)
+            }
+
+            fn quality_gate(&self, _q: DataQualityFlags) -> SignalGateDecision {
+                SignalGateDecision::Pass
+            }
+        }
+
+        assert!(SnapshotOnlySignal.latest_explanation().is_none());
+        assert!(DeltaMomentumSignal::default()
+            .latest_explanation()
+            .is_some());
     }
 
     #[test]
