@@ -23,6 +23,8 @@ What changes for runtime users:
 
 - existing lifecycle, subscription, polling, ingest, snapshot, health, and
   metrics APIs remain stable;
+- adapter inventory and active-status diagnostics are now exposed as additive
+  JSON helpers for dashboards and bindings;
 - strategies can pair `of_runtime` snapshots with `of_execution` order routing
   in the host application;
 - the recommended live architecture is now two explicit planes: market-data
@@ -46,6 +48,7 @@ Version policy:
 - [`DefaultEngine`] - boxed adapter + default delta signal.
 - [`RuntimeError`] - lifecycle/config/adapter/io errors.
 - [`ExternalFeedPolicy`] - stale and sequence policy for non-adapter ingest mode.
+- [`RuntimeAdapterStatus`] - active adapter descriptor plus health snapshot.
 - Snapshot accessors:
   - [`Engine::book_snapshot`]
   - [`Engine::analytics_snapshot`]
@@ -61,6 +64,7 @@ Public types:
 - [`EngineConfig`]
 - [`RuntimeError`]
 - [`ExternalFeedPolicy`]
+- [`RuntimeAdapterStatus`]
 - [`Engine<A, S>`]
 - [`DefaultEngine`]
 - [`ConfigCompatibilityMode`]
@@ -72,6 +76,7 @@ Public top-level functions:
 - [`load_engine_config_from_path`]
 - [`load_engine_config_report_from_path`]
 - [`validate_startup_config`]
+- [`adapter_inventory_json`]
 
 Public `ConfigLoadReport` method:
 
@@ -98,6 +103,10 @@ Public `Engine<A, S>` methods:
 - [`Engine::interval_candle_snapshot`]
 - [`Engine::book_snapshot`]
 - [`Engine::signal_snapshot`]
+- [`Engine::adapter_descriptor`]
+- [`Engine::adapter_status`]
+- [`Engine::adapter_inventory_json`]
+- [`Engine::active_adapter_status_json`]
 - [`Engine::metrics_json`]
 - [`Engine::health_seq`]
 - [`Engine::health_json`]
@@ -174,6 +183,14 @@ Return behavior:
 - [`Engine::health_seq`] is the cheap monotonic change counter for external polling loops.
 - [`Engine::health_json`] is the user-facing operational snapshot and includes connectivity, degradation, quality flags, supervision metadata, and tracked symbol counts.
 - [`Engine::metrics_json`] is the counter-oriented metrics payload and includes processed event counts, quality flag detail, and subsystem counts.
+- [`adapter_inventory_json`] returns known adapter descriptors for the current
+  build without requiring an engine.
+- [`Engine::adapter_inventory_json`] returns the same descriptor inventory with
+  the configured provider marked active.
+- [`Engine::active_adapter_status_json`] returns the configured adapter
+  descriptor, current health, health sequence, and circuit-breaker state.
+- [`Engine::adapter_status`] returns the typed Rust form for hosts that do not
+  need JSON.
 - [`Engine::current_quality_flags_bits`] exposes the current runtime quality bitset directly for low-allocation callers.
 - [`Engine::last_events`] exposes the last processed raw event batch for inspection/testing.
 - [`Engine::with_max_events_per_poll`] optionally enables a per-poll drain limit

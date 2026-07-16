@@ -1059,6 +1059,79 @@ mod tests {
     }
 
     #[test]
+    fn adapter_inventory_and_status_json_are_allocated() {
+        let _guard = test_guard();
+
+        let mut inventory_out: *const c_char = ptr::null();
+        let mut inventory_len = 0u32;
+        assert_eq!(
+            of_get_adapter_inventory_json(
+                &mut inventory_out as *mut *const c_char,
+                &mut inventory_len as *mut u32,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        let inventory = unsafe {
+            String::from_utf8_lossy(std::slice::from_raw_parts(
+                inventory_out.cast::<u8>(),
+                inventory_len as usize,
+            ))
+            .to_string()
+        };
+        assert!(inventory.contains("\"schema_version\":1"));
+        assert!(inventory.contains("\"provider_id\":\"mock\""));
+        assert!(inventory.contains("\"total_count\":4"));
+        of_string_free(inventory_out);
+
+        let cfg = of_engine_config_t {
+            instance_id: ptr::null(),
+            config_path: ptr::null(),
+            log_level: 0,
+            enable_persistence: 0,
+            audit_max_bytes: 0,
+            audit_max_files: 0,
+            audit_redact_tokens_csv: ptr::null(),
+            data_retention_max_bytes: 0,
+            data_retention_max_age_secs: 0,
+        };
+
+        let mut engine: *mut of_engine = ptr::null_mut();
+        assert_eq!(
+            of_engine_create(&cfg, &mut engine as *mut *mut of_engine),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!engine.is_null());
+        assert_eq!(of_engine_start(engine), of_error_t::OF_OK as i32);
+
+        let mut status_out: *const c_char = ptr::null();
+        let mut status_len = 0u32;
+        assert_eq!(
+            of_get_active_adapter_status_json(
+                engine,
+                &mut status_out as *mut *const c_char,
+                &mut status_len as *mut u32,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        let status = unsafe {
+            String::from_utf8_lossy(std::slice::from_raw_parts(
+                status_out.cast::<u8>(),
+                status_len as usize,
+            ))
+            .to_string()
+        };
+        assert!(status.contains("\"provider_id\":\"mock\""));
+        assert!(status.contains("\"started\":true"));
+        assert!(status.contains("\"connected\":true"));
+        assert!(status.contains("\"healthy\":true"));
+        assert!(status.contains("\"capabilities\":{"));
+        of_string_free(status_out);
+
+        assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
+        of_engine_destroy(engine);
+    }
+
+    #[test]
     fn ingest_book_rejects_invalid_side() {
         let _guard = test_guard();
 

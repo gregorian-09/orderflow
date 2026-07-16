@@ -485,6 +485,39 @@ mod tests {
     }
 
     #[test]
+    fn adapter_inventory_and_status_expose_active_provider() {
+        let mut engine = build_default_engine(EngineConfig::default()).expect("build should work");
+        let inventory = engine.adapter_inventory_json();
+        assert!(inventory.contains("\"schema_version\":1"));
+        assert!(inventory.contains("\"provider_id\":\"mock\""));
+        assert!(inventory.contains("\"compiled_count\":"));
+        assert!(inventory.contains("\"active\":true"));
+
+        let status = engine.adapter_status();
+        assert_eq!(status.descriptor.provider, ProviderKind::Mock);
+        assert!(!status.started);
+        assert!(!status.health.connected);
+
+        engine.start().expect("start should work");
+        let active = engine.active_adapter_status_json();
+        assert!(active.contains("\"provider_id\":\"mock\""));
+        assert!(active.contains("\"started\":true"));
+        assert!(active.contains("\"connected\":true"));
+        assert!(active.contains("\"healthy\":true"));
+        assert!(active.contains("\"capabilities\":{"));
+    }
+
+    #[test]
+    fn global_adapter_inventory_json_lists_known_adapters() {
+        let inventory = adapter_inventory_json();
+        assert!(inventory.contains("\"total_count\":4"));
+        assert!(inventory.contains("\"provider_id\":\"mock\""));
+        assert!(inventory.contains("\"provider_id\":\"rithmic\""));
+        assert!(inventory.contains("\"provider_id\":\"cqg\""));
+        assert!(inventory.contains("\"provider_id\":\"binance\""));
+    }
+
+    #[test]
     fn health_and_metrics_include_additive_observability_fields() {
         let symbol = SymbolId {
             venue: "CME".to_string(),

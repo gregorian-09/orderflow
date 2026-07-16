@@ -156,6 +156,48 @@ _ERROR_MAP = {
 }
 
 
+def _decode_json_payload(raw: str) -> Any:
+    if not raw:
+        return {}
+    return json.loads(raw)
+
+
+def _allocated_json_call(
+    ffi: OrderflowLib,
+    fn_name: str,
+    call: Callable[[ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_uint32)], int],
+) -> Any:
+    out = ctypes.c_char_p()
+    out_len = ctypes.c_uint32(0)
+    rc = call(ctypes.byref(out), ctypes.byref(out_len))
+    if int(rc) != 0:
+        exc = _ERROR_MAP.get(int(rc), OrderflowError)
+        raise exc(f"{fn_name} failed with code {rc}")
+    try:
+        raw = ctypes.string_at(out, out_len.value).decode("utf-8")
+        return _decode_json_payload(raw)
+    finally:
+        if out:
+            ffi.lib.of_string_free(out)
+
+
+def adapter_inventory(library_path: Optional[str] = None) -> Dict[str, Any]:
+    """Returns known market-data adapter descriptors for the native build."""
+    ffi = OrderflowLib(library_path=library_path)
+    return _allocated_json_call(
+        ffi,
+        "of_get_adapter_inventory_json",
+        ffi.lib.of_get_adapter_inventory_json,
+    )
+
+
+def available_adapters(library_path: Optional[str] = None) -> list[Dict[str, Any]]:
+    """Returns adapter descriptor dictionaries from the native build inventory."""
+    inventory = adapter_inventory(library_path=library_path)
+    adapters = inventory.get("adapters", [])
+    return adapters if isinstance(adapters, list) else []
+
+
 @dataclass(frozen=True)
 class Symbol:
     """Symbol descriptor used by subscriptions, snapshots, and ingest calls."""
@@ -1325,6 +1367,32 @@ class Engine:
             return self._decode_json(raw)
         finally:
             self._ffi.lib.of_string_free(out)
+
+    def adapter_inventory(self) -> Dict[str, Any]:
+        """Returns adapter inventory with this engine's active provider marked."""
+        self._require_handle()
+        inventory = _allocated_json_call(
+            self._ffi,
+            "of_get_adapter_inventory_json",
+            self._ffi.lib.of_get_adapter_inventory_json,
+        )
+        status = self.adapter_status()
+        active_provider_id = status.get("provider_id")
+        for adapter in inventory.get("adapters", []):
+            if isinstance(adapter, dict):
+                adapter["active"] = adapter.get("provider_id") == active_provider_id
+        return inventory
+
+    def adapter_status(self) -> Dict[str, Any]:
+        """Returns active adapter descriptor and health status."""
+        self._require_handle()
+        return _allocated_json_call(
+            self._ffi,
+            "of_get_active_adapter_status_json",
+            lambda out, out_len: self._ffi.lib.of_get_active_adapter_status_json(
+                self._engine, out, out_len
+            ),
+        )
 
     def _snapshot_call(self, fn, symbol: Symbol, *extra_args) -> Dict[str, Any]:
         self._require_handle()

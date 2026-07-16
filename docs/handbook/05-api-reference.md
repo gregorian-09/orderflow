@@ -95,12 +95,18 @@ Public types:
 - `AdapterResult<T>`
 - `MarketDataAdapter` trait
 - `ProviderKind` (`Mock`, `Rithmic`, `Cqg`, `Binance`)
+- `AdapterQualityLevel`
+- `AdapterDescriptor`
 - `AdapterConfig`
 - `CredentialsRef`
 - `MockAdapter`
 
 Public functions/methods:
 
+- `adapter_descriptors() -> &'static [AdapterDescriptor]`
+- `compiled_adapter_descriptors() -> Vec<AdapterDescriptor>`
+- `describe_adapter(ProviderKind) -> AdapterDescriptor`
+- `adapter_feature_enabled(ProviderKind) -> bool`
 - `create_adapter(&AdapterConfig) -> AdapterResult<Box<dyn MarketDataAdapter>>`
 - `MockAdapter::push_event(RawEvent)`
 
@@ -374,6 +380,10 @@ Public runtime methods:
 - `session_candle_snapshot(&SymbolId)`
 - `interval_candle_snapshot(&SymbolId, window_ns: u64)`
 - `signal_snapshot(&SymbolId)`
+- `adapter_descriptor() -> AdapterDescriptor`
+- `adapter_status() -> RuntimeAdapterStatus`
+- `adapter_inventory_json() -> String`
+- `active_adapter_status_json() -> String`
 - `metrics_json() -> String`
 - `health_seq() -> u64`
 - `health_json() -> String`
@@ -632,6 +642,8 @@ Snapshots and metrics:
 - `of_get_interval_candle_snapshot(...)`
 - `of_get_signal_snapshot(...)`
 - `of_get_metrics_json(...)`
+- `of_get_adapter_inventory_json(...)`
+- `of_get_active_adapter_status_json(...)`
 - `of_string_free(...)`
 
 ### Stream Kind IDs
@@ -660,7 +672,9 @@ Used in `of_subscribe(..., kind, ...)` and callback payloads:
   - `ts_exchange_ns`
   - `ts_recv_ns`
 - `of_get_analytics_snapshot(...)`, `of_get_derived_analytics_snapshot(...)`, `of_get_session_candle_snapshot(...)`, `of_get_interval_candle_snapshot(...)`, and `of_get_signal_snapshot(...)` return populated JSON when data exists.
-- `of_get_metrics_json(...)` allocates output string; caller must free via `of_string_free(...)`.
+- `of_get_metrics_json(...)`, `of_get_adapter_inventory_json(...)`, and
+  `of_get_active_adapter_status_json(...)` allocate output strings; callers
+  must free them via `of_string_free(...)`.
 - Snapshot functions report the required byte size via `inout_len`; callers should retry with a larger buffer when they receive `OF_ERR_INVALID_ARG`.
 
 ---
@@ -702,6 +716,10 @@ Used in `of_subscribe(..., kind, ...)` and callback payloads:
 - `interval_candle_snapshot(symbol, window_ns) -> dict`
 - `signal_snapshot(symbol) -> dict`
 - `metrics() -> dict`
+- `adapter_inventory(library_path=None) -> dict`
+- `available_adapters(library_path=None) -> list[dict]`
+- `Engine.adapter_inventory() -> dict`
+- `Engine.adapter_status() -> dict`
 
 Context manager support:
 
@@ -751,6 +769,9 @@ Context manager support:
 - `intervalCandleSnapshot(Symbol, long windowNs)`
 - `signalSnapshot(Symbol)`
 - `metricsJson()`
+- `adapterInventory(String nativePath)`
+- `adapterInventory()`
+- `adapterStatus()`
 - `close()`
 
 ---

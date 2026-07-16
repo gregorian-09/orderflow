@@ -38,6 +38,8 @@ Highlights:
 - route/account/symbol-scoped risk checks before adapter routing
 - offline WAL and checkpoint-store diagnostics for recovery checks without
   opening an execution engine
+- adapter inventory/status helpers for provider capability discovery before
+  connecting a feed
 - analytics-to-execution examples in this README and the handbook
 - continued PEP 561 `py.typed` support and bundled native library lookup
 
@@ -313,6 +315,15 @@ adapter ownership, reconnect/recovery policy, and monitoring around this shape.
 | `unsubscribe(symbol)` | Unsubscribes all streams for symbol |
 | `poll_once(quality_flags=DataQualityFlags.NONE)` | Drains adapter/runtime once |
 | `reset_symbol_session(symbol)` | Resets per-symbol session/profile state |
+
+#### Adapter discovery
+
+| Signature | Description |
+|---|---|
+| `adapter_inventory(library_path=None)` | Returns native build adapter descriptor inventory |
+| `available_adapters(library_path=None)` | Returns the inventory `adapters` list |
+| `engine.adapter_inventory()` | Returns adapter inventory with this engine's active provider marked |
+| `engine.adapter_status()` | Returns configured adapter descriptor plus current health |
 
 #### External feed supervision
 

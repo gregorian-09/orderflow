@@ -701,7 +701,11 @@ int32_t of_get_signal_snapshot(of_engine_t* engine, const of_symbol_t* symbol, v
 
 /** Returns engine metrics JSON allocated by the library. */
 int32_t of_get_metrics_json(of_engine_t* engine, const char** out_json, uint32_t* out_len);
-/** Releases strings allocated by `of_get_metrics_json`. */
+/** Returns adapter inventory JSON allocated by the library. */
+int32_t of_get_adapter_inventory_json(const char** out_json, uint32_t* out_len);
+/** Returns active adapter status JSON allocated by the library. */
+int32_t of_get_active_adapter_status_json(of_engine_t* engine, const char** out_json, uint32_t* out_len);
+/** Releases strings allocated by JSON-returning helper functions. */
 void of_string_free(const char* p);
 
 /** Computes LOB feature snapshot from engine book state and flow metrics. */

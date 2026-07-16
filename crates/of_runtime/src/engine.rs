@@ -5,7 +5,10 @@ use std::fs::{self, create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use of_adapters::{create_adapter, AdapterConfig, MarketDataAdapter, RawEvent, SubscribeReq};
+use of_adapters::{
+    adapter_descriptors, create_adapter, describe_adapter, AdapterConfig, AdapterDescriptor,
+    AdapterHealth, MarketDataAdapter, ProviderKind, RawEvent, SubscribeReq,
+};
 #[cfg(feature = "tickbar")]
 use of_core::CompletedBar;
 use of_core::{
@@ -134,6 +137,22 @@ pub struct ExternalFeedPolicy {
     pub stale_after_ms: u64,
     /// Enables sequence-gap/out-of-order checks.
     pub enforce_sequence: bool,
+}
+
+/// Runtime status for the active market-data adapter.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct RuntimeAdapterStatus {
+    /// Static adapter descriptor for the configured provider.
+    pub descriptor: AdapterDescriptor,
+    /// Latest health snapshot returned by the adapter.
+    pub health: AdapterHealth,
+    /// Runtime health sequence at the time this status was read.
+    pub health_seq: u64,
+    /// True when the runtime has been started.
+    pub started: bool,
+    /// True when the adapter circuit breaker is currently open.
+    pub circuit_breaker_open: bool,
 }
 
 impl Default for ExternalFeedPolicy {
@@ -481,6 +500,11 @@ pub struct Engine<A: MarketDataAdapter, S: SignalModule> {
 
 /// Default engine type used by C ABI and high-level bindings.
 pub type DefaultEngine = Engine<Box<dyn MarketDataAdapter>, of_signals::DeltaMomentumSignal>;
+
+/// Returns all known adapter descriptors as compact JSON.
+pub fn adapter_inventory_json() -> String {
+    format_adapter_inventory_json(None)
+}
 
 impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
     /// Creates an engine with explicit adapter and signal module.
@@ -1216,6 +1240,32 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         self.latest_signals.get(symbol).cloned()
     }
 
+    /// Returns static descriptor for the configured adapter provider.
+    pub fn adapter_descriptor(&self) -> AdapterDescriptor {
+        describe_adapter(self.cfg.adapter.provider.clone())
+    }
+
+    /// Returns latest active-adapter status.
+    pub fn adapter_status(&self) -> RuntimeAdapterStatus {
+        RuntimeAdapterStatus {
+            descriptor: self.adapter_descriptor(),
+            health: self.adapter.health(),
+            health_seq: self.health_seq,
+            started: self.started,
+            circuit_breaker_open: self.circuit_breaker.is_open_at(unix_ts_nanos()),
+        }
+    }
+
+    /// Returns adapter inventory as compact JSON.
+    pub fn adapter_inventory_json(&self) -> String {
+        format_adapter_inventory_json(Some(&self.cfg.adapter.provider))
+    }
+
+    /// Returns active adapter status as compact JSON.
+    pub fn active_adapter_status_json(&self) -> String {
+        format_adapter_status_json(&self.adapter_status())
+    }
+
     /// Returns runtime metrics as compact JSON payload.
     pub fn metrics_json(&self) -> String {
         let adapter_health = self.adapter.health();
@@ -1824,6 +1874,94 @@ fn optional_usize_json(value: Option<usize>) -> String {
     value
         .map(|v| v.to_string())
         .unwrap_or_else(|| "null".to_string())
+}
+
+fn optional_str_json(value: Option<&str>) -> String {
+    value
+        .map(|v| format!("\"{}\"", escape_json(v)))
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn format_adapter_descriptor_json(
+    descriptor: &AdapterDescriptor,
+    active_provider: Option<&ProviderKind>,
+) -> String {
+    let active = active_provider
+        .map(|provider| provider == &descriptor.provider)
+        .unwrap_or(false);
+    format!(
+        "{{\"provider\":\"{}\",\"provider_id\":\"{}\",\"display_name\":\"{}\",\"feature\":{},\"compiled\":{},\"quality\":\"{}\",\"supports_live\":{},\"supports_replay\":{},\"supports_trades\":{},\"supports_order_book\":{},\"supports_level2\":{},\"supports_reconnect\":{},\"supports_gap_recovery\":{},\"supports_polling\":{},\"active\":{},\"notes\":\"{}\"}}",
+        escape_json(descriptor.provider.id()),
+        escape_json(descriptor.provider_id),
+        escape_json(descriptor.display_name),
+        optional_str_json(descriptor.feature),
+        descriptor.compiled,
+        escape_json(descriptor.quality.id()),
+        descriptor.supports_live,
+        descriptor.supports_replay,
+        descriptor.supports_trades,
+        descriptor.supports_order_book,
+        descriptor.supports_level2,
+        descriptor.supports_reconnect,
+        descriptor.supports_gap_recovery,
+        descriptor.supports_polling,
+        active,
+        escape_json(descriptor.notes)
+    )
+}
+
+fn format_adapter_inventory_json(active_provider: Option<&ProviderKind>) -> String {
+    let items = adapter_descriptors()
+        .iter()
+        .map(|descriptor| format_adapter_descriptor_json(descriptor, active_provider))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{{\"schema_version\":1,\"adapters\":[{}],\"compiled_count\":{},\"total_count\":{}}}",
+        items,
+        adapter_descriptors()
+            .iter()
+            .filter(|descriptor| descriptor.compiled)
+            .count(),
+        adapter_descriptors().len()
+    )
+}
+
+fn format_adapter_status_json(status: &RuntimeAdapterStatus) -> String {
+    let last_error_json = status
+        .health
+        .last_error
+        .as_ref()
+        .map(|s| format!("\"{}\"", escape_json(s)))
+        .unwrap_or_else(|| "null".to_string());
+    let protocol_info_json = status
+        .health
+        .protocol_info
+        .as_ref()
+        .map(|s| format!("\"{}\"", escape_json(s)))
+        .unwrap_or_else(|| "null".to_string());
+    let healthy = status.started
+        && status.health.connected
+        && !status.health.degraded
+        && !status.circuit_breaker_open;
+    format!(
+        "{{\"schema_version\":1,\"provider\":\"{}\",\"provider_id\":\"{}\",\"display_name\":\"{}\",\"feature\":{},\"compiled\":{},\"quality\":\"{}\",\"started\":{},\"connected\":{},\"degraded\":{},\"healthy\":{},\"last_error\":{},\"protocol_info\":{},\"health_seq\":{},\"circuit_breaker_open\":{},\"capabilities\":{}}}",
+        escape_json(status.descriptor.provider.id()),
+        escape_json(status.descriptor.provider_id),
+        escape_json(status.descriptor.display_name),
+        optional_str_json(status.descriptor.feature),
+        status.descriptor.compiled,
+        escape_json(status.descriptor.quality.id()),
+        status.started,
+        status.health.connected,
+        status.health.degraded,
+        healthy,
+        last_error_json,
+        protocol_info_json,
+        status.health_seq,
+        status.circuit_breaker_open,
+        format_adapter_descriptor_json(&status.descriptor, Some(&status.descriptor.provider))
+    )
 }
 
 fn quality_flag_names(bits: u32) -> Vec<&'static str> {

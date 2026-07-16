@@ -45,6 +45,8 @@ Highlights:
 - route/account/symbol-scoped risk checks before adapter routing
 - offline WAL and checkpoint-store diagnostics for recovery checks without
   opening an execution engine
+- adapter inventory/status helpers for provider capability discovery before
+  connecting a feed
 - analytics-to-execution examples in this README and the handbook
 - existing native resolution behavior remains available: explicit path,
   `ORDERFLOW_LIBRARY_PATH`, then local debug library
@@ -320,6 +322,14 @@ Callback event envelope fields:
 | `void pollOnce(int qualityFlags)` | Poll runtime/adapter once |
 | `void unsubscribe(Symbol symbol)` | Remove symbol subscriptions |
 | `void resetSymbolSession(Symbol symbol)` | Reset symbol session state |
+
+#### Adapter discovery
+
+| Signature | Description |
+|---|---|
+| `static String adapterInventory(String nativePath)` | Returns native build adapter descriptor inventory JSON |
+| `String adapterInventory()` | Returns native build adapter descriptor inventory JSON |
+| `String adapterStatus()` | Returns configured adapter descriptor plus current health JSON |
 
 #### External feed supervision
 

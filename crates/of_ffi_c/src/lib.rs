@@ -25,8 +25,8 @@ use of_execution_core::{
     VenueOrderId, WalIntegrityReport,
 };
 use of_runtime::{
-    build_default_engine, load_engine_config_from_path, DefaultEngine, EngineConfig,
-    ExternalFeedPolicy, RuntimeError,
+    adapter_inventory_json as runtime_adapter_inventory_json, build_default_engine,
+    load_engine_config_from_path, DefaultEngine, EngineConfig, ExternalFeedPolicy, RuntimeError,
 };
 #[cfg(feature = "tickbar")]
 use support::format_bar_series;
@@ -2247,6 +2247,58 @@ pub extern "C" fn of_get_metrics_json(
     let engine = unsafe { &mut *engine };
     let metrics = engine.inner.metrics_json();
     let c = match CString::new(metrics) {
+        Ok(c) => c,
+        Err(_) => return of_error_t::OF_ERR_INTERNAL as i32,
+    };
+
+    let len = c.as_bytes().len() as u32;
+    let ptr = c.into_raw();
+    unsafe {
+        *out_json = ptr;
+        *out_len = len;
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Allocates and returns adapter inventory JSON.
+#[no_mangle]
+pub extern "C" fn of_get_adapter_inventory_json(
+    out_json: *mut *const c_char,
+    out_len: *mut u32,
+) -> i32 {
+    if out_json.is_null() || out_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+
+    let inventory = runtime_adapter_inventory_json();
+    let c = match CString::new(inventory) {
+        Ok(c) => c,
+        Err(_) => return of_error_t::OF_ERR_INTERNAL as i32,
+    };
+
+    let len = c.as_bytes().len() as u32;
+    let ptr = c.into_raw();
+    unsafe {
+        *out_json = ptr;
+        *out_len = len;
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Allocates and returns active adapter status JSON for `engine`.
+#[no_mangle]
+pub extern "C" fn of_get_active_adapter_status_json(
+    engine: *mut of_engine,
+    out_json: *mut *const c_char,
+    out_len: *mut u32,
+) -> i32 {
+    if engine.is_null() || out_json.is_null() || out_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+
+    let engine = unsafe { &mut *engine };
+    let status = engine.inner.active_adapter_status_json();
+    let c = match CString::new(status) {
         Ok(c) => c,
         Err(_) => return of_error_t::OF_ERR_INTERNAL as i32,
     };

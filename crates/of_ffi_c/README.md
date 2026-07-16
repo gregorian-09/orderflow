@@ -9,7 +9,9 @@ It is the native interface used by Python (`ctypes`), Java (JNA), and any C-comp
 - Subscription: `of_subscribe`, `of_unsubscribe`, `of_unsubscribe_symbol`, `of_reset_symbol_session`
 - External ingest and supervision: `of_ingest_trade`, `of_ingest_book`, `of_configure_external_feed`, `of_external_set_reconnecting`, `of_external_health_tick`
 - Polling and snapshots: `of_engine_poll_once`, `of_get_book_snapshot`, `of_get_analytics_snapshot`, `of_get_derived_analytics_snapshot`, `of_get_session_candle_snapshot`, `of_get_interval_candle_snapshot`, `of_get_signal_snapshot`
-- Metrics and memory management: `of_get_metrics_json`, `of_string_free`
+- Metrics, adapter discovery, and memory management:
+  `of_get_metrics_json`, `of_get_adapter_inventory_json`,
+  `of_get_active_adapter_status_json`, `of_string_free`
 
 ## New In 0.4.0
 
@@ -87,6 +89,8 @@ Exported C functions:
 - `of_get_interval_candle_snapshot`
 - `of_get_signal_snapshot`
 - `of_get_metrics_json`
+- `of_get_adapter_inventory_json`
+- `of_get_active_adapter_status_json`
 - `of_string_free`
 - `of_engine_poll_once`
 
@@ -234,6 +238,8 @@ Metadata and ownership helpers:
 
 - `of_api_version`
 - `of_build_info`
+- `of_get_adapter_inventory_json`
+- `of_get_active_adapter_status_json`
 - `of_execution_wal_integrity_report`
 - `of_execution_segmented_wal_integrity_report`
 - `of_execution_checkpoint_store_integrity_report`

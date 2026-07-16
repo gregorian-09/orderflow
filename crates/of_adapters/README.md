@@ -10,6 +10,9 @@ It standardizes lifecycle, subscription, polling, and health reporting while kee
 - Events: [`RawEvent`] (`Book`, `Trade`)
 - Config: [`AdapterConfig`], [`ProviderKind`], [`CredentialsRef`]
 - Health: [`AdapterHealth`]
+- Discovery: [`AdapterDescriptor`], [`AdapterQualityLevel`],
+  [`adapter_descriptors`], [`compiled_adapter_descriptors`],
+  [`describe_adapter`], [`adapter_feature_enabled`]
 
 ## New In 0.4.0
 
@@ -27,6 +30,8 @@ What changes for adapter authors:
   concepts across both adapter families without merging their traits;
 - operational health, backpressure, and circuit-breaker fields introduced in
   the previous release remain visible through runtime metrics;
+- adapter discovery now exposes static provider descriptors, feature gates,
+  quality levels, and capability flags without constructing an adapter;
 - the handbook now separates market-data provider authoring from execution
   adapter authoring so developers can build the right integration boundary.
 
@@ -47,6 +52,8 @@ Public types:
 - [`AdapterError`]
 - [`AdapterResult<T>`]
 - [`ProviderKind`]
+- [`AdapterQualityLevel`]
+- [`AdapterDescriptor`]
 - [`AdapterConfig`]
 - [`CredentialsRef`]
 - [`MockAdapter`]
@@ -54,6 +61,10 @@ Public types:
 Public functions and methods:
 
 - [`create_adapter`]
+- [`adapter_descriptors`]
+- [`compiled_adapter_descriptors`]
+- [`describe_adapter`]
+- [`adapter_feature_enabled`]
 - [`MockAdapter::push_event`]
 
 [`MarketDataAdapter`] trait methods:
@@ -72,6 +83,49 @@ The crate is built around a feature-gated provider model:
 - Optional: `Rithmic`, `CQG`, `Binance` (enable via Cargo features)
 
 This keeps the default build deterministic while allowing production adapters where needed.
+
+## Adapter Discovery
+
+Adapter discovery is a static, allocation-light control-plane API. It lets
+hosts, dashboards, and bindings answer "what can this binary do?" before trying
+to create or connect a provider.
+
+Discovery APIs:
+
+- [`adapter_descriptors`] returns every known provider descriptor.
+- [`compiled_adapter_descriptors`] returns only providers available in this
+  binary.
+- [`describe_adapter`] returns one descriptor for a [`ProviderKind`].
+- [`adapter_feature_enabled`] returns whether a provider can be constructed in
+  this build.
+
+Descriptor fields include:
+
+- stable `provider_id`;
+- human-readable display name;
+- required Cargo feature, if any;
+- compiled/enabled state;
+- [`AdapterQualityLevel`];
+- trade/book/level-2/reconnect/gap-recovery/polling capability flags;
+- operator-facing notes.
+
+Quality levels are intentionally conservative. A descriptor advertises current
+engineering maturity, not venue certification or capital-readiness.
+
+```rust
+use of_adapters::{adapter_descriptors, adapter_feature_enabled, ProviderKind};
+
+for descriptor in adapter_descriptors() {
+    println!(
+        "{} compiled={} quality={}",
+        descriptor.provider_id,
+        descriptor.compiled,
+        descriptor.quality.id()
+    );
+}
+
+assert!(adapter_feature_enabled(ProviderKind::Mock));
+```
 
 Current provider notes:
 

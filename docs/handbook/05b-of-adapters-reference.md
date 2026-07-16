@@ -15,10 +15,16 @@ normalized `BookUpdate` and `TradePrint` events.
 | `AdapterResult<T>` | type alias | `Result<T, AdapterError>` |
 | `MarketDataAdapter` | trait | Common provider interface |
 | `ProviderKind` | enum | Adapter factory selector |
+| `AdapterQualityLevel` | enum | Conservative provider maturity label |
+| `AdapterDescriptor` | struct | Static provider capability descriptor |
 | `AdapterConfig` | struct | Adapter factory configuration |
 | `CredentialsRef` | struct | Environment-variable references for secrets |
 | `MockAdapter` | struct | Deterministic in-memory adapter |
 | `create_adapter` | fn | Provider factory |
+| `adapter_descriptors` | fn | Returns all known provider descriptors |
+| `compiled_adapter_descriptors` | fn | Returns descriptors enabled in this build |
+| `describe_adapter` | fn | Returns descriptor for one provider |
+| `adapter_feature_enabled` | fn | Returns whether provider can be constructed |
 
 ## Core Types
 
@@ -67,6 +73,39 @@ Adapters do not emit provider-native payloads across the public boundary.
 | `Rithmic` | Rithmic provider |
 | `Cqg` | CQG provider |
 | `Binance` | Binance provider |
+
+### `AdapterQualityLevel`
+
+| Variant | Meaning |
+| --- | --- |
+| `Simulation` | Local deterministic adapter for tests, demos, and replay |
+| `Scaffold` | Build-time integration scaffold, not live-production complete |
+| `Functional` | Live-capable adapter that still requires operator validation |
+| `ProductionCandidate` | Candidate for production use with runbook, recovery, and metrics |
+
+Quality levels are descriptive and conservative. They are not a claim that an
+adapter is certified for a venue or suitable for live capital without user
+validation.
+
+### `AdapterDescriptor`
+
+| Field | Meaning |
+| --- | --- |
+| `provider` | `ProviderKind` used by `AdapterConfig` |
+| `provider_id` | Stable lowercase id used in JSON and diagnostics |
+| `display_name` | Human-readable provider name |
+| `feature` | Required Cargo feature, or `None` for always-available providers |
+| `compiled` | Whether this binary has the provider feature enabled |
+| `quality` | `AdapterQualityLevel` |
+| `supports_live` | Can connect to a live provider endpoint |
+| `supports_replay` | Suitable for deterministic local/replay flows |
+| `supports_trades` | Emits normalized trade events |
+| `supports_order_book` | Emits normalized book/depth events |
+| `supports_level2` | Supports level-2 depth updates |
+| `supports_reconnect` | Has reconnect behavior |
+| `supports_gap_recovery` | Has gap detection or recovery semantics |
+| `supports_polling` | Driven through the runtime poll contract |
+| `notes` | Operator-facing maturity or usage note |
 
 ## Configuration Types
 
@@ -121,6 +160,21 @@ Factory behavior:
 - If a feature is not enabled, `FeatureDisabled` is returned.
 - If required settings such as endpoint or credentials are missing, the factory
   returns `NotConfigured`.
+
+## Discovery Functions
+
+Use discovery before constructing adapters in dashboards, CLIs, bindings, or
+plugin hosts:
+
+| Function | Meaning |
+| --- | --- |
+| `adapter_descriptors()` | Lists all known providers, including feature-disabled providers |
+| `compiled_adapter_descriptors()` | Lists providers compiled into the current binary |
+| `describe_adapter(provider)` | Returns one descriptor |
+| `adapter_feature_enabled(provider)` | Checks whether `create_adapter` can attempt that provider |
+
+Discovery functions do not open sockets, validate credentials, create adapters,
+or mutate runtime state.
 
 ## `MockAdapter`
 

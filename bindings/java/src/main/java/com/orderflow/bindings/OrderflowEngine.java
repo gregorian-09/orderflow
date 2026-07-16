@@ -77,6 +77,18 @@ public final class OrderflowEngine implements AutoCloseable {
     }
 
     /**
+     * Returns market-data adapter inventory JSON for the native build.
+     *
+     * @param nativePath library path, or null/blank for default lookup
+     * @return JSON payload with known providers, feature gates, and capabilities
+     */
+    public static String adapterInventory(String nativePath) {
+        String libPath = nativePath == null || nativePath.isBlank() ? defaultLibraryPath() : nativePath;
+        OrderflowNative nativeLib = OrderflowNative.load(libPath);
+        return allocatedJson(nativeLib, null, "of_get_adapter_inventory_json");
+    }
+
+    /**
      * Starts engine processing.
      *
      * @throws OrderflowStateException if the runtime cannot start from current state
@@ -432,18 +444,26 @@ public final class OrderflowEngine implements AutoCloseable {
      */
     public String metricsJson() {
         requireEngine();
-        PointerByReference out = new PointerByReference();
-        IntByReference outLen = new IntByReference(0);
-        check(nativeLib.of_get_metrics_json(engine, out, outLen), "of_get_metrics_json");
-        Pointer p = out.getValue();
-        if (p == null) {
-            return "{}";
-        }
-        try {
-            return p.getString(0, StandardCharsets.UTF_8.name());
-        } finally {
-            nativeLib.of_string_free(p);
-        }
+        return allocatedJson(nativeLib, engine, "of_get_metrics_json");
+    }
+
+    /**
+     * Returns market-data adapter inventory JSON for the native build.
+     *
+     * @return JSON payload with known providers, feature gates, and capabilities
+     */
+    public String adapterInventory() {
+        return allocatedJson(nativeLib, null, "of_get_adapter_inventory_json");
+    }
+
+    /**
+     * Returns active adapter descriptor and health status as JSON.
+     *
+     * @return JSON payload for the engine's configured adapter
+     */
+    public String adapterStatus() {
+        requireEngine();
+        return allocatedJson(nativeLib, engine, "of_get_active_adapter_status_json");
     }
 
     /**
@@ -557,6 +577,31 @@ public final class OrderflowEngine implements AutoCloseable {
             throw new OrderflowStateException(fn + " failed with OF_ERR_STATE");
         }
         throw new OrderflowException(fn + " failed with error code " + rc);
+    }
+
+    private static String allocatedJson(OrderflowNative nativeLib, Pointer engine, String fn) {
+        PointerByReference out = new PointerByReference();
+        IntByReference outLen = new IntByReference(0);
+        int rc;
+        if ("of_get_metrics_json".equals(fn)) {
+            rc = nativeLib.of_get_metrics_json(engine, out, outLen);
+        } else if ("of_get_adapter_inventory_json".equals(fn)) {
+            rc = nativeLib.of_get_adapter_inventory_json(out, outLen);
+        } else if ("of_get_active_adapter_status_json".equals(fn)) {
+            rc = nativeLib.of_get_active_adapter_status_json(engine, out, outLen);
+        } else {
+            throw new OrderflowException("unknown allocated JSON function: " + fn);
+        }
+        check(rc, fn);
+        Pointer p = out.getValue();
+        if (p == null) {
+            return "{}";
+        }
+        try {
+            return p.getString(0, StandardCharsets.UTF_8.name());
+        } finally {
+            nativeLib.of_string_free(p);
+        }
     }
 
     private void requireEngine() {

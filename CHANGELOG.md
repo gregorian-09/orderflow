@@ -96,6 +96,14 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `OrderflowExecutionEngine.inspectCheckpointStore` expose offline checkpoint
   validation and latest-valid-checkpoint metadata without mutating checkpoint
   stores.
+- Additive market-data adapter discovery APIs across Rust, C ABI, Python, and
+  Java: `AdapterDescriptor`, `adapter_descriptors()`,
+  `compiled_adapter_descriptors()`, runtime adapter inventory/status JSON,
+  `of_get_adapter_inventory_json`, `of_get_active_adapter_status_json`,
+  `available_adapters()`, `adapter_inventory()`, and Java
+  `OrderflowEngine.adapterInventory()` / `adapterStatus()` expose provider
+  capabilities, feature gates, quality level, and active health without
+  changing adapter polling or ingest behavior.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

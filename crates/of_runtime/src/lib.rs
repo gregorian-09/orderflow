@@ -8,7 +8,8 @@ pub use config::{
     ConfigCompatibilityMode, ConfigLoadReport,
 };
 pub use engine::{
-    build_default_engine, DefaultEngine, Engine, EngineConfig, ExternalFeedPolicy, RuntimeError,
+    adapter_inventory_json, build_default_engine, DefaultEngine, Engine, EngineConfig,
+    ExternalFeedPolicy, RuntimeAdapterStatus, RuntimeError,
 };
 
 #[cfg(test)]

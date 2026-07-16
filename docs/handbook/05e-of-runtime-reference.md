@@ -10,6 +10,7 @@ signals, book state, persistence, health reporting, and external ingest flows.
 | `EngineConfig` | struct | Runtime control-plane configuration |
 | `RuntimeError` | enum | Runtime error contract |
 | `ExternalFeedPolicy` | struct | External ingest supervision rules |
+| `RuntimeAdapterStatus` | struct | Active adapter descriptor plus health snapshot |
 | `Engine<A, S>` | struct | Generic runtime |
 | `DefaultEngine` | type alias | Runtime with boxed adapter and default signal |
 | `ConfigCompatibilityMode` | enum | Config loader compatibility state |
@@ -18,6 +19,7 @@ signals, book state, persistence, health reporting, and external ingest flows.
 | `load_engine_config_from_path` | fn | Loads config only |
 | `load_engine_config_report_from_path` | fn | Loads config plus compatibility report |
 | `validate_startup_config` | fn | Validates config and env prerequisites |
+| `adapter_inventory_json` | fn | Lists known adapter descriptors for this build |
 
 ## Configuration Types
 
@@ -85,6 +87,7 @@ signals, book state, persistence, health reporting, and external ingest flows.
 | `load_engine_config_from_path(path)` | `Result<EngineConfig, RuntimeError>` | Loads config file only |
 | `load_engine_config_report_from_path(path)` | `Result<ConfigLoadReport, RuntimeError>` | Loads config plus compatibility diagnostics |
 | `validate_startup_config(cfg)` | `Result<(), RuntimeError>` | Validates startup config and env vars |
+| `adapter_inventory_json()` | `String` | Lists known adapter descriptors for this build |
 
 ## `Engine<A, S>`
 
@@ -136,6 +139,10 @@ signals, book state, persistence, health reporting, and external ingest flows.
 
 | Method | Returns | Meaning |
 | --- | --- | --- |
+| `adapter_descriptor()` | `AdapterDescriptor` | Static descriptor for configured provider |
+| `adapter_status()` | `RuntimeAdapterStatus` | Active adapter descriptor and health |
+| `adapter_inventory_json()` | `String` | Adapter descriptor inventory with active marker |
+| `active_adapter_status_json()` | `String` | Active adapter status JSON |
 | `metrics_json()` | `String` | Counter-oriented metrics JSON |
 | `health_seq()` | `u64` | Monotonic health-change sequence |
 | `health_json()` | `String` | Operational health JSON |
@@ -175,6 +182,10 @@ Important rules:
 
 - `health_json()` is the user-facing operational snapshot.
 - `metrics_json()` is the counter-focused operational snapshot.
+- `adapter_inventory_json()` is the build/provider catalog used by dashboards,
+  bindings, and CLIs before attempting provider-specific configuration.
+- `active_adapter_status_json()` combines static descriptor fields with current
+  adapter health, `health_seq`, and circuit-breaker state.
 - JSON field names are treated as stable once published.
 - New fields are added additively rather than replacing existing fields.
 - Aggregate fields such as `adapter_total_count`, `adapter_healthy_count`, and

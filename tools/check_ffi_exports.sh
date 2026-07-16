@@ -101,6 +101,8 @@ of_get_options_flow_snapshot
   of_get_interval_candle_snapshot
   of_get_signal_snapshot
   of_get_metrics_json
+  of_get_adapter_inventory_json
+  of_get_active_adapter_status_json
   of_string_free
   of_engine_poll_once
   of_engine_set_tickbar_interval   # requires feature "tickbar"
