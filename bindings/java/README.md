@@ -47,6 +47,8 @@ Highlights:
   opening an execution engine
 - adapter inventory/status helpers for provider capability discovery before
   connecting a feed
+- signal descriptor discovery through `OrderflowEngine.signalDescriptors(...)`
+  and `engine.signalDescriptors()` for dashboard/configuration inventory
 - native C ABI inventory validation through `bindings/api_manifest.toml` so
   future JNA declarations can be checked against `orderflow.h`
 - analytics-to-execution examples in this README and the handbook
@@ -101,6 +103,17 @@ not replace the hand-written Java classes, `AutoCloseable` lifecycle, typed
 request/event objects, or JNA ownership rules. New public Java conveniences
 should remain idiomatic, while repetitive native declarations can move toward
 manifest-backed generation.
+
+### Signal descriptor discovery
+
+```java
+String inventory = OrderflowEngine.signalDescriptors(null);
+System.out.println(inventory);
+```
+
+The descriptor inventory is read-only metadata. It helps dashboards and config
+tools list built-in signals, required inputs, warmup, parameters, and output
+semantics without constructing a live strategy or submitting orders.
 
 ## Java Version
 

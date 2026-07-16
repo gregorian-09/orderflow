@@ -198,6 +198,16 @@ def available_adapters(library_path: Optional[str] = None) -> list[Dict[str, Any
     return adapters if isinstance(adapters, list) else []
 
 
+def signal_descriptors(library_path: Optional[str] = None) -> Dict[str, Any]:
+    """Returns built-in signal descriptor metadata from the native build."""
+    ffi = OrderflowLib(library_path=library_path)
+    return _allocated_json_call(
+        ffi,
+        "of_get_signal_descriptors_json",
+        ffi.lib.of_get_signal_descriptors_json,
+    )
+
+
 @dataclass(frozen=True)
 class Symbol:
     """Symbol descriptor used by subscriptions, snapshots, and ingest calls."""
@@ -1392,6 +1402,15 @@ class Engine:
             lambda out, out_len: self._ffi.lib.of_get_active_adapter_status_json(
                 self._engine, out, out_len
             ),
+        )
+
+    def signal_descriptors(self) -> Dict[str, Any]:
+        """Returns built-in signal descriptor metadata from this native library."""
+        self._require_handle()
+        return _allocated_json_call(
+            self._ffi,
+            "of_get_signal_descriptors_json",
+            self._ffi.lib.of_get_signal_descriptors_json,
         )
 
     def _snapshot_call(self, fn, symbol: Symbol, *extra_args) -> Dict[str, Any]:

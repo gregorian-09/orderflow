@@ -518,6 +518,18 @@ mod tests {
     }
 
     #[test]
+    fn signal_descriptor_inventory_json_lists_built_ins() {
+        let inventory = signal_descriptor_inventory_json();
+        assert!(inventory.contains("\"schema_version\":1"));
+        assert!(inventory.contains("\"signals\":["));
+        assert!(inventory.contains("\"id\":\"delta_momentum_v1\""));
+        assert!(inventory.contains("\"output_semantics\":\"directional_bias\""));
+
+        let engine = build_default_engine(EngineConfig::default()).expect("build should work");
+        assert_eq!(engine.signal_descriptor_inventory_json(), inventory);
+    }
+
+    #[test]
     fn health_and_metrics_include_additive_observability_fields() {
         let symbol = SymbolId {
             venue: "CME".to_string(),

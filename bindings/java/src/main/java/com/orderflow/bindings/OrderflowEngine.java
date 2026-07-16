@@ -89,6 +89,18 @@ public final class OrderflowEngine implements AutoCloseable {
     }
 
     /**
+     * Returns built-in signal descriptor inventory JSON for the native build.
+     *
+     * @param nativePath library path, or null/blank for default lookup
+     * @return JSON payload with built-in signal metadata and requirements
+     */
+    public static String signalDescriptors(String nativePath) {
+        String libPath = nativePath == null || nativePath.isBlank() ? defaultLibraryPath() : nativePath;
+        OrderflowNative nativeLib = OrderflowNative.load(libPath);
+        return allocatedJson(nativeLib, null, "of_get_signal_descriptors_json");
+    }
+
+    /**
      * Starts engine processing.
      *
      * @throws OrderflowStateException if the runtime cannot start from current state
@@ -467,6 +479,15 @@ public final class OrderflowEngine implements AutoCloseable {
     }
 
     /**
+     * Returns built-in signal descriptor inventory JSON for this native library.
+     *
+     * @return JSON payload with built-in signal metadata and requirements
+     */
+    public String signalDescriptors() {
+        return allocatedJson(nativeLib, null, "of_get_signal_descriptors_json");
+    }
+
+    /**
      * Unsubscribes active subscriptions and destroys native engine handle.
      *
      * <p>Safe to call multiple times; subsequent calls are no-ops.
@@ -589,6 +610,8 @@ public final class OrderflowEngine implements AutoCloseable {
             rc = nativeLib.of_get_adapter_inventory_json(out, outLen);
         } else if ("of_get_active_adapter_status_json".equals(fn)) {
             rc = nativeLib.of_get_active_adapter_status_json(engine, out, outLen);
+        } else if ("of_get_signal_descriptors_json".equals(fn)) {
+            rc = nativeLib.of_get_signal_descriptors_json(out, outLen);
         } else {
             throw new OrderflowException("unknown allocated JSON function: " + fn);
         }

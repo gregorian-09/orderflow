@@ -391,6 +391,7 @@ Public runtime methods:
 - `adapter_status() -> RuntimeAdapterStatus`
 - `adapter_inventory_json() -> String`
 - `active_adapter_status_json() -> String`
+- `signal_descriptor_inventory_json() -> String`
 - `metrics_json() -> String`
 - `health_seq() -> u64`
 - `health_json() -> String`
@@ -651,6 +652,7 @@ Snapshots and metrics:
 - `of_get_metrics_json(...)`
 - `of_get_adapter_inventory_json(...)`
 - `of_get_active_adapter_status_json(...)`
+- `of_get_signal_descriptors_json(...)`
 - `of_string_free(...)`
 
 ### Stream Kind IDs
@@ -679,9 +681,10 @@ Used in `of_subscribe(..., kind, ...)` and callback payloads:
   - `ts_exchange_ns`
   - `ts_recv_ns`
 - `of_get_analytics_snapshot(...)`, `of_get_derived_analytics_snapshot(...)`, `of_get_session_candle_snapshot(...)`, `of_get_interval_candle_snapshot(...)`, and `of_get_signal_snapshot(...)` return populated JSON when data exists.
-- `of_get_metrics_json(...)`, `of_get_adapter_inventory_json(...)`, and
-  `of_get_active_adapter_status_json(...)` allocate output strings; callers
-  must free them via `of_string_free(...)`.
+- `of_get_metrics_json(...)`, `of_get_adapter_inventory_json(...)`,
+  `of_get_active_adapter_status_json(...)`, and
+  `of_get_signal_descriptors_json(...)` allocate output strings; callers must
+  free them via `of_string_free(...)`.
 - Snapshot functions report the required byte size via `inout_len`; callers should retry with a larger buffer when they receive `OF_ERR_INVALID_ARG`.
 
 ---
@@ -725,8 +728,10 @@ Used in `of_subscribe(..., kind, ...)` and callback payloads:
 - `metrics() -> dict`
 - `adapter_inventory(library_path=None) -> dict`
 - `available_adapters(library_path=None) -> list[dict]`
+- `signal_descriptors(library_path=None) -> dict`
 - `Engine.adapter_inventory() -> dict`
 - `Engine.adapter_status() -> dict`
+- `Engine.signal_descriptors() -> dict`
 
 Context manager support:
 
@@ -779,6 +784,8 @@ Context manager support:
 - `adapterInventory(String nativePath)`
 - `adapterInventory()`
 - `adapterStatus()`
+- `signalDescriptors(String nativePath)`
+- `signalDescriptors()`
 - `close()`
 
 ---

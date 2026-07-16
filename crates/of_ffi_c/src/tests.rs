@@ -1059,7 +1059,7 @@ mod tests {
     }
 
     #[test]
-    fn adapter_inventory_and_status_json_are_allocated() {
+    fn inventory_status_and_signal_descriptor_json_are_allocated() {
         let _guard = test_guard();
 
         let mut inventory_out: *const c_char = ptr::null();
@@ -1082,6 +1082,27 @@ mod tests {
         assert!(inventory.contains("\"provider_id\":\"mock\""));
         assert!(inventory.contains("\"total_count\":4"));
         of_string_free(inventory_out);
+
+        let mut signals_out: *const c_char = ptr::null();
+        let mut signals_len = 0u32;
+        assert_eq!(
+            of_get_signal_descriptors_json(
+                &mut signals_out as *mut *const c_char,
+                &mut signals_len as *mut u32,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        let signals = unsafe {
+            String::from_utf8_lossy(std::slice::from_raw_parts(
+                signals_out.cast::<u8>(),
+                signals_len as usize,
+            ))
+            .to_string()
+        };
+        assert!(signals.contains("\"schema_version\":1"));
+        assert!(signals.contains("\"signals\":["));
+        assert!(signals.contains("\"id\":\"delta_momentum_v1\""));
+        of_string_free(signals_out);
 
         let cfg = of_engine_config_t {
             instance_id: ptr::null(),

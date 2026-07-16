@@ -77,6 +77,7 @@ Public top-level functions:
 - [`load_engine_config_report_from_path`]
 - [`validate_startup_config`]
 - [`adapter_inventory_json`]
+- [`signal_descriptor_inventory_json`]
 
 Public `ConfigLoadReport` method:
 
@@ -107,6 +108,7 @@ Public `Engine<A, S>` methods:
 - [`Engine::adapter_status`]
 - [`Engine::adapter_inventory_json`]
 - [`Engine::active_adapter_status_json`]
+- [`Engine::signal_descriptor_inventory_json`]
 - [`Engine::metrics_json`]
 - [`Engine::health_seq`]
 - [`Engine::health_json`]
@@ -189,6 +191,9 @@ Return behavior:
   the configured provider marked active.
 - [`Engine::active_adapter_status_json`] returns the configured adapter
   descriptor, current health, health sequence, and circuit-breaker state.
+- [`signal_descriptor_inventory_json`] and
+  [`Engine::signal_descriptor_inventory_json`] expose built-in signal metadata
+  as read-only JSON for dashboards, config tools, and bindings.
 - [`Engine::adapter_status`] returns the typed Rust form for hosts that do not
   need JSON.
 - [`Engine::current_quality_flags_bits`] exposes the current runtime quality bitset directly for low-allocation callers.

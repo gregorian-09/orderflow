@@ -40,6 +40,8 @@ Highlights:
   opening an execution engine
 - adapter inventory/status helpers for provider capability discovery before
   connecting a feed
+- signal descriptor discovery through `signal_descriptors()` and
+  `Engine.signal_descriptors()` for dashboard/configuration inventory
 - native C ABI inventory validation through `bindings/api_manifest.toml` so
   future low-level `ctypes` declarations can be checked against `orderflow.h`
 - analytics-to-execution examples in this README and the handbook
@@ -94,6 +96,20 @@ not replace the hand-written `Engine`, `ExecutionEngine`, and
 `ConcurrentExecutionEngine` wrappers. New public Python conveniences should
 remain ergonomic and typed, while repetitive native declarations can move toward
 manifest-backed generation.
+
+### Signal descriptor discovery
+
+```python
+from orderflow import signal_descriptors
+
+inventory = signal_descriptors()
+for descriptor in inventory.get("signals", []):
+    print(descriptor["id"], descriptor["required_inputs"], descriptor["output_semantics"])
+```
+
+The descriptor inventory is read-only metadata. It helps dashboards and config
+tools list built-in signals, required inputs, warmup, parameters, and output
+semantics without constructing a live strategy or submitting orders.
 
 ## Architecture
 

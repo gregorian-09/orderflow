@@ -162,6 +162,15 @@ functions = [
 ]
 
 [[function_groups]]
+family = "signals"
+returns = "int32_t"
+ownership = "library_allocated_string"
+introduced = "0.4.0"
+functions = [
+  "of_get_signal_descriptors_json",
+]
+
+[[function_groups]]
 family = "runtime"
 returns = "void"
 ownership = "releases_library_allocated_string"

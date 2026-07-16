@@ -165,6 +165,8 @@ public interface OrderflowNative extends Library {
     int of_get_adapter_inventory_json(PointerByReference outJson, IntByReference outLen);
     /** Returns active adapter status JSON pointer and length. */
     int of_get_active_adapter_status_json(Pointer engine, PointerByReference outJson, IntByReference outLen);
+    /** Returns built-in signal descriptor JSON pointer and length. */
+    int of_get_signal_descriptors_json(PointerByReference outJson, IntByReference outLen);
     /** Frees strings allocated by native library. */
     void of_string_free(Pointer p);
 }

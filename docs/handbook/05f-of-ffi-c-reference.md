@@ -216,6 +216,7 @@ functions.
 | `of_get_metrics_json(engine, out_json, out_len)` | `int32_t` | Allocates and returns metrics JSON |
 | `of_get_adapter_inventory_json(out_json, out_len)` | `int32_t` | Allocates and returns adapter inventory JSON |
 | `of_get_active_adapter_status_json(engine, out_json, out_len)` | `int32_t` | Allocates and returns active adapter status JSON |
+| `of_get_signal_descriptors_json(out_json, out_len)` | `int32_t` | Allocates and returns built-in signal descriptor JSON |
 | `of_string_free(p)` | `void` | Releases strings owned by library |
 
 ## Buffer and Ownership Rules
@@ -224,9 +225,10 @@ functions.
 - `inout_len` is both input capacity and output required size.
 - If a snapshot buffer is too small, the function returns `OF_ERR_INVALID_ARG`
   and writes the required byte size back into `inout_len`.
-- `of_get_metrics_json`, `of_get_adapter_inventory_json`, and
-  `of_get_active_adapter_status_json` allocate returned strings; callers must
-  free them with `of_string_free`.
+- `of_get_metrics_json`, `of_get_adapter_inventory_json`,
+  `of_get_active_adapter_status_json`, and
+  `of_get_signal_descriptors_json` allocate returned strings; callers must free
+  them with `of_string_free`.
 - Callback payload pointers are valid only for the duration of the callback.
 
 ## Payload Compatibility Rules

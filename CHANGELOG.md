@@ -108,6 +108,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `tools/check_api_manifest.py`, and manifest-driven C ABI export checks so
   exported native symbols and `orderflow.h` declarations stay synchronized
   before low-level Python/JNA generation is expanded.
+- Additive signal descriptor discovery bridge across runtime, C ABI, Python,
+  and Java: `signal_descriptor_inventory_json()`,
+  `of_get_signal_descriptors_json`, Python `signal_descriptors()`, and Java
+  `OrderflowEngine.signalDescriptors()` expose built-in signal metadata without
+  changing signal evaluation or OMS routing behavior.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

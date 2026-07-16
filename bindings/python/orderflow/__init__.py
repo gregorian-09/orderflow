@@ -61,6 +61,7 @@ from .api import (
     inspect_execution_checkpoint_store,
     inspect_execution_segmented_wal,
     inspect_execution_wal,
+    signal_descriptors,
 )
 
 __all__ = [
@@ -101,4 +102,5 @@ __all__ = [
     "inspect_execution_checkpoint_store",
     "inspect_execution_segmented_wal",
     "inspect_execution_wal",
+    "signal_descriptors",
 ]

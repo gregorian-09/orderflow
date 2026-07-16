@@ -506,6 +506,12 @@ pub fn adapter_inventory_json() -> String {
     format_adapter_inventory_json(None)
 }
 
+/// Returns built-in signal descriptors as compact JSON.
+pub fn signal_descriptor_inventory_json() -> String {
+    let signals = of_signals::built_in_signal_descriptors_json();
+    format!("{{\"schema_version\":1,\"signals\":{signals}}}")
+}
+
 impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
     /// Creates an engine with explicit adapter and signal module.
     pub fn new(cfg: EngineConfig, adapter: A, signal_module: S) -> Self {
@@ -1264,6 +1270,11 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
     /// Returns active adapter status as compact JSON.
     pub fn active_adapter_status_json(&self) -> String {
         format_adapter_status_json(&self.adapter_status())
+    }
+
+    /// Returns built-in signal descriptors as compact JSON.
+    pub fn signal_descriptor_inventory_json(&self) -> String {
+        signal_descriptor_inventory_json()
     }
 
     /// Returns runtime metrics as compact JSON payload.

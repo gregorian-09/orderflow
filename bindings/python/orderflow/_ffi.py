@@ -836,6 +836,12 @@ class OrderflowLib:
         ]
         lib.of_get_active_adapter_status_json.restype = c_int32
 
+        lib.of_get_signal_descriptors_json.argtypes = [
+            ctypes.POINTER(c_char_p),
+            ctypes.POINTER(c_uint32),
+        ]
+        lib.of_get_signal_descriptors_json.restype = c_int32
+
         lib.of_compute_lob_features.argtypes = [
             c_void_p,
             ctypes.POINTER(OfSymbol),
