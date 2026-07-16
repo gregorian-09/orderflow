@@ -37,6 +37,11 @@ foundation for lower-latency production capture paths.
 | `MarketDataRecoveryInput` | struct | Checkpoint and WAL integrity inputs |
 | `MarketDataRecoveryPlan` | struct | Deterministic recovery decision |
 | `plan_market_data_recovery` | function | Builds a recovery plan from policy and inputs |
+| `MarketDataColdExportFormat` | enum | Cold research export format vocabulary |
+| `MarketDataJsonlExportConfig` | struct | JSONL export root and sync policy |
+| `MarketDataColdExportPartition` | struct | One exported partition summary |
+| `MarketDataColdExportManifest` | struct | Total export manifest |
+| `FileMarketDataJsonlExportWriter` | struct | Dependency-free JSONL cold-export writer |
 | `MarketDataPersistenceMode` | enum | Production writer mode vocabulary |
 | `MarketDataPersistenceFailureAction` | enum | Host action when persistence degrades |
 | `MarketDataPersistencePolicy` | struct | Production persistence policy |
@@ -207,6 +212,47 @@ All bounds are inclusive.
 
 Filtered replay still scans and validates frames in deterministic file order.
 Only matching payloads are materialized into the caller-provided vector.
+
+## Cold JSONL Export
+
+`FileMarketDataJsonlExportWriter` exports decoded WAL records to a research
+friendly JSONL partition without adding columnar-format dependencies to the
+persistence hot path.
+
+### Configuration and writer
+
+| Method | Returns | Meaning |
+| --- | --- | --- |
+| `MarketDataJsonlExportConfig::new(root)` | `MarketDataJsonlExportConfig` | Creates export config rooted at `root` |
+| `with_sync_on_write(bool)` | `MarketDataJsonlExportConfig` | Enables or disables `sync_data` after export |
+| `root()` | `&Path` | Returns the export root |
+| `sync_on_write()` | `bool` | Returns the sync policy |
+| `FileMarketDataJsonlExportWriter::open(config)` | `PersistResult<FileMarketDataJsonlExportWriter>` | Creates or opens the export root |
+| `config()` | `&MarketDataJsonlExportConfig` | Returns the writer config |
+| `export_records(venue, symbol, stream, records)` | `PersistResult<MarketDataColdExportPartition>` | Exports caller-provided decoded WAL records |
+| `export_wal(venue, symbol, stream, wal, filter)` | `PersistResult<MarketDataColdExportPartition>` | Replays matching WAL records and exports them |
+
+### Partition manifest
+
+| Field | Meaning |
+| --- | --- |
+| `format` | Export format, currently JSONL for the built-in writer |
+| `venue`, `symbol`, `stream` | Partition identity |
+| `path` | Exported file path |
+| `records` | Number of exported records |
+| `bytes` | Bytes written |
+| `first_sequence`, `last_sequence` | Exported WAL sequence range |
+| `first_ts_exchange_ns`, `last_ts_exchange_ns` | Exported exchange timestamp range |
+| `checksum` | FNV-style checksum over exported bytes |
+
+### JSONL row contract
+
+Each exported row includes schema version, venue, symbol, stream, record kind,
+WAL sequence, provider sequence, normalized event sequence, exchange timestamp,
+receive timestamp, and raw payload bytes as lowercase hex.
+
+`MarketDataColdExportFormat` also names CSV, Parquet, Arrow, and custom formats
+so future exporters can share the same partition and manifest semantics.
 
 ## `FileMarketDataCheckpointStore`
 

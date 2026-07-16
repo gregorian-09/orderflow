@@ -1419,6 +1419,276 @@ fn impossible_recovery_plan(
     }
 }
 
+/// Cold export file format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum MarketDataColdExportFormat {
+    /// Newline-delimited JSON.
+    #[default]
+    JsonLines,
+    /// Comma-separated values.
+    Csv,
+    /// Apache Parquet.
+    Parquet,
+    /// Apache Arrow/Feather.
+    Arrow,
+    /// User-defined export format.
+    Custom,
+}
+
+/// Configuration for [`FileMarketDataJsonlExportWriter`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct MarketDataJsonlExportConfig {
+    root: PathBuf,
+    sync_on_write: bool,
+}
+
+impl MarketDataJsonlExportConfig {
+    /// Creates JSONL export config rooted at `root`.
+    pub fn new(root: impl AsRef<Path>) -> Self {
+        Self {
+            root: root.as_ref().to_path_buf(),
+            sync_on_write: false,
+        }
+    }
+
+    /// Sets whether exported files call `sync_data`.
+    pub const fn with_sync_on_write(mut self, sync_on_write: bool) -> Self {
+        self.sync_on_write = sync_on_write;
+        self
+    }
+
+    /// Returns the configured export root.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Returns whether exported files call `sync_data`.
+    pub const fn sync_on_write(&self) -> bool {
+        self.sync_on_write
+    }
+}
+
+/// Metadata for one cold-export partition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MarketDataColdExportPartition {
+    /// Export file format.
+    pub format: MarketDataColdExportFormat,
+    /// Venue name.
+    pub venue: String,
+    /// Symbol name.
+    pub symbol: String,
+    /// Stream name.
+    pub stream: String,
+    /// Export file path.
+    pub path: PathBuf,
+    /// Number of records exported.
+    pub records: u64,
+    /// Number of bytes written.
+    pub bytes: u64,
+    /// First WAL sequence exported.
+    pub first_sequence: Option<MarketDataWalSequence>,
+    /// Last WAL sequence exported.
+    pub last_sequence: Option<MarketDataWalSequence>,
+    /// First exchange timestamp exported.
+    pub first_ts_exchange_ns: Option<u64>,
+    /// Last exchange timestamp exported.
+    pub last_ts_exchange_ns: Option<u64>,
+    /// Checksum over exported bytes.
+    pub checksum: u32,
+}
+
+/// Manifest for a cold-export operation.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct MarketDataColdExportManifest {
+    /// Export file format.
+    pub format: MarketDataColdExportFormat,
+    /// Exported partitions.
+    pub partitions: Vec<MarketDataColdExportPartition>,
+    /// Total records exported.
+    pub total_records: u64,
+    /// Total bytes written.
+    pub total_bytes: u64,
+}
+
+impl MarketDataColdExportManifest {
+    /// Creates a manifest from exported partitions.
+    pub fn from_partitions(
+        format: MarketDataColdExportFormat,
+        partitions: Vec<MarketDataColdExportPartition>,
+    ) -> Self {
+        let total_records = partitions.iter().map(|partition| partition.records).sum();
+        let total_bytes = partitions.iter().map(|partition| partition.bytes).sum();
+        Self {
+            format,
+            partitions,
+            total_records,
+            total_bytes,
+        }
+    }
+}
+
+/// File-backed JSONL cold-export writer for decoded market-data WAL records.
+#[derive(Debug, Clone)]
+pub struct FileMarketDataJsonlExportWriter {
+    config: MarketDataJsonlExportConfig,
+}
+
+impl FileMarketDataJsonlExportWriter {
+    /// Opens or creates a JSONL export writer root.
+    pub fn open(config: MarketDataJsonlExportConfig) -> PersistResult<Self> {
+        create_dir_all(&config.root)?;
+        Ok(Self { config })
+    }
+
+    /// Returns the export writer configuration.
+    pub const fn config(&self) -> &MarketDataJsonlExportConfig {
+        &self.config
+    }
+
+    /// Exports decoded records into one JSONL partition.
+    pub fn export_records(
+        &self,
+        venue: &str,
+        symbol: &str,
+        stream: &str,
+        records: &[MarketDataWalRecord],
+    ) -> PersistResult<MarketDataColdExportPartition> {
+        let dir = self.config.root.join(venue).join(symbol);
+        create_dir_all(&dir)?;
+        let path = dir.join(cold_export_file_name(stream, records));
+        let mut file = File::create(&path)?;
+        let mut partition = MarketDataColdExportPartition {
+            format: MarketDataColdExportFormat::JsonLines,
+            venue: venue.to_owned(),
+            symbol: symbol.to_owned(),
+            stream: stream.to_owned(),
+            path,
+            records: 0,
+            bytes: 0,
+            first_sequence: None,
+            last_sequence: None,
+            first_ts_exchange_ns: None,
+            last_ts_exchange_ns: None,
+            checksum: 0x811c9dc5_u32,
+        };
+        for record in records {
+            let line = format_cold_export_record(venue, symbol, stream, record);
+            file.write_all(line.as_bytes())?;
+            partition.checksum = update_fnv1a(partition.checksum, line.as_bytes());
+            partition.bytes = partition.bytes.saturating_add(line.len() as u64);
+            partition.records = partition.records.saturating_add(1);
+            partition.first_sequence.get_or_insert(record.sequence);
+            partition.last_sequence = Some(record.sequence);
+            partition
+                .first_ts_exchange_ns
+                .get_or_insert(record.ts_exchange_ns);
+            partition.last_ts_exchange_ns = Some(record.ts_exchange_ns);
+        }
+        if self.config.sync_on_write {
+            file.sync_data()?;
+        }
+        Ok(partition)
+    }
+
+    /// Replays matching WAL records and exports them into one JSONL partition.
+    pub fn export_wal(
+        &self,
+        venue: &str,
+        symbol: &str,
+        stream: &str,
+        wal: &MarketDataWal,
+        filter: MarketDataWalReplayFilter,
+    ) -> PersistResult<MarketDataColdExportPartition> {
+        let mut records = Vec::new();
+        wal.replay_filtered(filter, &mut records)?;
+        self.export_records(venue, symbol, stream, &records)
+    }
+}
+
+fn cold_export_file_name(stream: &str, records: &[MarketDataWalRecord]) -> String {
+    let escaped_stream = path_component(stream);
+    match (records.first(), records.last()) {
+        (Some(first), Some(last)) => {
+            format!(
+                "{}-{:020}-{:020}.jsonl",
+                escaped_stream, first.sequence.0, last.sequence.0
+            )
+        }
+        _ => format!("{}-empty-{}.jsonl", escaped_stream, current_unix_nanos()),
+    }
+}
+
+fn format_cold_export_record(
+    venue: &str,
+    symbol: &str,
+    stream: &str,
+    record: &MarketDataWalRecord,
+) -> String {
+    format!(
+        "{{\"schema\":1,\"venue\":\"{}\",\"symbol\":\"{}\",\"stream\":\"{}\",\"kind\":\"{}\",\"wal_sequence\":{},\"provider_sequence\":{},\"event_sequence\":{},\"ts_exchange_ns\":{},\"ts_recv_ns\":{},\"payload_hex\":\"{}\"}}\n",
+        escape_json(venue),
+        escape_json(symbol),
+        escape_json(stream),
+        market_data_wal_record_kind_name(record.kind),
+        record.sequence.0,
+        record.provider_sequence,
+        record.event_sequence,
+        record.ts_exchange_ns,
+        record.ts_recv_ns,
+        bytes_to_hex(&record.payload)
+    )
+}
+
+fn market_data_wal_record_kind_name(kind: MarketDataWalRecordKind) -> &'static str {
+    match kind {
+        MarketDataWalRecordKind::BookUpdate => "BookUpdate",
+        MarketDataWalRecordKind::TradePrint => "TradePrint",
+        MarketDataWalRecordKind::Heartbeat => "Heartbeat",
+        MarketDataWalRecordKind::GapMarker => "GapMarker",
+        MarketDataWalRecordKind::SegmentSeal => "SegmentSeal",
+    }
+}
+
+fn path_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' => ch,
+            _ => '_',
+        })
+        .collect()
+}
+
+fn escape_json(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if ch.is_control() => out.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch => out.push(ch),
+        }
+    }
+    out
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len().saturating_mul(2));
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
 #[derive(Debug, Clone, Copy)]
 struct MarketDataCheckpointFrameInput<'a> {
     id: MarketDataCheckpointId,
@@ -2127,6 +2397,14 @@ fn market_data_wal_checksum(frame: &[u8]) -> u32 {
 
 fn range_contains<T: Ord + Copy>(from: Option<T>, to: Option<T>, value: T) -> bool {
     from.is_none_or(|from| value >= from) && to.is_none_or(|to| value <= to)
+}
+
+fn update_fnv1a(mut hash: u32, bytes: &[u8]) -> u32 {
+    for byte in bytes {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x01000193);
+    }
+    hash
 }
 
 fn read_u16(bytes: &[u8]) -> u16 {
@@ -3158,6 +3436,86 @@ mod tests {
         assert_eq!(replay.records, 1);
         assert_eq!(records[0].provider_sequence, 21);
         assert_eq!(records[0].ts_recv_ns, 6_100);
+    }
+
+    #[test]
+    fn market_data_jsonl_export_writer_exports_records() {
+        let root = temp_dir("persist_market_data_jsonl_export");
+        let writer = FileMarketDataJsonlExportWriter::open(MarketDataJsonlExportConfig::new(&root))
+            .expect("open export writer");
+        let records = vec![
+            MarketDataWalRecord {
+                sequence: MarketDataWalSequence(1),
+                kind: MarketDataWalRecordKind::TradePrint,
+                provider_sequence: 10,
+                event_sequence: 100,
+                ts_exchange_ns: 1_000,
+                ts_recv_ns: 2_000,
+                payload: b"trade".to_vec(),
+            },
+            MarketDataWalRecord {
+                sequence: MarketDataWalSequence(2),
+                kind: MarketDataWalRecordKind::BookUpdate,
+                provider_sequence: 11,
+                event_sequence: 101,
+                ts_exchange_ns: 1_100,
+                ts_recv_ns: 2_100,
+                payload: b"book".to_vec(),
+            },
+        ];
+
+        let partition = writer
+            .export_records("CME", "ESZ6", "market-data", &records)
+            .expect("export records");
+        let manifest = MarketDataColdExportManifest::from_partitions(
+            MarketDataColdExportFormat::JsonLines,
+            vec![partition.clone()],
+        );
+        let exported = fs::read_to_string(&partition.path).expect("read export");
+
+        assert_eq!(partition.records, 2);
+        assert_eq!(partition.first_sequence, Some(MarketDataWalSequence(1)));
+        assert_eq!(partition.last_sequence, Some(MarketDataWalSequence(2)));
+        assert_eq!(partition.first_ts_exchange_ns, Some(1_000));
+        assert_eq!(partition.last_ts_exchange_ns, Some(1_100));
+        assert!(partition.bytes > 0);
+        assert_eq!(manifest.total_records, 2);
+        assert_eq!(manifest.total_bytes, partition.bytes);
+        assert!(exported.contains("\"kind\":\"TradePrint\""));
+        assert!(exported.contains("\"payload_hex\":\"7472616465\""));
+        assert!(exported.contains("\"payload_hex\":\"626f6f6b\""));
+    }
+
+    #[test]
+    fn market_data_jsonl_export_writer_exports_filtered_wal() {
+        let root = temp_dir("persist_market_data_jsonl_export_wal");
+        let wal_path = root.join("normalized.wal");
+        let export_root = root.join("cold");
+        let mut wal = MarketDataWal::open(MarketDataWalConfig::new(&wal_path)).expect("open wal");
+        wal.append_record(MarketDataWalRecordKind::TradePrint, 1, 10, 100, 200, b"t1")
+            .expect("append first");
+        wal.append_record(MarketDataWalRecordKind::BookUpdate, 2, 11, 101, 201, b"b1")
+            .expect("append second");
+
+        let writer =
+            FileMarketDataJsonlExportWriter::open(MarketDataJsonlExportConfig::new(&export_root))
+                .expect("open export writer");
+        let partition = writer
+            .export_wal(
+                "CME",
+                "NQZ6",
+                "trades",
+                &wal,
+                MarketDataWalReplayFilter::new()
+                    .with_kind(Some(MarketDataWalRecordKind::TradePrint)),
+            )
+            .expect("export wal");
+        let exported = fs::read_to_string(&partition.path).expect("read export");
+
+        assert_eq!(partition.records, 1);
+        assert_eq!(partition.first_sequence, Some(MarketDataWalSequence(1)));
+        assert!(exported.contains("\"kind\":\"TradePrint\""));
+        assert!(!exported.contains("\"kind\":\"BookUpdate\""));
     }
 
     #[test]

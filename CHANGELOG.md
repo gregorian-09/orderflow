@@ -51,6 +51,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added additive `of_persist` WAL replay filters for deterministic replay by
   WAL sequence, provider sequence, normalized event sequence, timestamps, and
   record kind.
+- Added additive `of_persist` JSONL cold-export helpers with partition
+  manifests, payload hex preservation, WAL replay filtering, and dependency-free
+  research export files.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

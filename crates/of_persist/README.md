@@ -33,6 +33,11 @@ production capture paths.
 - [`MarketDataRecoveryPolicy`] - fail-closed or replay-from-start recovery policy.
 - [`MarketDataRecoveryInput`] - checkpoint and WAL integrity inputs.
 - [`MarketDataRecoveryPlan`] - deterministic recovery decision.
+- [`MarketDataColdExportFormat`] - cold research export format vocabulary.
+- [`MarketDataJsonlExportConfig`] - JSONL export root and sync policy.
+- [`MarketDataColdExportPartition`] - one exported partition summary.
+- [`MarketDataColdExportManifest`] - total export manifest.
+- [`FileMarketDataJsonlExportWriter`] - dependency-free JSONL cold-export writer.
 - [`MarketDataPersistenceMode`] - production writer mode vocabulary.
 - [`MarketDataPersistenceFailureAction`] - host action when persistence degrades.
 - [`MarketDataPersistencePolicy`] - configured persistence mode and failure action.
@@ -76,6 +81,8 @@ What changes for persistence users:
 - WAL replay filters select records by WAL sequence, provider sequence,
   normalized event sequence, exchange/receive timestamp, and record kind while
   preserving existing unfiltered replay behavior;
+- JSONL cold-export helpers write decoded WAL records into partition files with
+  raw payload hex, sequence/timestamp metadata, checksums, and export manifests;
 - production deployments should keep market-data replay files and execution
   command/event journals correlated by strategy id, session id, and timestamp.
 
@@ -115,6 +122,11 @@ Public types:
 - [`MarketDataRecoveryPolicy`]
 - [`MarketDataRecoveryInput`]
 - [`MarketDataRecoveryPlan`]
+- [`MarketDataColdExportFormat`]
+- [`MarketDataJsonlExportConfig`]
+- [`MarketDataColdExportPartition`]
+- [`MarketDataColdExportManifest`]
+- [`FileMarketDataJsonlExportWriter`]
 - [`MarketDataPersistenceMode`]
 - [`MarketDataPersistenceFailureAction`]
 - [`MarketDataPersistencePolicy`]
@@ -192,6 +204,15 @@ Public methods:
 - [`MarketDataRecoveryInput::new`]
 - [`MarketDataRecoveryPlan::is_impossible`]
 - [`plan_market_data_recovery`]
+- [`MarketDataJsonlExportConfig::new`]
+- [`MarketDataJsonlExportConfig::with_sync_on_write`]
+- [`MarketDataJsonlExportConfig::root`]
+- [`MarketDataJsonlExportConfig::sync_on_write`]
+- [`MarketDataColdExportManifest::from_partitions`]
+- [`FileMarketDataJsonlExportWriter::open`]
+- [`FileMarketDataJsonlExportWriter::config`]
+- [`FileMarketDataJsonlExportWriter::export_records`]
+- [`FileMarketDataJsonlExportWriter::export_wal`]
 - [`MarketDataPersistencePolicy::disabled`]
 - [`MarketDataPersistencePolicy::inline_strict`]
 - [`MarketDataPersistencePolicy::bounded_async`]
@@ -330,6 +351,37 @@ The scanner still validates every complete frame in order and reports bytes
 consumed from the scan. Only matching records are pushed into the caller-owned
 output vector, which avoids retaining unrelated payloads during sequence- or
 time-bounded recovery and research workflows.
+
+## Cold JSONL Export
+
+[`FileMarketDataJsonlExportWriter`] provides the first cold research export path
+without adding Arrow or Parquet dependencies to the hot persistence crate. It
+exports decoded [`MarketDataWalRecord`] values to partition files under:
+
+`<root>/<venue>/<symbol>/<stream>-<first-seq>-<last-seq>.jsonl`
+
+Each JSONL row includes:
+
+- schema version,
+- venue, symbol, and stream,
+- record kind,
+- WAL, provider, and normalized event sequences,
+- exchange and receive timestamps,
+- raw payload bytes as lowercase hex.
+
+[`FileMarketDataJsonlExportWriter::export_records`] writes records already held
+by the caller. [`FileMarketDataJsonlExportWriter::export_wal`] combines
+[`MarketDataWal::replay_filtered`] with JSONL export for sequence/time/kind
+bounded cold-store jobs.
+
+[`MarketDataColdExportPartition`] records file path, format, record count,
+bytes written, first/last WAL sequence, first/last exchange timestamp, and a
+checksum over exported bytes. [`MarketDataColdExportManifest::from_partitions`]
+combines one or more partition summaries for batch jobs.
+
+[`MarketDataColdExportFormat`] includes JSONL, CSV, Parquet, Arrow, and custom
+variants so future exporters can share manifest semantics. This crate currently
+ships the dependency-free JSONL writer only.
 
 ## Market-Data Checkpoints
 
