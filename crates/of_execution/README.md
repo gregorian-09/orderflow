@@ -152,6 +152,13 @@ OMS helpers:
 - [`reconcile_allocations`]
 - [`DisconnectPolicy`]
 - [`RouteSafetyPolicy`]
+- [`SafetyCondition`]
+- [`SafetyPolicyAction`]
+- [`SafetyContext`]
+- [`SafetyPolicy`]
+- [`SafetyPolicyDecisionItem`]
+- [`SafetyPolicyDecision`]
+- [`evaluate_safety_policy`]
 - [`AdvancedRiskLimits`]
 - [`AdvancedRiskGate`]
 - [`Position`]
@@ -808,6 +815,19 @@ systems.
 
 [`RouteSafetyPolicy`] combines disconnect policy, kill switch state, and whether
 cancels are allowed while killed.
+
+[`SafetyPolicy`] provides a configurable fail-open/fail-closed matrix across
+production conditions such as stale market data, degraded persistence, degraded
+OMS WAL, checkpoint failure, adapter disconnect, drop-copy disconnect,
+reconciliation mismatch, unavailable risk, position ledger mismatch, and route
+health degradation.
+
+`SafetyPolicy::fail_closed()` is the default. It rejects new submissions for
+active conditions while preserving cancel flow. `SafetyPolicy::fail_open_degraded()`
+must be selected explicitly and records every active allowance in
+[`SafetyPolicyDecision::fail_open_count`]. [`evaluate_safety_policy`] returns
+whether submissions and cancels remain enabled, whether operator approval is
+required, and whether the decision is degraded.
 
 ### Advanced risk
 

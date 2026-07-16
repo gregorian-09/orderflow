@@ -27,6 +27,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added optional execution timestamp discipline helpers for source-tagged
   workflow traces, latency attribution, monotonic validation, and exchange/OMS
   clock-skew checks.
+- Added configurable execution safety policy helpers with conservative
+  fail-closed defaults, explicit degraded fail-open actions, operator approval
+  gating, and per-condition decision reports.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,
