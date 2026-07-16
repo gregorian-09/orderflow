@@ -188,7 +188,9 @@ Return behavior:
 - [`Engine::health_json`] is the user-facing operational snapshot and includes connectivity, degradation, quality flags, supervision metadata, and tracked symbol counts.
 - [`Engine::metrics_json`] is the counter-oriented metrics payload and includes processed event counts, quality flag detail, subsystem counts, and a low-cardinality `adapters` array with active adapter descriptor/health metadata.
 - [`adapter_inventory_json`] returns known adapter descriptors for the current
-  build without requiring an engine.
+  build without requiring an engine, including additive capability flags for
+  backpressure, raw capture, fixture replay, stale detection, and latency
+  metrics when a provider supports them.
 - [`Engine::adapter_inventory_json`] returns the same descriptor inventory with
   the configured provider marked active.
 - [`Engine::active_adapter_status_json`] returns the configured adapter

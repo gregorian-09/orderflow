@@ -71,6 +71,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   health counters.
 - Added Binance raw fixture replay through the live parser/normalizer path with
   deterministic receive timestamps for repeatable adapter tests.
+- Added adapter descriptor capability flags and inventory JSON fields for
+  backpressure, raw capture, fixture replay, stale detection, and latency
+  metrics.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

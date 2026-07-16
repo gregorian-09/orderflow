@@ -513,6 +513,11 @@ mod tests {
         assert!(inventory.contains("\"provider_id\":\"mock\""));
         assert!(inventory.contains("\"compiled_count\":"));
         assert!(inventory.contains("\"active\":true"));
+        assert!(inventory.contains("\"supports_backpressure\":"));
+        assert!(inventory.contains("\"supports_raw_capture\":"));
+        assert!(inventory.contains("\"supports_fixture_replay\":"));
+        assert!(inventory.contains("\"supports_stale_detection\":"));
+        assert!(inventory.contains("\"supports_latency_metrics\":"));
 
         let status = engine.adapter_status();
         assert_eq!(status.descriptor.provider, ProviderKind::Mock);
@@ -526,6 +531,8 @@ mod tests {
         assert!(active.contains("\"connected\":true"));
         assert!(active.contains("\"healthy\":true"));
         assert!(active.contains("\"capabilities\":{"));
+        assert!(active.contains("\"supports_backpressure\":"));
+        assert!(active.contains("\"supports_raw_capture\":"));
     }
 
     #[test]

@@ -365,6 +365,11 @@ adapter ownership, reconnect/recovery policy, and monitoring around this shape.
 | `engine.adapter_inventory()` | Returns adapter inventory with this engine's active provider marked |
 | `engine.adapter_status()` | Returns configured adapter descriptor plus current health |
 
+Adapter inventory records include provider metadata and additive capability
+flags such as `supports_backpressure`, `supports_raw_capture`,
+`supports_fixture_replay`, `supports_stale_detection`, and
+`supports_latency_metrics` when exposed by the native runtime.
+
 #### External feed supervision
 
 | Signature | Description |

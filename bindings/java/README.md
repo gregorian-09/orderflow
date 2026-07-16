@@ -368,6 +368,11 @@ Callback event envelope fields:
 | `String adapterInventory()` | Returns native build adapter descriptor inventory JSON |
 | `String adapterStatus()` | Returns configured adapter descriptor plus current health JSON |
 
+Adapter inventory JSON includes provider metadata and additive capability flags
+such as `supports_backpressure`, `supports_raw_capture`,
+`supports_fixture_replay`, `supports_stale_detection`, and
+`supports_latency_metrics` when the native runtime exposes them.
+
 #### External feed supervision
 
 | Signature | Description |

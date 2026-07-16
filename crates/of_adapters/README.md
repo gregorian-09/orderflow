@@ -106,7 +106,8 @@ Descriptor fields include:
 - required Cargo feature, if any;
 - compiled/enabled state;
 - [`AdapterQualityLevel`];
-- trade/book/level-2/reconnect/gap-recovery/polling capability flags;
+- trade/book/level-2/reconnect/gap-recovery/backpressure/raw-capture/
+  fixture-replay/stale-detection/latency-metrics/polling capability flags;
 - operator-facing notes.
 
 Quality levels are intentionally conservative. A descriptor advertises current

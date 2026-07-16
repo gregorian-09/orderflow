@@ -182,6 +182,16 @@ pub struct AdapterDescriptor {
     pub supports_reconnect: bool,
     /// True when adapter has gap detection or recovery semantics.
     pub supports_gap_recovery: bool,
+    /// True when adapter exposes bounded backpressure behavior or counters.
+    pub supports_backpressure: bool,
+    /// True when adapter can capture raw provider messages.
+    pub supports_raw_capture: bool,
+    /// True when adapter can replay provider-specific raw fixtures.
+    pub supports_fixture_replay: bool,
+    /// True when adapter has stale-feed detection.
+    pub supports_stale_detection: bool,
+    /// True when adapter reports parser or normalization latency metrics.
+    pub supports_latency_metrics: bool,
     /// True when adapter is driven through the poll-based runtime contract.
     pub supports_polling: bool,
     /// Short operator-facing note.
@@ -203,6 +213,11 @@ const ADAPTER_DESCRIPTORS: [AdapterDescriptor; 4] = [
         supports_level2: true,
         supports_reconnect: false,
         supports_gap_recovery: false,
+        supports_backpressure: false,
+        supports_raw_capture: false,
+        supports_fixture_replay: false,
+        supports_stale_detection: false,
+        supports_latency_metrics: false,
         supports_polling: true,
         notes: "deterministic in-memory adapter for tests, demos, and replay harnesses",
     },
@@ -220,6 +235,11 @@ const ADAPTER_DESCRIPTORS: [AdapterDescriptor; 4] = [
         supports_level2: true,
         supports_reconnect: cfg!(feature = "rithmic"),
         supports_gap_recovery: false,
+        supports_backpressure: false,
+        supports_raw_capture: false,
+        supports_fixture_replay: false,
+        supports_stale_detection: cfg!(feature = "rithmic"),
+        supports_latency_metrics: false,
         supports_polling: true,
         notes: "feature-gated futures adapter scaffold; validate venue behavior before live capital use",
     },
@@ -237,6 +257,11 @@ const ADAPTER_DESCRIPTORS: [AdapterDescriptor; 4] = [
         supports_level2: true,
         supports_reconnect: cfg!(feature = "cqg"),
         supports_gap_recovery: false,
+        supports_backpressure: false,
+        supports_raw_capture: false,
+        supports_fixture_replay: false,
+        supports_stale_detection: false,
+        supports_latency_metrics: false,
         supports_polling: true,
         notes: "feature-gated CQG adapter with reconnect/resubscribe hardening",
     },
@@ -254,8 +279,13 @@ const ADAPTER_DESCRIPTORS: [AdapterDescriptor; 4] = [
         supports_level2: true,
         supports_reconnect: cfg!(feature = "binance"),
         supports_gap_recovery: cfg!(feature = "binance"),
+        supports_backpressure: cfg!(feature = "binance"),
+        supports_raw_capture: cfg!(feature = "binance"),
+        supports_fixture_replay: cfg!(feature = "binance"),
+        supports_stale_detection: cfg!(feature = "binance"),
+        supports_latency_metrics: cfg!(feature = "binance"),
         supports_polling: true,
-        notes: "feature-gated crypto adapter with websocket trade/depth parsing, reconnects, and depth update-id gap detection",
+        notes: "feature-gated crypto adapter with websocket trade/depth parsing, reconnects, gap detection, bounded backpressure, raw capture, and fixture replay",
     },
 ];
 
@@ -474,6 +504,12 @@ mod tests {
             describe_adapter(ProviderKind::Binance).provider_id,
             "binance"
         );
+        let binance = describe_adapter(ProviderKind::Binance);
+        assert_eq!(binance.supports_raw_capture, cfg!(feature = "binance"));
+        assert_eq!(binance.supports_fixture_replay, cfg!(feature = "binance"));
+        assert_eq!(binance.supports_backpressure, cfg!(feature = "binance"));
+        assert_eq!(binance.supports_stale_detection, cfg!(feature = "binance"));
+        assert_eq!(binance.supports_latency_metrics, cfg!(feature = "binance"));
     }
 
     #[test]

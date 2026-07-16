@@ -104,6 +104,11 @@ validation.
 | `supports_level2` | Supports level-2 depth updates |
 | `supports_reconnect` | Has reconnect behavior |
 | `supports_gap_recovery` | Has gap detection or recovery semantics |
+| `supports_backpressure` | Exposes bounded backpressure behavior or counters |
+| `supports_raw_capture` | Can capture raw provider messages |
+| `supports_fixture_replay` | Can replay provider-specific raw fixtures |
+| `supports_stale_detection` | Has stale-feed detection |
+| `supports_latency_metrics` | Reports parser or normalization latency metrics |
 | `supports_polling` | Driven through the runtime poll contract |
 | `notes` | Operator-facing maturity or usage note |
 

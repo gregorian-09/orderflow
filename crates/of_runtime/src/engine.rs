@@ -1982,7 +1982,7 @@ fn format_adapter_descriptor_json(
         .map(|provider| provider == &descriptor.provider)
         .unwrap_or(false);
     format!(
-        "{{\"provider\":\"{}\",\"provider_id\":\"{}\",\"display_name\":\"{}\",\"feature\":{},\"compiled\":{},\"quality\":\"{}\",\"supports_live\":{},\"supports_replay\":{},\"supports_trades\":{},\"supports_order_book\":{},\"supports_level2\":{},\"supports_reconnect\":{},\"supports_gap_recovery\":{},\"supports_polling\":{},\"active\":{},\"notes\":\"{}\"}}",
+        "{{\"provider\":\"{}\",\"provider_id\":\"{}\",\"display_name\":\"{}\",\"feature\":{},\"compiled\":{},\"quality\":\"{}\",\"supports_live\":{},\"supports_replay\":{},\"supports_trades\":{},\"supports_order_book\":{},\"supports_level2\":{},\"supports_reconnect\":{},\"supports_gap_recovery\":{},\"supports_backpressure\":{},\"supports_raw_capture\":{},\"supports_fixture_replay\":{},\"supports_stale_detection\":{},\"supports_latency_metrics\":{},\"supports_polling\":{},\"active\":{},\"notes\":\"{}\"}}",
         escape_json(descriptor.provider.id()),
         escape_json(descriptor.provider_id),
         escape_json(descriptor.display_name),
@@ -1996,6 +1996,11 @@ fn format_adapter_descriptor_json(
         descriptor.supports_level2,
         descriptor.supports_reconnect,
         descriptor.supports_gap_recovery,
+        descriptor.supports_backpressure,
+        descriptor.supports_raw_capture,
+        descriptor.supports_fixture_replay,
+        descriptor.supports_stale_detection,
+        descriptor.supports_latency_metrics,
         descriptor.supports_polling,
         active,
         escape_json(descriptor.notes)
