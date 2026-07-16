@@ -13,9 +13,10 @@ use std::sync::{
 use of_adapters::{AdapterConfig, ProviderKind};
 use of_core::{AnalyticsConfig, BookUpdate, DataQualityFlags, SignalState, SymbolId, TradePrint};
 use of_execution::{
-    simulated_engine_with_routes, AllowAllRiskGate, ConcurrentExecutionConfig,
-    ConcurrentExecutionEngine, ConcurrentExecutionError, ExecutionCommand, ExecutionCommandKind,
-    ExecutionCommandReport, ExecutionEngine, ExecutionError, ExecutionEventBuffer, InMemoryJournal,
+    simulated_engine_with_routes, AllowAllRiskGate, CheckpointStoreIntegrityReport,
+    ConcurrentExecutionConfig, ConcurrentExecutionEngine, ConcurrentExecutionError,
+    ExecutionCommand, ExecutionCommandKind, ExecutionCommandReport, ExecutionEngine,
+    ExecutionError, ExecutionEventBuffer, FileExecutionCheckpointStore, InMemoryJournal,
     RouteConfig, SegmentedWalExecutionJournal, SimExecutionAdapter, WalSegmentIntegrityReport,
 };
 use of_execution_core::{
@@ -504,6 +505,31 @@ pub struct of_execution_segmented_wal_integrity_report_t {
     pub valid: u8,
 }
 
+/// Execution checkpoint store integrity report returned by
+/// [`of_execution_checkpoint_store_integrity_report`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct of_execution_checkpoint_store_integrity_report_t {
+    /// Number of checkpoint files discovered.
+    pub checkpoint_files: u64,
+    /// Number of checkpoint files decoded and checksum-validated.
+    pub valid_checkpoints: u64,
+    /// Number of checkpoint files that failed validation.
+    pub invalid_checkpoints: u64,
+    /// Total bytes across discovered checkpoint files.
+    pub bytes: u64,
+    /// Latest valid checkpoint id, meaningful when `has_latest != 0`.
+    pub latest_checkpoint_id: u64,
+    /// Last WAL sequence covered by the latest valid checkpoint.
+    pub latest_last_applied_sequence: u64,
+    /// Creation timestamp for the latest valid checkpoint.
+    pub latest_created_ns: u64,
+    /// Non-zero when latest checkpoint fields are meaningful.
+    pub has_latest: u8,
+    /// Non-zero when all discovered checkpoints decoded cleanly.
+    pub valid: u8,
+}
+
 /// Concurrent execution worker configuration.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -645,6 +671,28 @@ pub extern "C" fn of_execution_segmented_wal_integrity_report(
     };
     unsafe {
         *out_report = segmented_wal_integrity_report_to_ffi(report);
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Inspects an execution checkpoint store root and writes an integrity report.
+#[no_mangle]
+pub extern "C" fn of_execution_checkpoint_store_integrity_report(
+    root: *const c_char,
+    out_report: *mut of_execution_checkpoint_store_integrity_report_t,
+) -> i32 {
+    if root.is_null() || out_report.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let Some(root) = non_empty_string(root) else {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    };
+    let report = match FileExecutionCheckpointStore::inspect_root(root) {
+        Ok(report) => report,
+        Err(_) => return of_error_t::OF_ERR_IO as i32,
+    };
+    unsafe {
+        *out_report = checkpoint_store_integrity_report_to_ffi(report);
     }
     of_error_t::OF_OK as i32
 }
@@ -2424,6 +2472,24 @@ fn segmented_wal_integrity_report_to_ffi(
         sequence_failures: report.sequence_failures,
         has_first_sequence: u8::from(report.first_sequence.is_some()),
         has_last_sequence: u8::from(report.last_sequence.is_some()),
+        valid: u8::from(report.valid),
+    }
+}
+
+fn checkpoint_store_integrity_report_to_ffi(
+    report: CheckpointStoreIntegrityReport,
+) -> of_execution_checkpoint_store_integrity_report_t {
+    of_execution_checkpoint_store_integrity_report_t {
+        checkpoint_files: report.checkpoint_files,
+        valid_checkpoints: report.valid_checkpoints,
+        invalid_checkpoints: report.invalid_checkpoints,
+        bytes: report.bytes,
+        latest_checkpoint_id: report.latest_checkpoint_id.unwrap_or(0),
+        latest_last_applied_sequence: report
+            .latest_last_applied_sequence
+            .map_or(0, |sequence| sequence.0),
+        latest_created_ns: report.latest_created_ns.unwrap_or(0),
+        has_latest: u8::from(report.latest_checkpoint_id.is_some()),
         valid: u8::from(report.valid),
     }
 }

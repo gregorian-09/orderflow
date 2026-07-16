@@ -151,6 +151,12 @@ WAL integrity can be inspected through the binding-facing diagnostic APIs:
   `inspect_execution_segmented_wal(root, library_path=None)`;
 - Java segmented root:
   `OrderflowExecutionEngine.inspectSegmentedWal(nativePath, walRoot)`.
+- C checkpoint root:
+  `of_execution_checkpoint_store_integrity_report(root, out_report)`;
+- Python checkpoint root:
+  `inspect_execution_checkpoint_store(root, library_path=None)`;
+- Java checkpoint root:
+  `OrderflowExecutionEngine.inspectCheckpointStore(nativePath, checkpointRoot)`.
 
 Run these diagnostics before a recovery drill, after crash restart, and before
 archiving WAL data. Use the segmented-root diagnostic for production rotated
@@ -159,6 +165,15 @@ cross-segment continuity. The functions report corrupt or truncated bytes as a
 successful call with `valid = false`; missing or unreadable files return an I/O
 error. Treat `valid = false` as a fail-closed condition for live submissions
 until an operator has reconciled state with the venue.
+
+Checkpoint-store diagnostics are the checkpoint counterpart to WAL scans. They
+count discovered `.ofchk` files, valid checkpoints, invalid checkpoints, total
+bytes, and the latest valid checkpoint id, covered WAL sequence, and creation
+timestamp. Run them before selecting a recovery checkpoint. A corrupt
+checkpoint file keeps the API call successful with `valid = false` when the
+root is readable, allowing the restart procedure to fall back to the latest
+valid checkpoint or require manual venue reconciliation. Missing or unreadable
+checkpoint roots return an I/O error.
 
 Low-latency guidance:
 
@@ -193,6 +208,20 @@ load the latest valid checkpoint and replay WAL records after that sequence.
 Current checkpoint contents cover open orders, positions, route config hash,
 kill-switch state, and checksum. Venue reconciliation must still run before
 strategy submissions resume.
+
+Operational startup should scan the checkpoint root before loading it:
+
+1. call `FileExecutionCheckpointStore::inspect_root(root)` or the binding
+   checkpoint diagnostic;
+2. fail closed if the root is missing, unreadable, or the report is invalid;
+3. ensure `latest_checkpoint_id` is present for checkpoint-based recovery;
+4. open the checkpoint store only after the diagnostic result is acceptable;
+5. replay WAL records strictly after `latest_last_applied_sequence`;
+6. run venue reconciliation before enabling submissions.
+
+The diagnostic path is intentionally outside the low-latency order path. It
+does not create directories, save checkpoints, prune old checkpoint files, or
+start a background writer.
 
 ## Checkpoint Plus WAL Recovery
 

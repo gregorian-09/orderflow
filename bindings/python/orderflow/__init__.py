@@ -33,6 +33,7 @@ from .api import (
     DataQualityFlags,
     Engine,
     EngineConfig,
+    ExecutionCheckpointStoreIntegrityReport,
     ExecutionEngine,
     ExecutionCommandReport,
     ExecutionEvent,
@@ -55,6 +56,7 @@ from .api import (
     Side,
     StreamKind,
     Symbol,
+    inspect_execution_checkpoint_store,
     inspect_execution_segmented_wal,
     inspect_execution_wal,
 )
@@ -68,6 +70,7 @@ __all__ = [
     "DataQualityFlags",
     "Engine",
     "EngineConfig",
+    "ExecutionCheckpointStoreIntegrityReport",
     "ExecutionEngine",
     "ExecutionCommandReport",
     "ExecutionEvent",
@@ -91,6 +94,7 @@ __all__ = [
     "Side",
     "StreamKind",
     "Symbol",
+    "inspect_execution_checkpoint_store",
     "inspect_execution_segmented_wal",
     "inspect_execution_wal",
 ]

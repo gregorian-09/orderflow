@@ -391,6 +391,28 @@ typedef struct {
   uint8_t valid;
 } of_execution_segmented_wal_integrity_report_t;
 
+/** Execution checkpoint store integrity snapshot for operator diagnostics. */
+typedef struct {
+  /** Number of checkpoint files discovered. */
+  uint64_t checkpoint_files;
+  /** Number of checkpoint files decoded and checksum-validated. */
+  uint64_t valid_checkpoints;
+  /** Number of checkpoint files that failed validation. */
+  uint64_t invalid_checkpoints;
+  /** Total bytes across discovered checkpoint files. */
+  uint64_t bytes;
+  /** Latest valid checkpoint id; meaningful when has_latest is non-zero. */
+  uint64_t latest_checkpoint_id;
+  /** Last WAL sequence covered by latest valid checkpoint. */
+  uint64_t latest_last_applied_sequence;
+  /** Creation timestamp for latest valid checkpoint. */
+  uint64_t latest_created_ns;
+  /** Non-zero when latest checkpoint fields are meaningful. */
+  uint8_t has_latest;
+  /** Non-zero when all discovered checkpoints decoded cleanly. */
+  uint8_t valid;
+} of_execution_checkpoint_store_integrity_report_t;
+
 /** Concurrent execution worker configuration. */
 typedef struct {
   /** Bounded command queue capacity; 0 uses default. */
@@ -423,6 +445,8 @@ uint32_t of_execution_api_version(void);
 int32_t of_execution_wal_integrity_report(const char* path, of_execution_wal_integrity_report_t* out_report);
 /** Inspects a segmented execution WAL root and writes an integrity report. */
 int32_t of_execution_segmented_wal_integrity_report(const char* root, of_execution_segmented_wal_integrity_report_t* out_report);
+/** Inspects an execution checkpoint store root and writes an integrity report. */
+int32_t of_execution_checkpoint_store_integrity_report(const char* root, of_execution_checkpoint_store_integrity_report_t* out_report);
 
 /** Creates a simulated execution engine instance. */
 int32_t of_execution_engine_create(const of_execution_route_config_t* cfg, of_execution_engine_t** out_engine);

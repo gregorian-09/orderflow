@@ -331,6 +331,22 @@ class OfExecutionSegmentedWalIntegrityReport(ctypes.Structure):
     ]
 
 
+class OfExecutionCheckpointStoreIntegrityReport(ctypes.Structure):
+    """ctypes mirror of `of_execution_checkpoint_store_integrity_report_t`."""
+
+    _fields_ = [
+        ("checkpoint_files", c_uint64),
+        ("valid_checkpoints", c_uint64),
+        ("invalid_checkpoints", c_uint64),
+        ("bytes", c_uint64),
+        ("latest_checkpoint_id", c_uint64),
+        ("latest_last_applied_sequence", c_uint64),
+        ("latest_created_ns", c_uint64),
+        ("has_latest", c_uint8),
+        ("valid", c_uint8),
+    ]
+
+
 class OfExecutionConcurrentConfig(ctypes.Structure):
     """ctypes mirror of `of_execution_concurrent_config_t`."""
 
@@ -428,6 +444,12 @@ class OrderflowLib:
             ctypes.POINTER(OfExecutionSegmentedWalIntegrityReport),
         ]
         lib.of_execution_segmented_wal_integrity_report.restype = c_int32
+
+        lib.of_execution_checkpoint_store_integrity_report.argtypes = [
+            c_char_p,
+            ctypes.POINTER(OfExecutionCheckpointStoreIntegrityReport),
+        ]
+        lib.of_execution_checkpoint_store_integrity_report.restype = c_int32
 
         lib.of_execution_engine_create.argtypes = [
             ctypes.POINTER(OfExecutionRouteConfig),

@@ -27,6 +27,7 @@ expected_symbols=(
   of_execution_api_version
   of_execution_wal_integrity_report
   of_execution_segmented_wal_integrity_report
+  of_execution_checkpoint_store_integrity_report
   of_execution_engine_create
   of_execution_engine_create_multi
   of_execution_engine_start

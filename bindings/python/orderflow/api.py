@@ -34,6 +34,7 @@ from ._ffi import (
     OfEventCallback,
     OfExecutionAmendRequest,
     OfExecutionCancelRequest,
+    OfExecutionCheckpointStoreIntegrityReport,
     OfExecutionCommandReport,
     OfExecutionConcurrentConfig,
     OfExecutionEvent,
@@ -355,6 +356,20 @@ class ExecutionSegmentedWalIntegrityReport:
 
 
 @dataclass(frozen=True)
+class ExecutionCheckpointStoreIntegrityReport:
+    """Execution checkpoint store integrity report for offline diagnostics."""
+
+    checkpoint_files: int
+    valid_checkpoints: int
+    invalid_checkpoints: int
+    bytes: int
+    latest_checkpoint_id: Optional[int]
+    latest_last_applied_sequence: Optional[int]
+    latest_created_ns: Optional[int]
+    valid: bool
+
+
+@dataclass(frozen=True)
 class ConcurrentExecutionConfig:
     """Concurrent execution worker queue configuration."""
 
@@ -438,6 +453,43 @@ def inspect_execution_segmented_wal(
         last_sequence=int(report.last_sequence) if report.has_last_sequence else None,
         checksum_failures=int(report.checksum_failures),
         sequence_failures=int(report.sequence_failures),
+        valid=bool(report.valid),
+    )
+
+
+def inspect_execution_checkpoint_store(
+    root: str,
+    library_path: Optional[str] = None,
+) -> ExecutionCheckpointStoreIntegrityReport:
+    """Inspects an execution checkpoint store directory without mutating it.
+
+    Args:
+        root: UTF-8 filesystem path to a checkpoint store root directory.
+        library_path: Optional explicit path to ``libof_ffi_c``.
+
+    Returns:
+        A typed integrity report with discovered/valid/invalid checkpoint
+        counts, total bytes, latest valid checkpoint metadata, and validity flag.
+    """
+    ffi = OrderflowLib(library_path=library_path)
+    report = OfExecutionCheckpointStoreIntegrityReport()
+    encoded_root = str(root).encode("utf-8")
+    rc = ffi.lib.of_execution_checkpoint_store_integrity_report(
+        encoded_root, ctypes.byref(report)
+    )
+    if int(rc) != 0:
+        exc = _ERROR_MAP.get(int(rc), OrderflowError)
+        raise exc(f"of_execution_checkpoint_store_integrity_report failed with code {rc}")
+    return ExecutionCheckpointStoreIntegrityReport(
+        checkpoint_files=int(report.checkpoint_files),
+        valid_checkpoints=int(report.valid_checkpoints),
+        invalid_checkpoints=int(report.invalid_checkpoints),
+        bytes=int(report.bytes),
+        latest_checkpoint_id=int(report.latest_checkpoint_id) if report.has_latest else None,
+        latest_last_applied_sequence=(
+            int(report.latest_last_applied_sequence) if report.has_latest else None
+        ),
+        latest_created_ns=int(report.latest_created_ns) if report.has_latest else None,
         valid=bool(report.valid),
     )
 

@@ -31,6 +31,8 @@ New execution ABI concepts:
   single binary execution WAL file
 - `of_execution_segmented_wal_integrity_report`: offline operator diagnostic
   for a rotated execution WAL directory
+- `of_execution_checkpoint_store_integrity_report`: offline operator
+  diagnostic for an execution checkpoint directory
 - `of_execution_concurrent_engine_t`: bounded worker for many command
   producers and one deterministic execution owner
 - `of_execution_command_report_t`: typed command completion report with a
@@ -234,20 +236,29 @@ Metadata and ownership helpers:
 - `of_build_info`
 - `of_execution_wal_integrity_report`
 - `of_execution_segmented_wal_integrity_report`
+- `of_execution_checkpoint_store_integrity_report`
 - `of_get_metrics_json`
 - `of_string_free`
 
-Execution WAL integrity diagnostics:
+Execution recovery diagnostics:
 
 - `of_execution_wal_integrity_report(path, out_report)` reads a single WAL file
   and fills `of_execution_wal_integrity_report_t`.
 - `of_execution_segmented_wal_integrity_report(root, out_report)` reads
   `wal-*.ofwal` files under a segmented WAL root and fills
   `of_execution_segmented_wal_integrity_report_t`.
+- `of_execution_checkpoint_store_integrity_report(root, out_report)` reads
+  `.ofchk` checkpoint files under a checkpoint root and fills
+  `of_execution_checkpoint_store_integrity_report_t`.
 - It is an offline/operator path, not an order-submission hot-path function.
 - Empty WAL files or directories are valid and report no first/last sequence.
+- Empty checkpoint directories are valid and report no latest checkpoint.
 - Corrupt or truncated bytes return `OF_OK` with `valid = 0` so operators can
-  inspect the report; missing/unreadable files return `OF_ERR_IO`.
+  inspect the report; missing/unreadable files or directories return
+  `OF_ERR_IO`.
+- Checkpoint diagnostics report discovered, valid, and invalid checkpoint file
+  counts, total checkpoint bytes, and the latest valid checkpoint id, covered
+  WAL sequence, and creation timestamp when one exists.
 
 ## Safety Contract
 

@@ -1858,6 +1858,78 @@ mod tests {
     }
 
     #[test]
+    fn execution_checkpoint_store_integrity_report_scans_directory() {
+        let _guard = test_guard();
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-ffi-checkpoints-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        {
+            let mut store = of_execution::FileExecutionCheckpointStore::open(
+                of_execution::CheckpointConfig::new(&root).with_sync_on_save(false),
+            )
+            .expect("checkpoint store");
+            let first = of_execution::ExecutionCheckpoint::new(
+                1,
+                of_execution_core::WalSequence(10),
+                100,
+            );
+            let second = of_execution::ExecutionCheckpoint::new(
+                2,
+                of_execution_core::WalSequence(20),
+                200,
+            );
+            of_execution::ExecutionCheckpointStore::save_checkpoint(&mut store, &first)
+                .expect("first checkpoint");
+            let manifest =
+                of_execution::ExecutionCheckpointStore::save_checkpoint(&mut store, &second)
+                    .expect("second checkpoint");
+
+            let root_c = CString::new(root.to_string_lossy().as_bytes()).expect("cstring");
+            let mut report = of_execution_checkpoint_store_integrity_report_t {
+                checkpoint_files: 0,
+                valid_checkpoints: 0,
+                invalid_checkpoints: 0,
+                bytes: 0,
+                latest_checkpoint_id: 0,
+                latest_last_applied_sequence: 0,
+                latest_created_ns: 0,
+                has_latest: 0,
+                valid: 0,
+            };
+            assert_eq!(
+                of_execution_checkpoint_store_integrity_report(root_c.as_ptr(), &mut report),
+                of_error_t::OF_OK as i32
+            );
+            assert_eq!(report.valid, 1);
+            assert_eq!(report.checkpoint_files, 2);
+            assert_eq!(report.valid_checkpoints, 2);
+            assert_eq!(report.invalid_checkpoints, 0);
+            assert_eq!(report.latest_checkpoint_id, 2);
+            assert_eq!(report.latest_last_applied_sequence, 20);
+            assert_eq!(report.has_latest, 1);
+
+            let mut bytes = std::fs::read(&manifest.path).expect("read checkpoint");
+            let last = bytes.last_mut().expect("checkpoint byte");
+            *last ^= 0x01;
+            std::fs::write(&manifest.path, bytes).expect("write corrupt checkpoint");
+
+            assert_eq!(
+                of_execution_checkpoint_store_integrity_report(root_c.as_ptr(), &mut report),
+                of_error_t::OF_OK as i32
+            );
+            assert_eq!(report.valid, 0);
+            assert_eq!(report.checkpoint_files, 2);
+            assert_eq!(report.valid_checkpoints, 1);
+            assert_eq!(report.invalid_checkpoints, 1);
+            assert_eq!(report.latest_checkpoint_id, 1);
+            assert_eq!(report.latest_last_applied_sequence, 10);
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn execution_abi_create_multi_routes_submits_multiple_symbols() {
         let _guard = test_guard();
         let route = CString::new("SIM").expect("cstring");

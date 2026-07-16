@@ -560,6 +560,13 @@ assert!(store.validate_checkpoint(&latest)?);
 store does not start background writers or block the OMS worker automatically;
 callers decide when to construct and save snapshots.
 
+Use `FileExecutionCheckpointStore::inspect_root(root)` for read-only startup and
+operator diagnostics. The report counts discovered, valid, and invalid
+checkpoint files, totals checkpoint bytes, and identifies the latest valid
+checkpoint id, covered WAL sequence, and creation timestamp. It does not create
+the store directory, save checkpoints, prune files, or mutate the checkpoint
+root.
+
 ### Recovery plan
 
 [`RecoveryPlan`] describes a deterministic replay before recovery starts:

@@ -25,6 +25,8 @@ public interface OrderflowNative extends Library {
     int of_execution_wal_integrity_report(String path, OfExecutionWalIntegrityReport outReport);
     /** Inspects segmented execution WAL directory integrity. */
     int of_execution_segmented_wal_integrity_report(String root, OfExecutionSegmentedWalIntegrityReport outReport);
+    /** Inspects execution checkpoint store directory integrity. */
+    int of_execution_checkpoint_store_integrity_report(String root, OfExecutionCheckpointStoreIntegrityReport outReport);
 
     /** Creates execution engine instance. */
     int of_execution_engine_create(OfExecutionRouteConfig cfg, PointerByReference outEngine);

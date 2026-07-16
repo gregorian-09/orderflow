@@ -85,14 +85,14 @@ return `WalJournalMetrics`. The snapshot tracks successful frames and bytes,
 write latency, sync latency, write/sync failures, segment rotations, and
 manifest writes. Hosts should export this snapshot outside the hot path.
 
-The C ABI and bindings expose a path-based integrity diagnostic for single WAL
-files:
+The C ABI and bindings expose path-based integrity diagnostics for WAL files
+and checkpoint stores:
 
 | Layer | API |
 | --- | --- |
-| C | `of_execution_wal_integrity_report(path, out_report)` and `of_execution_segmented_wal_integrity_report(root, out_report)` |
-| Python | `inspect_execution_wal(path, library_path=None)` and `inspect_execution_segmented_wal(root, library_path=None)` |
-| Java | `OrderflowExecutionEngine.inspectWal(nativePath, walPath)` and `OrderflowExecutionEngine.inspectSegmentedWal(nativePath, walRoot)` |
+| C | `of_execution_wal_integrity_report(path, out_report)`, `of_execution_segmented_wal_integrity_report(root, out_report)`, and `of_execution_checkpoint_store_integrity_report(root, out_report)` |
+| Python | `inspect_execution_wal(path, library_path=None)`, `inspect_execution_segmented_wal(root, library_path=None)`, and `inspect_execution_checkpoint_store(root, library_path=None)` |
+| Java | `OrderflowExecutionEngine.inspectWal(nativePath, walPath)`, `OrderflowExecutionEngine.inspectSegmentedWal(nativePath, walRoot)`, and `OrderflowExecutionEngine.inspectCheckpointStore(nativePath, checkpointRoot)` |
 
 This diagnostic is intentionally offline/operator-oriented. It does not create
 an execution engine, does not submit orders, and does not mutate OMS state. It
@@ -101,6 +101,12 @@ sequence, checksum failures, sequence failures, truncated-tail status, and an
 overall validity flag. Use the segmented APIs for rotated production WAL roots;
 they validate `wal-*.ofwal` files in segment-id order and preserve the same
 cross-segment checksum and sequence rules used by replay.
+
+Checkpoint diagnostics are the matching read-only restart check for
+`FileExecutionCheckpointStore`. They count discovered, valid, and invalid
+checkpoint files, total checkpoint bytes, and the latest valid checkpoint id,
+covered WAL sequence, and creation timestamp. They do not create the checkpoint
+directory, prune files, save checkpoints, or mutate OMS state.
 
 ### Checkpoints
 
@@ -125,6 +131,13 @@ when to collect a consistent snapshot and save it.
 optionally syncs it, atomically renames it to the final checkpoint path, and
 optionally syncs the directory on Unix platforms. Loading rejects unsupported
 schema versions and checksum mismatches.
+
+Use `FileExecutionCheckpointStore::inspect_root(root)` for startup checks,
+recovery drills, and operator dashboards that need to validate a checkpoint
+root without opening a mutable store. Corrupt checkpoint files are counted in
+the report and set `valid` to false; missing or unreadable roots return an
+error. Binding users should call the C/Python/Java checkpoint-store integrity
+helpers listed above.
 
 ### Recovery
 

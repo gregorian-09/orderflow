@@ -1970,6 +1970,28 @@ pub struct CheckpointManifest {
     pub checksum: u64,
 }
 
+/// Read-only integrity summary for a checkpoint store root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct CheckpointStoreIntegrityReport {
+    /// Number of checkpoint files discovered.
+    pub checkpoint_files: u64,
+    /// Number of checkpoint files decoded and checksum-validated.
+    pub valid_checkpoints: u64,
+    /// Number of checkpoint files that failed decode or checksum validation.
+    pub invalid_checkpoints: u64,
+    /// Total bytes across discovered checkpoint files.
+    pub bytes: u64,
+    /// Latest valid checkpoint id, when one exists.
+    pub latest_checkpoint_id: Option<u64>,
+    /// Last WAL sequence covered by the latest valid checkpoint.
+    pub latest_last_applied_sequence: Option<WalSequence>,
+    /// Creation timestamp for the latest valid checkpoint.
+    pub latest_created_ns: Option<u64>,
+    /// True when all discovered checkpoint files are valid.
+    pub valid: bool,
+}
+
 impl CheckpointManifest {
     fn from_checkpoint(path: PathBuf, bytes: u64, checkpoint: &ExecutionCheckpoint) -> Self {
         Self {
@@ -2041,6 +2063,19 @@ impl FileExecutionCheckpointStore {
             "checkpoint-{:020}-{:020}.{}.tmp",
             checkpoint.checkpoint_id, checkpoint.last_applied_sequence.0, CHECKPOINT_EXT
         ))
+    }
+
+    /// Inspects a checkpoint root without creating or deleting files.
+    ///
+    /// This helper is intended for operator diagnostics and binding layers. It
+    /// counts checkpoint files, validates each payload, and identifies the
+    /// latest valid checkpoint without mutating the store.
+    ///
+    /// # Errors
+    ///
+    /// Returns an execution journal error when the root cannot be listed.
+    pub fn inspect_root(root: impl AsRef<Path>) -> ExecutionResult<CheckpointStoreIntegrityReport> {
+        inspect_checkpoint_store_root(root.as_ref())
     }
 }
 
@@ -2627,6 +2662,71 @@ fn decode_checkpoint(bytes: &[u8]) -> ExecutionResult<ExecutionCheckpoint> {
 fn load_checkpoint_file(path: &Path) -> ExecutionResult<ExecutionCheckpoint> {
     let bytes = fs::read(path).map_err(|err| ExecutionError::Journal(err.to_string()))?;
     decode_checkpoint(&bytes)
+}
+
+fn inspect_checkpoint_store_root(root: &Path) -> ExecutionResult<CheckpointStoreIntegrityReport> {
+    if !root.exists() {
+        return Err(ExecutionError::Journal(format!(
+            "checkpoint root does not exist: {}",
+            root.display()
+        )));
+    }
+
+    let mut report = CheckpointStoreIntegrityReport {
+        valid: true,
+        ..CheckpointStoreIntegrityReport::default()
+    };
+    let mut latest: Option<CheckpointManifest> = None;
+
+    for entry in fs::read_dir(root).map_err(|err| ExecutionError::Journal(err.to_string()))? {
+        let entry = entry.map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some(CHECKPOINT_EXT) {
+            continue;
+        }
+        let metadata = entry
+            .metadata()
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        report.checkpoint_files = report.checkpoint_files.saturating_add(1);
+        report.bytes = report.bytes.saturating_add(metadata.len());
+
+        match load_checkpoint_file(&path) {
+            Ok(checkpoint) => {
+                report.valid_checkpoints = report.valid_checkpoints.saturating_add(1);
+                let manifest =
+                    CheckpointManifest::from_checkpoint(path, metadata.len(), &checkpoint);
+                let is_newer = match latest.as_ref() {
+                    Some(current) => {
+                        (
+                            manifest.last_applied_sequence,
+                            manifest.created_ns,
+                            manifest.checkpoint_id,
+                        ) > (
+                            current.last_applied_sequence,
+                            current.created_ns,
+                            current.checkpoint_id,
+                        )
+                    }
+                    None => true,
+                };
+                if is_newer {
+                    latest = Some(manifest);
+                }
+            }
+            Err(_) => {
+                report.invalid_checkpoints = report.invalid_checkpoints.saturating_add(1);
+                report.valid = false;
+            }
+        }
+    }
+
+    if let Some(manifest) = latest {
+        report.latest_checkpoint_id = Some(manifest.checkpoint_id);
+        report.latest_last_applied_sequence = Some(manifest.last_applied_sequence);
+        report.latest_created_ns = Some(manifest.created_ns);
+    }
+
+    Ok(report)
 }
 
 fn checkpoint_checksum(checkpoint: &ExecutionCheckpoint) -> u64 {
@@ -4352,6 +4452,51 @@ mod tests {
         std::fs::write(&manifest.path, bytes).unwrap();
 
         assert!(store.load_latest().is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn checkpoint_store_inspect_root_reports_latest_and_corruption() {
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-checkpoints-inspect-{}",
+            std::process::id()
+        ));
+        let missing = root.with_extension("missing");
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&missing);
+        assert!(FileExecutionCheckpointStore::inspect_root(&missing).is_err());
+
+        let mut store = FileExecutionCheckpointStore::open(
+            CheckpointConfig::new(&root).with_sync_on_save(false),
+        )
+        .unwrap();
+        let first = ExecutionCheckpoint::new(1, WalSequence(10), 100);
+        let second = ExecutionCheckpoint::new(2, WalSequence(20), 200);
+        store.save_checkpoint(&first).unwrap();
+        let manifest = store.save_checkpoint(&second).unwrap();
+
+        let report = FileExecutionCheckpointStore::inspect_root(&root).unwrap();
+        assert!(report.valid);
+        assert_eq!(report.checkpoint_files, 2);
+        assert_eq!(report.valid_checkpoints, 2);
+        assert_eq!(report.invalid_checkpoints, 0);
+        assert_eq!(report.latest_checkpoint_id, Some(2));
+        assert_eq!(report.latest_last_applied_sequence, Some(WalSequence(20)));
+        assert_eq!(report.latest_created_ns, Some(200));
+
+        let mut bytes = std::fs::read(&manifest.path).unwrap();
+        let last = bytes.last_mut().unwrap();
+        *last ^= 0x01;
+        std::fs::write(&manifest.path, bytes).unwrap();
+
+        let report = FileExecutionCheckpointStore::inspect_root(&root).unwrap();
+        assert!(!report.valid);
+        assert_eq!(report.checkpoint_files, 2);
+        assert_eq!(report.valid_checkpoints, 1);
+        assert_eq!(report.invalid_checkpoints, 1);
+        assert_eq!(report.latest_checkpoint_id, Some(1));
+        assert_eq!(report.latest_last_applied_sequence, Some(WalSequence(10)));
+
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -43,6 +43,8 @@ Highlights:
   native order-state owner
 - typed execution events and command reports instead of JSON on the order path
 - route/account/symbol-scoped risk checks before adapter routing
+- offline WAL and checkpoint-store diagnostics for recovery checks without
+  opening an execution engine
 - analytics-to-execution examples in this README and the handbook
 - existing native resolution behavior remains available: explicit path,
   `ORDERFLOW_LIBRARY_PATH`, then local debug library
@@ -410,6 +412,7 @@ analytics runtime.
 | `ExecutionMetrics` | Submitted/cancelled/amended/events/risk/adapter/recovery counters |
 | `ExecutionWalIntegrityReport` | Offline WAL scan summary for operator diagnostics |
 | `ExecutionSegmentedWalIntegrityReport` | Offline segmented WAL directory scan summary |
+| `ExecutionCheckpointStoreIntegrityReport` | Offline checkpoint store scan summary |
 | `ConcurrentExecutionConfig` | Command/report/event-buffer capacities |
 | `ExecutionCommandReport` | Concurrent command result, sequence, result code, and events |
 
@@ -431,6 +434,7 @@ analytics runtime.
 | `ExecutionMetrics executionMetrics()` | Returns execution metrics |
 | `static ExecutionWalIntegrityReport inspectWal(String nativePath, String walPath)` | Inspects a single execution WAL file without creating an execution engine |
 | `static ExecutionSegmentedWalIntegrityReport inspectSegmentedWal(String nativePath, String walRoot)` | Inspects a segmented execution WAL directory without creating an execution engine |
+| `static ExecutionCheckpointStoreIntegrityReport inspectCheckpointStore(String nativePath, String checkpointRoot)` | Inspects an execution checkpoint store directory without creating an execution engine |
 
 #### `ConcurrentOrderflowExecutionEngine`
 
@@ -445,7 +449,7 @@ analytics runtime.
 | `Optional<ExecutionCommandReport> tryRecvReport()` | Receives a command report without blocking |
 | `long stop()` | Queues worker stop and returns command sequence |
 
-#### WAL integrity diagnostic
+#### Recovery integrity diagnostics
 
 Use `OrderflowExecutionEngine.inspectWal()` and
 `OrderflowExecutionEngine.inspectSegmentedWal()` before recovery drills, after
@@ -454,7 +458,17 @@ outside the order path and return counts, byte position, optional sequence
 range, checksum/sequence failure counts, and validity flags. Use the segmented
 helper for production rotated WAL roots.
 
+Use `OrderflowExecutionEngine.inspectCheckpointStore()` with the same restart
+workflow to validate checkpoint files before selecting a restart point. It
+reports discovered, valid, and invalid checkpoint counts, total checkpoint
+bytes, and the latest valid checkpoint id, covered WAL sequence, and creation
+timestamp. Corrupt checkpoint files do not throw when the root can be listed;
+they return a report with `valid == false` so operators can inspect the failure
+and fall back to the latest valid checkpoint. Missing or unreadable roots throw
+the mapped native I/O exception.
+
 ```java
+import com.orderflow.bindings.ExecutionCheckpointStoreIntegrityReport;
 import com.orderflow.bindings.ExecutionSegmentedWalIntegrityReport;
 import com.orderflow.bindings.ExecutionWalIntegrityReport;
 import com.orderflow.bindings.OrderflowExecutionEngine;
@@ -463,8 +477,13 @@ ExecutionWalIntegrityReport report =
     OrderflowExecutionEngine.inspectWal(null, "execution-wal/wal-000000000001.ofwal");
 ExecutionSegmentedWalIntegrityReport segmented =
     OrderflowExecutionEngine.inspectSegmentedWal(null, "execution-wal");
-if (!report.valid || !segmented.valid) {
-    throw new IllegalStateException("unsafe execution WAL");
+ExecutionCheckpointStoreIntegrityReport checkpoints =
+    OrderflowExecutionEngine.inspectCheckpointStore(null, "execution-checkpoints");
+if (!report.valid || !segmented.valid || !checkpoints.valid) {
+    throw new IllegalStateException("unsafe execution recovery inputs");
+}
+if (checkpoints.latestCheckpointId == null) {
+    throw new IllegalStateException("no valid checkpoint available");
 }
 ```
 

@@ -114,6 +114,38 @@ public final class OrderflowExecutionEngine implements AutoCloseable {
         );
     }
 
+    /**
+     * Inspects an execution checkpoint store directory without creating an execution engine.
+     *
+     * @param nativePath native library path, or null/blank for default debug path
+     * @param checkpointRoot UTF-8 path to the checkpoint store root directory
+     * @return typed checkpoint store integrity report
+     */
+    public static ExecutionCheckpointStoreIntegrityReport inspectCheckpointStore(
+        String nativePath,
+        String checkpointRoot
+    ) {
+        String libPath = nativePath == null || nativePath.isBlank() ? defaultLibraryPath() : nativePath;
+        OrderflowNative nativeLib = OrderflowNative.load(libPath);
+        OfExecutionCheckpointStoreIntegrityReport report = new OfExecutionCheckpointStoreIntegrityReport();
+        check(
+            nativeLib.of_execution_checkpoint_store_integrity_report(checkpointRoot, report),
+            "of_execution_checkpoint_store_integrity_report",
+            List.of()
+        );
+        report.read();
+        return new ExecutionCheckpointStoreIntegrityReport(
+            report.checkpoint_files,
+            report.valid_checkpoints,
+            report.invalid_checkpoints,
+            report.bytes,
+            report.has_latest != 0 ? report.latest_checkpoint_id : null,
+            report.has_latest != 0 ? report.latest_last_applied_sequence : null,
+            report.has_latest != 0 ? report.latest_created_ns : null,
+            report.valid != 0
+        );
+    }
+
     /** Starts execution adapter/session. */
     public void start() {
         requireEngine();

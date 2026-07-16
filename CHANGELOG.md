@@ -90,6 +90,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `inspect_execution_segmented_wal`, `OrderflowExecutionEngine.inspectWal`,
   and `OrderflowExecutionEngine.inspectSegmentedWal` expose offline WAL scans
   without changing existing execution handles or order-path APIs.
+- Additive checkpoint-store integrity diagnostics across the C ABI, Python,
+  and Java bindings: `of_execution_checkpoint_store_integrity_report`,
+  `inspect_execution_checkpoint_store`, and
+  `OrderflowExecutionEngine.inspectCheckpointStore` expose offline checkpoint
+  validation and latest-valid-checkpoint metadata without mutating checkpoint
+  stores.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

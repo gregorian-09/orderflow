@@ -36,6 +36,8 @@ Highlights:
   native order-state owner
 - typed execution events and command reports instead of JSON on the order path
 - route/account/symbol-scoped risk checks before adapter routing
+- offline WAL and checkpoint-store diagnostics for recovery checks without
+  opening an execution engine
 - analytics-to-execution examples in this README and the handbook
 - continued PEP 561 `py.typed` support and bundled native library lookup
 
@@ -402,6 +404,7 @@ analytics runtime.
 | `ExecutionMetrics` | Submitted/cancelled/amended/events/risk/adapter/recovery counters |
 | `ExecutionWalIntegrityReport` | Offline WAL scan summary for operator diagnostics |
 | `ExecutionSegmentedWalIntegrityReport` | Offline segmented WAL directory scan summary |
+| `ExecutionCheckpointStoreIntegrityReport` | Offline checkpoint store scan summary |
 | `ConcurrentExecutionConfig` | Command/report/event-buffer capacities |
 | `ExecutionCommandReport` | Concurrent command result, sequence, result code, and events |
 
@@ -439,8 +442,9 @@ analytics runtime.
 |---|---|
 | `inspect_execution_wal(path, library_path=None)` | Inspects a single execution WAL file without creating an execution engine |
 | `inspect_execution_segmented_wal(root, library_path=None)` | Inspects a segmented execution WAL directory without creating an execution engine |
+| `inspect_execution_checkpoint_store(root, library_path=None)` | Inspects an execution checkpoint store directory without creating an execution engine |
 
-#### WAL integrity diagnostic
+#### Recovery integrity diagnostics
 
 Use `inspect_execution_wal()` and `inspect_execution_segmented_wal()` before
 recovery drills, after crash restart, or in an operations health check. Both
@@ -448,13 +452,29 @@ helpers read bytes outside the order path and return counts, byte position,
 optional sequence range, checksum/sequence failure counts, and validity flags.
 Use the segmented helper for production rotated WAL roots.
 
+Use `inspect_execution_checkpoint_store()` with the same restart workflow to
+validate checkpoint files before selecting a restart point. It reports
+discovered, valid, and invalid checkpoint counts, total checkpoint bytes, and
+the latest valid checkpoint id, covered WAL sequence, and creation timestamp.
+Corrupt checkpoint files do not raise when the root can be listed; they return a
+report with `valid == False` so operators can inspect the failure and fall back
+to the latest valid checkpoint. Missing or unreadable roots raise the mapped
+native I/O error.
+
 ```python
-from orderflow import inspect_execution_segmented_wal, inspect_execution_wal
+from orderflow import (
+    inspect_execution_checkpoint_store,
+    inspect_execution_segmented_wal,
+    inspect_execution_wal,
+)
 
 single = inspect_execution_wal("execution-wal/wal-000000000001.ofwal")
 segmented = inspect_execution_segmented_wal("execution-wal")
-if not single.valid or not segmented.valid:
-    raise RuntimeError("unsafe execution WAL")
+checkpoints = inspect_execution_checkpoint_store("execution-checkpoints")
+if not single.valid or not segmented.valid or not checkpoints.valid:
+    raise RuntimeError("unsafe execution recovery inputs")
+if checkpoints.latest_checkpoint_id is None:
+    raise RuntimeError("no valid checkpoint available")
 ```
 
 ## Usage Patterns
