@@ -482,6 +482,57 @@ pub struct ExecutionMetrics {
     pub recovered: u64,
 }
 
+/// Read-only operator runbook summary for an execution engine.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ExecutionRunbookSnapshot {
+    /// True when the engine has started its adapter.
+    pub started: bool,
+    /// True when the adapter reports connected.
+    pub connected: bool,
+    /// True when the adapter reports degraded.
+    pub degraded: bool,
+    /// Latest adapter health sequence.
+    pub health_seq: u64,
+    /// Configured route count.
+    pub route_count: usize,
+    /// Enabled route count.
+    pub enabled_route_count: usize,
+    /// Disabled route count.
+    pub disabled_route_count: usize,
+    /// Enabled route count with route-level kill switch active.
+    pub kill_switch_route_count: usize,
+    /// Locally known non-terminal order count.
+    pub open_order_count: usize,
+    /// Locally known terminal order count.
+    pub terminal_order_count: usize,
+    /// Submitted orders accepted by the local engine.
+    pub submitted: u64,
+    /// Cancel commands accepted by the local engine.
+    pub cancelled: u64,
+    /// Amend commands accepted by the local engine.
+    pub amended: u64,
+    /// Execution events applied to state machines.
+    pub events_applied: u64,
+    /// Risk rejection count.
+    pub risk_rejected: u64,
+    /// Adapter error count.
+    pub adapter_errors: u64,
+    /// Recovery event count.
+    pub recovered: u64,
+    /// True when new submissions are blocked for all configured routes.
+    pub new_submissions_blocked: bool,
+    /// True when an operator should inspect the route or adapter state.
+    pub operator_attention_required: bool,
+}
+
+impl ExecutionRunbookSnapshot {
+    /// Returns true when the engine can accept at least one new-order route.
+    pub const fn can_submit_new_orders(self) -> bool {
+        !self.new_submissions_blocked
+    }
+}
+
 /// Configuration for the concurrent execution worker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConcurrentExecutionConfig {
@@ -969,6 +1020,55 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
     /// Returns adapter health.
     pub fn health(&self) -> ExecutionHealth {
         self.adapter.health()
+    }
+
+    /// Returns a read-only operator runbook summary.
+    pub fn runbook_snapshot(&self) -> ExecutionRunbookSnapshot {
+        let health = self.adapter.health();
+        let enabled_route_count = self.routes.iter().filter(|route| route.enabled).count();
+        let kill_switch_route_count = self
+            .routes
+            .iter()
+            .filter(|route| route.enabled && route.risk_limits.kill_switch)
+            .count();
+        let open_order_count = self
+            .orders
+            .values()
+            .filter(|state| !state.state().status.is_terminal())
+            .count();
+        let terminal_order_count = self.orders.len().saturating_sub(open_order_count);
+        let new_submissions_blocked = !self.started
+            || !health.connected
+            || enabled_route_count == 0
+            || enabled_route_count == kill_switch_route_count;
+        let operator_attention_required = !self.started
+            || !health.connected
+            || health.degraded
+            || enabled_route_count == 0
+            || kill_switch_route_count > 0
+            || self.metrics.adapter_errors > 0;
+
+        ExecutionRunbookSnapshot {
+            started: self.started,
+            connected: health.connected,
+            degraded: health.degraded,
+            health_seq: health.health_seq,
+            route_count: self.routes.len(),
+            enabled_route_count,
+            disabled_route_count: self.routes.len().saturating_sub(enabled_route_count),
+            kill_switch_route_count,
+            open_order_count,
+            terminal_order_count,
+            submitted: self.metrics.submitted,
+            cancelled: self.metrics.cancelled,
+            amended: self.metrics.amended,
+            events_applied: self.metrics.events_applied,
+            risk_rejected: self.metrics.risk_rejected,
+            adapter_errors: self.metrics.adapter_errors,
+            recovered: self.metrics.recovered,
+            new_submissions_blocked,
+            operator_attention_required,
+        }
     }
 
     /// Returns an order state by client id.
@@ -1717,7 +1817,21 @@ mod tests {
     #[test]
     fn simulated_engine_submits_and_fills() {
         let mut engine = simulated_engine(route());
+        let stopped = engine.runbook_snapshot();
+        assert!(!stopped.started);
+        assert!(stopped.new_submissions_blocked);
+        assert!(stopped.operator_attention_required);
+
         engine.start().unwrap();
+        let started = engine.runbook_snapshot();
+        assert!(started.started);
+        assert!(started.connected);
+        assert_eq!(started.route_count, 1);
+        assert_eq!(started.enabled_route_count, 1);
+        assert_eq!(started.kill_switch_route_count, 0);
+        assert!(started.can_submit_new_orders());
+        assert!(!started.operator_attention_required);
+
         let mut out = ExecutionEventBuffer::with_capacity(8);
         engine.submit(order(), &mut out).unwrap();
 
@@ -1730,6 +1844,27 @@ mod tests {
         );
         assert_eq!(engine.metrics().submitted, 1);
         assert_eq!(engine.metrics().events_applied, 2);
+        let after_fill = engine.runbook_snapshot();
+        assert_eq!(after_fill.submitted, 1);
+        assert_eq!(after_fill.events_applied, 2);
+        assert_eq!(after_fill.open_order_count, 0);
+        assert_eq!(after_fill.terminal_order_count, 1);
+    }
+
+    #[test]
+    fn runbook_snapshot_marks_killed_routes_without_mutating_engine() {
+        let mut killed = route();
+        killed.risk_limits.kill_switch = true;
+        let mut engine = simulated_engine(killed);
+        engine.start().unwrap();
+
+        let snapshot = engine.runbook_snapshot();
+        assert!(snapshot.started);
+        assert!(snapshot.connected);
+        assert_eq!(snapshot.kill_switch_route_count, 1);
+        assert!(snapshot.new_submissions_blocked);
+        assert!(!snapshot.can_submit_new_orders());
+        assert!(snapshot.operator_attention_required);
     }
 
     #[test]

@@ -13,6 +13,14 @@ The crate has two execution layers:
 The synchronous engine is the canonical state machine. The concurrent engine is
 an additive producer/worker wrapper.
 
+`ExecutionRunbookSnapshot` is a read-only operator summary for dashboards and
+runbooks. `ExecutionEngine::runbook_snapshot()` reports adapter connectivity,
+route counts, route-level kill switches, open/terminal local order counts,
+execution counters, whether all new submissions are blocked, and whether
+operator attention is required. It does not mutate state and does not execute
+operator actions; host applications still enforce permissions and decide
+whether to pause, reconcile, cancel, or recover.
+
 ## Core Traits
 
 ### `ExecutionAdapter`
@@ -211,7 +219,8 @@ Important behaviors:
 1. Construct with `ExecutionEngine::new(adapter, risk, journal, routes)`.
 2. Call `start()`.
 3. Call `submit`, `cancel`, `amend`, `poll`, or `recover_open_orders`.
-4. Read `order_state`, `metrics`, `health`, or `replay_journal`.
+4. Read `order_state`, `metrics`, `health`, `runbook_snapshot`, or
+   `replay_journal`.
 
 ### Submit Path
 

@@ -16,6 +16,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
   ctypes, and Java JNA compatibility matrix.
 - Added structured active adapter metadata to `Engine::metrics_json()` under an
   additive `adapters` array while preserving existing flat metrics fields.
+- Added `ExecutionRunbookSnapshot` and `ExecutionEngine::runbook_snapshot()` for
+  read-only OMS operator dashboards and incident runbooks.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

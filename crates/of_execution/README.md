@@ -98,6 +98,7 @@ Engine and simulation:
 
 - [`ExecutionEngine`]
 - [`ExecutionMetrics`]
+- [`ExecutionRunbookSnapshot`]
 - [`SimExecutionAdapter`]
 - [`simulated_engine`]
 - [`simulated_engine_with_routes`]
@@ -182,6 +183,14 @@ flowchart TD
 The synchronous [`ExecutionEngine`] is the canonical state owner. The
 [`ConcurrentExecutionEngine`] is a wrapper that lets many producer threads
 submit commands while one worker thread owns the synchronous engine.
+
+[`ExecutionEngine::runbook_snapshot`] returns a read-only
+[`ExecutionRunbookSnapshot`] for operator dashboards and incident checklists. It
+summarizes adapter connectivity, route enablement, route-level kill switches,
+open versus terminal local orders, core execution counters, whether every
+new-order route is blocked, and whether the engine deserves operator attention.
+The snapshot is factual only: hosts still own permissions, escalation, and
+operator command execution.
 
 ## Adapter Contract
 
