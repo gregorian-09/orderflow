@@ -499,6 +499,10 @@ mod tests {
         assert!(metrics.contains("\"adapter_protocol_info\""));
         assert!(metrics.contains("\"health_seq\":"));
         assert!(metrics.contains("\"quality_flags_detail\":"));
+        assert!(metrics.contains("\"adapters\":[{"));
+        assert!(metrics.contains("\"provider_id\":\"mock\""));
+        assert!(metrics.contains("\"healthy\":true"));
+        assert!(metrics.contains("\"capabilities\":{"));
     }
 
     #[test]

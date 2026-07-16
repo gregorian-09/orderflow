@@ -14,6 +14,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
   sync with the manifest.
 - Expanded the generated binding inventory with a per-symbol C ABI, Python
   ctypes, and Java JNA compatibility matrix.
+- Added structured active adapter metadata to `Engine::metrics_json()` under an
+  additive `adapters` array while preserving existing flat metrics fields.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

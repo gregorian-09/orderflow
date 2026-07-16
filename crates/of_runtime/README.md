@@ -186,7 +186,7 @@ Return behavior:
 
 - [`Engine::health_seq`] is the cheap monotonic change counter for external polling loops.
 - [`Engine::health_json`] is the user-facing operational snapshot and includes connectivity, degradation, quality flags, supervision metadata, and tracked symbol counts.
-- [`Engine::metrics_json`] is the counter-oriented metrics payload and includes processed event counts, quality flag detail, and subsystem counts.
+- [`Engine::metrics_json`] is the counter-oriented metrics payload and includes processed event counts, quality flag detail, subsystem counts, and a low-cardinality `adapters` array with active adapter descriptor/health metadata.
 - [`adapter_inventory_json`] returns known adapter descriptors for the current
   build without requiring an engine.
 - [`Engine::adapter_inventory_json`] returns the same descriptor inventory with

@@ -185,7 +185,9 @@ Important rules:
 ## Health and Metrics Contracts
 
 - `health_json()` is the user-facing operational snapshot.
-- `metrics_json()` is the counter-focused operational snapshot.
+- `metrics_json()` is the counter-focused operational snapshot. It keeps the
+  existing flat adapter counters and also includes an additive `adapters` array
+  with low-cardinality descriptor and health metadata for dashboards.
 - `adapter_inventory_json()` is the build/provider catalog used by dashboards,
   bindings, and CLIs before attempting provider-specific configuration.
 - `active_adapter_status_json()` combines static descriptor fields with current

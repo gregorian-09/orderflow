@@ -1349,6 +1349,13 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         let circuit_open = self.circuit_breaker.is_open_at(unix_ts_nanos());
         let adapter_healthy =
             self.started && adapter_health.connected && !adapter_health.degraded && !circuit_open;
+        let adapter_status_json = format_adapter_status_json(&RuntimeAdapterStatus {
+            descriptor: self.adapter_descriptor(),
+            health: adapter_health.clone(),
+            health_seq: self.health_seq,
+            started: self.started,
+            circuit_breaker_open: circuit_open,
+        });
         let runtime_health_status = if !self.started || !adapter_health.connected {
             "disconnected"
         } else if adapter_health.degraded
@@ -1362,7 +1369,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         };
 
         format!(
-            "{{\"instance_id\":\"{}\",\"started\":{},\"processed_events\":{},\"symbols\":{},\"book_symbols\":{},\"analytics_symbols\":{},\"signal_symbols\":{},\"persistence\":{},\"health_seq\":{},\"quality_flags\":{},\"quality_flags_detail\":{},\"adapter_connected\":{},\"adapter_degraded\":{},\"adapter_last_error\":{},\"adapter_protocol_info\":{},\"adapter_total_count\":1,\"adapter_healthy_count\":{},\"runtime_health_status\":\"{}\",\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_sequence_enforced\":{},\"external_stale_after_ms\":{},\"external_last_ingest_ns\":{},\"external_trade_sequence_symbols\":{},\"external_book_sequence_symbols\":{},\"max_events_per_poll\":{},\"backpressure_dropped_events\":{},\"circuit_breaker_enabled\":{},\"circuit_breaker_open\":{},\"circuit_breaker_consecutive_failures\":{},\"circuit_breaker_opened_count\":{},\"circuit_breaker_cooldown_ms\":{}}}",
+            "{{\"instance_id\":\"{}\",\"started\":{},\"processed_events\":{},\"symbols\":{},\"book_symbols\":{},\"analytics_symbols\":{},\"signal_symbols\":{},\"persistence\":{},\"health_seq\":{},\"quality_flags\":{},\"quality_flags_detail\":{},\"adapter_connected\":{},\"adapter_degraded\":{},\"adapter_last_error\":{},\"adapter_protocol_info\":{},\"adapter_total_count\":1,\"adapter_healthy_count\":{},\"runtime_health_status\":\"{}\",\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_sequence_enforced\":{},\"external_stale_after_ms\":{},\"external_last_ingest_ns\":{},\"external_trade_sequence_symbols\":{},\"external_book_sequence_symbols\":{},\"max_events_per_poll\":{},\"backpressure_dropped_events\":{},\"circuit_breaker_enabled\":{},\"circuit_breaker_open\":{},\"circuit_breaker_consecutive_failures\":{},\"circuit_breaker_opened_count\":{},\"circuit_breaker_cooldown_ms\":{},\"adapters\":[{}]}}",
             escape_json(&self.cfg.instance_id),
             self.started,
             self.processed_events,
@@ -1393,7 +1400,8 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             circuit_open,
             self.circuit_breaker.consecutive_failures,
             self.circuit_breaker.opened_count,
-            self.circuit_breaker.cooldown_ms
+            self.circuit_breaker.cooldown_ms,
+            adapter_status_json
         )
     }
 
