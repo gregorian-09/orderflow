@@ -84,6 +84,14 @@ Journaling:
 - [`CheckpointManifest`]
 - [`ExecutionCheckpointStore`]
 - [`FileExecutionCheckpointStore`]
+- [`RecoveryCorruptionPolicy`]
+- [`RecoveryVenuePolicy`]
+- [`RecoveryPlan`]
+- [`RecoveredOmsState`]
+- [`RecoveryResult`]
+- [`recover_oms_state_from_records`]
+- [`recover_oms_state_from_segmented_wal`]
+- [`recover_latest_checkpoint_from_segmented_wal`]
 
 Engine and simulation:
 
@@ -446,7 +454,8 @@ use of_execution::{
 };
 use of_execution_core::{ClientOrderId, WalSequence, WalSyncPolicy};
 
-let root = std::env::temp_dir().join("execution-wal");
+let root = std::env::temp_dir().join(format!("execution-wal-{}", std::process::id()));
+let _ = std::fs::remove_dir_all(&root);
 let mut journal = SegmentedWalExecutionJournal::open(
     WalSegmentConfig::new(&root)
         .with_sync_policy(WalSyncPolicy::EveryNRecords(64))
@@ -477,8 +486,8 @@ sequences across segment boundaries, reconstructs the manifest, and fails
 closed on corrupt or non-contiguous data. The manifest is an operator inventory
 and discovery aid.
 
-Checkpoint markers and recovery-plan orchestration remain separate additive
-features so the compatibility boundary stays narrow.
+Checkpoint marker records remain a separate additive feature so the
+compatibility boundary stays narrow.
 
 ### Checkpoint store
 
@@ -502,7 +511,8 @@ use of_execution::{
 };
 use of_execution_core::WalSequence;
 
-let root = std::env::temp_dir().join("orderflow-checkpoints");
+let root = std::env::temp_dir().join(format!("orderflow-checkpoints-{}", std::process::id()));
+let _ = std::fs::remove_dir_all(&root);
 let mut store = FileExecutionCheckpointStore::open(
     CheckpointConfig::new(&root).with_sync_on_save(false),
 )?;
@@ -523,6 +533,58 @@ assert!(store.validate_checkpoint(&latest)?);
 `CheckpointPolicy` is metadata for hosts and future checkpoint schedulers. This
 store does not start background writers or block the OMS worker automatically;
 callers decide when to construct and save snapshots.
+
+### Recovery plan
+
+[`RecoveryPlan`] describes a deterministic replay before recovery starts:
+
+- first WAL sequence to replay;
+- optional latest sequence expected by the caller;
+- fail-closed corruption policy;
+- venue reconciliation policy;
+- whether strategy submissions remain disabled after recovery.
+
+[`recover_latest_checkpoint_from_segmented_wal`] loads the newest valid
+checkpoint from an [`ExecutionCheckpointStore`], builds a plan from
+`last_applied_sequence + 1`, replays the segmented WAL tail, and returns a
+[`RecoveryResult`] with [`RecoveredOmsState`].
+
+```rust
+use of_execution::{
+    recover_latest_checkpoint_from_segmented_wal, CheckpointConfig,
+    FileExecutionCheckpointStore, SegmentedWalExecutionJournal, WalSegmentConfig,
+};
+use of_execution_core::WalSyncPolicy;
+
+let checkpoints = std::env::temp_dir().join(format!(
+    "orderflow-checkpoints-recovery-{}",
+    std::process::id()
+));
+let wal = std::env::temp_dir().join(format!("execution-wal-recovery-{}", std::process::id()));
+let _ = std::fs::remove_dir_all(&checkpoints);
+let _ = std::fs::remove_dir_all(&wal);
+
+let store = FileExecutionCheckpointStore::open(
+    CheckpointConfig::new(&checkpoints).with_sync_on_save(false),
+)?;
+let journal = SegmentedWalExecutionJournal::open(
+    WalSegmentConfig::new(&wal).with_sync_policy(WalSyncPolicy::Never),
+)?;
+
+let result = recover_latest_checkpoint_from_segmented_wal(&store, &journal)?;
+assert!(result.venue_reconciliation_required);
+# let _ = std::fs::remove_dir_all(checkpoints);
+# let _ = std::fs::remove_dir_all(wal);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Recovery intentionally fails closed when the WAL tail contains an execution
+event for an order that was not present in the selected checkpoint. The current
+command WAL payload records command kind, id, and timestamp, not the full
+`OrderRequest`, so the recovery layer refuses to invent side, strategy, price,
+or quantity. Production hosts should checkpoint frequently, require venue
+reconciliation, and add full command-payload journaling before relying on
+checkpoint-only recovery for long uncheckpointed windows.
 
 ## Concurrent Worker
 

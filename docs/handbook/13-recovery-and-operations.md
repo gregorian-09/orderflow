@@ -155,6 +155,43 @@ Current checkpoint contents cover open orders, positions, route config hash,
 kill-switch state, and checksum. Venue reconciliation must still run before
 strategy submissions resume.
 
+## Checkpoint Plus WAL Recovery
+
+The first OMS recovery helper is
+`recover_latest_checkpoint_from_segmented_wal(store, journal)`.
+
+Startup flow:
+
+1. open `FileExecutionCheckpointStore`;
+2. open `SegmentedWalExecutionJournal`;
+3. load the latest valid checkpoint;
+4. build `RecoveryPlan::from_checkpoint(&checkpoint)`;
+5. replay WAL records from `last_applied_sequence + 1`;
+6. apply execution events to checkpoint order states;
+7. return `RecoveryResult` with `RecoveredOmsState`;
+8. keep submissions disabled unless the host deliberately enables them;
+9. run venue reconciliation before live strategy flow resumes.
+
+`RecoveryPlan` defaults are conservative:
+
+- `RecoveryCorruptionPolicy::FailClosed`;
+- `RecoveryVenuePolicy::RequireReconciliation`;
+- submissions disabled after recovery.
+
+The helper intentionally rejects a WAL tail event for an order that is not
+present in the checkpoint. Current command WAL records contain command kind,
+client order id, and timestamp, not the full order request. Without side,
+strategy id, price, and quantity, safe recovery cannot recreate a new order
+that arrived after the checkpoint. In that case recovery fails closed and the
+host should reconcile with venue state.
+
+This keeps the first recovery layer deterministic:
+
+- same checkpoint plus same WAL bytes produce the same `RecoveredOmsState`;
+- corrupt WAL frames are rejected by segmented WAL replay before state rebuild;
+- invalid order transitions return errors instead of best-effort state;
+- venue reconciliation is explicit, not silently bypassed.
+
 ## Metrics To Export
 
 At minimum export:

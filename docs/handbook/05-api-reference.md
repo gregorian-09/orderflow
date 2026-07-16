@@ -480,6 +480,14 @@ Public journal types:
 - `CheckpointManifest`
 - `ExecutionCheckpointStore` trait
 - `FileExecutionCheckpointStore`
+- `RecoveryCorruptionPolicy`
+- `RecoveryVenuePolicy`
+- `RecoveryPlan`
+- `RecoveredOmsState`
+- `RecoveryResult`
+- `recover_oms_state_from_records`
+- `recover_oms_state_from_segmented_wal`
+- `recover_latest_checkpoint_from_segmented_wal`
 
 Public concurrent execution types:
 

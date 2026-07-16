@@ -11,11 +11,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use of_execution_core::{
-    execution_wal_checksum, AccountId, AmendRequest, CancelRequest, ClientOrderId, ExecutionEvent,
-    ExecutionSymbol, ExecutionText, ExecutionType, FixedAscii, OrderPrice, OrderQty, OrderRequest,
-    OrderSide, OrderState, OrderStatus, OrderType, RiskCheck, RiskContext, RiskDecision,
-    RiskLimits, RiskRejectReason, RouteId, StrategyId, TimeInForce, WalIntegrityReport,
-    WalRecordKind, WalRecordView, WalReplayCursor, WalSegmentId, WalSequence, WalSyncPolicy,
+    execution_wal_checksum, AccountId, AmendRequest, CancelRequest, ClientOrderId,
+    ExecutionCoreError, ExecutionEvent, ExecutionSymbol, ExecutionText, ExecutionType, FixedAscii,
+    OrderPrice, OrderQty, OrderRequest, OrderSide, OrderState, OrderStatus, OrderType, RiskCheck,
+    RiskContext, RiskDecision, RiskLimits, RiskRejectReason, RouteId, StrategyId, TimeInForce,
+    WalIntegrityReport, WalRecordKind, WalRecordView, WalReplayCursor, WalSegmentId, WalSequence,
+    WalSyncPolicy,
 };
 
 use crate::{
@@ -1981,6 +1982,400 @@ impl ExecutionCheckpointStore for FileExecutionCheckpointStore {
     }
 }
 
+/// Recovery behavior when WAL replay encounters unusable data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum RecoveryCorruptionPolicy {
+    /// Fail recovery on the first invalid, corrupt, or incomplete transition.
+    #[default]
+    FailClosed,
+}
+
+/// Venue reconciliation requirement selected for a recovery run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum RecoveryVenuePolicy {
+    /// Require the host to reconcile against venue truth before submissions.
+    #[default]
+    RequireReconciliation,
+    /// Let the host decide whether reconciliation is required.
+    HostControlled,
+}
+
+/// Deterministic OMS recovery plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RecoveryPlan {
+    replay_from: WalSequence,
+    expected_latest_sequence: Option<WalSequence>,
+    corruption_policy: RecoveryCorruptionPolicy,
+    venue_policy: RecoveryVenuePolicy,
+    submissions_disabled: bool,
+}
+
+impl RecoveryPlan {
+    /// Creates a recovery plan that replays from `replay_from`.
+    pub fn new(replay_from: WalSequence) -> Self {
+        Self {
+            replay_from,
+            expected_latest_sequence: None,
+            corruption_policy: RecoveryCorruptionPolicy::FailClosed,
+            venue_policy: RecoveryVenuePolicy::RequireReconciliation,
+            submissions_disabled: true,
+        }
+    }
+
+    /// Creates a recovery plan that starts after `checkpoint`.
+    pub fn from_checkpoint(checkpoint: &ExecutionCheckpoint) -> Self {
+        Self::new(checkpoint.last_applied_sequence.next())
+    }
+
+    /// Sets the latest WAL sequence expected by the caller.
+    pub fn with_expected_latest_sequence(
+        mut self,
+        expected_latest_sequence: Option<WalSequence>,
+    ) -> Self {
+        self.expected_latest_sequence = expected_latest_sequence;
+        self
+    }
+
+    /// Sets the corruption policy.
+    pub fn with_corruption_policy(mut self, corruption_policy: RecoveryCorruptionPolicy) -> Self {
+        self.corruption_policy = corruption_policy;
+        self
+    }
+
+    /// Sets the venue reconciliation policy.
+    pub fn with_venue_policy(mut self, venue_policy: RecoveryVenuePolicy) -> Self {
+        self.venue_policy = venue_policy;
+        self
+    }
+
+    /// Sets whether strategy submissions stay disabled after recovery.
+    pub fn with_submissions_disabled(mut self, submissions_disabled: bool) -> Self {
+        self.submissions_disabled = submissions_disabled;
+        self
+    }
+
+    /// Returns the first WAL sequence to replay.
+    pub const fn replay_from(&self) -> WalSequence {
+        self.replay_from
+    }
+
+    /// Returns the optional latest expected WAL sequence.
+    pub const fn expected_latest_sequence(&self) -> Option<WalSequence> {
+        self.expected_latest_sequence
+    }
+
+    /// Returns the corruption policy.
+    pub const fn corruption_policy(&self) -> RecoveryCorruptionPolicy {
+        self.corruption_policy
+    }
+
+    /// Returns the venue reconciliation policy.
+    pub const fn venue_policy(&self) -> RecoveryVenuePolicy {
+        self.venue_policy
+    }
+
+    /// Returns true when submissions should remain disabled after recovery.
+    pub const fn submissions_disabled(&self) -> bool {
+        self.submissions_disabled
+    }
+}
+
+impl Default for RecoveryPlan {
+    fn default() -> Self {
+        Self::new(WalSequence(1))
+    }
+}
+
+/// Recovered OMS state reconstructed from a checkpoint and WAL replay.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct RecoveredOmsState {
+    checkpoint_id: Option<u64>,
+    route_config_hash: u64,
+    kill_switch: bool,
+    orders: Vec<OrderState>,
+    positions: Vec<CheckpointPosition>,
+}
+
+impl RecoveredOmsState {
+    /// Creates an empty recovered state.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates recovered state from a checkpoint.
+    pub fn from_checkpoint(checkpoint: &ExecutionCheckpoint) -> Self {
+        Self {
+            checkpoint_id: Some(checkpoint.checkpoint_id),
+            route_config_hash: checkpoint.route_config_hash,
+            kill_switch: checkpoint.kill_switch,
+            orders: checkpoint.open_orders.clone(),
+            positions: checkpoint.positions.clone(),
+        }
+    }
+
+    /// Returns the checkpoint id used for recovery, if any.
+    pub const fn checkpoint_id(&self) -> Option<u64> {
+        self.checkpoint_id
+    }
+
+    /// Returns the recovered route config hash.
+    pub const fn route_config_hash(&self) -> u64 {
+        self.route_config_hash
+    }
+
+    /// Returns whether the recovered kill switch is active.
+    pub const fn kill_switch(&self) -> bool {
+        self.kill_switch
+    }
+
+    /// Returns all recovered order states.
+    pub fn orders(&self) -> &[OrderState] {
+        &self.orders
+    }
+
+    /// Returns recovered non-terminal order states.
+    pub fn open_orders(&self) -> Vec<OrderState> {
+        self.orders
+            .iter()
+            .copied()
+            .filter(|state| !state.status.is_terminal())
+            .collect()
+    }
+
+    /// Returns recovered checkpoint positions.
+    pub fn positions(&self) -> &[CheckpointPosition] {
+        &self.positions
+    }
+}
+
+/// Summary of one deterministic recovery run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RecoveryResult {
+    /// Recovery plan used for the run.
+    pub plan: RecoveryPlan,
+    /// Recovered OMS state.
+    pub state: RecoveredOmsState,
+    /// WAL replay summary.
+    pub replay: WalReplayResult,
+    /// Number of command records observed during replay.
+    pub commands_seen: usize,
+    /// Number of execution events applied during replay.
+    pub events_applied: usize,
+    /// True when venue reconciliation must run before submissions resume.
+    pub venue_reconciliation_required: bool,
+    /// True when strategy submissions may resume after recovery.
+    pub submissions_enabled: bool,
+}
+
+/// Recovers OMS state from already decoded journal records.
+///
+/// # Errors
+///
+/// Returns an execution journal error when replay contains an event for an
+/// unknown order or an invalid state transition.
+pub fn recover_oms_state_from_records(
+    plan: RecoveryPlan,
+    checkpoint: Option<&ExecutionCheckpoint>,
+    records: &[JournalRecord],
+) -> ExecutionResult<RecoveryResult> {
+    let mut state = checkpoint
+        .map(RecoveredOmsState::from_checkpoint)
+        .unwrap_or_default();
+    let mut commands_seen = 0_usize;
+    let mut events_applied = 0_usize;
+
+    for record in records {
+        match record {
+            JournalRecord::Command { .. } => {
+                commands_seen = commands_seen.saturating_add(1);
+            }
+            JournalRecord::Event(event) => {
+                apply_recovered_event(&mut state.orders, event)?;
+                events_applied = events_applied.saturating_add(1);
+            }
+        }
+    }
+
+    let venue_reconciliation_required =
+        plan.venue_policy() == RecoveryVenuePolicy::RequireReconciliation;
+    let submissions_enabled =
+        !plan.submissions_disabled() && plan.venue_policy() == RecoveryVenuePolicy::HostControlled;
+
+    Ok(RecoveryResult {
+        plan,
+        state,
+        replay: WalReplayResult {
+            records: records.len(),
+            bytes: 0,
+            first_sequence: None,
+            last_sequence: None,
+        },
+        commands_seen,
+        events_applied,
+        venue_reconciliation_required,
+        submissions_enabled,
+    })
+}
+
+/// Recovers OMS state from a segmented WAL and an optional checkpoint.
+///
+/// # Errors
+///
+/// Returns an execution journal error when WAL replay or state reconstruction
+/// fails.
+pub fn recover_oms_state_from_segmented_wal(
+    plan: RecoveryPlan,
+    checkpoint: Option<&ExecutionCheckpoint>,
+    journal: &SegmentedWalExecutionJournal,
+) -> ExecutionResult<RecoveryResult> {
+    let mut records = Vec::new();
+    let replay = journal.replay_from(plan.replay_from(), &mut records)?;
+    let mut result = recover_oms_state_from_records(plan, checkpoint, &records)?;
+    if let Some(expected) = result.plan.expected_latest_sequence() {
+        let actual = replay
+            .last_sequence
+            .or_else(|| checkpoint.map(|checkpoint| checkpoint.last_applied_sequence));
+        if actual != Some(expected) {
+            return Err(ExecutionError::Journal(format!(
+                "recovery latest sequence mismatch: expected {}, actual {}",
+                expected.0,
+                actual.map_or(0, |sequence| sequence.0)
+            )));
+        }
+    }
+    result.replay = replay;
+    Ok(result)
+}
+
+/// Loads the latest checkpoint and recovers state from a segmented WAL.
+///
+/// # Errors
+///
+/// Returns an execution journal error when checkpoint loading, WAL replay, or
+/// state reconstruction fails.
+pub fn recover_latest_checkpoint_from_segmented_wal<S>(
+    store: &S,
+    journal: &SegmentedWalExecutionJournal,
+) -> ExecutionResult<RecoveryResult>
+where
+    S: ExecutionCheckpointStore + ?Sized,
+{
+    let checkpoint = store.load_latest()?;
+    let plan = checkpoint
+        .as_ref()
+        .map(RecoveryPlan::from_checkpoint)
+        .unwrap_or_default();
+    recover_oms_state_from_segmented_wal(plan, checkpoint.as_ref(), journal)
+}
+
+fn apply_recovered_event(
+    orders: &mut Vec<OrderState>,
+    event: &ExecutionEvent,
+) -> ExecutionResult<()> {
+    let key = recovery_event_key(event);
+    let Some(index) = orders.iter().position(|state| state.client_order_id == key) else {
+        return Err(ExecutionError::Journal(format!(
+            "recovery event references unknown order {}",
+            key.as_str()
+        )));
+    };
+
+    let mut state = orders[index];
+    apply_recovered_state_transition(&mut state, event)?;
+    if event.exec_type == ExecutionType::ReplaceAck {
+        orders.remove(index);
+        orders.push(state);
+    } else {
+        orders[index] = state;
+    }
+    Ok(())
+}
+
+fn recovery_event_key(event: &ExecutionEvent) -> ClientOrderId {
+    if !event.orig_client_order_id.is_empty()
+        && matches!(
+            event.exec_type,
+            ExecutionType::CancelPending
+                | ExecutionType::CancelAck
+                | ExecutionType::CancelReject
+                | ExecutionType::ReplacePending
+                | ExecutionType::ReplaceAck
+                | ExecutionType::ReplaceReject
+        )
+    {
+        event.orig_client_order_id
+    } else {
+        event.client_order_id
+    }
+}
+
+fn apply_recovered_state_transition(
+    state: &mut OrderState,
+    event: &ExecutionEvent,
+) -> ExecutionResult<()> {
+    match event.exec_type {
+        ExecutionType::Ack => {
+            if state.status != OrderStatus::PendingNew {
+                return Err(ExecutionError::Core(ExecutionCoreError::InvalidTransition));
+            }
+            state.status = OrderStatus::New;
+            state.venue_order_id = event.venue_order_id;
+            state.leaves_qty = event.leaves_qty;
+        }
+        ExecutionType::Trade => {
+            if event.cumulative_qty.0 > state.order_qty.0 {
+                return Err(ExecutionError::Core(ExecutionCoreError::InvalidTransition));
+            }
+            state.cumulative_qty = event.cumulative_qty;
+            state.leaves_qty = event.leaves_qty;
+            state.average_price = event.average_price;
+            state.status = if event.leaves_qty.0 == 0 {
+                OrderStatus::Filled
+            } else {
+                OrderStatus::PartiallyFilled
+            };
+        }
+        ExecutionType::CancelPending => state.status = OrderStatus::PendingCancel,
+        ExecutionType::CancelAck => {
+            state.status = OrderStatus::Cancelled;
+            state.cumulative_qty = event.cumulative_qty;
+            state.leaves_qty = event.leaves_qty;
+            state.average_price = event.average_price;
+        }
+        ExecutionType::ReplacePending => state.status = OrderStatus::PendingReplace,
+        ExecutionType::ReplaceAck => {
+            state.client_order_id = event.client_order_id;
+            state.last_accepted_client_order_id = event.client_order_id;
+            state.status = OrderStatus::Replaced;
+            state.order_qty = OrderQty(event.cumulative_qty.0 + event.leaves_qty.0);
+            state.cumulative_qty = event.cumulative_qty;
+            state.leaves_qty = event.leaves_qty;
+            state.average_price = event.average_price;
+        }
+        ExecutionType::Reject
+        | ExecutionType::Expire
+        | ExecutionType::CancelReject
+        | ExecutionType::ReplaceReject
+        | ExecutionType::Status
+        | ExecutionType::Restated
+        | ExecutionType::AdapterDegraded => {
+            if event.order_status != OrderStatus::Unknown {
+                state.status = event.order_status;
+            }
+            state.cumulative_qty = event.cumulative_qty;
+            state.leaves_qty = event.leaves_qty;
+            state.average_price = event.average_price;
+        }
+    }
+    state.updated_ns = event.ts_recv_ns;
+    Ok(())
+}
+
 fn encode_checkpoint(checkpoint: &ExecutionCheckpoint) -> Vec<u8> {
     let mut out = Vec::with_capacity(128 + checkpoint.open_orders.len() * 320);
     put_payload_u32(&mut out, CHECKPOINT_MAGIC);
@@ -3413,6 +3808,124 @@ mod tests {
 
         assert!(store.load_latest().is_err());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn recovery_replays_segmented_wal_after_latest_checkpoint() {
+        let root =
+            std::env::temp_dir().join(format!("orderflow-recovery-wal-{}", std::process::id()));
+        let checkpoint_root = std::env::temp_dir().join(format!(
+            "orderflow-recovery-checkpoints-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&checkpoint_root);
+
+        let req = order("C1");
+        let mut state = OrderState::pending_new(&req);
+        state.status = OrderStatus::New;
+        state.venue_order_id = id("V1");
+        state.leaves_qty = req.quantity;
+        state.updated_ns = 2;
+
+        let mut store = FileExecutionCheckpointStore::open(
+            CheckpointConfig::new(&checkpoint_root).with_sync_on_save(false),
+        )
+        .unwrap();
+        store
+            .save_checkpoint(
+                &ExecutionCheckpoint::new(1, WalSequence(2), 100).with_open_orders(vec![state]),
+            )
+            .unwrap();
+
+        let mut journal = SegmentedWalExecutionJournal::open(
+            WalSegmentConfig::new(&root).with_sync_policy(WalSyncPolicy::Never),
+        )
+        .unwrap();
+        journal
+            .record_command(JournalCommandKind::Submit, req.client_order_id, 1)
+            .unwrap();
+        journal
+            .record_event(&ExecutionEvent::accepted(&req, id("V1")))
+            .unwrap();
+        let mut cancel_ack = ExecutionEvent::accepted(&req, id("V1"));
+        cancel_ack.exec_type = ExecutionType::CancelAck;
+        cancel_ack.order_status = OrderStatus::Cancelled;
+        cancel_ack.orig_client_order_id = req.client_order_id;
+        cancel_ack.client_order_id = id("CXL1");
+        cancel_ack.leaves_qty = OrderQty(0);
+        cancel_ack.ts_recv_ns = 3;
+        journal.record_event(&cancel_ack).unwrap();
+        journal.sync().unwrap();
+
+        let result = recover_latest_checkpoint_from_segmented_wal(&store, &journal).unwrap();
+        assert_eq!(result.replay.first_sequence, Some(WalSequence(3)));
+        assert_eq!(result.events_applied, 1);
+        assert_eq!(result.commands_seen, 0);
+        assert!(result.venue_reconciliation_required);
+        assert!(!result.submissions_enabled);
+        assert_eq!(result.state.orders().len(), 1);
+        assert_eq!(result.state.orders()[0].status, OrderStatus::Cancelled);
+        assert!(result.state.open_orders().is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&checkpoint_root);
+    }
+
+    #[test]
+    fn recovery_is_deterministic_for_same_checkpoint_and_wal() {
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-recovery-deterministic-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+
+        let req = order("C1");
+        let mut state = OrderState::pending_new(&req);
+        state.status = OrderStatus::New;
+        state.venue_order_id = id("V1");
+        let checkpoint =
+            ExecutionCheckpoint::new(1, WalSequence(2), 100).with_open_orders(vec![state]);
+
+        let mut journal = SegmentedWalExecutionJournal::open(
+            WalSegmentConfig::new(&root).with_sync_policy(WalSyncPolicy::Never),
+        )
+        .unwrap();
+        journal
+            .record_command(JournalCommandKind::Submit, req.client_order_id, 1)
+            .unwrap();
+        journal
+            .record_event(&ExecutionEvent::accepted(&req, id("V1")))
+            .unwrap();
+        let mut fill = ExecutionEvent::accepted(&req, id("V1"));
+        fill.exec_type = ExecutionType::Trade;
+        fill.order_status = OrderStatus::Filled;
+        fill.last_qty = req.quantity;
+        fill.last_price = req.limit_price;
+        fill.cumulative_qty = req.quantity;
+        fill.leaves_qty = OrderQty(0);
+        fill.average_price = req.limit_price;
+        fill.ts_recv_ns = 3;
+        journal.record_event(&fill).unwrap();
+
+        let plan = RecoveryPlan::from_checkpoint(&checkpoint);
+        let first = recover_oms_state_from_segmented_wal(plan.clone(), Some(&checkpoint), &journal)
+            .unwrap();
+        let second =
+            recover_oms_state_from_segmented_wal(plan, Some(&checkpoint), &journal).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.state.orders()[0].status, OrderStatus::Filled);
+        assert_eq!(first.state.orders()[0].average_price, req.limit_price);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn recovery_fails_closed_on_unknown_order_event() {
+        let req = order("C1");
+        let record = JournalRecord::Event(Box::new(ExecutionEvent::accepted(&req, id("V1"))));
+        let err =
+            recover_oms_state_from_records(RecoveryPlan::default(), None, &[record]).unwrap_err();
+        assert!(err.to_string().contains("unknown order"));
     }
 
     #[test]

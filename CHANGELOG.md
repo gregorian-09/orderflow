@@ -73,6 +73,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `SegmentedWalExecutionJournal` for rotated binary OMS WAL directories with
   segment seals, manifest inventory, cross-segment checksum validation, and
   replay through the existing `ExecutionJournal` model.
+- Additive `of_execution` recovery APIs with `RecoveryPlan`,
+  `RecoveryCorruptionPolicy`, `RecoveryVenuePolicy`, `RecoveredOmsState`,
+  `RecoveryResult`, and segmented-WAL recovery helpers that load the latest
+  checkpoint, replay the WAL tail, fail closed on unsafe unknown orders, and
+  require venue reconciliation by default.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

@@ -103,6 +103,32 @@ optionally syncs it, atomically renames it to the final checkpoint path, and
 optionally syncs the directory on Unix platforms. Loading rejects unsupported
 schema versions and checksum mismatches.
 
+### Recovery
+
+Recovery types:
+
+| Type | Use |
+| --- | --- |
+| `RecoveryCorruptionPolicy` | Fail-closed corruption policy vocabulary |
+| `RecoveryVenuePolicy` | Venue reconciliation requirement vocabulary |
+| `RecoveryPlan` | Replay start sequence, expected latest sequence, policy, and submission gate |
+| `RecoveredOmsState` | Reconstructed checkpoint-plus-WAL state snapshot |
+| `RecoveryResult` | Recovery plan, state, replay summary, counters, and submission/reconciliation flags |
+
+Recovery functions:
+
+| Function | Use |
+| --- | --- |
+| `recover_oms_state_from_records` | Rebuild state from decoded journal records |
+| `recover_oms_state_from_segmented_wal` | Replay a segmented WAL tail from a supplied plan |
+| `recover_latest_checkpoint_from_segmented_wal` | Load latest checkpoint and replay the segmented WAL tail after it |
+
+The recovery path is deterministic and fail closed. It starts from
+`checkpoint.last_applied_sequence.next()`, applies replayed execution events to
+checkpoint order states, and refuses to synthesize unknown orders from partial
+command metadata. Venue reconciliation remains required by default before
+strategy submissions resume.
+
 ## Route Configuration
 
 `RouteConfig` binds:
