@@ -12,6 +12,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added generated binding API inventory documentation from
   `bindings/api_manifest.toml`, with CI coverage to keep the symbol tables in
   sync with the manifest.
+- Expanded the generated binding inventory with a per-symbol C ABI, Python
+  ctypes, and Java JNA compatibility matrix.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

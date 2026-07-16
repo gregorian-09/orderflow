@@ -17,7 +17,9 @@ Latest release: `0.4.0`.
   binding plumbing cannot silently drift from the ABI inventory.
 - [Binding API Inventory](./api-inventory.md) is generated from the same
   manifest and lists every exported symbol by family, ownership model, and
-  binding exposure level.
+  binding exposure level. It also includes a per-symbol C/Python/Java
+  compatibility matrix so release reviewers can see binding coverage at a
+  glance.
 
 - [Python Binding](./python.md)
 - [Java Binding](./java.md)

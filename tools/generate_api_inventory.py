@@ -9,6 +9,12 @@ from collections import defaultdict
 from pathlib import Path
 
 from check_api_manifest import DEFAULT_MANIFEST, FunctionEntry, ROOT, load_manifest
+from check_binding_parity import (
+    DEFAULT_JAVA_NATIVE,
+    DEFAULT_PYTHON_FFI,
+    parse_java_declarations,
+    parse_python_registrations,
+)
 
 
 DEFAULT_OUTPUT = ROOT / "docs" / "bindings" / "api-inventory.md"
@@ -18,6 +24,12 @@ def escape_cell(value: object) -> str:
     """Escape a Markdown table cell."""
 
     return str(value).replace("|", "\\|")
+
+
+def mark(enabled: bool) -> str:
+    """Return a stable Markdown marker for a compatibility cell."""
+
+    return "yes" if enabled else "no"
 
 
 def render_table(entries: list[FunctionEntry]) -> list[str]:
@@ -39,7 +51,42 @@ def render_table(entries: list[FunctionEntry]) -> list[str]:
     return lines
 
 
-def render_inventory(entries: list[FunctionEntry]) -> str:
+def render_matrix(entries: list[FunctionEntry], python_ffi: Path, java_native: Path) -> list[str]:
+    """Render the per-symbol low-level binding compatibility matrix."""
+
+    py_argtypes, py_restypes = parse_python_registrations(python_ffi)
+    java_symbols = parse_java_declarations(java_native)
+
+    lines = [
+        "## Binding Compatibility Matrix",
+        "",
+        "The matrix reports whether each exported C ABI symbol is declared in the",
+        "low-level Python ctypes layer and Java JNA layer. `yes` means the symbol",
+        "has both Python `argtypes` and `restype` registrations, and a Java native",
+        "interface declaration.",
+        "",
+        "| Function | Family | C ABI | Python ctypes | Java JNA | Exposure |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for entry in entries:
+        if not entry.exported:
+            continue
+        python_ready = entry.name in py_argtypes and entry.name in py_restypes
+        java_ready = entry.name in java_symbols
+        lines.append(
+            "| "
+            f"`{escape_cell(entry.name)}` | "
+            f"`{escape_cell(entry.family)}` | "
+            "yes | "
+            f"{mark(python_ready)} | "
+            f"{mark(java_ready)} | "
+            f"`{escape_cell(entry.binding_exposure)}` |"
+        )
+    lines.append("")
+    return lines
+
+
+def render_inventory(entries: list[FunctionEntry], python_ffi: Path, java_native: Path) -> str:
     """Render the full API inventory document."""
 
     groups: dict[str, list[FunctionEntry]] = defaultdict(list)
@@ -70,6 +117,8 @@ def render_inventory(entries: list[FunctionEntry]) -> str:
         ]
     )
 
+    lines.extend(render_matrix(entries, python_ffi, java_native))
+
     for family in sorted(groups):
         entries_for_family = groups[family]
         lines.extend(
@@ -92,6 +141,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--python-ffi", type=Path, default=DEFAULT_PYTHON_FFI)
+    parser.add_argument("--java-native", type=Path, default=DEFAULT_JAVA_NATIVE)
     parser.add_argument(
         "--check",
         action="store_true",
@@ -99,7 +150,11 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    rendered = render_inventory(load_manifest(args.manifest))
+    rendered = render_inventory(
+        load_manifest(args.manifest),
+        args.python_ffi,
+        args.java_native,
+    )
     if args.check:
         existing = args.output.read_text(encoding="utf-8") if args.output.exists() else ""
         if existing != rendered:
