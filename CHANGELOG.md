@@ -74,6 +74,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added adapter descriptor capability flags and inventory JSON fields for
   backpressure, raw capture, fixture replay, stale detection, and latency
   metrics.
+- Added deterministic jitter to Binance reconnect backoff and exposed the last
+  scheduled reconnect delay in health metadata.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

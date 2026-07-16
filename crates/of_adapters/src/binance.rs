@@ -269,6 +269,7 @@ pub struct BinanceAdapter {
     gap_count: u64,
     snapshot_rebuild_count: u64,
     reconnect_attempt: u32,
+    last_reconnect_delay_ms: u64,
     next_reconnect_at: Option<Instant>,
     last_message_at: Option<Instant>,
     last_market_data_at: Option<Instant>,
@@ -315,6 +316,7 @@ impl BinanceAdapter {
             gap_count: 0,
             snapshot_rebuild_count: 0,
             reconnect_attempt: 0,
+            last_reconnect_delay_ms: 0,
             next_reconnect_at: None,
             last_message_at: None,
             last_market_data_at: None,
@@ -684,10 +686,19 @@ impl BinanceAdapter {
 
     fn schedule_reconnect(&mut self) {
         self.reconnect_attempt = self.reconnect_attempt.saturating_add(1);
-        let base_ms = 250u64;
-        let max_ms = 5_000u64;
-        let delay_ms = (base_ms.saturating_mul(1u64 << self.reconnect_attempt.min(5))).min(max_ms);
+        let delay_ms = reconnect_delay_ms(self.reconnect_attempt, self.reconnect_jitter_salt());
+        self.last_reconnect_delay_ms = delay_ms;
         self.next_reconnect_at = Some(Instant::now() + Duration::from_millis(delay_ms));
+    }
+
+    fn reconnect_jitter_salt(&self) -> u64 {
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        for byte in self.cfg.endpoint.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        hash ^= (self.subscribed.len() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        hash ^ self.seq ^ self.messages_received
     }
 
     fn reconnect_if_due(&mut self) -> AdapterResult<()> {
@@ -760,6 +771,7 @@ impl MarketDataAdapter for BinanceAdapter {
         self.last_error = None;
         self.next_reconnect_at = None;
         self.reconnect_attempt = 0;
+        self.last_reconnect_delay_ms = 0;
         match &mut self.transport {
             BinanceTransport::Mock => {
                 self.connected = true;
@@ -899,8 +911,9 @@ impl MarketDataAdapter for BinanceAdapter {
             degraded: self.degraded,
             last_error: self.last_error.clone(),
             protocol_info: Some(format!(
-                "provider=binance;market=crypto;mode={mode};endpoint={endpoint};reconnect_attempt={};subscribed={};messages_received={};normalized_events={};parse_errors={};dropped_events={};backpressure_events={};raw_capture_depth={raw_capture_depth};raw_capture_capacity={};raw_capture_dropped={};parse_latency_samples={};parse_latency_avg_ns={parse_latency_avg_ns};parse_latency_max_ns={};normalization_latency_samples={};normalization_latency_avg_ns={normalization_latency_avg_ns};normalization_latency_max_ns={};duplicate_depth_updates={};out_of_order_depth_updates={};gap_count={};snapshot_rebuild_count={};queue_depth={queue_depth};max_queue_depth={};last_update_ids={depth_update_ids};last_message_age_ms={last_message_age_ms};last_market_data_age_ms={last_market_data_age_ms}",
+                "provider=binance;market=crypto;mode={mode};endpoint={endpoint};reconnect_attempt={};reconnect_delay_ms={};subscribed={};messages_received={};normalized_events={};parse_errors={};dropped_events={};backpressure_events={};raw_capture_depth={raw_capture_depth};raw_capture_capacity={};raw_capture_dropped={};parse_latency_samples={};parse_latency_avg_ns={parse_latency_avg_ns};parse_latency_max_ns={};normalization_latency_samples={};normalization_latency_avg_ns={normalization_latency_avg_ns};normalization_latency_max_ns={};duplicate_depth_updates={};out_of_order_depth_updates={};gap_count={};snapshot_rebuild_count={};queue_depth={queue_depth};max_queue_depth={};last_update_ids={depth_update_ids};last_message_age_ms={last_message_age_ms};last_market_data_age_ms={last_market_data_age_ms}",
                 self.reconnect_attempt,
+                self.last_reconnect_delay_ms,
                 self.subscribed.len(),
                 self.messages_received,
                 self.normalized_events,
@@ -1294,6 +1307,19 @@ fn duration_ns(elapsed: Duration) -> u64 {
 
 fn average_ns(total_ns: u64, samples: u64) -> u64 {
     total_ns.checked_div(samples).unwrap_or(0)
+}
+
+fn reconnect_delay_ms(attempt: u32, salt: u64) -> u64 {
+    const BASE_MS: u64 = 250;
+    const MAX_MS: u64 = 5_000;
+    const JITTER_WINDOW_MS: u64 = 125;
+
+    let exponent = attempt.min(5);
+    let backoff_ms = BASE_MS.saturating_mul(1u64 << exponent);
+    let jitter_seed =
+        salt ^ (u64::from(attempt).wrapping_mul(0x9e37_79b9_7f4a_7c15)) ^ (salt >> 33);
+    let jitter_ms = jitter_seed % JITTER_WINDOW_MS;
+    backoff_ms.saturating_add(jitter_ms).min(MAX_MS)
 }
 
 fn redact_endpoint(endpoint: &str) -> String {
@@ -1717,6 +1743,24 @@ mod tests {
         assert!(matches!(err, AdapterError::Disconnected));
         assert!(adapter.health().degraded);
         assert!(adapter.next_reconnect_at.is_some());
+        assert!(adapter
+            .health()
+            .protocol_info
+            .unwrap_or_default()
+            .contains("reconnect_delay_ms="));
+    }
+
+    #[test]
+    fn reconnect_delay_uses_bounded_deterministic_jitter() {
+        let first = reconnect_delay_ms(1, 42);
+        let again = reconnect_delay_ms(1, 42);
+        let different_salt = reconnect_delay_ms(1, 43);
+        let capped = reconnect_delay_ms(99, 42);
+
+        assert_eq!(first, again);
+        assert!((500..=624).contains(&first));
+        assert!((500..=624).contains(&different_salt));
+        assert_eq!(capped, 5_000);
     }
 
     #[test]

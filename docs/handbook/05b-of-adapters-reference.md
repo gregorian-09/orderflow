@@ -226,7 +226,8 @@ offline examples.
 - Replays raw Binance JSON fixtures through the same parser and normalizer with
   `replay_raw_messages(...)`, using deterministic local receive timestamps for
   repeatable fixture tests.
-- Supervises live activity timeout and reconnects with backoff.
+- Supervises live activity timeout and reconnects with capped exponential
+  backoff plus deterministic jitter.
 - Exposes Binance health metadata for messages received, normalized events,
   parse errors, dropped events, backpressure events, duplicate depth updates,
   gap count, snapshot rebuild count, queue depth, and max queue depth.

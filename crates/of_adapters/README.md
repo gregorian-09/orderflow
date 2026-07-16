@@ -159,7 +159,8 @@ Current provider notes:
   - `replay_raw_messages(...)` replays captured or fixture Binance JSON through
     the same parser/normalizer used by live ingestion and appends newly produced
     normalized events to a caller-owned buffer
-  - live mode schedules reconnect with backoff on disconnect or market-data timeout
+  - live mode schedules reconnect with capped exponential backoff plus
+    deterministic jitter on disconnect or market-data timeout
   - reconnect replays active subscriptions automatically
   - health metadata includes reconnect attempt, subscription count, message/data
     ages, parse errors, normalized event count, duplicate depth updates, gap
