@@ -59,6 +59,8 @@ jobs:
         uses: ./.github/actions/setup-rust
       - name: Validate C ABI API manifest
         run: python3 tools/check_api_manifest.py
+      - name: Validate low-level binding parity
+        run: python3 tools/check_binding_parity.py
       - name: Build C ABI library
         run: cargo build -q -p of_ffi_c
       - name: Verify exported C ABI symbols

@@ -114,6 +114,8 @@ Build C ABI for bindings, then test FFI exports:
 
 ```bash
 cargo build -p of_ffi_c --features tickbar
+python3 tools/check_api_manifest.py
+python3 tools/check_binding_parity.py
 tools/check_ffi_exports.sh
 ```
 
