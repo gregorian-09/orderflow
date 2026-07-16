@@ -2,7 +2,6 @@ package com.orderflow.bindings;
 
 import com.sun.jna.Structure;
 
-/** JNA mirror of native `of_execution_wal_integrity_report_t`. */
 @Structure.FieldOrder({
     "records",
     "bytes",
@@ -15,6 +14,7 @@ import com.sun.jna.Structure;
     "truncated_tail",
     "valid"
 })
+/** JNA mirror of native `of_execution_wal_integrity_report_t`. */
 public class OfExecutionWalIntegrityReport extends Structure {
     /** Valid WAL frame count. */
     public long records;

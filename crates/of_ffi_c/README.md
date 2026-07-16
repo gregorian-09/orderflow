@@ -13,6 +13,13 @@ It is the native interface used by Python (`ctypes`), Java (JNA), and any C-comp
   `of_get_metrics_json`, `of_get_adapter_inventory_json`,
   `of_get_active_adapter_status_json`, `of_string_free`
 
+The machine-readable ABI inventory lives in `bindings/api_manifest.toml`.
+Maintainers should update it whenever they add a C ABI symbol. The manifest is
+validated against `include/orderflow.h` by `tools/check_api_manifest.py`, and
+`tools/check_ffi_exports.sh` reads the same manifest when checking the compiled
+shared library. This keeps the header, exported symbols, and future generated
+binding declarations from drifting.
+
 ## New In 0.4.0
 
 `0.4.0` keeps all existing analytics/runtime C ABI symbols valid and adds a
@@ -39,6 +46,8 @@ New execution ABI concepts:
   producers and one deterministic execution owner
 - `of_execution_command_report_t`: typed command completion report with a
   caller-owned event buffer
+- `bindings/api_manifest.toml`: the first machine-readable C ABI manifest for
+  export validation and binding parity checks
 
 The execution ABI is additive and intentionally separate from the market-data
 engine ABI. That separation lets C, Python, Java, and other FFI users adopt OMS

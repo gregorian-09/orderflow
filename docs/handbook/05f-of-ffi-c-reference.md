@@ -5,6 +5,12 @@ binding, and the Java JNA binding.
 
 ## Public ABI Map
 
+The machine-readable C ABI inventory is `bindings/api_manifest.toml`. It is
+validated against this header by `tools/check_api_manifest.py`, and the native
+export check reads the same manifest through `tools/check_ffi_exports.sh`.
+When adding a new exported C symbol, update the manifest in the same commit as
+the header, Rust export, binding declaration, tests, and docs.
+
 | Item | Kind | Purpose |
 | --- | --- | --- |
 | `of_engine_t` | opaque handle | Runtime engine handle |

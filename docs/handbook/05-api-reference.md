@@ -12,6 +12,13 @@ into one oversized page.
 - **Python** wraps C ABI with `ctypes`.
 - **Java** wraps C ABI with JNA.
 
+The C ABI also has a machine-readable inventory at
+`bindings/api_manifest.toml`. `tools/check_api_manifest.py` validates that the
+manifest and `orderflow.h` expose the same functions and return types, while
+`tools/check_ffi_exports.sh` uses the manifest as the expected native symbol
+list. The manifest is for low-level parity and future generated declarations;
+the Python and Java user-facing APIs remain manually designed.
+
 ## Detailed Handbook Chapters
 
 Rust crate chapters:

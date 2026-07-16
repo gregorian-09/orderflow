@@ -2,7 +2,6 @@ package com.orderflow.bindings;
 
 import com.sun.jna.Structure;
 
-/** JNA mirror of native `of_execution_segmented_wal_integrity_report_t`. */
 @Structure.FieldOrder({
     "segments",
     "records",
@@ -15,6 +14,7 @@ import com.sun.jna.Structure;
     "has_last_sequence",
     "valid"
 })
+/** JNA mirror of native `of_execution_segmented_wal_integrity_report_t`. */
 public class OfExecutionSegmentedWalIntegrityReport extends Structure {
     /** Segment file count. */
     public long segments;

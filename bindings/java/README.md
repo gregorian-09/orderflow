@@ -47,6 +47,8 @@ Highlights:
   opening an execution engine
 - adapter inventory/status helpers for provider capability discovery before
   connecting a feed
+- native C ABI inventory validation through `bindings/api_manifest.toml` so
+  future JNA declarations can be checked against `orderflow.h`
 - analytics-to-execution examples in this README and the handbook
 - existing native resolution behavior remains available: explicit path,
   `ORDERFLOW_LIBRARY_PATH`, then local debug library
@@ -90,6 +92,15 @@ Use `ConcurrentOrderflowExecutionEngine` when multiple producer threads need to
 queue commands into one deterministic native worker. Command methods return a
 sequence number; `tryRecvReport()` returns completed command reports without
 blocking.
+
+### Binding manifest policy
+
+Low-level native symbols are tracked in `bindings/api_manifest.toml`. The
+manifest validates the stable C ABI boundary and powers export checks; it does
+not replace the hand-written Java classes, `AutoCloseable` lifecycle, typed
+request/event objects, or JNA ownership rules. New public Java conveniences
+should remain idiomatic, while repetitive native declarations can move toward
+manifest-backed generation.
 
 ## Java Version
 

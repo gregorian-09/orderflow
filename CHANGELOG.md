@@ -104,6 +104,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `OrderflowEngine.adapterInventory()` / `adapterStatus()` expose provider
   capabilities, feature gates, quality level, and active health without
   changing adapter polling or ingest behavior.
+- Additive binding API manifest tooling with `bindings/api_manifest.toml`,
+  `tools/check_api_manifest.py`, and manifest-driven C ABI export checks so
+  exported native symbols and `orderflow.h` declarations stay synchronized
+  before low-level Python/JNA generation is expanded.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

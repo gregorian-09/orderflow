@@ -2,7 +2,6 @@ package com.orderflow.bindings;
 
 import com.sun.jna.Structure;
 
-/** JNA mirror of native `of_execution_checkpoint_store_integrity_report_t`. */
 @Structure.FieldOrder({
     "checkpoint_files",
     "valid_checkpoints",
@@ -14,6 +13,7 @@ import com.sun.jna.Structure;
     "has_latest",
     "valid"
 })
+/** JNA mirror of native `of_execution_checkpoint_store_integrity_report_t`. */
 public class OfExecutionCheckpointStoreIntegrityReport extends Structure {
     /** Checkpoint file count. */
     public long checkpoint_files;

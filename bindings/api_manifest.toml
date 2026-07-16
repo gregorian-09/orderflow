@@ -1,0 +1,170 @@
+schema_version = 1
+header = "crates/of_ffi_c/include/orderflow.h"
+description = "Machine-readable inventory for the stable Orderflow C ABI surface."
+
+[defaults]
+introduced = "pre-manifest"
+exported = true
+binding_exposure = "LowLevelGenerated"
+
+[[function_groups]]
+family = "runtime"
+returns = "uint32_t"
+ownership = "value"
+functions = [
+  "of_api_version",
+]
+
+[[function_groups]]
+family = "runtime"
+returns = "const char*"
+ownership = "static_string"
+functions = [
+  "of_build_info",
+]
+
+[[function_groups]]
+family = "execution"
+returns = "uint32_t"
+ownership = "value"
+functions = [
+  "of_execution_api_version",
+]
+
+[[function_groups]]
+family = "execution"
+returns = "int32_t"
+ownership = "caller_owned_output"
+functions = [
+  "of_execution_wal_integrity_report",
+  "of_execution_segmented_wal_integrity_report",
+  "of_execution_checkpoint_store_integrity_report",
+  "of_execution_engine_create",
+  "of_execution_engine_create_multi",
+  "of_execution_engine_start",
+  "of_execution_engine_stop",
+  "of_execution_submit_order",
+  "of_execution_cancel_order",
+  "of_execution_amend_order",
+  "of_execution_poll",
+  "of_execution_get_order_state",
+  "of_execution_health",
+  "of_execution_metrics",
+  "of_execution_concurrent_engine_create_multi",
+  "of_execution_concurrent_stop",
+  "of_execution_concurrent_submit_order",
+  "of_execution_concurrent_cancel_order",
+  "of_execution_concurrent_amend_order",
+  "of_execution_concurrent_poll",
+  "of_execution_concurrent_try_recv_report",
+]
+
+[[function_groups]]
+family = "execution"
+returns = "void"
+ownership = "releases_handle"
+functions = [
+  "of_execution_engine_destroy",
+  "of_execution_concurrent_engine_destroy",
+]
+
+[[function_groups]]
+family = "runtime"
+returns = "int32_t"
+ownership = "caller_owned_output"
+functions = [
+  "of_engine_create",
+  "of_engine_start",
+  "of_engine_stop",
+  "of_subscribe",
+  "of_unsubscribe",
+  "of_unsubscribe_symbol",
+  "of_reset_symbol_session",
+  "of_ingest_trade",
+  "of_ingest_book",
+  "of_configure_external_feed",
+  "of_external_set_reconnecting",
+  "of_external_health_tick",
+  "of_engine_poll_once",
+  "of_engine_set_tickbar_interval",
+]
+
+[[function_groups]]
+family = "runtime"
+returns = "void"
+ownership = "releases_handle"
+functions = [
+  "of_engine_destroy",
+]
+
+[[function_groups]]
+family = "analytics"
+returns = "int32_t"
+ownership = "caller_owned_buffer"
+functions = [
+  "of_get_book_snapshot",
+  "of_get_book_analytics_snapshot",
+  "of_compute_weighted_average_price",
+  "of_compute_depth_slope",
+  "of_get_mid_price",
+  "of_get_effective_spread_bps",
+  "of_get_half_spread_cost_bps",
+  "of_get_realised_spread_bps",
+  "of_get_book_event_analytics",
+  "of_get_resiliency_snapshot",
+  "of_get_vpin_snapshot",
+  "of_get_kyle_lambda_snapshot",
+  "of_get_amihud_snapshot",
+  "of_get_cvd_enhancement_snapshot",
+  "of_get_pattern_snapshot",
+  "of_get_volatility_snapshot",
+  "of_get_noise_snapshot",
+  "of_get_hasbrouck_snapshot",
+  "of_get_almgren_chriss_snapshot",
+  "of_get_spread_decomp_snapshot",
+  "of_get_acd_snapshot",
+  "of_get_regime_snapshot",
+  "of_get_kinetic_energy_snapshot",
+  "of_get_dark_pool_snapshot",
+  "of_get_options_flow_snapshot",
+  "of_get_futures_snapshot",
+  "of_get_vol_signature_snapshot",
+  "of_get_agent_type_snapshot",
+  "of_get_dark_lit_correlation_snapshot",
+  "of_get_institutional_flow_snapshot",
+  "of_get_oi_analysis_snapshot",
+  "of_get_analytics_snapshot",
+  "of_get_derived_analytics_snapshot",
+  "of_get_session_candle_snapshot",
+  "of_get_interval_candle_snapshot",
+  "of_get_bar_series",
+  "of_get_signal_snapshot",
+  "of_compute_lob_features",
+  "of_engine_set_analytics_config",
+]
+
+[[function_groups]]
+family = "runtime"
+returns = "int32_t"
+ownership = "library_allocated_string"
+functions = [
+  "of_get_metrics_json",
+]
+
+[[function_groups]]
+family = "adapters"
+returns = "int32_t"
+ownership = "library_allocated_string"
+introduced = "0.4.0"
+functions = [
+  "of_get_adapter_inventory_json",
+  "of_get_active_adapter_status_json",
+]
+
+[[function_groups]]
+family = "runtime"
+returns = "void"
+ownership = "releases_library_allocated_string"
+functions = [
+  "of_string_free",
+]
