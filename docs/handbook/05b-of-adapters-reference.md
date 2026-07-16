@@ -213,6 +213,11 @@ offline examples.
   The default value `0` is unbounded for compatibility.
 - Sheds the candidate normalized event when the configured queue bound is full,
   increments dropped/backpressure counters, and marks health degraded.
+- Supports opt-in bounded raw inbound message capture on direct
+  `BinanceAdapter` instances with `with_raw_capture_capacity(...)` or
+  `set_raw_capture_capacity(...)`; the default capacity `0` disables capture.
+- Drops oldest captured raw messages when capture capacity is full and reports
+  raw capture depth, capacity, and drop counters in health metadata.
 - Supervises live activity timeout and reconnects with backoff.
 - Exposes Binance health metadata for messages received, normalized events,
   parse errors, dropped events, backpressure events, duplicate depth updates,

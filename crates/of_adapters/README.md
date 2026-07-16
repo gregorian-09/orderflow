@@ -148,6 +148,13 @@ Current provider notes:
   - when the bounded queue is full, the candidate normalized event is shed,
     `dropped_events` and `backpressure_events` increase, and health is marked
     degraded rather than allowing unbounded memory growth
+  - direct `BinanceAdapter` users can opt into bounded raw inbound message
+    capture via `with_raw_capture_capacity(...)` or
+    `set_raw_capture_capacity(...)`; the default capacity of `0` keeps capture
+    disabled and avoids raw-message cloning on the normal path
+  - raw capture keeps the newest provider messages, drops the oldest captured
+    message when full, and exposes capture depth/capacity/drop counters in
+    health metadata
   - live mode schedules reconnect with backoff on disconnect or market-data timeout
   - reconnect replays active subscriptions automatically
   - health metadata includes reconnect attempt, subscription count, message/data

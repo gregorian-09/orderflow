@@ -247,6 +247,8 @@ pub struct BinanceAdapter {
     depth_state: HashMap<SymbolId, BinanceDepthState>,
     queue: VecDeque<RawEvent>,
     max_queue_depth: usize,
+    raw_capture_capacity: usize,
+    raw_capture: VecDeque<String>,
     seq: u64,
     request_id: u64,
     messages_received: u64,
@@ -254,6 +256,7 @@ pub struct BinanceAdapter {
     parse_errors: u64,
     dropped_events: u64,
     backpressure_events: u64,
+    raw_capture_dropped: u64,
     parse_latency_samples: u64,
     parse_latency_total_ns: u64,
     parse_latency_max_ns: u64,
@@ -290,6 +293,8 @@ impl BinanceAdapter {
             depth_state: HashMap::new(),
             queue: VecDeque::new(),
             max_queue_depth: 0,
+            raw_capture_capacity: 0,
+            raw_capture: VecDeque::new(),
             seq: 0,
             request_id: 0,
             messages_received: 0,
@@ -297,6 +302,7 @@ impl BinanceAdapter {
             parse_errors: 0,
             dropped_events: 0,
             backpressure_events: 0,
+            raw_capture_dropped: 0,
             parse_latency_samples: 0,
             parse_latency_total_ns: 0,
             parse_latency_max_ns: 0,
@@ -340,6 +346,59 @@ impl BinanceAdapter {
     /// adapter behavior.
     pub fn max_queue_depth(&self) -> usize {
         self.max_queue_depth
+    }
+
+    /// Returns a copy of this adapter with raw inbound message capture enabled.
+    ///
+    /// A capacity of `0` keeps capture disabled. Non-zero capacity stores the
+    /// most recent raw inbound provider messages in a bounded ring buffer for
+    /// incident analysis and fixture generation.
+    pub fn with_raw_capture_capacity(mut self, capacity: usize) -> Self {
+        self.set_raw_capture_capacity(capacity);
+        self
+    }
+
+    /// Sets the raw inbound message capture capacity.
+    ///
+    /// A capacity of `0` disables capture and clears buffered raw messages.
+    /// Lowering capacity prunes oldest buffered messages first.
+    pub fn set_raw_capture_capacity(&mut self, capacity: usize) {
+        self.raw_capture_capacity = capacity;
+        if capacity == 0 {
+            self.raw_capture.clear();
+            return;
+        }
+        while self.raw_capture.len() > capacity {
+            self.raw_capture.pop_front();
+            self.raw_capture_dropped = self.raw_capture_dropped.saturating_add(1);
+        }
+    }
+
+    /// Returns the configured raw inbound message capture capacity.
+    ///
+    /// A value of `0` means raw capture is disabled.
+    pub fn raw_capture_capacity(&self) -> usize {
+        self.raw_capture_capacity
+    }
+
+    /// Returns the number of raw inbound messages currently buffered.
+    pub fn raw_capture_len(&self) -> usize {
+        self.raw_capture.len()
+    }
+
+    /// Returns the number of raw inbound messages dropped from the capture ring.
+    pub fn raw_capture_dropped(&self) -> u64 {
+        self.raw_capture_dropped
+    }
+
+    /// Drains captured raw inbound messages into `out`.
+    ///
+    /// Messages are appended in capture order. The return value is the number of
+    /// messages appended.
+    pub fn drain_raw_messages(&mut self, out: &mut Vec<String>) -> usize {
+        let n = self.raw_capture.len();
+        out.extend(self.raw_capture.drain(..));
+        n
     }
 
     fn is_mock_mode(&self) -> bool {
@@ -397,6 +456,17 @@ impl BinanceAdapter {
         self.queue.push_back(event);
         self.normalized_events = self.normalized_events.saturating_add(1);
         true
+    }
+
+    fn capture_raw_message(&mut self, msg: &str) {
+        if self.raw_capture_capacity == 0 {
+            return;
+        }
+        if self.raw_capture.len() >= self.raw_capture_capacity {
+            self.raw_capture.pop_front();
+            self.raw_capture_dropped = self.raw_capture_dropped.saturating_add(1);
+        }
+        self.raw_capture.push_back(msg.to_string());
     }
 
     fn record_parse_latency(&mut self, elapsed: Duration) {
@@ -762,6 +832,7 @@ impl MarketDataAdapter for BinanceAdapter {
                 }
             }
             for msg in inbound {
+                self.capture_raw_message(&msg);
                 let parse_started = Instant::now();
                 self.parse_live_message(&msg);
                 self.record_parse_latency(parse_started.elapsed());
@@ -789,6 +860,7 @@ impl MarketDataAdapter for BinanceAdapter {
             .map(|t| t.elapsed().as_millis() as u64)
             .unwrap_or(0);
         let queue_depth = self.queue.len();
+        let raw_capture_depth = self.raw_capture.len();
         let endpoint = redact_endpoint(&self.cfg.endpoint);
         let depth_update_ids = format_depth_update_ids(&self.depth_state);
         let parse_latency_avg_ns =
@@ -806,7 +878,7 @@ impl MarketDataAdapter for BinanceAdapter {
             degraded: self.degraded,
             last_error: self.last_error.clone(),
             protocol_info: Some(format!(
-                "provider=binance;market=crypto;mode={mode};endpoint={endpoint};reconnect_attempt={};subscribed={};messages_received={};normalized_events={};parse_errors={};dropped_events={};backpressure_events={};parse_latency_samples={};parse_latency_avg_ns={parse_latency_avg_ns};parse_latency_max_ns={};normalization_latency_samples={};normalization_latency_avg_ns={normalization_latency_avg_ns};normalization_latency_max_ns={};duplicate_depth_updates={};out_of_order_depth_updates={};gap_count={};snapshot_rebuild_count={};queue_depth={queue_depth};max_queue_depth={};last_update_ids={depth_update_ids};last_message_age_ms={last_message_age_ms};last_market_data_age_ms={last_market_data_age_ms}",
+                "provider=binance;market=crypto;mode={mode};endpoint={endpoint};reconnect_attempt={};subscribed={};messages_received={};normalized_events={};parse_errors={};dropped_events={};backpressure_events={};raw_capture_depth={raw_capture_depth};raw_capture_capacity={};raw_capture_dropped={};parse_latency_samples={};parse_latency_avg_ns={parse_latency_avg_ns};parse_latency_max_ns={};normalization_latency_samples={};normalization_latency_avg_ns={normalization_latency_avg_ns};normalization_latency_max_ns={};duplicate_depth_updates={};out_of_order_depth_updates={};gap_count={};snapshot_rebuild_count={};queue_depth={queue_depth};max_queue_depth={};last_update_ids={depth_update_ids};last_message_age_ms={last_message_age_ms};last_market_data_age_ms={last_market_data_age_ms}",
                 self.reconnect_attempt,
                 self.subscribed.len(),
                 self.messages_received,
@@ -814,6 +886,8 @@ impl MarketDataAdapter for BinanceAdapter {
                 self.parse_errors,
                 self.dropped_events,
                 self.backpressure_events,
+                self.raw_capture_capacity,
+                self.raw_capture_dropped,
                 self.parse_latency_samples,
                 self.parse_latency_max_ns,
                 self.normalization_latency_samples,
@@ -1427,6 +1501,42 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("binance queue backpressure"));
+    }
+
+    #[test]
+    fn live_mode_captures_raw_messages_with_bounded_capacity() {
+        let mut adapter = BinanceAdapter::from_config(&cfg("ws://test.live/ws"))
+            .expect("cfg")
+            .with_raw_capture_capacity(2);
+        assert_eq!(adapter.raw_capture_capacity(), 2);
+        adapter.set_raw_capture_capacity(2);
+
+        adapter.connect().expect("connect");
+        if let BinanceTransport::Live(ws) = &mut adapter.transport {
+            ws.inject_text(r#"{"result":null,"id":1}"#);
+            ws.inject_text(r#"{"result":null,"id":2}"#);
+            ws.inject_text(r#"{"result":null,"id":3}"#);
+        }
+
+        let mut out = Vec::new();
+        let n = adapter.poll(&mut out).expect("poll");
+        let protocol = adapter.health().protocol_info.unwrap_or_default();
+
+        assert_eq!(n, 0);
+        assert_eq!(adapter.raw_capture_len(), 2);
+        assert_eq!(adapter.raw_capture_dropped(), 1);
+        assert!(protocol.contains("raw_capture_depth=2"));
+        assert!(protocol.contains("raw_capture_capacity=2"));
+        assert!(protocol.contains("raw_capture_dropped=1"));
+
+        let mut raw = Vec::new();
+        assert_eq!(adapter.drain_raw_messages(&mut raw), 2);
+        assert_eq!(adapter.raw_capture_len(), 0);
+        assert!(raw[0].contains("\"id\":2"));
+        assert!(raw[1].contains("\"id\":3"));
+
+        adapter.set_raw_capture_capacity(0);
+        assert_eq!(adapter.raw_capture_capacity(), 0);
     }
 
     #[test]

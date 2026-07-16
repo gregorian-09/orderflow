@@ -66,6 +66,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   behavior.
 - Added Binance adapter parse and normalization latency health metrics with
   aggregate sample, average, and max nanosecond fields.
+- Added opt-in bounded Binance raw inbound message capture for incident
+  analysis and fixture generation, with capture depth, capacity, and drop
+  health counters.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,
