@@ -514,6 +514,13 @@ Public OMS helper types:
 - `ReconciliationAction`
 - `ReconciliationItem`
 - `ReconciliationReport`
+- `ReconciliationIssueKind`
+- `ReconciliationDetail`
+- `VenueReconciliationReport`
+- `ReconciliationPolicyAction`
+- `ReconciliationPolicy`
+- `ReconciliationPolicyItem`
+- `ReconciliationPolicyDecision`
 - `DisconnectPolicy`
 - `RouteSafetyPolicy`
 - `AdvancedRiskLimits`
@@ -538,6 +545,8 @@ Public helper functions:
 - `simulated_engine(route) -> ExecutionEngine<SimExecutionAdapter, BasicRiskGate, InMemoryJournal>`
 - `simulated_engine_with_routes(routes) -> ExecutionEngine<SimExecutionAdapter, AllowAllRiskGate, InMemoryJournal>`
 - `reconcile_open_orders(local, venue) -> ReconciliationReport`
+- `reconcile_open_orders_detailed(local, venue) -> VenueReconciliationReport`
+- `evaluate_reconciliation_policy(report, policy) -> ReconciliationPolicyDecision`
 - `normalize_order_type(order_type, tif, capabilities) -> NormalizedOrderType`
 - `replay_simulated_oms(routes, decisions) -> ExecutionResult<ReplayResult>`
 

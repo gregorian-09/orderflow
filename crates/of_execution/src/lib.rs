@@ -976,6 +976,34 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
         self.orders.get(id).map(|sm| *sm.state())
     }
 
+    /// Returns all non-terminal local order states.
+    pub fn open_order_states(&self) -> Vec<OrderState> {
+        self.orders
+            .values()
+            .map(|sm| *sm.state())
+            .filter(|state| !state.status.is_terminal())
+            .collect()
+    }
+
+    /// Builds a detailed reconciliation report for a venue open-order snapshot.
+    pub fn reconcile_open_orders_with(
+        &self,
+        venue_open_orders: &[OrderState],
+    ) -> VenueReconciliationReport {
+        let local = self.open_order_states();
+        reconcile_open_orders_detailed(&local, venue_open_orders)
+    }
+
+    /// Evaluates a venue open-order snapshot against a reconciliation policy.
+    pub fn evaluate_reconciliation(
+        &self,
+        venue_open_orders: &[OrderState],
+        policy: ReconciliationPolicy,
+    ) -> ReconciliationPolicyDecision {
+        let report = self.reconcile_open_orders_with(venue_open_orders);
+        evaluate_reconciliation_policy(&report, policy)
+    }
+
     /// Returns journal records.
     pub fn replay_journal(&self, out: &mut Vec<JournalRecord>) -> ExecutionResult<usize> {
         self.journal.replay(out)
@@ -1794,6 +1822,42 @@ mod tests {
             ExecutionError::RiskRejected(RiskRejectReason::MaxOpenOrders)
         ));
         assert_eq!(out.as_slice()[0].reason, RiskRejectReason::MaxOpenOrders);
+    }
+
+    #[test]
+    fn engine_evaluates_venue_reconciliation_policy() {
+        let mut engine = ExecutionEngine::new(
+            SimExecutionAdapter::default().with_partial_fill(true),
+            AllowAllRiskGate,
+            InMemoryJournal::default(),
+            vec![route()],
+        );
+        engine.start().unwrap();
+        let mut out = ExecutionEventBuffer::with_capacity(8);
+        engine.submit(order(), &mut out).unwrap();
+
+        let mut venue = engine.open_order_states();
+        assert_eq!(venue.len(), 1);
+        venue[0].status = OrderStatus::Cancelled;
+
+        let report = engine.reconcile_open_orders_with(&venue);
+        assert_eq!(report.details.len(), 1);
+        assert_eq!(
+            report.details[0].issue,
+            ReconciliationIssueKind::StatusMismatch
+        );
+
+        let decision = engine.evaluate_reconciliation(
+            &venue,
+            ReconciliationPolicy::fail_closed()
+                .with_status_mismatch(ReconciliationPolicyAction::AcceptVenueTruth),
+        );
+        assert!(!decision.submissions_enabled);
+        assert!(decision.local_restates_required);
+        assert_eq!(
+            decision.items[0].action,
+            ReconciliationPolicyAction::AcceptVenueTruth
+        );
     }
 
     #[test]

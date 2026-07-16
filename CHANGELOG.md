@@ -78,6 +78,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `RecoveryResult`, and segmented-WAL recovery helpers that load the latest
   checkpoint, replay the WAL tail, fail closed on unsafe unknown orders, and
   require venue reconciliation by default.
+- Additive `of_execution` venue reconciliation policy APIs with
+  `ReconciliationIssueKind`, `VenueReconciliationReport`,
+  `ReconciliationPolicy`, `ReconciliationPolicyDecision`, detailed mismatch
+  classification, and `ExecutionEngine` helpers for evaluating venue
+  open-order snapshots without mutating local state or sending cancels.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

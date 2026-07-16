@@ -126,7 +126,16 @@ OMS helpers:
 - [`ReconciliationAction`]
 - [`ReconciliationItem`]
 - [`ReconciliationReport`]
+- [`ReconciliationIssueKind`]
+- [`ReconciliationDetail`]
+- [`VenueReconciliationReport`]
+- [`ReconciliationPolicyAction`]
+- [`ReconciliationPolicy`]
+- [`ReconciliationPolicyItem`]
+- [`ReconciliationPolicyDecision`]
 - [`reconcile_open_orders`]
+- [`reconcile_open_orders_detailed`]
+- [`evaluate_reconciliation_policy`]
 - [`DisconnectPolicy`]
 - [`RouteSafetyPolicy`]
 - [`AdvancedRiskLimits`]
@@ -687,6 +696,27 @@ Actions:
 - [`ReconciliationAction::RestateFromVenue`]
 
 The function reports differences. It does not mutate state or cancel orders.
+
+Use [`reconcile_open_orders_detailed`] when recovery or live monitoring needs a
+more precise discrepancy type:
+
+- [`ReconciliationIssueKind::Matched`]
+- [`ReconciliationIssueKind::VenueOnly`]
+- [`ReconciliationIssueKind::LocalOnly`]
+- [`ReconciliationIssueKind::QuantityMismatch`]
+- [`ReconciliationIssueKind::StatusMismatch`]
+- [`ReconciliationIssueKind::PriceMismatch`]
+- [`ReconciliationIssueKind::Unknown`]
+
+[`ReconciliationPolicy`] maps those issues to host actions such as fail closed,
+accept venue truth, cancel venue-only orders, restate venue-only orders, or
+require operator approval. [`evaluate_reconciliation_policy`] returns a
+[`ReconciliationPolicyDecision`] that keeps submissions disabled until required
+host action completes.
+
+[`ExecutionEngine::reconcile_open_orders_with`] and
+[`ExecutionEngine::evaluate_reconciliation`] apply the same logic to the
+engine's current local non-terminal orders and a venue open-order snapshot.
 
 ### Safety policies
 

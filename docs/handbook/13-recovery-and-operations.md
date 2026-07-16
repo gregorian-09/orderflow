@@ -27,8 +27,10 @@ After process restart:
 3. rebuild expected local state,
 4. reconnect provider,
 5. request open orders,
-6. compare with `reconcile_open_orders`,
-7. emit restatements or trigger operator review.
+6. compare with `reconcile_open_orders_detailed`,
+7. evaluate a `ReconciliationPolicy`,
+8. emit restatements, cancels, or operator-review tasks,
+9. enable submissions only after the policy decision no longer blocks them.
 
 If reconciliation finds `VenueOnly` orders, the venue has working orders the
 local journal did not know about. Treat this as high severity.
@@ -36,6 +38,21 @@ local journal did not know about. Treat this as high severity.
 If reconciliation finds `LocalOnly` orders, the local journal thinks something
 is working but the venue does not report it. Treat this as a possible missed
 terminal report.
+
+Detailed reconciliation also classifies `QuantityMismatch`, `StatusMismatch`,
+`PriceMismatch`, and `Unknown`. Use these categories to choose host action:
+
+- default to `ReconciliationPolicy::fail_closed()` during startup recovery;
+- use `CancelVenueOrder` only when the venue-only order is definitely unwanted;
+- use `AcceptVenueTruth` only after local risk and audit systems can absorb the
+  restatement;
+- use `RequireOperatorApproval` when the venue snapshot is incomplete or the
+  strategy ownership is unclear.
+
+`ExecutionEngine::evaluate_reconciliation(venue_open_orders, policy)` evaluates
+the engine's current non-terminal local orders against a venue snapshot. It does
+not mutate state or send cancels. Hosts must apply the selected actions, then
+re-run reconciliation before resuming strategy submissions.
 
 ## Disconnect Handling
 

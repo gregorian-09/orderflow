@@ -184,7 +184,7 @@ policy, WAL, or database-backed journal through the `ExecutionJournal` trait.
 ## Reconciliation
 
 `reconcile_open_orders(local, venue)` compares two sets of `OrderState` values
-and classifies each item:
+and preserves the original simple classification:
 
 - `Matched`
 - `VenueOnly`
@@ -193,6 +193,24 @@ and classifies each item:
 
 The function does not mutate state. It reports differences so the caller can
 decide whether to restate, cancel, alert, or halt trading.
+
+`reconcile_open_orders_detailed(local, venue)` adds production-oriented issue
+classification:
+
+- `QuantityMismatch`
+- `StatusMismatch`
+- `PriceMismatch`
+- `Unknown`
+
+`ReconciliationPolicy` maps each issue to a host action. The default is fail
+closed. Other actions let the host accept venue truth, cancel venue-only
+orders, restate venue-only orders locally, or require operator approval. The
+policy evaluator returns `ReconciliationPolicyDecision`, which keeps
+submissions disabled while any host action is still required.
+
+`ExecutionEngine::reconcile_open_orders_with(venue)` and
+`ExecutionEngine::evaluate_reconciliation(venue, policy)` apply those helpers
+to the engine's current local non-terminal order states.
 
 ## Safety Policies
 

@@ -257,7 +257,7 @@ The `oms` module is re-exported from `of_execution`.
 | Event fanout | `ExecutionEventFanout`, `ExecutionEventSubscriber` |
 | Lifecycle | `ExecutionLifecycle`, `ExecutionAdapterState`, `ExecutionLifecycleSnapshot` |
 | Durable journal | `FileExecutionJournal` |
-| Reconciliation | `reconcile_open_orders`, `ReconciliationReport` |
+| Reconciliation | `reconcile_open_orders`, `reconcile_open_orders_detailed`, `evaluate_reconciliation_policy`, `ReconciliationReport`, `VenueReconciliationReport`, `ReconciliationPolicy` |
 | Safety policies | `DisconnectPolicy`, `RouteSafetyPolicy` |
 | Advanced risk | `AdvancedRiskLimits`, `AdvancedRiskGate` |
 | Ledger | `PositionLedger`, `Position`, `PositionKey` |
