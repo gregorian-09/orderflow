@@ -9,6 +9,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `tools/check_binding_parity.py` and CI coverage to validate that
   manifest-exposed C ABI symbols have matching Python ctypes registrations and
   Java JNA declarations before release.
+- Added generated binding API inventory documentation from
+  `bindings/api_manifest.toml`, with CI coverage to keep the symbol tables in
+  sync with the manifest.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

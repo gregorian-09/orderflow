@@ -61,6 +61,8 @@ jobs:
         run: python3 tools/check_api_manifest.py
       - name: Validate low-level binding parity
         run: python3 tools/check_binding_parity.py
+      - name: Validate generated binding inventory
+        run: python3 tools/generate_api_inventory.py --check
       - name: Build C ABI library
         run: cargo build -q -p of_ffi_c
       - name: Verify exported C ABI symbols

@@ -147,6 +147,7 @@ functions = [
 family = "runtime"
 returns = "int32_t"
 ownership = "library_allocated_string"
+binding_exposure = "JsonFacade"
 functions = [
   "of_get_metrics_json",
 ]
@@ -156,6 +157,7 @@ family = "adapters"
 returns = "int32_t"
 ownership = "library_allocated_string"
 introduced = "0.4.0"
+binding_exposure = "JsonFacade"
 functions = [
   "of_get_adapter_inventory_json",
   "of_get_active_adapter_status_json",
@@ -166,6 +168,7 @@ family = "signals"
 returns = "int32_t"
 ownership = "library_allocated_string"
 introduced = "0.4.0"
+binding_exposure = "JsonFacade"
 functions = [
   "of_get_signal_descriptors_json",
   "of_get_signal_explanation_json",

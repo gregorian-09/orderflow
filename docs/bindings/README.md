@@ -15,6 +15,9 @@ Latest release: `0.4.0`.
 - `bindings/api_manifest.toml` is checked against the C header, exported native
   symbols, Python ctypes registrations, and Java JNA declarations so low-level
   binding plumbing cannot silently drift from the ABI inventory.
+- [Binding API Inventory](./api-inventory.md) is generated from the same
+  manifest and lists every exported symbol by family, ownership model, and
+  binding exposure level.
 
 - [Python Binding](./python.md)
 - [Java Binding](./java.md)
