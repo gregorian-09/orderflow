@@ -246,11 +246,14 @@ pub struct BinanceAdapter {
     subscribed: HashMap<SymbolId, u16>,
     depth_state: HashMap<SymbolId, BinanceDepthState>,
     queue: VecDeque<RawEvent>,
+    max_queue_depth: usize,
     seq: u64,
     request_id: u64,
     messages_received: u64,
     normalized_events: u64,
     parse_errors: u64,
+    dropped_events: u64,
+    backpressure_events: u64,
     duplicate_depth_updates: u64,
     out_of_order_depth_updates: u64,
     gap_count: u64,
@@ -280,11 +283,14 @@ impl BinanceAdapter {
             subscribed: HashMap::new(),
             depth_state: HashMap::new(),
             queue: VecDeque::new(),
+            max_queue_depth: 0,
             seq: 0,
             request_id: 0,
             messages_received: 0,
             normalized_events: 0,
             parse_errors: 0,
+            dropped_events: 0,
+            backpressure_events: 0,
             duplicate_depth_updates: 0,
             out_of_order_depth_updates: 0,
             gap_count: 0,
@@ -295,6 +301,33 @@ impl BinanceAdapter {
             last_market_data_at: None,
             healthy_since: None,
         })
+    }
+
+    /// Returns a copy of this adapter with a maximum pending event queue depth.
+    ///
+    /// A depth of `0` keeps the default unbounded queue behavior for backward
+    /// compatibility. Non-zero values cap the internal pending event queue; when
+    /// the queue is full, the candidate event is shed, backpressure counters are
+    /// incremented, and health is marked degraded.
+    pub fn with_max_queue_depth(mut self, max_queue_depth: usize) -> Self {
+        self.max_queue_depth = max_queue_depth;
+        self
+    }
+
+    /// Sets the maximum pending event queue depth.
+    ///
+    /// A depth of `0` disables the bound. This does not drop events already in
+    /// the queue; the bound is enforced on subsequent event normalization.
+    pub fn set_max_queue_depth(&mut self, max_queue_depth: usize) {
+        self.max_queue_depth = max_queue_depth;
+    }
+
+    /// Returns the configured maximum pending event queue depth.
+    ///
+    /// A value of `0` means the queue is unbounded, which preserves historical
+    /// adapter behavior.
+    pub fn max_queue_depth(&self) -> usize {
+        self.max_queue_depth
     }
 
     fn is_mock_mode(&self) -> bool {
@@ -320,7 +353,7 @@ impl BinanceAdapter {
         } else {
             300 * PRICE_SCALE
         };
-        self.queue.push_back(RawEvent::Trade(TradePrint {
+        self.push_event(RawEvent::Trade(TradePrint {
             symbol: symbol.clone(),
             price: base + (self.seq % 25) as i64 * 10_000,
             size: 1 + (self.seq % 3) as i64,
@@ -333,6 +366,25 @@ impl BinanceAdapter {
             ts_exchange_ns: Self::now_ns(),
             ts_recv_ns: Self::now_ns(),
         }));
+    }
+
+    fn push_event(&mut self, event: RawEvent) -> bool {
+        if self.max_queue_depth != 0 && self.queue.len() >= self.max_queue_depth {
+            self.dropped_events = self.dropped_events.saturating_add(1);
+            self.backpressure_events = self.backpressure_events.saturating_add(1);
+            self.degraded = true;
+            self.healthy_since = None;
+            self.last_error = Some(format!(
+                "binance queue backpressure queue_depth={} max_queue_depth={}",
+                self.queue.len(),
+                self.max_queue_depth
+            ));
+            return false;
+        }
+
+        self.queue.push_back(event);
+        self.normalized_events = self.normalized_events.saturating_add(1);
+        true
     }
 
     fn send_binance_subscribe(&mut self, symbol: &SymbolId) -> AdapterResult<()> {
@@ -382,8 +434,7 @@ impl BinanceAdapter {
         }
         if payload.contains("\"e\":\"aggTrade\"") {
             if let Some(trade) = parse_agg_trade(payload, &mut self.seq) {
-                self.queue.push_back(RawEvent::Trade(trade));
-                self.normalized_events = self.normalized_events.saturating_add(1);
+                self.push_event(RawEvent::Trade(trade));
                 self.last_market_data_at = Some(Instant::now());
                 self.healthy_since.get_or_insert_with(Instant::now);
             } else {
@@ -449,13 +500,14 @@ impl BinanceAdapter {
                 .map(|ms| ms.saturating_mul(1_000_000))
                 .unwrap_or_else(Self::now_ns);
             let ts_recv_ns = Self::now_ns();
+            let mut accepted_depth_event = false;
 
             for (level, (price, size)) in extract_depth_pairs(payload, "b")
                 .into_iter()
                 .take(depth_limit)
                 .enumerate()
             {
-                self.queue.push_back(RawEvent::Book(BookUpdate {
+                accepted_depth_event |= self.push_event(RawEvent::Book(BookUpdate {
                     symbol: sym_id.clone(),
                     side: Side::Bid,
                     level: level as u16,
@@ -470,14 +522,13 @@ impl BinanceAdapter {
                     ts_exchange_ns,
                     ts_recv_ns,
                 }));
-                self.normalized_events = self.normalized_events.saturating_add(1);
             }
             for (level, (price, size)) in extract_depth_pairs(payload, "a")
                 .into_iter()
                 .take(depth_limit)
                 .enumerate()
             {
-                self.queue.push_back(RawEvent::Book(BookUpdate {
+                accepted_depth_event |= self.push_event(RawEvent::Book(BookUpdate {
                     symbol: sym_id.clone(),
                     side: Side::Ask,
                     level: level as u16,
@@ -492,10 +543,11 @@ impl BinanceAdapter {
                     ts_exchange_ns,
                     ts_recv_ns,
                 }));
-                self.normalized_events = self.normalized_events.saturating_add(1);
             }
             self.last_market_data_at = Some(Instant::now());
-            self.healthy_since.get_or_insert_with(Instant::now);
+            if accepted_depth_event {
+                self.healthy_since.get_or_insert_with(Instant::now);
+            }
         }
     }
 
@@ -709,16 +761,19 @@ impl MarketDataAdapter for BinanceAdapter {
             degraded: self.degraded,
             last_error: self.last_error.clone(),
             protocol_info: Some(format!(
-                "provider=binance;market=crypto;mode={mode};endpoint={endpoint};reconnect_attempt={};subscribed={};messages_received={};normalized_events={};parse_errors={};duplicate_depth_updates={};out_of_order_depth_updates={};gap_count={};snapshot_rebuild_count={};queue_depth={queue_depth};last_update_ids={depth_update_ids};last_message_age_ms={last_message_age_ms};last_market_data_age_ms={last_market_data_age_ms}",
+                "provider=binance;market=crypto;mode={mode};endpoint={endpoint};reconnect_attempt={};subscribed={};messages_received={};normalized_events={};parse_errors={};dropped_events={};backpressure_events={};duplicate_depth_updates={};out_of_order_depth_updates={};gap_count={};snapshot_rebuild_count={};queue_depth={queue_depth};max_queue_depth={};last_update_ids={depth_update_ids};last_message_age_ms={last_message_age_ms};last_market_data_age_ms={last_market_data_age_ms}",
                 self.reconnect_attempt,
                 self.subscribed.len(),
                 self.messages_received,
                 self.normalized_events,
                 self.parse_errors,
+                self.dropped_events,
+                self.backpressure_events,
                 self.duplicate_depth_updates,
                 self.out_of_order_depth_updates,
                 self.gap_count,
-                self.snapshot_rebuild_count
+                self.snapshot_rebuild_count,
+                self.max_queue_depth
             )),
         }
     }
@@ -1263,6 +1318,51 @@ mod tests {
             .protocol_info
             .unwrap_or_default()
             .contains("last_update_ids=BTCUSDT:160"));
+    }
+
+    #[test]
+    fn live_mode_sheds_events_when_queue_bound_is_reached() {
+        let mut adapter = BinanceAdapter::from_config(&cfg("ws://test.live/ws"))
+            .expect("cfg")
+            .with_max_queue_depth(1);
+        assert_eq!(adapter.max_queue_depth(), 1);
+        adapter.set_max_queue_depth(1);
+
+        adapter.connect().expect("connect");
+        adapter
+            .subscribe(SubscribeReq {
+                symbol: SymbolId {
+                    venue: "BINANCE".to_string(),
+                    symbol: "BTCUSDT".to_string(),
+                },
+                depth_levels: 5,
+            })
+            .expect("sub");
+
+        if let BinanceTransport::Live(ws) = &mut adapter.transport {
+            ws.inject_text(r#"{"e":"aggTrade","E":1710000000123,"s":"BTCUSDT","a":1,"p":"66107.98000000","q":"0.01200000","f":1,"l":1,"T":1710000000001,"m":true,"M":true}"#);
+            ws.inject_text(r#"{"e":"depthUpdate","E":1710000000124,"s":"BTCUSDT","U":157,"u":160,"b":[["66107.97","1.99161"]],"a":[["66107.98","1.83166"]]}"#);
+        }
+
+        let mut out = Vec::new();
+        let n = adapter.poll(&mut out).expect("poll");
+        let health = adapter.health();
+        let protocol = health.protocol_info.unwrap_or_default();
+
+        assert_eq!(n, 1);
+        assert_eq!(out.len(), 1);
+        assert!(matches!(out[0], RawEvent::Trade(_)));
+        assert!(health.degraded);
+        assert!(protocol.contains("normalized_events=1"));
+        assert!(protocol.contains("dropped_events=2"));
+        assert!(protocol.contains("backpressure_events=2"));
+        assert!(protocol.contains("queue_depth=0"));
+        assert!(protocol.contains("max_queue_depth=1"));
+        assert!(adapter
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("binance queue backpressure"));
     }
 
     #[test]

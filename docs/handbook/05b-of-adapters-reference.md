@@ -208,10 +208,15 @@ offline examples.
 - Drops duplicate depth updates before normalization.
 - Marks the adapter degraded and schedules rebuild/reconnect handling on depth
   gaps.
+- Supports an opt-in bounded pending event queue on direct `BinanceAdapter`
+  instances with `with_max_queue_depth(...)` or `set_max_queue_depth(...)`.
+  The default value `0` is unbounded for compatibility.
+- Sheds the candidate normalized event when the configured queue bound is full,
+  increments dropped/backpressure counters, and marks health degraded.
 - Supervises live activity timeout and reconnects with backoff.
 - Exposes Binance health metadata for messages received, normalized events,
-  parse errors, duplicate depth updates, gap count, snapshot rebuild count, and
-  queue depth.
+  parse errors, dropped events, backpressure events, duplicate depth updates,
+  gap count, snapshot rebuild count, queue depth, and max queue depth.
 - Reports per-symbol last depth update ids and redacts endpoint userinfo,
   query strings, and fragments before health metadata is emitted.
 

@@ -61,6 +61,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   expanded health metadata.
 - Added Binance adapter health hardening with redacted endpoint metadata and
   deterministic per-symbol last depth update-id reporting.
+- Added opt-in Binance adapter pending event queue bounds with dropped-event and
+  backpressure health counters while preserving the default unbounded queue
+  behavior.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

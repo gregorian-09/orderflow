@@ -142,12 +142,19 @@ Current provider notes:
   - depth updates track Binance `U`/`u`/`pu` continuity per symbol
   - duplicate depth updates are dropped before normalization
   - update-id gaps mark the adapter degraded and schedule rebuild/reconnect handling
+  - direct `BinanceAdapter` users can opt into a bounded pending event queue via
+    `with_max_queue_depth(...)` or `set_max_queue_depth(...)`; the default
+    depth of `0` preserves the historical unbounded queue behavior
+  - when the bounded queue is full, the candidate normalized event is shed,
+    `dropped_events` and `backpressure_events` increase, and health is marked
+    degraded rather than allowing unbounded memory growth
   - live mode schedules reconnect with backoff on disconnect or market-data timeout
   - reconnect replays active subscriptions automatically
   - health metadata includes reconnect attempt, subscription count, message/data
     ages, parse errors, normalized event count, duplicate depth updates, gap
-    count, snapshot rebuild count, per-symbol last update ids, queue depth, and
-    a redacted endpoint with URL userinfo/query/fragment removed
+    count, snapshot rebuild count, dropped/backpressure events, per-symbol last
+    update ids, queue depth, max queue depth, and a redacted endpoint with URL
+    userinfo/query/fragment removed
 
 ## Trait Contract
 
