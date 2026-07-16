@@ -24,6 +24,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   export inventories.
 - Added optional multi-account allocation primitives with proportional and
   priority average-price allocation reports plus allocation reconciliation.
+- Added optional execution timestamp discipline helpers for source-tagged
+  workflow traces, latency attribution, monotonic validation, and exchange/OMS
+  clock-skew checks.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

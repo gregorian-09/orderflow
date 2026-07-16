@@ -318,7 +318,7 @@ The `oms` module is re-exported from `of_execution`.
 | Advanced risk | `AdvancedRiskLimits`, `AdvancedRiskGate` |
 | Ledger | `PositionLedger`, `Position`, `PositionKey` |
 | Normalization | `VenueOrderCapabilities`, `normalize_order_type` |
-| Telemetry | `ExecutionTelemetry` |
+| Telemetry | `ExecutionTelemetry`, `ExecutionTimestampTrace`, `ExecutionLatencyAttribution`, `TimestampDisciplineConfig`, `TimestampDisciplineReport` |
 | Sharding | `ShardKey`, `ShardRouter` |
 | Throttling | `OrderThrottle` |
 | Replay | `ReplayDecision`, `ReplayResult`, `replay_simulated_oms` |

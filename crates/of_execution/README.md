@@ -161,6 +161,15 @@ OMS helpers:
 - [`NormalizedOrderType`]
 - [`normalize_order_type`]
 - [`ExecutionTelemetry`]
+- [`TimestampSource`]
+- [`TimestampPointKind`]
+- [`ExecutionTimestampSources`]
+- [`ExecutionTimestampTrace`]
+- [`ExecutionLatencyAttribution`]
+- [`TimestampDisciplineConfig`]
+- [`TimestampDisciplineIssueKind`]
+- [`TimestampDisciplineIssue`]
+- [`TimestampDisciplineReport`]
 - [`ShardKey`]
 - [`ShardRouter`]
 - [`OrderThrottle`]
@@ -831,6 +840,31 @@ types and TIFs return structured [`RiskRejectReason`] values from
 small so deployments can export metrics to Prometheus, statsd, OpenTelemetry,
 or internal systems without making this crate depend on any one telemetry
 stack.
+
+### Clock and timestamp discipline
+
+[`ExecutionTimestampTrace`] is an optional, host-owned timestamp envelope for
+production execution workflows. It tracks:
+
+- strategy decision time,
+- OMS receive time,
+- WAL append time,
+- adapter send time,
+- exchange/venue time,
+- OMS report receive time,
+- drop-copy receive time, and
+- checkpoint time.
+
+[`TimestampSource`] and [`ExecutionTimestampSources`] record where those values
+came from, such as host software clocks, monotonic clocks, hardware clocks,
+venues, journals, drop copy, or checkpoint stores. The trace can produce
+[`ExecutionLatencyAttribution`] without forcing the engine to read clocks on
+every command.
+
+[`TimestampDisciplineConfig`] and [`TimestampDisciplineReport`] validate known
+internal timestamps for monotonic order and compare venue timestamps with OMS
+report receive time for clock-skew checks. The helpers are additive and do not
+change existing `repr(C)` request or event layouts.
 
 ### Sharding
 
