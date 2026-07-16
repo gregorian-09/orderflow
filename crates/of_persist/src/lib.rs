@@ -1609,6 +1609,288 @@ impl FileMarketDataJsonlExportWriter {
     }
 }
 
+/// Retention/tiering action selected for market-data persistence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum MarketDataRetentionAction {
+    /// Keep the hot WAL segment.
+    RetainHotWal,
+    /// Export the WAL range to cold storage.
+    ExportCold,
+    /// Delete the hot WAL range.
+    DeleteHotWal,
+    /// Keep checkpoints that depend on the WAL range.
+    RetainCheckpoint,
+    /// Delete checkpoints that no longer depend on retained WAL.
+    DeleteCheckpoint,
+    /// Preserve records because they are part of an incident window.
+    PreserveIncidentWindow,
+}
+
+/// Reason attached to a retention/tiering decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum MarketDataRetentionReason {
+    /// WAL is still within the hot retention window.
+    WithinHotWindow,
+    /// WAL age exceeds the hot retention window.
+    AgeExceeded,
+    /// Hot bytes exceed the configured byte budget.
+    BytesExceeded,
+    /// Cold export has not been verified.
+    MissingVerifiedColdExport,
+    /// Cold export has been verified.
+    VerifiedColdExport,
+    /// A checkpoint still depends on this WAL range.
+    CheckpointDependsOnWal,
+    /// Records are inside an incident preservation window.
+    IncidentWindow,
+}
+
+/// Market-data retention and tiering policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MarketDataRetentionPolicy {
+    /// Hot WAL retention window in nanoseconds. Zero disables age pressure.
+    pub hot_retention_ns: u64,
+    /// Maximum hot WAL bytes. Zero disables byte pressure.
+    pub max_hot_bytes: u64,
+    /// Require verified cold export before hot WAL deletion.
+    pub require_verified_cold_export: bool,
+    /// Preserve incident windows regardless of age/size pressure.
+    pub preserve_incident_windows: bool,
+    /// Minimum checkpoints to retain after their WAL dependencies are gone.
+    pub min_checkpoints_retained: usize,
+}
+
+impl MarketDataRetentionPolicy {
+    /// Creates a conservative policy that never deletes without verified export.
+    pub const fn conservative() -> Self {
+        Self {
+            hot_retention_ns: 0,
+            max_hot_bytes: 0,
+            require_verified_cold_export: true,
+            preserve_incident_windows: true,
+            min_checkpoints_retained: 2,
+        }
+    }
+
+    /// Sets hot WAL retention window in nanoseconds.
+    pub const fn with_hot_retention_ns(mut self, hot_retention_ns: u64) -> Self {
+        self.hot_retention_ns = hot_retention_ns;
+        self
+    }
+
+    /// Sets maximum hot WAL bytes.
+    pub const fn with_max_hot_bytes(mut self, max_hot_bytes: u64) -> Self {
+        self.max_hot_bytes = max_hot_bytes;
+        self
+    }
+
+    /// Sets whether cold export verification is required before deletion.
+    pub const fn with_require_verified_cold_export(
+        mut self,
+        require_verified_cold_export: bool,
+    ) -> Self {
+        self.require_verified_cold_export = require_verified_cold_export;
+        self
+    }
+
+    /// Sets whether incident windows are preserved.
+    pub const fn with_preserve_incident_windows(mut self, preserve_incident_windows: bool) -> Self {
+        self.preserve_incident_windows = preserve_incident_windows;
+        self
+    }
+
+    /// Sets minimum checkpoints retained after WAL dependencies are gone.
+    pub const fn with_min_checkpoints_retained(mut self, min_checkpoints_retained: usize) -> Self {
+        self.min_checkpoints_retained = min_checkpoints_retained;
+        self
+    }
+}
+
+impl Default for MarketDataRetentionPolicy {
+    fn default() -> Self {
+        Self::conservative()
+    }
+}
+
+/// Inputs for retention/tiering planning over one WAL range.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct MarketDataRetentionInput {
+    /// First WAL sequence in the range.
+    pub first_sequence: Option<MarketDataWalSequence>,
+    /// Last WAL sequence in the range.
+    pub last_sequence: Option<MarketDataWalSequence>,
+    /// Range creation timestamp in nanoseconds.
+    pub created_ns: u64,
+    /// Bytes occupied by the hot WAL range.
+    pub hot_bytes: u64,
+    /// True when cold export for this range has been verified.
+    pub cold_export_verified: bool,
+    /// True when this range belongs to an incident window.
+    pub incident_window: bool,
+    /// Latest checkpoint sequence that depends on this WAL range.
+    pub dependent_checkpoint_sequence: Option<MarketDataWalSequence>,
+    /// Checkpoints currently retained for the stream.
+    pub retained_checkpoints: usize,
+}
+
+impl MarketDataRetentionInput {
+    /// Creates retention input for one WAL sequence range.
+    pub const fn new(
+        first_sequence: Option<MarketDataWalSequence>,
+        last_sequence: Option<MarketDataWalSequence>,
+        created_ns: u64,
+        hot_bytes: u64,
+    ) -> Self {
+        Self {
+            first_sequence,
+            last_sequence,
+            created_ns,
+            hot_bytes,
+            cold_export_verified: false,
+            incident_window: false,
+            dependent_checkpoint_sequence: None,
+            retained_checkpoints: 0,
+        }
+    }
+
+    /// Sets cold export verification state.
+    pub const fn with_cold_export_verified(mut self, cold_export_verified: bool) -> Self {
+        self.cold_export_verified = cold_export_verified;
+        self
+    }
+
+    /// Sets incident-window state.
+    pub const fn with_incident_window(mut self, incident_window: bool) -> Self {
+        self.incident_window = incident_window;
+        self
+    }
+
+    /// Sets latest dependent checkpoint sequence.
+    pub const fn with_dependent_checkpoint_sequence(
+        mut self,
+        dependent_checkpoint_sequence: Option<MarketDataWalSequence>,
+    ) -> Self {
+        self.dependent_checkpoint_sequence = dependent_checkpoint_sequence;
+        self
+    }
+
+    /// Sets retained checkpoint count for the stream.
+    pub const fn with_retained_checkpoints(mut self, retained_checkpoints: usize) -> Self {
+        self.retained_checkpoints = retained_checkpoints;
+        self
+    }
+}
+
+/// Retention/tiering decision for one WAL range.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct MarketDataRetentionDecision {
+    /// Selected actions.
+    pub actions: Vec<MarketDataRetentionAction>,
+    /// Reasons for selected actions.
+    pub reasons: Vec<MarketDataRetentionReason>,
+    /// True when hot WAL can be deleted.
+    pub may_delete_hot_wal: bool,
+    /// True when cold export should run before deletion.
+    pub should_export_cold: bool,
+    /// True when checkpoints should be retained.
+    pub should_retain_checkpoints: bool,
+}
+
+/// Builds a deterministic retention/tiering decision for one WAL range.
+pub fn plan_market_data_retention(
+    policy: MarketDataRetentionPolicy,
+    now_ns: u64,
+    input: &MarketDataRetentionInput,
+) -> MarketDataRetentionDecision {
+    let mut decision = MarketDataRetentionDecision::default();
+    if policy.preserve_incident_windows && input.incident_window {
+        decision
+            .actions
+            .push(MarketDataRetentionAction::PreserveIncidentWindow);
+        decision
+            .actions
+            .push(MarketDataRetentionAction::RetainHotWal);
+        decision
+            .reasons
+            .push(MarketDataRetentionReason::IncidentWindow);
+        return decision;
+    }
+
+    let age_exceeded = policy.hot_retention_ns > 0
+        && now_ns.saturating_sub(input.created_ns) >= policy.hot_retention_ns;
+    let bytes_exceeded = policy.max_hot_bytes > 0 && input.hot_bytes >= policy.max_hot_bytes;
+    if !age_exceeded && !bytes_exceeded {
+        decision
+            .actions
+            .push(MarketDataRetentionAction::RetainHotWal);
+        decision
+            .reasons
+            .push(MarketDataRetentionReason::WithinHotWindow);
+        return decision;
+    }
+    if age_exceeded {
+        decision
+            .reasons
+            .push(MarketDataRetentionReason::AgeExceeded);
+    }
+    if bytes_exceeded {
+        decision
+            .reasons
+            .push(MarketDataRetentionReason::BytesExceeded);
+    }
+
+    if input.dependent_checkpoint_sequence.is_some() {
+        decision
+            .actions
+            .push(MarketDataRetentionAction::RetainHotWal);
+        decision
+            .actions
+            .push(MarketDataRetentionAction::RetainCheckpoint);
+        decision
+            .reasons
+            .push(MarketDataRetentionReason::CheckpointDependsOnWal);
+        return decision;
+    }
+
+    if policy.require_verified_cold_export && !input.cold_export_verified {
+        decision.actions.push(MarketDataRetentionAction::ExportCold);
+        decision
+            .actions
+            .push(MarketDataRetentionAction::RetainHotWal);
+        decision
+            .reasons
+            .push(MarketDataRetentionReason::MissingVerifiedColdExport);
+        decision.should_export_cold = true;
+        return decision;
+    }
+
+    if input.cold_export_verified {
+        decision
+            .reasons
+            .push(MarketDataRetentionReason::VerifiedColdExport);
+    }
+    decision
+        .actions
+        .push(MarketDataRetentionAction::DeleteHotWal);
+    decision.may_delete_hot_wal = true;
+    if input.retained_checkpoints <= policy.min_checkpoints_retained {
+        decision
+            .actions
+            .push(MarketDataRetentionAction::RetainCheckpoint);
+        decision.should_retain_checkpoints = true;
+    } else {
+        decision
+            .actions
+            .push(MarketDataRetentionAction::DeleteCheckpoint);
+    }
+    decision
+}
+
 fn cold_export_file_name(stream: &str, records: &[MarketDataWalRecord]) -> String {
     let escaped_stream = path_component(stream);
     match (records.first(), records.last()) {
@@ -3516,6 +3798,126 @@ mod tests {
         assert_eq!(partition.first_sequence, Some(MarketDataWalSequence(1)));
         assert!(exported.contains("\"kind\":\"TradePrint\""));
         assert!(!exported.contains("\"kind\":\"BookUpdate\""));
+    }
+
+    #[test]
+    fn market_data_retention_preserves_incident_window() {
+        let input = MarketDataRetentionInput::new(
+            Some(MarketDataWalSequence(1)),
+            Some(MarketDataWalSequence(10)),
+            0,
+            10_000,
+        )
+        .with_incident_window(true)
+        .with_cold_export_verified(true);
+
+        let decision =
+            plan_market_data_retention(MarketDataRetentionPolicy::conservative(), 10_000, &input);
+
+        assert!(!decision.may_delete_hot_wal);
+        assert!(decision
+            .actions
+            .contains(&MarketDataRetentionAction::PreserveIncidentWindow));
+        assert!(decision
+            .reasons
+            .contains(&MarketDataRetentionReason::IncidentWindow));
+    }
+
+    #[test]
+    fn market_data_retention_keeps_wal_inside_hot_window() {
+        let policy = MarketDataRetentionPolicy::conservative().with_hot_retention_ns(1_000);
+        let input = MarketDataRetentionInput::new(
+            Some(MarketDataWalSequence(1)),
+            Some(MarketDataWalSequence(10)),
+            9_500,
+            10,
+        );
+
+        let decision = plan_market_data_retention(policy, 10_000, &input);
+
+        assert_eq!(
+            decision.actions,
+            vec![MarketDataRetentionAction::RetainHotWal]
+        );
+        assert_eq!(
+            decision.reasons,
+            vec![MarketDataRetentionReason::WithinHotWindow]
+        );
+    }
+
+    #[test]
+    fn market_data_retention_exports_before_deleting_unverified_wal() {
+        let policy = MarketDataRetentionPolicy::conservative().with_hot_retention_ns(1_000);
+        let input = MarketDataRetentionInput::new(
+            Some(MarketDataWalSequence(1)),
+            Some(MarketDataWalSequence(10)),
+            0,
+            10,
+        );
+
+        let decision = plan_market_data_retention(policy, 10_000, &input);
+
+        assert!(decision.should_export_cold);
+        assert!(!decision.may_delete_hot_wal);
+        assert_eq!(
+            decision.actions,
+            vec![
+                MarketDataRetentionAction::ExportCold,
+                MarketDataRetentionAction::RetainHotWal,
+            ]
+        );
+    }
+
+    #[test]
+    fn market_data_retention_keeps_wal_with_checkpoint_dependency() {
+        let policy = MarketDataRetentionPolicy::conservative().with_max_hot_bytes(1);
+        let input = MarketDataRetentionInput::new(
+            Some(MarketDataWalSequence(1)),
+            Some(MarketDataWalSequence(10)),
+            0,
+            10,
+        )
+        .with_cold_export_verified(true)
+        .with_dependent_checkpoint_sequence(Some(MarketDataWalSequence(10)));
+
+        let decision = plan_market_data_retention(policy, 10_000, &input);
+
+        assert!(!decision.may_delete_hot_wal);
+        assert!(decision
+            .actions
+            .contains(&MarketDataRetentionAction::RetainCheckpoint));
+        assert!(decision
+            .reasons
+            .contains(&MarketDataRetentionReason::CheckpointDependsOnWal));
+    }
+
+    #[test]
+    fn market_data_retention_deletes_verified_exported_wal() {
+        let policy = MarketDataRetentionPolicy::conservative()
+            .with_hot_retention_ns(1_000)
+            .with_min_checkpoints_retained(2);
+        let input = MarketDataRetentionInput::new(
+            Some(MarketDataWalSequence(1)),
+            Some(MarketDataWalSequence(10)),
+            0,
+            10,
+        )
+        .with_cold_export_verified(true)
+        .with_retained_checkpoints(3);
+
+        let decision = plan_market_data_retention(policy, 10_000, &input);
+
+        assert!(decision.may_delete_hot_wal);
+        assert_eq!(
+            decision.actions,
+            vec![
+                MarketDataRetentionAction::DeleteHotWal,
+                MarketDataRetentionAction::DeleteCheckpoint,
+            ]
+        );
+        assert!(decision
+            .reasons
+            .contains(&MarketDataRetentionReason::VerifiedColdExport));
     }
 
     #[test]

@@ -38,6 +38,11 @@ production capture paths.
 - [`MarketDataColdExportPartition`] - one exported partition summary.
 - [`MarketDataColdExportManifest`] - total export manifest.
 - [`FileMarketDataJsonlExportWriter`] - dependency-free JSONL cold-export writer.
+- [`MarketDataRetentionAction`] - retention/tiering host action.
+- [`MarketDataRetentionReason`] - reason attached to retention decisions.
+- [`MarketDataRetentionPolicy`] - hot WAL and cold export retention policy.
+- [`MarketDataRetentionInput`] - WAL range retention inputs.
+- [`MarketDataRetentionDecision`] - deterministic retention/tiering decision.
 - [`MarketDataPersistenceMode`] - production writer mode vocabulary.
 - [`MarketDataPersistenceFailureAction`] - host action when persistence degrades.
 - [`MarketDataPersistencePolicy`] - configured persistence mode and failure action.
@@ -83,6 +88,9 @@ What changes for persistence users:
   preserving existing unfiltered replay behavior;
 - JSONL cold-export helpers write decoded WAL records into partition files with
   raw payload hex, sequence/timestamp metadata, checksums, and export manifests;
+- retention planner helpers decide when to retain hot WAL, export cold data, or
+  delete hot ranges while preserving incident windows and checkpoint
+  dependencies;
 - production deployments should keep market-data replay files and execution
   command/event journals correlated by strategy id, session id, and timestamp.
 
@@ -127,6 +135,11 @@ Public types:
 - [`MarketDataColdExportPartition`]
 - [`MarketDataColdExportManifest`]
 - [`FileMarketDataJsonlExportWriter`]
+- [`MarketDataRetentionAction`]
+- [`MarketDataRetentionReason`]
+- [`MarketDataRetentionPolicy`]
+- [`MarketDataRetentionInput`]
+- [`MarketDataRetentionDecision`]
 - [`MarketDataPersistenceMode`]
 - [`MarketDataPersistenceFailureAction`]
 - [`MarketDataPersistencePolicy`]
@@ -213,6 +226,18 @@ Public methods:
 - [`FileMarketDataJsonlExportWriter::config`]
 - [`FileMarketDataJsonlExportWriter::export_records`]
 - [`FileMarketDataJsonlExportWriter::export_wal`]
+- [`MarketDataRetentionPolicy::conservative`]
+- [`MarketDataRetentionPolicy::with_hot_retention_ns`]
+- [`MarketDataRetentionPolicy::with_max_hot_bytes`]
+- [`MarketDataRetentionPolicy::with_require_verified_cold_export`]
+- [`MarketDataRetentionPolicy::with_preserve_incident_windows`]
+- [`MarketDataRetentionPolicy::with_min_checkpoints_retained`]
+- [`MarketDataRetentionInput::new`]
+- [`MarketDataRetentionInput::with_cold_export_verified`]
+- [`MarketDataRetentionInput::with_incident_window`]
+- [`MarketDataRetentionInput::with_dependent_checkpoint_sequence`]
+- [`MarketDataRetentionInput::with_retained_checkpoints`]
+- [`plan_market_data_retention`]
 - [`MarketDataPersistencePolicy::disabled`]
 - [`MarketDataPersistencePolicy::inline_strict`]
 - [`MarketDataPersistencePolicy::bounded_async`]
@@ -382,6 +407,30 @@ combines one or more partition summaries for batch jobs.
 [`MarketDataColdExportFormat`] includes JSONL, CSV, Parquet, Arrow, and custom
 variants so future exporters can share manifest semantics. This crate currently
 ships the dependency-free JSONL writer only.
+
+## Retention And Tiering Planner
+
+[`plan_market_data_retention`] is a pure retention policy helper for one WAL
+range. It does not delete files or run a background worker. Hosts pass in the
+range age, byte size, cold-export verification state, incident-window state, and
+checkpoint dependency state; the planner returns explicit actions and reasons.
+
+[`MarketDataRetentionPolicy::conservative`] defaults to:
+
+- require verified cold export before hot WAL deletion;
+- preserve incident windows;
+- keep at least two checkpoints after WAL dependencies are gone;
+- no age or byte pressure until configured by the host.
+
+The planner keeps hot WAL when:
+
+- the range is still inside the hot retention window;
+- the range is inside an incident window;
+- a checkpoint still depends on that WAL range;
+- cold export is required but not verified.
+
+It permits hot WAL deletion only when age or byte pressure is active, no
+checkpoint depends on the range, and cold export policy is satisfied.
 
 ## Market-Data Checkpoints
 

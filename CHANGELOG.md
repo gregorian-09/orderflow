@@ -54,6 +54,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added additive `of_persist` JSONL cold-export helpers with partition
   manifests, payload hex preservation, WAL replay filtering, and dependency-free
   research export files.
+- Added additive `of_persist` retention/tiering planner helpers for hot WAL,
+  verified cold export, checkpoint dependency, and incident-window decisions.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

@@ -42,6 +42,12 @@ foundation for lower-latency production capture paths.
 | `MarketDataColdExportPartition` | struct | One exported partition summary |
 | `MarketDataColdExportManifest` | struct | Total export manifest |
 | `FileMarketDataJsonlExportWriter` | struct | Dependency-free JSONL cold-export writer |
+| `MarketDataRetentionAction` | enum | Retention/tiering host action |
+| `MarketDataRetentionReason` | enum | Reason attached to retention decisions |
+| `MarketDataRetentionPolicy` | struct | Hot WAL and cold export retention policy |
+| `MarketDataRetentionInput` | struct | WAL range retention inputs |
+| `MarketDataRetentionDecision` | struct | Deterministic retention/tiering decision |
+| `plan_market_data_retention` | function | Builds a retention/tiering decision |
 | `MarketDataPersistenceMode` | enum | Production writer mode vocabulary |
 | `MarketDataPersistenceFailureAction` | enum | Host action when persistence degrades |
 | `MarketDataPersistencePolicy` | struct | Production persistence policy |
@@ -253,6 +259,48 @@ receive timestamp, and raw payload bytes as lowercase hex.
 
 `MarketDataColdExportFormat` also names CSV, Parquet, Arrow, and custom formats
 so future exporters can share the same partition and manifest semantics.
+
+## Retention And Tiering Planner
+
+`plan_market_data_retention` is a pure helper. It does not delete files,
+compact segments, or start a background task.
+
+### Policy
+
+| Method | Returns | Meaning |
+| --- | --- | --- |
+| `MarketDataRetentionPolicy::conservative()` | `MarketDataRetentionPolicy` | Requires verified cold export, preserves incidents, and retains at least two checkpoints |
+| `with_hot_retention_ns(u64)` | `MarketDataRetentionPolicy` | Sets hot WAL age pressure |
+| `with_max_hot_bytes(u64)` | `MarketDataRetentionPolicy` | Sets hot WAL byte pressure |
+| `with_require_verified_cold_export(bool)` | `MarketDataRetentionPolicy` | Requires verified cold export before deletion |
+| `with_preserve_incident_windows(bool)` | `MarketDataRetentionPolicy` | Preserves incident windows |
+| `with_min_checkpoints_retained(usize)` | `MarketDataRetentionPolicy` | Keeps a minimum checkpoint count after WAL dependencies are gone |
+
+### Inputs
+
+| Field | Meaning |
+| --- | --- |
+| `first_sequence`, `last_sequence` | WAL sequence range |
+| `created_ns` | WAL range creation timestamp |
+| `hot_bytes` | Hot storage bytes occupied by the range |
+| `cold_export_verified` | Whether cold export for this range has been verified |
+| `incident_window` | Whether the range is protected for incident review |
+| `dependent_checkpoint_sequence` | Latest checkpoint that still depends on the range |
+| `retained_checkpoints` | Current checkpoint count for the stream |
+
+### Decision
+
+| Field | Meaning |
+| --- | --- |
+| `actions` | Retain hot WAL, export cold, delete hot WAL, retain/delete checkpoint, preserve incident window |
+| `reasons` | Window, age, bytes, export, checkpoint dependency, or incident reason |
+| `may_delete_hot_wal` | True only when deletion is safe under policy |
+| `should_export_cold` | True when cold export should happen before deletion |
+| `should_retain_checkpoints` | True when checkpoint retention floor still applies |
+
+Deletion is allowed only when age or byte pressure is active, the range is not
+incident-protected, no checkpoint depends on it, and cold export requirements
+are satisfied.
 
 ## `FileMarketDataCheckpointStore`
 
