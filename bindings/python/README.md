@@ -44,6 +44,8 @@ Highlights:
   `Engine.signal_descriptors()` for dashboard/configuration inventory
 - signal explanation discovery through `Engine.signal_explanation(symbol)` for
   audit and dashboard diagnostics
+- signal metrics through `Engine.signal_metrics()` for state counts,
+  confidence, quality, and explanation coverage diagnostics
 - native C ABI inventory validation through `bindings/api_manifest.toml` so
   future low-level `ctypes` declarations can be checked against `orderflow.h`
 - analytics-to-execution examples in this README and the handbook
@@ -117,6 +119,10 @@ After a signal has evaluated for a symbol, `Engine.signal_explanation(symbol)`
 returns the latest explanation payload with reason code, observed inputs,
 thresholds, and confidence contributors. This is a diagnostics surface; order
 submission decisions should still flow through explicit strategy/risk/OMS code.
+
+`Engine.signal_metrics()` returns a compact runtime summary of the current
+signal cache: state counts, directional count, average confidence, quality
+flagged signals, and explanation coverage.
 
 ## Architecture
 

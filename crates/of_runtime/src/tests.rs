@@ -54,6 +54,15 @@ mod tests {
         assert!(explanation.contains("\"state\":\"long_bias\""));
         assert!(explanation.contains("\"reason_code\":\"delta_momentum_positive\""));
         assert!(explanation.contains("\"inputs\":[{\"name\":\"delta\",\"value\":10}]"));
+
+        let metrics = engine.signal_metrics_json();
+        assert!(metrics.contains("\"schema_version\":1"));
+        assert!(metrics.contains("\"signal_symbols\":1"));
+        assert!(metrics.contains("\"explanation_symbols\":1"));
+        assert!(metrics.contains("\"long_bias\":1"));
+        assert!(metrics.contains("\"directional\":1"));
+        assert!(metrics.contains("\"average_confidence_bps\":500"));
+        assert!(metrics.contains("\"latest_explanation_coverage_bps\":10000"));
     }
 
     #[test]

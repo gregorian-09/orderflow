@@ -1285,6 +1285,51 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         signal_descriptor_inventory_json()
     }
 
+    /// Returns signal metrics as compact JSON payload.
+    pub fn signal_metrics_json(&self) -> String {
+        let mut neutral = 0_u64;
+        let mut long_bias = 0_u64;
+        let mut short_bias = 0_u64;
+        let mut blocked = 0_u64;
+        let mut quality_flagged = 0_u64;
+        let mut confidence_sum = 0_u64;
+
+        for snapshot in self.latest_signals.values() {
+            match snapshot.state {
+                SignalState::Neutral => neutral += 1,
+                SignalState::LongBias => long_bias += 1,
+                SignalState::ShortBias => short_bias += 1,
+                SignalState::Blocked => blocked += 1,
+            }
+            if snapshot.quality_flags != 0 {
+                quality_flagged += 1;
+            }
+            confidence_sum += u64::from(snapshot.confidence_bps);
+        }
+
+        let total = self.latest_signals.len() as u64;
+        let average_confidence_bps = confidence_sum.checked_div(total).unwrap_or(0);
+        let latest_explanation_coverage_bps = (self.latest_signal_explanations.len() as u64)
+            .saturating_mul(10_000)
+            .checked_div(total)
+            .unwrap_or(0);
+
+        format!(
+            "{{\"schema_version\":1,\"signal_symbols\":{},\"explanation_symbols\":{},\"neutral\":{},\"long_bias\":{},\"short_bias\":{},\"blocked\":{},\"directional\":{},\"quality_flagged\":{},\"average_confidence_bps\":{},\"last_quality_flags\":{},\"latest_explanation_coverage_bps\":{}}}",
+            total,
+            self.latest_signal_explanations.len(),
+            neutral,
+            long_bias,
+            short_bias,
+            blocked,
+            long_bias + short_bias,
+            quality_flagged,
+            average_confidence_bps,
+            self.last_quality_flags_bits,
+            latest_explanation_coverage_bps
+        )
+    }
+
     /// Returns runtime metrics as compact JSON payload.
     pub fn metrics_json(&self) -> String {
         let adapter_health = self.adapter.health();

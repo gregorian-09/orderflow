@@ -1425,6 +1425,17 @@ class Engine:
             ),
         )
 
+    def signal_metrics(self) -> Dict[str, Any]:
+        """Returns signal metrics JSON decoded as dict."""
+        self._require_handle()
+        return _allocated_json_call(
+            self._ffi,
+            "of_get_signal_metrics_json",
+            lambda out, out_len: self._ffi.lib.of_get_signal_metrics_json(
+                self._engine, out, out_len
+            ),
+        )
+
     def _snapshot_call(self, fn, symbol: Symbol, *extra_args) -> Dict[str, Any]:
         self._require_handle()
         c_symbol = self._to_c_symbol(symbol)

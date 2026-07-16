@@ -169,6 +169,8 @@ public interface OrderflowNative extends Library {
     int of_get_signal_descriptors_json(PointerByReference outJson, IntByReference outLen);
     /** Returns latest signal explanation JSON pointer and length. */
     int of_get_signal_explanation_json(Pointer engine, OfSymbol symbol, PointerByReference outJson, IntByReference outLen);
+    /** Returns signal metrics JSON pointer and length. */
+    int of_get_signal_metrics_json(Pointer engine, PointerByReference outJson, IntByReference outLen);
     /** Frees strings allocated by native library. */
     void of_string_free(Pointer p);
 }

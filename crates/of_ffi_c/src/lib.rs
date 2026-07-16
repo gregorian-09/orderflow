@@ -2318,6 +2318,21 @@ pub extern "C" fn of_get_signal_explanation_json(
     allocate_json_string(explanation, out_json, out_len)
 }
 
+/// Allocates and returns signal metrics JSON for `engine`.
+#[no_mangle]
+pub extern "C" fn of_get_signal_metrics_json(
+    engine: *mut of_engine,
+    out_json: *mut *const c_char,
+    out_len: *mut u32,
+) -> i32 {
+    if engine.is_null() || out_json.is_null() || out_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+
+    let engine = unsafe { &mut *engine };
+    allocate_json_string(engine.inner.signal_metrics_json(), out_json, out_len)
+}
+
 fn allocate_json_string(payload: String, out_json: *mut *const c_char, out_len: *mut u32) -> i32 {
     let c = match CString::new(payload) {
         Ok(c) => c,

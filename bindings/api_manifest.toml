@@ -169,6 +169,7 @@ introduced = "0.4.0"
 functions = [
   "of_get_signal_descriptors_json",
   "of_get_signal_explanation_json",
+  "of_get_signal_metrics_json",
 ]
 
 [[function_groups]]

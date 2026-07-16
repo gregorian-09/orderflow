@@ -218,6 +218,7 @@ functions.
 | `of_get_active_adapter_status_json(engine, out_json, out_len)` | `int32_t` | Allocates and returns active adapter status JSON |
 | `of_get_signal_descriptors_json(out_json, out_len)` | `int32_t` | Allocates and returns built-in signal descriptor JSON |
 | `of_get_signal_explanation_json(engine, symbol, out_json, out_len)` | `int32_t` | Allocates and returns latest signal explanation JSON |
+| `of_get_signal_metrics_json(engine, out_json, out_len)` | `int32_t` | Allocates and returns signal metrics JSON |
 | `of_string_free(p)` | `void` | Releases strings owned by library |
 
 ## Buffer and Ownership Rules
@@ -229,7 +230,8 @@ functions.
 - `of_get_metrics_json`, `of_get_adapter_inventory_json`,
   `of_get_active_adapter_status_json`, and
   `of_get_signal_descriptors_json`, and `of_get_signal_explanation_json`
-  allocate returned strings; callers must free them with `of_string_free`.
+  and `of_get_signal_metrics_json` allocate returned strings; callers must free
+  them with `of_string_free`.
 - Callback payload pointers are valid only for the duration of the callback.
 
 ## Payload Compatibility Rules

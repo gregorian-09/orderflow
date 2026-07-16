@@ -119,6 +119,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `Engine.signal_explanation(symbol)`, and Java
   `OrderflowEngine.signalExplanation(symbol)` for audit/dashboard diagnostics
   without changing existing signal snapshots.
+- Additive signal metrics bridge with `Engine::signal_metrics_json`,
+  `of_get_signal_metrics_json`, Python `Engine.signal_metrics()`, and Java
+  `OrderflowEngine.signalMetrics()` for state counts, confidence summaries,
+  quality-flagged signal counts, and explanation coverage diagnostics.
 
 ### Fixed
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the

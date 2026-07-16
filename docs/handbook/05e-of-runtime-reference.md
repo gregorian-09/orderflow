@@ -136,6 +136,7 @@ signals, book state, persistence, health reporting, and external ingest flows.
 | `book_snapshot(symbol)` | `Option<BookSnapshot>` | Materialized book snapshot |
 | `signal_snapshot(symbol)` | `Option<SignalSnapshot>` | Current signal snapshot |
 | `signal_explanation_json(symbol)` | `Option<String>` | Latest signal explanation JSON |
+| `signal_metrics_json()` | `String` | Signal state and explanation coverage metrics |
 
 ### Health, metrics, and diagnostics
 
@@ -193,6 +194,8 @@ Important rules:
   dashboards, config tools, and binding discovery helpers.
 - `signal_explanation_json(symbol)` is the latest per-symbol signal
   explanation cache for audit and dashboard paths.
+- `signal_metrics_json()` is the aggregate signal diagnostics summary for
+  dashboards and bindings.
 - JSON field names are treated as stable once published.
 - New fields are added additively rather than replacing existing fields.
 - Aggregate fields such as `adapter_total_count`, `adapter_healthy_count`, and

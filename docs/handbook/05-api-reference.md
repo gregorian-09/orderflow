@@ -388,6 +388,7 @@ Public runtime methods:
 - `interval_candle_snapshot(&SymbolId, window_ns: u64)`
 - `signal_snapshot(&SymbolId)`
 - `signal_explanation_json(&SymbolId) -> Option<String>`
+- `signal_metrics_json() -> String`
 - `adapter_descriptor() -> AdapterDescriptor`
 - `adapter_status() -> RuntimeAdapterStatus`
 - `adapter_inventory_json() -> String`
@@ -655,6 +656,7 @@ Snapshots and metrics:
 - `of_get_active_adapter_status_json(...)`
 - `of_get_signal_descriptors_json(...)`
 - `of_get_signal_explanation_json(...)`
+- `of_get_signal_metrics_json(...)`
 - `of_string_free(...)`
 
 ### Stream Kind IDs
@@ -686,8 +688,8 @@ Used in `of_subscribe(..., kind, ...)` and callback payloads:
 - `of_get_metrics_json(...)`, `of_get_adapter_inventory_json(...)`,
   `of_get_active_adapter_status_json(...)`, and
   `of_get_signal_descriptors_json(...)`, and
-  `of_get_signal_explanation_json(...)` allocate output strings; callers must
-  free them via `of_string_free(...)`.
+  `of_get_signal_explanation_json(...)`, and `of_get_signal_metrics_json(...)`
+  allocate output strings; callers must free them via `of_string_free(...)`.
 - Snapshot functions report the required byte size via `inout_len`; callers should retry with a larger buffer when they receive `OF_ERR_INVALID_ARG`.
 
 ---
@@ -729,6 +731,7 @@ Used in `of_subscribe(..., kind, ...)` and callback payloads:
 - `interval_candle_snapshot(symbol, window_ns) -> dict`
 - `signal_snapshot(symbol) -> dict`
 - `signal_explanation(symbol) -> dict`
+- `signal_metrics() -> dict`
 - `metrics() -> dict`
 - `adapter_inventory(library_path=None) -> dict`
 - `available_adapters(library_path=None) -> list[dict]`
@@ -785,6 +788,7 @@ Context manager support:
 - `intervalCandleSnapshot(Symbol, long windowNs)`
 - `signalSnapshot(Symbol)`
 - `signalExplanation(Symbol)`
+- `signalMetrics()`
 - `metricsJson()`
 - `adapterInventory(String nativePath)`
 - `adapterInventory()`

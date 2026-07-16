@@ -297,6 +297,30 @@ mod tests {
         assert!(explanation.contains("\"inputs\":[{\"name\":\"delta\",\"value\":9}]"));
         of_string_free(explanation_out);
 
+        let mut metrics_out: *const c_char = ptr::null();
+        let mut metrics_len = 0u32;
+        assert_eq!(
+            of_get_signal_metrics_json(
+                engine,
+                &mut metrics_out as *mut *const c_char,
+                &mut metrics_len as *mut u32,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        let signal_metrics = unsafe {
+            String::from_utf8_lossy(std::slice::from_raw_parts(
+                metrics_out.cast::<u8>(),
+                metrics_len as usize,
+            ))
+            .to_string()
+        };
+        assert!(signal_metrics.contains("\"schema_version\":1"));
+        assert!(signal_metrics.contains("\"signal_symbols\":1"));
+        assert!(signal_metrics.contains("\"explanation_symbols\":1"));
+        assert!(signal_metrics.contains("\"neutral\":1"));
+        assert!(signal_metrics.contains("\"average_confidence_bps\":500"));
+        of_string_free(metrics_out);
+
         assert_eq!(of_unsubscribe(sub), of_error_t::OF_OK as i32);
         assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
         of_engine_destroy(engine);

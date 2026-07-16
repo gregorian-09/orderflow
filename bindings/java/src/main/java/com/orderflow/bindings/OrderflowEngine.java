@@ -448,6 +448,16 @@ public final class OrderflowEngine implements AutoCloseable {
     }
 
     /**
+     * Returns signal metrics as JSON string.
+     *
+     * @return JSON payload with signal state counts, confidence, and explanation coverage
+     */
+    public String signalMetrics() {
+        requireEngine();
+        return allocatedJson(nativeLib, engine, "of_get_signal_metrics_json");
+    }
+
+    /**
      * Returns completed bar series JSON array for a symbol.
      *
      * <p>Requires the native library to be built with the {@code tickbar} feature.
@@ -623,6 +633,8 @@ public final class OrderflowEngine implements AutoCloseable {
             rc = nativeLib.of_get_active_adapter_status_json(engine, out, outLen);
         } else if ("of_get_signal_descriptors_json".equals(fn)) {
             rc = nativeLib.of_get_signal_descriptors_json(out, outLen);
+        } else if ("of_get_signal_metrics_json".equals(fn)) {
+            rc = nativeLib.of_get_signal_metrics_json(engine, out, outLen);
         } else {
             throw new OrderflowException("unknown allocated JSON function: " + fn);
         }
