@@ -13,6 +13,9 @@ const JSONL_SCHEMA_VERSION: u32 = 1;
 const MARKET_DATA_WAL_MAGIC: [u8; 4] = *b"OFMW";
 const MARKET_DATA_WAL_VERSION: u16 = 1;
 const MARKET_DATA_WAL_HEADER_LEN: usize = 64;
+const MARKET_DATA_CHECKPOINT_MAGIC: [u8; 4] = *b"OFMC";
+const MARKET_DATA_CHECKPOINT_VERSION: u16 = 1;
+const MARKET_DATA_CHECKPOINT_HEADER_LEN: usize = 64;
 
 /// Persistence-layer errors.
 #[derive(Debug)]
@@ -35,6 +38,11 @@ pub type PersistResult<T> = Result<T, PersistError>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct MarketDataWalSequence(pub u64);
 
+/// Monotonic market-data checkpoint identifier.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct MarketDataCheckpointId(pub u64);
+
 /// Normalized market-data WAL record kind.
 #[repr(u16)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -50,6 +58,42 @@ pub enum MarketDataWalRecordKind {
     GapMarker = 4,
     /// Segment seal marker payload.
     SegmentSeal = 5,
+}
+
+/// Opaque market-data checkpoint payload category.
+#[repr(u16)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum MarketDataCheckpointKind {
+    /// Materialized order-book state.
+    Book = 1,
+    /// Analytics accumulator state.
+    Analytics = 2,
+    /// Combined book and analytics state.
+    BookAndAnalytics = 3,
+    /// Deterministic signal state.
+    SignalState = 4,
+    /// Provider and normalized sequence cache state.
+    SequenceState = 5,
+    /// Runtime subscription, quality, and metric baseline state.
+    RuntimeState = 6,
+    /// User-defined checkpoint payload.
+    Custom = 65_535,
+}
+
+impl MarketDataCheckpointKind {
+    fn from_u16(value: u16) -> Option<Self> {
+        match value {
+            1 => Some(Self::Book),
+            2 => Some(Self::Analytics),
+            3 => Some(Self::BookAndAnalytics),
+            4 => Some(Self::SignalState),
+            5 => Some(Self::SequenceState),
+            6 => Some(Self::RuntimeState),
+            65_535 => Some(Self::Custom),
+            _ => None,
+        }
+    }
 }
 
 impl MarketDataWalRecordKind {
@@ -529,6 +573,630 @@ impl MarketDataBackpressureDecision {
                 | MarketDataBackpressureAction::FailProcess
         )
     }
+}
+
+/// Configuration for [`FileMarketDataCheckpointStore`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct MarketDataCheckpointConfig {
+    root: PathBuf,
+    retain_last: usize,
+    sync_on_save: bool,
+}
+
+impl MarketDataCheckpointConfig {
+    /// Creates checkpoint config rooted at `root`.
+    pub fn new(root: impl AsRef<Path>) -> Self {
+        Self {
+            root: root.as_ref().to_path_buf(),
+            retain_last: 0,
+            sync_on_save: false,
+        }
+    }
+
+    /// Sets how many recent checkpoints to retain per venue/symbol.
+    ///
+    /// A value of `0` disables automatic pruning.
+    pub const fn with_retain_last(mut self, retain_last: usize) -> Self {
+        self.retain_last = retain_last;
+        self
+    }
+
+    /// Sets whether each saved checkpoint calls `sync_data`.
+    pub const fn with_sync_on_save(mut self, sync_on_save: bool) -> Self {
+        self.sync_on_save = sync_on_save;
+        self
+    }
+
+    /// Returns the configured checkpoint root.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Returns the number of recent checkpoints retained per venue/symbol.
+    pub const fn retain_last(&self) -> usize {
+        self.retain_last
+    }
+
+    /// Returns whether saved checkpoint files are synced before rename.
+    pub const fn sync_on_save(&self) -> bool {
+        self.sync_on_save
+    }
+}
+
+/// Opaque market-data checkpoint payload and sequence anchors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MarketDataCheckpoint {
+    /// Checkpoint identifier. Zero lets the file store assign the next id.
+    pub id: MarketDataCheckpointId,
+    /// Checkpoint payload category.
+    pub kind: MarketDataCheckpointKind,
+    /// Venue name associated with the checkpoint.
+    pub venue: String,
+    /// Symbol name associated with the checkpoint.
+    pub symbol: String,
+    /// Last applied market-data WAL sequence.
+    pub wal_sequence: MarketDataWalSequence,
+    /// Last applied provider-native sequence when known.
+    pub provider_sequence: u64,
+    /// Last applied normalized event sequence when known.
+    pub event_sequence: u64,
+    /// Checkpoint creation timestamp in nanoseconds since Unix epoch.
+    pub created_ns: u64,
+    /// User payload schema/version tag.
+    pub payload_version: u32,
+    /// Opaque encoded checkpoint payload.
+    pub payload: Vec<u8>,
+}
+
+impl MarketDataCheckpoint {
+    /// Creates an opaque checkpoint payload with sequence anchor.
+    pub fn new(
+        kind: MarketDataCheckpointKind,
+        venue: impl Into<String>,
+        symbol: impl Into<String>,
+        wal_sequence: MarketDataWalSequence,
+        payload: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self {
+            id: MarketDataCheckpointId(0),
+            kind,
+            venue: venue.into(),
+            symbol: symbol.into(),
+            wal_sequence,
+            provider_sequence: 0,
+            event_sequence: 0,
+            created_ns: 0,
+            payload_version: 1,
+            payload: payload.into(),
+        }
+    }
+
+    /// Sets checkpoint id.
+    pub const fn with_id(mut self, id: MarketDataCheckpointId) -> Self {
+        self.id = id;
+        self
+    }
+
+    /// Sets provider-native sequence anchor.
+    pub const fn with_provider_sequence(mut self, provider_sequence: u64) -> Self {
+        self.provider_sequence = provider_sequence;
+        self
+    }
+
+    /// Sets normalized event sequence anchor.
+    pub const fn with_event_sequence(mut self, event_sequence: u64) -> Self {
+        self.event_sequence = event_sequence;
+        self
+    }
+
+    /// Sets creation timestamp in nanoseconds since Unix epoch.
+    pub const fn with_created_ns(mut self, created_ns: u64) -> Self {
+        self.created_ns = created_ns;
+        self
+    }
+
+    /// Sets opaque payload version.
+    pub const fn with_payload_version(mut self, payload_version: u32) -> Self {
+        self.payload_version = payload_version;
+        self
+    }
+}
+
+/// Metadata for a persisted market-data checkpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MarketDataCheckpointManifest {
+    /// Checkpoint identifier.
+    pub id: MarketDataCheckpointId,
+    /// Checkpoint payload category.
+    pub kind: MarketDataCheckpointKind,
+    /// Venue name associated with the checkpoint.
+    pub venue: String,
+    /// Symbol name associated with the checkpoint.
+    pub symbol: String,
+    /// Last applied market-data WAL sequence.
+    pub wal_sequence: MarketDataWalSequence,
+    /// Last applied provider-native sequence when known.
+    pub provider_sequence: u64,
+    /// Last applied normalized event sequence when known.
+    pub event_sequence: u64,
+    /// Checkpoint creation timestamp in nanoseconds since Unix epoch.
+    pub created_ns: u64,
+    /// User payload schema/version tag.
+    pub payload_version: u32,
+    /// Opaque payload byte length.
+    pub payload_bytes: u64,
+    /// Checksum over checkpoint header and payload.
+    pub checksum: u32,
+    /// Checkpoint file path.
+    pub path: PathBuf,
+}
+
+/// Integrity report for one persisted market-data checkpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MarketDataCheckpointValidation {
+    /// True when header, version, checksum, and payload length validate.
+    pub valid: bool,
+    /// Manifest decoded from the checkpoint header when available.
+    pub manifest: Option<MarketDataCheckpointManifest>,
+    /// Number of checksum failures.
+    pub checksum_failures: u64,
+    /// True when the checkpoint file ends before the declared payload length.
+    pub truncated: bool,
+}
+
+impl Default for MarketDataCheckpointValidation {
+    fn default() -> Self {
+        Self {
+            valid: true,
+            manifest: None,
+            checksum_failures: 0,
+            truncated: false,
+        }
+    }
+}
+
+/// File-backed store for opaque market-data checkpoints.
+#[derive(Debug, Clone)]
+pub struct FileMarketDataCheckpointStore {
+    config: MarketDataCheckpointConfig,
+}
+
+impl FileMarketDataCheckpointStore {
+    /// Opens or creates a checkpoint store root.
+    pub fn open(config: MarketDataCheckpointConfig) -> PersistResult<Self> {
+        create_dir_all(&config.root)?;
+        Ok(Self { config })
+    }
+
+    /// Returns the checkpoint store configuration.
+    pub const fn config(&self) -> &MarketDataCheckpointConfig {
+        &self.config
+    }
+
+    /// Saves a checkpoint and returns its manifest.
+    ///
+    /// When `checkpoint.id` is zero, the next id for the venue/symbol is
+    /// assigned from existing checkpoint filenames.
+    pub fn save_checkpoint(
+        &self,
+        checkpoint: &MarketDataCheckpoint,
+    ) -> PersistResult<MarketDataCheckpointManifest> {
+        let next_id = self.next_checkpoint_id(&checkpoint.venue, &checkpoint.symbol)?;
+        let id = if checkpoint.id.0 == 0 {
+            next_id
+        } else if checkpoint.id < next_id {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "market-data checkpoint id must be greater than existing ids",
+            )
+            .into());
+        } else {
+            checkpoint.id
+        };
+        let created_ns = if checkpoint.created_ns == 0 {
+            current_unix_nanos()
+        } else {
+            checkpoint.created_ns
+        };
+        let dir = self.symbol_checkpoint_dir(&checkpoint.venue, &checkpoint.symbol);
+        create_dir_all(&dir)?;
+        let path = checkpoint_path(&dir, id);
+        if path.exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "market-data checkpoint id already exists",
+            )
+            .into());
+        }
+        let temp_path = checkpoint_temp_path(&dir, id);
+        let frame = encode_market_data_checkpoint_frame(MarketDataCheckpointFrameInput {
+            id,
+            kind: checkpoint.kind,
+            wal_sequence: checkpoint.wal_sequence,
+            provider_sequence: checkpoint.provider_sequence,
+            event_sequence: checkpoint.event_sequence,
+            created_ns,
+            payload_version: checkpoint.payload_version,
+            payload: &checkpoint.payload,
+        });
+
+        {
+            let mut file = File::create(&temp_path)?;
+            file.write_all(&frame)?;
+            if self.config.sync_on_save {
+                file.sync_data()?;
+            }
+        }
+        fs::rename(&temp_path, &path)?;
+
+        if self.config.retain_last > 0 {
+            self.prune_old(
+                &checkpoint.venue,
+                &checkpoint.symbol,
+                self.config.retain_last,
+            )?;
+        }
+
+        Ok(MarketDataCheckpointManifest {
+            id,
+            kind: checkpoint.kind,
+            venue: checkpoint.venue.clone(),
+            symbol: checkpoint.symbol.clone(),
+            wal_sequence: checkpoint.wal_sequence,
+            provider_sequence: checkpoint.provider_sequence,
+            event_sequence: checkpoint.event_sequence,
+            created_ns,
+            payload_version: checkpoint.payload_version,
+            payload_bytes: checkpoint.payload.len() as u64,
+            checksum: read_u32(&frame[60..64]),
+            path,
+        })
+    }
+
+    /// Loads a checkpoint by id.
+    pub fn load_checkpoint(
+        &self,
+        venue: &str,
+        symbol: &str,
+        id: MarketDataCheckpointId,
+    ) -> PersistResult<MarketDataCheckpoint> {
+        let path = checkpoint_path(&self.symbol_checkpoint_dir(venue, symbol), id);
+        decode_market_data_checkpoint_file(&path, venue, symbol)
+    }
+
+    /// Loads the latest valid checkpoint, optionally filtered by kind.
+    pub fn load_latest(
+        &self,
+        venue: &str,
+        symbol: &str,
+        kind: Option<MarketDataCheckpointKind>,
+    ) -> PersistResult<Option<MarketDataCheckpoint>> {
+        let mut ids = checkpoint_ids(&self.symbol_checkpoint_dir(venue, symbol))?;
+        ids.sort_unstable_by(|left, right| right.cmp(left));
+        for id in ids {
+            let checkpoint = match self.load_checkpoint(venue, symbol, id) {
+                Ok(checkpoint) => checkpoint,
+                Err(_) => continue,
+            };
+            if kind.is_none_or(|expected| checkpoint.kind == expected) {
+                return Ok(Some(checkpoint));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Lists checkpoint manifests for one venue/symbol ordered by id.
+    pub fn list_checkpoints(
+        &self,
+        venue: &str,
+        symbol: &str,
+    ) -> PersistResult<Vec<MarketDataCheckpointManifest>> {
+        let mut manifests = Vec::new();
+        let dir = self.symbol_checkpoint_dir(venue, symbol);
+        for id in checkpoint_ids(&dir)? {
+            let path = checkpoint_path(&dir, id);
+            manifests.push(read_market_data_checkpoint_manifest(&path, venue, symbol)?);
+        }
+        manifests.sort_unstable_by_key(|manifest| manifest.id);
+        Ok(manifests)
+    }
+
+    /// Validates one checkpoint file.
+    pub fn validate_checkpoint(
+        &self,
+        venue: &str,
+        symbol: &str,
+        id: MarketDataCheckpointId,
+    ) -> PersistResult<MarketDataCheckpointValidation> {
+        let path = checkpoint_path(&self.symbol_checkpoint_dir(venue, symbol), id);
+        validate_market_data_checkpoint_file(&path, venue, symbol)
+    }
+
+    /// Prunes old checkpoints, keeping the newest `retain_last` by id.
+    pub fn prune_old(&self, venue: &str, symbol: &str, retain_last: usize) -> PersistResult<usize> {
+        if retain_last == 0 {
+            return Ok(0);
+        }
+        let dir = self.symbol_checkpoint_dir(venue, symbol);
+        let mut ids = checkpoint_ids(&dir)?;
+        ids.sort_unstable();
+        let prune_count = ids.len().saturating_sub(retain_last);
+        for id in ids.into_iter().take(prune_count) {
+            fs::remove_file(checkpoint_path(&dir, id))?;
+        }
+        Ok(prune_count)
+    }
+
+    fn next_checkpoint_id(
+        &self,
+        venue: &str,
+        symbol: &str,
+    ) -> PersistResult<MarketDataCheckpointId> {
+        let max_id = checkpoint_ids(&self.symbol_checkpoint_dir(venue, symbol))?
+            .into_iter()
+            .map(|id| id.0)
+            .max()
+            .unwrap_or(0);
+        Ok(MarketDataCheckpointId(max_id.saturating_add(1)))
+    }
+
+    fn symbol_checkpoint_dir(&self, venue: &str, symbol: &str) -> PathBuf {
+        self.config
+            .root
+            .join(venue)
+            .join(symbol)
+            .join("checkpoints")
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MarketDataCheckpointFrameInput<'a> {
+    id: MarketDataCheckpointId,
+    kind: MarketDataCheckpointKind,
+    wal_sequence: MarketDataWalSequence,
+    provider_sequence: u64,
+    event_sequence: u64,
+    created_ns: u64,
+    payload_version: u32,
+    payload: &'a [u8],
+}
+
+fn encode_market_data_checkpoint_frame(input: MarketDataCheckpointFrameInput<'_>) -> Vec<u8> {
+    let mut frame = vec![0_u8; MARKET_DATA_CHECKPOINT_HEADER_LEN + input.payload.len()];
+    frame[0..4].copy_from_slice(&MARKET_DATA_CHECKPOINT_MAGIC);
+    write_u16(&mut frame[4..6], MARKET_DATA_CHECKPOINT_VERSION);
+    write_u16(&mut frame[6..8], input.kind as u16);
+    write_u64(&mut frame[8..16], input.id.0);
+    write_u64(&mut frame[16..24], input.wal_sequence.0);
+    write_u64(&mut frame[24..32], input.provider_sequence);
+    write_u64(&mut frame[32..40], input.event_sequence);
+    write_u64(&mut frame[40..48], input.created_ns);
+    write_u32(&mut frame[48..52], input.payload_version);
+    write_u64(&mut frame[52..60], input.payload.len() as u64);
+    frame[MARKET_DATA_CHECKPOINT_HEADER_LEN..].copy_from_slice(input.payload);
+    let checksum = market_data_checkpoint_checksum(&frame);
+    write_u32(&mut frame[60..64], checksum);
+    frame
+}
+
+fn decode_market_data_checkpoint_file(
+    path: &Path,
+    venue: &str,
+    symbol: &str,
+) -> PersistResult<MarketDataCheckpoint> {
+    let mut file = File::open(path)?;
+    let mut header = [0_u8; MARKET_DATA_CHECKPOINT_HEADER_LEN];
+    let read = read_exact_or_tail(&mut file, &mut header)?;
+    if read < MARKET_DATA_CHECKPOINT_HEADER_LEN {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "truncated market-data checkpoint header",
+        )
+        .into());
+    }
+    let manifest = decode_market_data_checkpoint_header(&header, path, venue, symbol)?;
+    let payload_len = usize::try_from(manifest.payload_bytes).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "market-data checkpoint payload is too large for this platform",
+        )
+    })?;
+    let mut payload = vec![0_u8; payload_len];
+    let payload_read = read_exact_or_tail(&mut file, &mut payload)?;
+    if payload_read < payload_len {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "truncated market-data checkpoint payload",
+        )
+        .into());
+    }
+    let mut frame = Vec::with_capacity(MARKET_DATA_CHECKPOINT_HEADER_LEN + payload_len);
+    frame.extend_from_slice(&header);
+    frame.extend_from_slice(&payload);
+    if market_data_checkpoint_checksum(&frame) != manifest.checksum {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "market-data checkpoint checksum mismatch",
+        )
+        .into());
+    }
+    Ok(MarketDataCheckpoint {
+        id: manifest.id,
+        kind: manifest.kind,
+        venue: manifest.venue,
+        symbol: manifest.symbol,
+        wal_sequence: manifest.wal_sequence,
+        provider_sequence: manifest.provider_sequence,
+        event_sequence: manifest.event_sequence,
+        created_ns: manifest.created_ns,
+        payload_version: manifest.payload_version,
+        payload,
+    })
+}
+
+fn read_market_data_checkpoint_manifest(
+    path: &Path,
+    venue: &str,
+    symbol: &str,
+) -> PersistResult<MarketDataCheckpointManifest> {
+    let mut file = File::open(path)?;
+    let mut header = [0_u8; MARKET_DATA_CHECKPOINT_HEADER_LEN];
+    let read = read_exact_or_tail(&mut file, &mut header)?;
+    if read < MARKET_DATA_CHECKPOINT_HEADER_LEN {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "truncated market-data checkpoint header",
+        )
+        .into());
+    }
+    decode_market_data_checkpoint_header(&header, path, venue, symbol)
+}
+
+fn validate_market_data_checkpoint_file(
+    path: &Path,
+    venue: &str,
+    symbol: &str,
+) -> PersistResult<MarketDataCheckpointValidation> {
+    let mut file = File::open(path)?;
+    let mut header = [0_u8; MARKET_DATA_CHECKPOINT_HEADER_LEN];
+    let read = read_exact_or_tail(&mut file, &mut header)?;
+    if read < MARKET_DATA_CHECKPOINT_HEADER_LEN {
+        return Ok(MarketDataCheckpointValidation {
+            valid: false,
+            manifest: None,
+            checksum_failures: 0,
+            truncated: true,
+        });
+    }
+    let manifest = match decode_market_data_checkpoint_header(&header, path, venue, symbol) {
+        Ok(manifest) => manifest,
+        Err(_) => {
+            return Ok(MarketDataCheckpointValidation {
+                valid: false,
+                manifest: None,
+                checksum_failures: 1,
+                truncated: false,
+            });
+        }
+    };
+    let payload_len = usize::try_from(manifest.payload_bytes).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "market-data checkpoint payload is too large for this platform",
+        )
+    })?;
+    let mut payload = vec![0_u8; payload_len];
+    let payload_read = read_exact_or_tail(&mut file, &mut payload)?;
+    if payload_read < payload_len {
+        return Ok(MarketDataCheckpointValidation {
+            valid: false,
+            manifest: Some(manifest),
+            checksum_failures: 0,
+            truncated: true,
+        });
+    }
+    let mut frame = Vec::with_capacity(MARKET_DATA_CHECKPOINT_HEADER_LEN + payload_len);
+    frame.extend_from_slice(&header);
+    frame.extend_from_slice(&payload);
+    let checksum_failures = u64::from(market_data_checkpoint_checksum(&frame) != manifest.checksum);
+    Ok(MarketDataCheckpointValidation {
+        valid: checksum_failures == 0,
+        manifest: Some(manifest),
+        checksum_failures,
+        truncated: false,
+    })
+}
+
+fn decode_market_data_checkpoint_header(
+    header: &[u8; MARKET_DATA_CHECKPOINT_HEADER_LEN],
+    path: &Path,
+    venue: &str,
+    symbol: &str,
+) -> PersistResult<MarketDataCheckpointManifest> {
+    if header[0..4] != MARKET_DATA_CHECKPOINT_MAGIC
+        || read_u16(&header[4..6]) != MARKET_DATA_CHECKPOINT_VERSION
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid market-data checkpoint header",
+        )
+        .into());
+    }
+    let kind = MarketDataCheckpointKind::from_u16(read_u16(&header[6..8])).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid market-data checkpoint kind",
+        )
+    })?;
+    Ok(MarketDataCheckpointManifest {
+        id: MarketDataCheckpointId(read_u64(&header[8..16])),
+        kind,
+        venue: venue.to_owned(),
+        symbol: symbol.to_owned(),
+        wal_sequence: MarketDataWalSequence(read_u64(&header[16..24])),
+        provider_sequence: read_u64(&header[24..32]),
+        event_sequence: read_u64(&header[32..40]),
+        created_ns: read_u64(&header[40..48]),
+        payload_version: read_u32(&header[48..52]),
+        payload_bytes: read_u64(&header[52..60]),
+        checksum: read_u32(&header[60..64]),
+        path: path.to_path_buf(),
+    })
+}
+
+fn checkpoint_ids(dir: &Path) -> PersistResult<Vec<MarketDataCheckpointId>> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut ids = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("ofmc") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let Ok(id) = stem.parse::<u64>() else {
+            continue;
+        };
+        ids.push(MarketDataCheckpointId(id));
+    }
+    ids.sort_unstable();
+    Ok(ids)
+}
+
+fn checkpoint_path(dir: &Path, id: MarketDataCheckpointId) -> PathBuf {
+    dir.join(format!("{:020}.ofmc", id.0))
+}
+
+fn checkpoint_temp_path(dir: &Path, id: MarketDataCheckpointId) -> PathBuf {
+    dir.join(format!("{:020}.ofmc.tmp", id.0))
+}
+
+fn market_data_checkpoint_checksum(frame: &[u8]) -> u32 {
+    let mut hash = 0x811c9dc5_u32;
+    for (idx, byte) in frame.iter().enumerate() {
+        if (60..64).contains(&idx) {
+            hash ^= 0;
+        } else {
+            hash ^= u32::from(*byte);
+        }
+        hash = hash.wrapping_mul(0x01000193);
+    }
+    hash
+}
+
+fn current_unix_nanos() -> u64 {
+    let Ok(duration) = SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+        return 0;
+    };
+    duration.as_nanos().min(u128::from(u64::MAX)) as u64
 }
 
 /// Evaluates backpressure policy for one candidate persistence record.
@@ -1928,6 +2596,183 @@ mod tests {
         assert!(!report.valid);
         assert_eq!(report.checksum_failures, 1);
         assert!(MarketDataWal::open(MarketDataWalConfig::new(&path)).is_err());
+    }
+
+    #[test]
+    fn market_data_checkpoint_store_saves_and_loads_payload() {
+        let root = temp_dir("persist_market_data_checkpoint");
+        let store = FileMarketDataCheckpointStore::open(MarketDataCheckpointConfig::new(&root))
+            .expect("open checkpoint store");
+        let checkpoint = MarketDataCheckpoint::new(
+            MarketDataCheckpointKind::BookAndAnalytics,
+            "CME",
+            "ESZ6",
+            MarketDataWalSequence(42),
+            b"checkpoint-bytes".to_vec(),
+        )
+        .with_provider_sequence(100)
+        .with_event_sequence(200)
+        .with_created_ns(300)
+        .with_payload_version(7);
+
+        let manifest = store.save_checkpoint(&checkpoint).expect("save checkpoint");
+        let loaded = store
+            .load_checkpoint("CME", "ESZ6", manifest.id)
+            .expect("load checkpoint");
+        let validation = store
+            .validate_checkpoint("CME", "ESZ6", manifest.id)
+            .expect("validate checkpoint");
+
+        assert_eq!(manifest.id, MarketDataCheckpointId(1));
+        assert_eq!(manifest.kind, MarketDataCheckpointKind::BookAndAnalytics);
+        assert_eq!(manifest.wal_sequence, MarketDataWalSequence(42));
+        assert_eq!(manifest.payload_bytes, b"checkpoint-bytes".len() as u64);
+        assert_eq!(loaded.payload, b"checkpoint-bytes");
+        assert_eq!(loaded.provider_sequence, 100);
+        assert_eq!(loaded.event_sequence, 200);
+        assert!(validation.valid);
+        assert_eq!(
+            validation.manifest.as_ref().map(|manifest| manifest.id),
+            Some(MarketDataCheckpointId(1))
+        );
+    }
+
+    #[test]
+    fn market_data_checkpoint_store_loads_latest_valid_by_kind() {
+        let root = temp_dir("persist_market_data_checkpoint_latest");
+        let store = FileMarketDataCheckpointStore::open(MarketDataCheckpointConfig::new(&root))
+            .expect("open checkpoint store");
+        store
+            .save_checkpoint(&MarketDataCheckpoint::new(
+                MarketDataCheckpointKind::Book,
+                "CME",
+                "NQZ6",
+                MarketDataWalSequence(1),
+                b"book-1".to_vec(),
+            ))
+            .expect("save book");
+        store
+            .save_checkpoint(&MarketDataCheckpoint::new(
+                MarketDataCheckpointKind::Analytics,
+                "CME",
+                "NQZ6",
+                MarketDataWalSequence(2),
+                b"analytics-1".to_vec(),
+            ))
+            .expect("save analytics");
+        store
+            .save_checkpoint(&MarketDataCheckpoint::new(
+                MarketDataCheckpointKind::Book,
+                "CME",
+                "NQZ6",
+                MarketDataWalSequence(3),
+                b"book-2".to_vec(),
+            ))
+            .expect("save second book");
+
+        let latest_any = store
+            .load_latest("CME", "NQZ6", None)
+            .expect("latest any")
+            .expect("checkpoint exists");
+        let latest_analytics = store
+            .load_latest("CME", "NQZ6", Some(MarketDataCheckpointKind::Analytics))
+            .expect("latest analytics")
+            .expect("analytics checkpoint exists");
+
+        assert_eq!(latest_any.id, MarketDataCheckpointId(3));
+        assert_eq!(latest_any.payload, b"book-2");
+        assert_eq!(latest_analytics.id, MarketDataCheckpointId(2));
+        assert_eq!(latest_analytics.payload, b"analytics-1");
+    }
+
+    #[test]
+    fn market_data_checkpoint_validation_detects_corruption() {
+        let root = temp_dir("persist_market_data_checkpoint_corrupt");
+        let store = FileMarketDataCheckpointStore::open(MarketDataCheckpointConfig::new(&root))
+            .expect("open checkpoint store");
+        let manifest = store
+            .save_checkpoint(&MarketDataCheckpoint::new(
+                MarketDataCheckpointKind::SequenceState,
+                "CME",
+                "YMZ6",
+                MarketDataWalSequence(9),
+                b"sequence-state".to_vec(),
+            ))
+            .expect("save checkpoint");
+        let mut bytes = fs::read(&manifest.path).expect("read checkpoint");
+        let last = bytes.last_mut().expect("last byte");
+        *last ^= 0x01;
+        fs::write(&manifest.path, bytes).expect("corrupt checkpoint");
+
+        let validation = store
+            .validate_checkpoint("CME", "YMZ6", manifest.id)
+            .expect("validate checkpoint");
+
+        assert!(!validation.valid);
+        assert_eq!(validation.checksum_failures, 1);
+        assert!(store.load_checkpoint("CME", "YMZ6", manifest.id).is_err());
+    }
+
+    #[test]
+    fn market_data_checkpoint_store_prunes_old_checkpoints() {
+        let root = temp_dir("persist_market_data_checkpoint_prune");
+        let store = FileMarketDataCheckpointStore::open(
+            MarketDataCheckpointConfig::new(&root).with_retain_last(2),
+        )
+        .expect("open checkpoint store");
+        for sequence in 1..=4 {
+            store
+                .save_checkpoint(&MarketDataCheckpoint::new(
+                    MarketDataCheckpointKind::RuntimeState,
+                    "CME",
+                    "RTYZ6",
+                    MarketDataWalSequence(sequence),
+                    vec![sequence as u8],
+                ))
+                .expect("save checkpoint");
+        }
+
+        let manifests = store
+            .list_checkpoints("CME", "RTYZ6")
+            .expect("list checkpoints");
+
+        assert_eq!(manifests.len(), 2);
+        assert_eq!(manifests[0].id, MarketDataCheckpointId(3));
+        assert_eq!(manifests[1].id, MarketDataCheckpointId(4));
+    }
+
+    #[test]
+    fn market_data_checkpoint_store_rejects_non_monotonic_explicit_id() {
+        let root = temp_dir("persist_market_data_checkpoint_monotonic");
+        let store = FileMarketDataCheckpointStore::open(
+            MarketDataCheckpointConfig::new(&root).with_retain_last(1),
+        )
+        .expect("open checkpoint store");
+        store
+            .save_checkpoint(&MarketDataCheckpoint::new(
+                MarketDataCheckpointKind::RuntimeState,
+                "CME",
+                "MNQZ6",
+                MarketDataWalSequence(1),
+                b"one".to_vec(),
+            ))
+            .expect("save checkpoint");
+        let err = store
+            .save_checkpoint(
+                &MarketDataCheckpoint::new(
+                    MarketDataCheckpointKind::RuntimeState,
+                    "CME",
+                    "MNQZ6",
+                    MarketDataWalSequence(2),
+                    b"older-id".to_vec(),
+                )
+                .with_id(MarketDataCheckpointId(1)),
+            )
+            .expect_err("reject non-monotonic id");
+
+        match err {
+            PersistError::Io(err) => assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput),
+        }
     }
 
     #[test]

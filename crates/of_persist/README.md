@@ -20,6 +20,13 @@ production capture paths.
 - [`MarketDataWalReplayResult`] - replay summary.
 - [`MarketDataWalIntegrityReport`] - checksum and sequence validation summary.
 - [`MarketDataWalMetrics`] - append/sync counters.
+- [`MarketDataCheckpointId`] - monotonic checkpoint identifier.
+- [`MarketDataCheckpointKind`] - checkpoint payload category.
+- [`MarketDataCheckpointConfig`] - checkpoint root, retention, and sync policy.
+- [`MarketDataCheckpoint`] - opaque checkpoint payload with sequence anchors.
+- [`MarketDataCheckpointManifest`] - checkpoint metadata without payload bytes.
+- [`MarketDataCheckpointValidation`] - checkpoint integrity report.
+- [`FileMarketDataCheckpointStore`] - file-backed checkpoint store.
 - [`MarketDataPersistenceMode`] - production writer mode vocabulary.
 - [`MarketDataPersistenceFailureAction`] - host action when persistence degrades.
 - [`MarketDataPersistencePolicy`] - configured persistence mode and failure action.
@@ -54,6 +61,9 @@ What changes for persistence users:
   degradation into execution safety policy;
 - market-data backpressure helpers make slow-consumer and bounded-writer
   behavior explicit without silently dropping records;
+- market-data checkpoint helpers persist opaque book, analytics, signal,
+  sequence, or runtime state with WAL sequence anchors so recovery can replay
+  from the latest valid checkpoint instead of the whole session;
 - production deployments should keep market-data replay files and execution
   command/event journals correlated by strategy id, session id, and timestamp.
 
@@ -80,6 +90,13 @@ Public types:
 - [`MarketDataWalReplayResult`]
 - [`MarketDataWalIntegrityReport`]
 - [`MarketDataWalMetrics`]
+- [`MarketDataCheckpointId`]
+- [`MarketDataCheckpointKind`]
+- [`MarketDataCheckpointConfig`]
+- [`MarketDataCheckpoint`]
+- [`MarketDataCheckpointManifest`]
+- [`MarketDataCheckpointValidation`]
+- [`FileMarketDataCheckpointStore`]
 - [`MarketDataPersistenceMode`]
 - [`MarketDataPersistenceFailureAction`]
 - [`MarketDataPersistencePolicy`]
@@ -119,6 +136,26 @@ Public methods:
 - [`MarketDataWal::append_record`]
 - [`MarketDataWal::replay`]
 - [`MarketDataWal::inspect_path`]
+- [`MarketDataCheckpointConfig::new`]
+- [`MarketDataCheckpointConfig::with_retain_last`]
+- [`MarketDataCheckpointConfig::with_sync_on_save`]
+- [`MarketDataCheckpointConfig::root`]
+- [`MarketDataCheckpointConfig::retain_last`]
+- [`MarketDataCheckpointConfig::sync_on_save`]
+- [`MarketDataCheckpoint::new`]
+- [`MarketDataCheckpoint::with_id`]
+- [`MarketDataCheckpoint::with_provider_sequence`]
+- [`MarketDataCheckpoint::with_event_sequence`]
+- [`MarketDataCheckpoint::with_created_ns`]
+- [`MarketDataCheckpoint::with_payload_version`]
+- [`FileMarketDataCheckpointStore::open`]
+- [`FileMarketDataCheckpointStore::config`]
+- [`FileMarketDataCheckpointStore::save_checkpoint`]
+- [`FileMarketDataCheckpointStore::load_checkpoint`]
+- [`FileMarketDataCheckpointStore::load_latest`]
+- [`FileMarketDataCheckpointStore::list_checkpoints`]
+- [`FileMarketDataCheckpointStore::validate_checkpoint`]
+- [`FileMarketDataCheckpointStore::prune_old`]
 - [`MarketDataPersistencePolicy::disabled`]
 - [`MarketDataPersistencePolicy::inline_strict`]
 - [`MarketDataPersistencePolicy::bounded_async`]
@@ -235,6 +272,45 @@ Sync policy is intentionally small in this first foundation:
 
 Segment rotation, async writer queues, raw provider capture, and cold-store
 export remain higher-level integration work.
+
+## Market-Data Checkpoints
+
+[`FileMarketDataCheckpointStore`] persists opaque checkpoint payloads beside the
+market-data WAL. The crate does not dictate the payload codec. A host may store
+a serialized order book, analytics accumulator, signal state, sequence cache,
+runtime subscription baseline, or a custom binary blob.
+
+Each checkpoint records:
+
+- checkpoint id and kind,
+- venue and symbol through its store path,
+- last applied [`MarketDataWalSequence`],
+- provider and normalized event sequence anchors when known,
+- creation timestamp,
+- payload version,
+- payload byte length, and
+- checksum over the binary frame.
+
+The layout is:
+
+`<root>/<venue>/<symbol>/checkpoints/<checkpoint-id>.ofmc`
+
+`save_checkpoint` writes a temporary file and renames it into place. A zero id
+lets the store assign the next id for the venue/symbol. Explicit ids must be
+greater than all existing ids for that venue/symbol, and an existing id fails
+with `AlreadyExists` instead of overwriting evidence. `load_latest` walks
+backward by id and returns the newest valid checkpoint, optionally filtered by
+[`MarketDataCheckpointKind`].
+
+Retention is explicit:
+
+- `with_retain_last(0)` disables automatic pruning;
+- `with_retain_last(n)` keeps the newest `n` checkpoint files after each save;
+- `prune_old` can be called manually by operators or runtime maintenance code.
+
+Recovery-oriented hosts should load the latest valid checkpoint, restore the
+opaque payload into their domain state, then replay WAL records with sequence
+greater than `checkpoint.wal_sequence`.
 
 ## Production Persistence Policy And Health
 

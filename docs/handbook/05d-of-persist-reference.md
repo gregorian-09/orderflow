@@ -23,6 +23,13 @@ foundation for lower-latency production capture paths.
 | `MarketDataWalReplayResult` | struct | Binary WAL replay summary |
 | `MarketDataWalIntegrityReport` | struct | Checksum/sequence integrity report |
 | `MarketDataWalMetrics` | struct | Binary WAL append/sync counters |
+| `MarketDataCheckpointId` | newtype | Monotonic checkpoint identifier |
+| `MarketDataCheckpointKind` | enum | Opaque checkpoint payload category |
+| `MarketDataCheckpointConfig` | struct | Checkpoint root, retention, and sync configuration |
+| `MarketDataCheckpoint` | struct | Opaque checkpoint payload with sequence anchors |
+| `MarketDataCheckpointManifest` | struct | Checkpoint metadata without payload bytes |
+| `MarketDataCheckpointValidation` | struct | Checkpoint integrity report |
+| `FileMarketDataCheckpointStore` | struct | File-backed checkpoint store |
 | `MarketDataPersistenceMode` | enum | Production writer mode vocabulary |
 | `MarketDataPersistenceFailureAction` | enum | Host action when persistence degrades |
 | `MarketDataPersistencePolicy` | struct | Production persistence policy |
@@ -174,6 +181,70 @@ validate before append state is initialized.
 The first implementation is intentionally single-file. Segment rotation,
 bounded async writer queues, raw provider-message capture, and cold research
 export remain separate integration layers.
+
+## `FileMarketDataCheckpointStore`
+
+`FileMarketDataCheckpointStore` persists opaque binary checkpoints for
+market-data recovery. It is additive and codec-neutral: callers decide how to
+serialize order books, analytics accumulators, signal state, sequence caches, or
+runtime baselines.
+
+### Configuration
+
+| Method | Returns | Meaning |
+| --- | --- | --- |
+| `MarketDataCheckpointConfig::new(root)` | `MarketDataCheckpointConfig` | Creates checkpoint config rooted at `root` |
+| `with_retain_last(usize)` | `MarketDataCheckpointConfig` | Keeps only the newest N checkpoints per venue/symbol after save; `0` disables pruning |
+| `with_sync_on_save(bool)` | `MarketDataCheckpointConfig` | Enables or disables `sync_data` before rename |
+| `root()` | `&Path` | Returns the configured checkpoint root |
+| `retain_last()` | `usize` | Returns the automatic retention count |
+| `sync_on_save()` | `bool` | Returns the sync policy |
+
+### Checkpoint payload
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `id` | `MarketDataCheckpointId` | Checkpoint id; zero lets the file store assign the next id |
+| `kind` | `MarketDataCheckpointKind` | Payload category |
+| `venue` | `String` | Venue path component |
+| `symbol` | `String` | Symbol path component |
+| `wal_sequence` | `MarketDataWalSequence` | Last applied market-data WAL sequence |
+| `provider_sequence` | `u64` | Last provider-native sequence when known |
+| `event_sequence` | `u64` | Last normalized event sequence when known |
+| `created_ns` | `u64` | Creation timestamp in nanoseconds since Unix epoch |
+| `payload_version` | `u32` | Caller-owned payload schema/version tag |
+| `payload` | `Vec<u8>` | Opaque encoded checkpoint bytes |
+
+### Store methods
+
+| Method | Returns | Meaning |
+| --- | --- | --- |
+| `FileMarketDataCheckpointStore::open(config)` | `PersistResult<FileMarketDataCheckpointStore>` | Creates or opens the checkpoint root |
+| `config()` | `&MarketDataCheckpointConfig` | Returns the store configuration |
+| `save_checkpoint(checkpoint)` | `PersistResult<MarketDataCheckpointManifest>` | Writes a temp file and renames it into place |
+| `load_checkpoint(venue, symbol, id)` | `PersistResult<MarketDataCheckpoint>` | Loads and validates one checkpoint payload |
+| `load_latest(venue, symbol, kind)` | `PersistResult<Option<MarketDataCheckpoint>>` | Returns the newest valid checkpoint, optionally filtered by kind |
+| `list_checkpoints(venue, symbol)` | `PersistResult<Vec<MarketDataCheckpointManifest>>` | Lists checkpoint metadata ordered by id |
+| `validate_checkpoint(venue, symbol, id)` | `PersistResult<MarketDataCheckpointValidation>` | Validates checksum and payload length |
+| `prune_old(venue, symbol, retain_last)` | `PersistResult<usize>` | Removes older checkpoint files and returns the count |
+
+### Layout and recovery contract
+
+Checkpoint files are stored as:
+
+`<root>/<venue>/<symbol>/checkpoints/<checkpoint-id>.ofmc`
+
+Each file carries magic/version, checkpoint kind, checkpoint id, WAL sequence,
+provider sequence, normalized event sequence, creation timestamp, payload
+version, payload length, and checksum. Existing ids are not overwritten, and
+explicit ids must be greater than all existing ids for the venue/symbol.
+
+A production recovery flow should:
+
+1. call `load_latest` for the venue/symbol and desired kind,
+2. restore the opaque payload into the host-owned book/analytics/signal state,
+3. replay WAL records after `checkpoint.wal_sequence`,
+4. validate sequence continuity before allowing strategy submission.
 
 ## Production Persistence Policy And Health
 
