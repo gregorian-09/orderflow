@@ -66,6 +66,7 @@ Segmented WAL types:
 
 | Type | Use |
 | --- | --- |
+| `WalJournalMetrics` | Copyable write/sync/rotation/failure metrics for binary WAL implementations |
 | `WalSegmentConfig` | Root directory, sync policy, byte rotation threshold, and record rotation threshold |
 | `WalSegmentMetadata` | Segment id, file path, first/last sequence, byte count, record count, seal state, and timestamps |
 | `WalSegmentManifest` | Ordered segment inventory with active/first/last helpers |
@@ -78,6 +79,11 @@ frames themselves. The manifest is useful for operators and discovery, but
 recovery validates the segment files directly. Rotation writes a `SegmentSeal`
 frame, opens the next segment, and continues the same monotonic WAL sequence.
 Replay skips seal frames while still validating their checksum links.
+
+`WalExecutionJournal::metrics()` and `SegmentedWalExecutionJournal::metrics()`
+return `WalJournalMetrics`. The snapshot tracks successful frames and bytes,
+write latency, sync latency, write/sync failures, segment rotations, and
+manifest writes. Hosts should export this snapshot outside the hot path.
 
 ### Checkpoints
 

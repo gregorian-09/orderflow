@@ -467,6 +467,7 @@ Public journal types:
 - `InMemoryJournal`
 - `WalJournalConfig`
 - `WalReplayResult`
+- `WalJournalMetrics`
 - `WalExecutionJournal`
 - `WalSegmentConfig`
 - `WalSegmentMetadata`

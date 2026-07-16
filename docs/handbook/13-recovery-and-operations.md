@@ -150,6 +150,9 @@ Low-latency guidance:
 - rotate by record count when predictable replay batch sizes matter;
 - keep the WAL directory on low-latency local storage and archive sealed
   segments off the hot path.
+- export `WalJournalMetrics` out of band and alert on write failures, sync
+  failures, manifest write failures, unexpected rotation spikes, and write/sync
+  latency drift.
 
 ## Checkpoint Policy
 

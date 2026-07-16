@@ -60,9 +60,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `WalIntegrityReport`, checksum validation, strict sequence checks, and
   borrowed replay support for future low-latency OMS persistence.
 - Additive `of_execution` `WalExecutionJournal` with `WalJournalConfig`,
-  `WalReplayResult`, binary WAL frame persistence, replay-from-sequence,
-  integrity reporting, configurable sync policy, and fail-closed validation of
-  existing WAL bytes while preserving the existing `ExecutionJournal` trait.
+  `WalReplayResult`, `WalJournalMetrics`, binary WAL frame persistence,
+  replay-from-sequence, integrity reporting, configurable sync policy, write
+  and sync latency counters, and fail-closed validation of existing WAL bytes
+  while preserving the existing `ExecutionJournal` trait.
 - Additive `of_execution` checkpoint store APIs with `ExecutionCheckpoint`,
   `CheckpointPosition`, `CheckpointConfig`, `CheckpointPolicy`,
   `CheckpointManifest`, `ExecutionCheckpointStore`, and

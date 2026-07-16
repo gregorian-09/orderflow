@@ -389,6 +389,73 @@ pub struct WalReplayResult {
     pub last_sequence: Option<WalSequence>,
 }
 
+/// Low-latency execution WAL metrics snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct WalJournalMetrics {
+    /// Number of WAL frames written successfully.
+    pub records_written: u64,
+    /// Number of encoded WAL bytes written successfully.
+    pub bytes_written: u64,
+    /// Number of durable sync operations completed successfully.
+    pub sync_count: u64,
+    /// Number of segment rotations completed successfully.
+    pub segment_rotations: u64,
+    /// Number of manifest writes completed successfully.
+    pub manifest_writes: u64,
+    /// Number of WAL frame write failures.
+    pub write_failures: u64,
+    /// Number of sync failures.
+    pub sync_failures: u64,
+    /// Number of manifest write failures.
+    pub manifest_write_failures: u64,
+    /// Cumulative write latency in nanoseconds.
+    pub total_write_latency_ns: u128,
+    /// Maximum observed write latency in nanoseconds.
+    pub max_write_latency_ns: u64,
+    /// Cumulative sync latency in nanoseconds.
+    pub total_sync_latency_ns: u128,
+    /// Maximum observed sync latency in nanoseconds.
+    pub max_sync_latency_ns: u64,
+}
+
+impl WalJournalMetrics {
+    /// Returns average successful write latency in nanoseconds.
+    pub fn average_write_latency_ns(&self) -> u64 {
+        if self.records_written == 0 {
+            0
+        } else {
+            (self.total_write_latency_ns / u128::from(self.records_written)) as u64
+        }
+    }
+
+    /// Returns average successful sync latency in nanoseconds.
+    pub fn average_sync_latency_ns(&self) -> u64 {
+        if self.sync_count == 0 {
+            0
+        } else {
+            (self.total_sync_latency_ns / u128::from(self.sync_count)) as u64
+        }
+    }
+
+    fn observe_write(&mut self, bytes: u64, latency_ns: u64) {
+        self.records_written = self.records_written.saturating_add(1);
+        self.bytes_written = self.bytes_written.saturating_add(bytes);
+        self.total_write_latency_ns = self
+            .total_write_latency_ns
+            .saturating_add(u128::from(latency_ns));
+        self.max_write_latency_ns = self.max_write_latency_ns.max(latency_ns);
+    }
+
+    fn observe_sync(&mut self, latency_ns: u64) {
+        self.sync_count = self.sync_count.saturating_add(1);
+        self.total_sync_latency_ns = self
+            .total_sync_latency_ns
+            .saturating_add(u128::from(latency_ns));
+        self.max_sync_latency_ns = self.max_sync_latency_ns.max(latency_ns);
+    }
+}
+
 /// Configuration for [`SegmentedWalExecutionJournal`].
 #[derive(Debug, Clone)]
 pub struct WalSegmentConfig {
@@ -562,6 +629,7 @@ pub struct WalExecutionJournal {
     previous_checksum: u64,
     records_since_sync: u32,
     last_sync_ns: u64,
+    metrics: WalJournalMetrics,
     scratch: Vec<u8>,
     frame_scratch: Vec<u8>,
 }
@@ -592,6 +660,7 @@ impl WalExecutionJournal {
             previous_checksum,
             records_since_sync: 0,
             last_sync_ns: now_ns(),
+            metrics: WalJournalMetrics::default(),
             scratch: Vec::with_capacity(256),
             frame_scratch: Vec::with_capacity(384),
         })
@@ -622,6 +691,11 @@ impl WalExecutionJournal {
         self.next_sequence
     }
 
+    /// Returns the current WAL metrics snapshot.
+    pub const fn metrics(&self) -> WalJournalMetrics {
+        self.metrics
+    }
+
     /// Flushes and syncs the WAL file.
     ///
     /// # Errors
@@ -629,10 +703,13 @@ impl WalExecutionJournal {
     /// Returns an execution journal error when the OS reports a flush/sync
     /// failure.
     pub fn sync(&mut self) -> ExecutionResult<()> {
-        self.file
-            .flush()
-            .and_then(|()| self.file.sync_data())
-            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        let started_ns = now_ns();
+        if let Err(err) = self.file.flush().and_then(|()| self.file.sync_data()) {
+            self.metrics.sync_failures = self.metrics.sync_failures.saturating_add(1);
+            return Err(ExecutionError::Journal(err.to_string()));
+        }
+        self.metrics
+            .observe_sync(now_ns().saturating_sub(started_ns));
         self.records_since_sync = 0;
         self.last_sync_ns = now_ns();
         Ok(())
@@ -684,9 +761,15 @@ impl WalExecutionJournal {
             .encode_into(&mut self.frame_scratch)
             .map_err(wal_error)?;
 
-        self.file
-            .write_all(&self.frame_scratch)
-            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        let write_started_ns = now_ns();
+        if let Err(err) = self.file.write_all(&self.frame_scratch) {
+            self.metrics.write_failures = self.metrics.write_failures.saturating_add(1);
+            return Err(ExecutionError::Journal(err.to_string()));
+        }
+        self.metrics.observe_write(
+            record.encoded_len() as u64,
+            now_ns().saturating_sub(write_started_ns),
+        );
         self.previous_checksum = record.header.header_checksum;
         self.next_sequence = self.next_sequence.next();
         self.records_since_sync = self.records_since_sync.saturating_add(1);
@@ -763,6 +846,7 @@ pub struct SegmentedWalExecutionJournal {
     previous_checksum: u64,
     records_since_sync: u32,
     last_sync_ns: u64,
+    metrics: WalJournalMetrics,
     scratch: Vec<u8>,
     frame_scratch: Vec<u8>,
 }
@@ -809,6 +893,7 @@ impl SegmentedWalExecutionJournal {
             previous_checksum,
             records_since_sync: 0,
             last_sync_ns: now_ns(),
+            metrics: WalJournalMetrics::default(),
             scratch: Vec::with_capacity(256),
             frame_scratch: Vec::with_capacity(384),
         };
@@ -824,7 +909,7 @@ impl SegmentedWalExecutionJournal {
                 journal.last_sync_ns,
             ));
         }
-        write_segment_manifest(journal.config.root(), &journal.manifest)?;
+        journal.write_manifest()?;
         Ok(journal)
     }
 
@@ -858,6 +943,11 @@ impl SegmentedWalExecutionJournal {
         &self.manifest
     }
 
+    /// Returns the current segmented WAL metrics snapshot.
+    pub const fn metrics(&self) -> WalJournalMetrics {
+        self.metrics
+    }
+
     /// Flushes and syncs the active segment file.
     ///
     /// # Errors
@@ -865,11 +955,14 @@ impl SegmentedWalExecutionJournal {
     /// Returns an execution journal error when the OS reports a flush/sync
     /// failure.
     pub fn sync(&mut self) -> ExecutionResult<()> {
-        self.file
-            .flush()
-            .and_then(|()| self.file.sync_data())
-            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
-        write_segment_manifest(self.config.root(), &self.manifest)?;
+        let started_ns = now_ns();
+        if let Err(err) = self.file.flush().and_then(|()| self.file.sync_data()) {
+            self.metrics.sync_failures = self.metrics.sync_failures.saturating_add(1);
+            return Err(ExecutionError::Journal(err.to_string()));
+        }
+        self.metrics
+            .observe_sync(now_ns().saturating_sub(started_ns));
+        self.write_manifest()?;
         self.records_since_sync = 0;
         self.last_sync_ns = now_ns();
         Ok(())
@@ -910,7 +1003,8 @@ impl SegmentedWalExecutionJournal {
             .map_err(|err| ExecutionError::Journal(err.to_string()))?;
         let metadata = WalSegmentMetadata::empty(next_id, path, now_ns());
         self.manifest.segments.push(metadata.clone());
-        write_segment_manifest(self.config.root(), &self.manifest)?;
+        self.metrics.segment_rotations = self.metrics.segment_rotations.saturating_add(1);
+        self.write_manifest()?;
         Ok(metadata)
     }
 
@@ -1022,9 +1116,15 @@ impl SegmentedWalExecutionJournal {
             .encode_into(&mut self.frame_scratch)
             .map_err(wal_error)?;
 
-        self.file
-            .write_all(&self.frame_scratch)
-            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        let write_started_ns = now_ns();
+        if let Err(err) = self.file.write_all(&self.frame_scratch) {
+            self.metrics.write_failures = self.metrics.write_failures.saturating_add(1);
+            return Err(ExecutionError::Journal(err.to_string()));
+        }
+        self.metrics.observe_write(
+            record.encoded_len() as u64,
+            now_ns().saturating_sub(write_started_ns),
+        );
         self.previous_checksum = record.header.header_checksum;
         self.next_sequence = self.next_sequence.next();
         self.records_since_sync = self.records_since_sync.saturating_add(1);
@@ -1046,6 +1146,20 @@ impl SegmentedWalExecutionJournal {
                     || segment.bytes.saturating_add(next_record_bytes)
                         > self.config.max_segment_bytes())
         })
+    }
+
+    fn write_manifest(&mut self) -> ExecutionResult<()> {
+        match write_segment_manifest(self.config.root(), &self.manifest) {
+            Ok(()) => {
+                self.metrics.manifest_writes = self.metrics.manifest_writes.saturating_add(1);
+                Ok(())
+            }
+            Err(err) => {
+                self.metrics.manifest_write_failures =
+                    self.metrics.manifest_write_failures.saturating_add(1);
+                Err(err)
+            }
+        }
     }
 
     fn maybe_sync(&mut self, kind: WalRecordKind) -> ExecutionResult<()> {
@@ -3850,6 +3964,10 @@ mod tests {
             .record_event(&ExecutionEvent::accepted(&req, id("V1")))
             .unwrap();
         assert_eq!(journal.next_sequence(), WalSequence(3));
+        let metrics = journal.metrics();
+        assert_eq!(metrics.records_written, 2);
+        assert!(metrics.bytes_written > 0);
+        assert_eq!(metrics.write_failures, 0);
         drop(journal);
 
         let journal = WalExecutionJournal::open_path(&path, WalSyncPolicy::Never).unwrap();
@@ -3932,6 +4050,12 @@ mod tests {
         journal.sync().unwrap();
 
         assert_eq!(journal.next_sequence(), WalSequence(5));
+        let metrics = journal.metrics();
+        assert_eq!(metrics.records_written, 4);
+        assert!(metrics.bytes_written > 0);
+        assert_eq!(metrics.segment_rotations, 1);
+        assert!(metrics.sync_count > 0);
+        assert!(metrics.manifest_writes > 0);
         assert_eq!(journal.manifest().segments.len(), 2);
         assert!(journal.manifest().segments[0].sealed);
         assert_eq!(

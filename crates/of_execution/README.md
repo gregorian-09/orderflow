@@ -71,6 +71,7 @@ Journaling:
 - [`InMemoryJournal`]
 - [`WalJournalConfig`]
 - [`WalReplayResult`]
+- [`WalJournalMetrics`]
 - [`WalExecutionJournal`]
 - [`WalSegmentConfig`]
 - [`WalSegmentMetadata`]
@@ -419,6 +420,9 @@ journal.sync()?;
 let report = journal.integrity_report()?;
 assert!(report.valid);
 
+let metrics = journal.metrics();
+assert_eq!(metrics.records_written, 1);
+
 let mut replayed = Vec::new();
 let replay = journal.replay_from(WalSequence(1), &mut replayed)?;
 assert_eq!(replay.records, replayed.len());
@@ -434,6 +438,11 @@ Supported sync policies come from `of_execution_core::WalSyncPolicy`:
 - `EveryDurationNs(ns)`
 - `Manual`
 - `OnRiskBoundary`
+
+[`WalJournalMetrics`] records successful WAL frames/bytes, write latency, sync
+latency, sync failures, write failures, segment rotations, and manifest writes.
+The snapshot is copyable and allocation-free so hosts can export it out of band
+to Prometheus, statsd, or tracing systems without formatting on the order path.
 
 ### Segmented WAL journal
 
@@ -481,6 +490,7 @@ journal.sync()?;
 
 let manifest = journal.manifest();
 assert!(manifest.active_segment().is_some());
+assert_eq!(journal.metrics().records_written, 1);
 
 let mut replayed = Vec::new();
 let replay = journal.replay_from(WalSequence(1), &mut replayed)?;
