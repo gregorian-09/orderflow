@@ -30,6 +30,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added configurable execution safety policy helpers with conservative
   fail-closed defaults, explicit degraded fail-open actions, operator approval
   gating, and per-condition decision reports.
+- Added production deployment templates covering simulation, paper trading,
+  shadow mode, live trading, capture, replay, active/passive recovery, and
+  disaster recovery drills.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,
