@@ -1,8 +1,9 @@
 # `of_persist` Reference
 
-`of_persist` provides append-only JSONL storage for normalized orderflow data.
-It is designed for auditability, replay, and post-trade research rather than
-for arbitrary OLTP-style querying.
+`of_persist` provides append-only storage for normalized orderflow data.
+`RollingStore` remains the stable JSONL store for auditability, replay, and
+post-trade research. `MarketDataWal` adds a binary normalized market-data WAL
+foundation for lower-latency production capture paths.
 
 ## Public API Map
 
@@ -15,6 +16,14 @@ for arbitrary OLTP-style querying.
 | `StoredBookEvent` | struct | Typed book readback record |
 | `StoredTradeEvent` | struct | Typed trade readback record |
 | `StoredEvent` | enum | Merged replay-oriented event |
+| `MarketDataWalSequence` | newtype | Monotonic binary WAL writer sequence |
+| `MarketDataWalRecordKind` | enum | Binary WAL record kind vocabulary |
+| `MarketDataWalConfig` | struct | Binary WAL path and sync configuration |
+| `MarketDataWalRecord` | struct | Decoded binary WAL replay record |
+| `MarketDataWalReplayResult` | struct | Binary WAL replay summary |
+| `MarketDataWalIntegrityReport` | struct | Checksum/sequence integrity report |
+| `MarketDataWalMetrics` | struct | Binary WAL append/sync counters |
+| `MarketDataWal` | struct | Single-file binary normalized market-data WAL |
 
 ## Storage Layout
 
@@ -118,6 +127,43 @@ Rules:
 | `read_events(venue, symbol)` | `PersistResult<Vec<StoredEvent>>` | Merges stored book and trade events by sequence |
 | `read_events_in_range(venue, symbol, from, to)` | `PersistResult<Vec<StoredEvent>>` | Merged read within inclusive sequence bounds |
 
+## `MarketDataWal`
+
+`MarketDataWal` is a binary append-only WAL for normalized market-data frames.
+It is additive and does not change `RollingStore` JSONL semantics.
+
+### Configuration
+
+| Method | Returns | Meaning |
+| --- | --- | --- |
+| `MarketDataWalConfig::new(path)` | `MarketDataWalConfig` | Creates WAL config for a single file path |
+| `with_sync_on_write(bool)` | `MarketDataWalConfig` | Enables or disables `sync_data` after each append |
+| `path()` | `&Path` | Returns the configured WAL path |
+| `sync_on_write()` | `bool` | Returns the sync policy |
+
+### Writer and replay
+
+| Method | Returns | Meaning |
+| --- | --- | --- |
+| `MarketDataWal::open(config)` | `PersistResult<MarketDataWal>` | Opens a WAL and validates existing bytes before appending |
+| `path()` | `&Path` | Returns the WAL path |
+| `next_sequence()` | `MarketDataWalSequence` | Returns the next sequence to be assigned |
+| `metrics()` | `MarketDataWalMetrics` | Returns append/sync counters |
+| `append_record(...)` | `PersistResult<MarketDataWalSequence>` | Appends one binary frame |
+| `replay(out)` | `PersistResult<MarketDataWalReplayResult>` | Replays decoded records into `out` |
+| `inspect_path(path)` | `PersistResult<MarketDataWalIntegrityReport>` | Validates a WAL file without materializing payloads |
+
+### Frame contract
+
+Each frame carries magic/version, record kind, WAL sequence, provider sequence,
+normalized event sequence, exchange timestamp, receive timestamp, payload
+length, checksum, and previous-record checksum link. Existing bytes must
+validate before append state is initialized.
+
+The first implementation is intentionally single-file. Segment rotation,
+bounded async writer queues, raw provider-message capture, and cold research
+export remain separate integration layers.
+
 ## Ordering and Range Rules
 
 - Append methods preserve append order inside each file.
@@ -143,6 +189,7 @@ Malformed JSONL lines are surfaced as `Io` with `InvalidData`.
 - Oldest files are pruned first when `max_total_bytes` is exceeded.
 - Files older than `max_age_secs` are pruned when age retention is enabled.
 - The crate does not run a background compactor or daemon.
+- Binary WAL sync is configured per writer with `sync_on_write`.
 
 ## When To Use `of_persist`
 

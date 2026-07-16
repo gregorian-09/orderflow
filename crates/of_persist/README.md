@@ -1,7 +1,10 @@
 # of_persist
 
-`of_persist` provides append-only JSONL persistence for normalized orderflow events, with optional retention pruning.
-It is designed for replay, auditability, and post-trade research workflows.
+`of_persist` provides append-only persistence for normalized orderflow events.
+The stable [`RollingStore`] API writes human-readable JSONL for replay,
+auditability, and post-trade research workflows. The additive [`MarketDataWal`]
+API provides a binary normalized market-data WAL foundation for lower-latency
+production capture paths.
 
 ## Main Types
 
@@ -9,6 +12,14 @@ It is designed for replay, auditability, and post-trade research workflows.
 - [`StoredBookEvent`] / [`StoredTradeEvent`] - typed readback records parsed from existing JSONL files.
 - [`StoredEvent`] - merged replay-oriented enum for interleaved symbol reads.
 - [`RetentionPolicy`] - bounded retention by total bytes and/or max file age.
+- [`MarketDataWal`] - single-file binary WAL for normalized market-data frames.
+- [`MarketDataWalConfig`] - WAL path and sync policy configuration.
+- [`MarketDataWalRecordKind`] - fixed record kind vocabulary.
+- [`MarketDataWalRecord`] - decoded WAL replay record.
+- [`MarketDataWalSequence`] - monotonic writer sequence.
+- [`MarketDataWalReplayResult`] - replay summary.
+- [`MarketDataWalIntegrityReport`] - checksum and sequence validation summary.
+- [`MarketDataWalMetrics`] - append/sync counters.
 - [`PersistError`] / [`PersistResult<T>`] - persistence error contract.
 
 ## New In 0.4.0
@@ -27,6 +38,8 @@ What changes for persistence users:
   streams;
 - execution journals are intentionally separate from market-data stores so
   audit, retention, and recovery policies can differ;
+- binary normalized market-data WAL helpers are available as additive building
+  blocks for production capture without replacing JSONL workflows;
 - production deployments should keep market-data replay files and execution
   command/event journals correlated by strategy id, session id, and timestamp.
 
@@ -46,6 +59,14 @@ Public types:
 - [`StoredBookEvent`]
 - [`StoredTradeEvent`]
 - [`StoredEvent`]
+- [`MarketDataWalSequence`]
+- [`MarketDataWalRecordKind`]
+- [`MarketDataWalConfig`]
+- [`MarketDataWalRecord`]
+- [`MarketDataWalReplayResult`]
+- [`MarketDataWalIntegrityReport`]
+- [`MarketDataWalMetrics`]
+- [`MarketDataWal`]
 
 Public methods:
 
@@ -63,6 +84,17 @@ Public methods:
 - [`RollingStore::list_venues`]
 - [`RollingStore::list_symbols`]
 - [`RollingStore::list_streams`]
+- [`MarketDataWalConfig::new`]
+- [`MarketDataWalConfig::with_sync_on_write`]
+- [`MarketDataWalConfig::path`]
+- [`MarketDataWalConfig::sync_on_write`]
+- [`MarketDataWal::open`]
+- [`MarketDataWal::path`]
+- [`MarketDataWal::next_sequence`]
+- [`MarketDataWal::metrics`]
+- [`MarketDataWal::append_record`]
+- [`MarketDataWal::replay`]
+- [`MarketDataWal::inspect_path`]
 
 ## Storage Layout
 
@@ -130,6 +162,37 @@ fields.
 - Discovery APIs operate on directory/file presence and do not require a separate index.
 - Readback APIs parse the same JSONL files the writer produces, so replay stays aligned with persisted runtime output.
 
+## MarketDataWal Contract
+
+[`MarketDataWal`] is an additive binary WAL foundation for normalized
+market-data capture. It does not replace [`RollingStore`]; JSONL remains the
+compatibility, dashboard, and research-friendly format.
+
+The WAL uses fixed-size headers with:
+
+- magic and version,
+- record kind,
+- WAL sequence,
+- provider and normalized event sequences,
+- exchange and receive timestamps,
+- payload length,
+- checksum, and
+- previous-record checksum link.
+
+[`MarketDataWal::open`] validates existing bytes before appending. Corrupt
+records, broken checksum links, invalid record kinds, and truncated tails fail
+closed through [`PersistError::Io`] with `InvalidData`. [`MarketDataWal::replay`]
+materializes decoded [`MarketDataWalRecord`] values, and
+[`MarketDataWal::inspect_path`] validates a file without returning payloads.
+
+Sync policy is intentionally small in this first foundation:
+
+- `sync_on_write = false`: append to the OS page cache;
+- `sync_on_write = true`: call `sync_data` after each append.
+
+Segment rotation, async writer queues, raw provider capture, and cold-store
+export remain higher-level integration work.
+
 ## Quick Example
 
 ```rust
@@ -169,6 +232,31 @@ println!("venues={venues:?} symbols={symbols:?} streams={streams:?}");
 for trade in trades {
     println!("seq={} price={} size={}", trade.sequence, trade.price, trade.size);
 }
+```
+
+## Binary WAL Example
+
+```rust,no_run
+use of_persist::{MarketDataWal, MarketDataWalConfig, MarketDataWalRecordKind};
+
+let path = "data/CME/ESM6/normalized.wal";
+let mut wal = MarketDataWal::open(
+    MarketDataWalConfig::new(path).with_sync_on_write(false),
+)?;
+
+let sequence = wal.append_record(
+    MarketDataWalRecordKind::TradePrint,
+    42,
+    1001,
+    1_700_000_000,
+    1_700_000_050,
+    b"encoded-normalized-trade",
+)?;
+
+let mut records = Vec::new();
+let replay = wal.replay(&mut records)?;
+println!("sequence={sequence:?} replayed={}", replay.records);
+# Ok::<(), of_persist::PersistError>(())
 ```
 
 ## Replay Read Example

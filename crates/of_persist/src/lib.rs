@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::fs::{self, create_dir_all, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -10,6 +10,9 @@ use of_core::{BookAction, BookUpdate, Side, TradePrint};
 use serde::Deserialize;
 
 const JSONL_SCHEMA_VERSION: u32 = 1;
+const MARKET_DATA_WAL_MAGIC: [u8; 4] = *b"OFMW";
+const MARKET_DATA_WAL_VERSION: u16 = 1;
+const MARKET_DATA_WAL_HEADER_LEN: usize = 64;
 
 /// Persistence-layer errors.
 #[derive(Debug)]
@@ -26,6 +29,485 @@ impl From<std::io::Error> for PersistError {
 
 /// Result type alias used by persistence APIs.
 pub type PersistResult<T> = Result<T, PersistError>;
+
+/// Monotonic normalized market-data WAL sequence.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct MarketDataWalSequence(pub u64);
+
+/// Normalized market-data WAL record kind.
+#[repr(u16)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum MarketDataWalRecordKind {
+    /// Normalized book update payload.
+    BookUpdate = 1,
+    /// Normalized trade print payload.
+    TradePrint = 2,
+    /// Writer heartbeat payload.
+    Heartbeat = 3,
+    /// Sequence gap marker payload.
+    GapMarker = 4,
+    /// Segment seal marker payload.
+    SegmentSeal = 5,
+}
+
+impl MarketDataWalRecordKind {
+    fn from_u16(value: u16) -> Option<Self> {
+        match value {
+            1 => Some(Self::BookUpdate),
+            2 => Some(Self::TradePrint),
+            3 => Some(Self::Heartbeat),
+            4 => Some(Self::GapMarker),
+            5 => Some(Self::SegmentSeal),
+            _ => None,
+        }
+    }
+}
+
+/// Configuration for [`MarketDataWal`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct MarketDataWalConfig {
+    path: PathBuf,
+    sync_on_write: bool,
+}
+
+impl MarketDataWalConfig {
+    /// Creates WAL config for `path`.
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+            sync_on_write: false,
+        }
+    }
+
+    /// Sets whether every append calls `sync_data`.
+    pub fn with_sync_on_write(mut self, sync_on_write: bool) -> Self {
+        self.sync_on_write = sync_on_write;
+        self
+    }
+
+    /// Returns the WAL path.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Returns whether every append syncs data.
+    pub const fn sync_on_write(&self) -> bool {
+        self.sync_on_write
+    }
+}
+
+/// One decoded normalized market-data WAL record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MarketDataWalRecord {
+    /// WAL sequence assigned by the writer.
+    pub sequence: MarketDataWalSequence,
+    /// Record kind.
+    pub kind: MarketDataWalRecordKind,
+    /// Provider-native sequence when known.
+    pub provider_sequence: u64,
+    /// Normalized book/trade event sequence when known.
+    pub event_sequence: u64,
+    /// Exchange timestamp in nanoseconds when known.
+    pub ts_exchange_ns: u64,
+    /// Local receive timestamp in nanoseconds when known.
+    pub ts_recv_ns: u64,
+    /// Raw encoded payload bytes.
+    pub payload: Vec<u8>,
+}
+
+/// Replay summary for normalized market-data WAL reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct MarketDataWalReplayResult {
+    /// Number of records replayed.
+    pub records: usize,
+    /// Number of bytes consumed.
+    pub bytes: u64,
+    /// First replayed sequence.
+    pub first_sequence: Option<MarketDataWalSequence>,
+    /// Last replayed sequence.
+    pub last_sequence: Option<MarketDataWalSequence>,
+}
+
+/// Integrity report for a normalized market-data WAL file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct MarketDataWalIntegrityReport {
+    /// True when all complete records validate.
+    pub valid: bool,
+    /// Complete records inspected.
+    pub records: u64,
+    /// Bytes consumed by complete records.
+    pub bytes: u64,
+    /// Number of checksum failures.
+    pub checksum_failures: u64,
+    /// Number of sequence continuity failures.
+    pub sequence_failures: u64,
+    /// True when the file ends in an incomplete frame.
+    pub truncated_tail: bool,
+    /// Last valid sequence.
+    pub last_sequence: Option<MarketDataWalSequence>,
+}
+
+/// Low-latency market-data WAL metrics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct MarketDataWalMetrics {
+    /// Number of records written successfully.
+    pub records_written: u64,
+    /// Number of bytes written successfully.
+    pub bytes_written: u64,
+    /// Number of successful sync operations.
+    pub sync_count: u64,
+    /// Number of append failures.
+    pub write_failures: u64,
+    /// Number of sync failures.
+    pub sync_failures: u64,
+}
+
+/// Single-file binary WAL for normalized market-data events.
+#[derive(Debug)]
+pub struct MarketDataWal {
+    path: PathBuf,
+    file: File,
+    sync_on_write: bool,
+    next_sequence: MarketDataWalSequence,
+    previous_checksum: u32,
+    metrics: MarketDataWalMetrics,
+}
+
+impl MarketDataWal {
+    /// Opens or creates a market-data WAL.
+    ///
+    /// Existing bytes are validated before append state is initialized.
+    pub fn open(config: MarketDataWalConfig) -> PersistResult<Self> {
+        if let Some(parent) = config.path.parent() {
+            create_dir_all(parent)?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .read(true)
+            .open(&config.path)?;
+        let scan = scan_market_data_wal(&config.path, false)?;
+        if !scan.report.valid {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "market-data WAL failed integrity validation",
+            )
+            .into());
+        }
+        Ok(Self {
+            path: config.path,
+            file,
+            sync_on_write: config.sync_on_write,
+            next_sequence: MarketDataWalSequence(
+                scan.report
+                    .last_sequence
+                    .map_or(1, |sequence| sequence.0 + 1),
+            ),
+            previous_checksum: scan.previous_checksum,
+            metrics: MarketDataWalMetrics::default(),
+        })
+    }
+
+    /// Returns WAL path.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Returns next sequence that will be assigned.
+    pub const fn next_sequence(&self) -> MarketDataWalSequence {
+        self.next_sequence
+    }
+
+    /// Returns metrics.
+    pub const fn metrics(&self) -> MarketDataWalMetrics {
+        self.metrics
+    }
+
+    /// Appends one encoded WAL record and returns its assigned sequence.
+    pub fn append_record(
+        &mut self,
+        kind: MarketDataWalRecordKind,
+        provider_sequence: u64,
+        event_sequence: u64,
+        ts_exchange_ns: u64,
+        ts_recv_ns: u64,
+        payload: &[u8],
+    ) -> PersistResult<MarketDataWalSequence> {
+        let sequence = self.next_sequence;
+        let frame = encode_market_data_wal_frame(MarketDataWalFrameInput {
+            sequence,
+            kind,
+            provider_sequence,
+            event_sequence,
+            ts_exchange_ns,
+            ts_recv_ns,
+            payload,
+            previous_checksum: self.previous_checksum,
+        })?;
+        if let Err(err) = self.file.write_all(&frame) {
+            self.metrics.write_failures = self.metrics.write_failures.saturating_add(1);
+            return Err(err.into());
+        }
+        if self.sync_on_write {
+            if let Err(err) = self.file.sync_data() {
+                self.metrics.sync_failures = self.metrics.sync_failures.saturating_add(1);
+                return Err(err.into());
+            }
+            self.metrics.sync_count = self.metrics.sync_count.saturating_add(1);
+        }
+        self.metrics.records_written = self.metrics.records_written.saturating_add(1);
+        self.metrics.bytes_written = self
+            .metrics
+            .bytes_written
+            .saturating_add(frame.len() as u64);
+        self.previous_checksum = read_u32(&frame[52..56]);
+        self.next_sequence = MarketDataWalSequence(self.next_sequence.0.saturating_add(1));
+        Ok(sequence)
+    }
+
+    /// Replays all records into `out`.
+    pub fn replay(
+        &self,
+        out: &mut Vec<MarketDataWalRecord>,
+    ) -> PersistResult<MarketDataWalReplayResult> {
+        replay_market_data_wal(&self.path, out)
+    }
+
+    /// Inspects a WAL path for integrity without materializing payloads.
+    pub fn inspect_path(path: impl AsRef<Path>) -> PersistResult<MarketDataWalIntegrityReport> {
+        Ok(scan_market_data_wal(path.as_ref(), false)?.report)
+    }
+}
+
+#[derive(Debug, Default)]
+struct MarketDataWalScan {
+    report: MarketDataWalIntegrityReport,
+    previous_checksum: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MarketDataWalFrameInput<'a> {
+    sequence: MarketDataWalSequence,
+    kind: MarketDataWalRecordKind,
+    provider_sequence: u64,
+    event_sequence: u64,
+    ts_exchange_ns: u64,
+    ts_recv_ns: u64,
+    payload: &'a [u8],
+    previous_checksum: u32,
+}
+
+fn encode_market_data_wal_frame(input: MarketDataWalFrameInput<'_>) -> PersistResult<Vec<u8>> {
+    let payload = input.payload;
+    if payload.len() > u32::MAX as usize {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "market-data WAL payload is too large",
+        )
+        .into());
+    }
+    let mut frame = vec![0_u8; MARKET_DATA_WAL_HEADER_LEN + payload.len()];
+    frame[0..4].copy_from_slice(&MARKET_DATA_WAL_MAGIC);
+    write_u16(&mut frame[4..6], MARKET_DATA_WAL_VERSION);
+    write_u16(&mut frame[6..8], input.kind as u16);
+    write_u64(&mut frame[8..16], input.sequence.0);
+    write_u64(&mut frame[16..24], input.provider_sequence);
+    write_u64(&mut frame[24..32], input.event_sequence);
+    write_u64(&mut frame[32..40], input.ts_exchange_ns);
+    write_u64(&mut frame[40..48], input.ts_recv_ns);
+    write_u32(&mut frame[48..52], payload.len() as u32);
+    write_u32(&mut frame[56..60], input.previous_checksum);
+    frame[MARKET_DATA_WAL_HEADER_LEN..].copy_from_slice(payload);
+    let checksum = market_data_wal_checksum(&frame);
+    write_u32(&mut frame[52..56], checksum);
+    Ok(frame)
+}
+
+fn replay_market_data_wal(
+    path: &Path,
+    out: &mut Vec<MarketDataWalRecord>,
+) -> PersistResult<MarketDataWalReplayResult> {
+    let before = out.len();
+    let scan = scan_market_data_wal_into(path, Some(out))?;
+    let records = out.len().saturating_sub(before);
+    Ok(MarketDataWalReplayResult {
+        records,
+        bytes: scan.report.bytes,
+        first_sequence: out.get(before).map(|record| record.sequence),
+        last_sequence: records
+            .checked_sub(1)
+            .and_then(|offset| out.get(before + offset))
+            .map(|record| record.sequence),
+    })
+}
+
+fn scan_market_data_wal(path: &Path, materialize: bool) -> PersistResult<MarketDataWalScan> {
+    if materialize {
+        let mut records = Vec::new();
+        scan_market_data_wal_into(path, Some(&mut records))
+    } else {
+        scan_market_data_wal_into(path, None)
+    }
+}
+
+fn scan_market_data_wal_into(
+    path: &Path,
+    mut out: Option<&mut Vec<MarketDataWalRecord>>,
+) -> PersistResult<MarketDataWalScan> {
+    if !path.exists() {
+        return Ok(MarketDataWalScan {
+            report: MarketDataWalIntegrityReport {
+                valid: true,
+                ..MarketDataWalIntegrityReport::default()
+            },
+            previous_checksum: 0,
+        });
+    }
+    let mut file = File::open(path)?;
+    file.seek(SeekFrom::Start(0))?;
+    let mut scan = MarketDataWalScan {
+        report: MarketDataWalIntegrityReport {
+            valid: true,
+            ..MarketDataWalIntegrityReport::default()
+        },
+        previous_checksum: 0,
+    };
+    let mut expected_sequence = 1_u64;
+    loop {
+        let mut header = [0_u8; MARKET_DATA_WAL_HEADER_LEN];
+        let read = read_exact_or_tail(&mut file, &mut header)?;
+        if read == 0 {
+            break;
+        }
+        if read < MARKET_DATA_WAL_HEADER_LEN {
+            scan.report.valid = false;
+            scan.report.truncated_tail = true;
+            break;
+        }
+        if header[0..4] != MARKET_DATA_WAL_MAGIC
+            || read_u16(&header[4..6]) != MARKET_DATA_WAL_VERSION
+        {
+            scan.report.valid = false;
+            scan.report.checksum_failures = scan.report.checksum_failures.saturating_add(1);
+            break;
+        }
+        let kind = MarketDataWalRecordKind::from_u16(read_u16(&header[6..8])).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid market-data WAL record kind",
+            )
+        })?;
+        let sequence = read_u64(&header[8..16]);
+        if sequence != expected_sequence {
+            scan.report.valid = false;
+            scan.report.sequence_failures = scan.report.sequence_failures.saturating_add(1);
+        }
+        let provider_sequence = read_u64(&header[16..24]);
+        let event_sequence = read_u64(&header[24..32]);
+        let ts_exchange_ns = read_u64(&header[32..40]);
+        let ts_recv_ns = read_u64(&header[40..48]);
+        let payload_len = read_u32(&header[48..52]) as usize;
+        let expected_checksum = read_u32(&header[52..56]);
+        let previous_checksum = read_u32(&header[56..60]);
+        if previous_checksum != scan.previous_checksum {
+            scan.report.valid = false;
+            scan.report.checksum_failures = scan.report.checksum_failures.saturating_add(1);
+        }
+        let mut payload = vec![0_u8; payload_len];
+        let payload_read = read_exact_or_tail(&mut file, &mut payload)?;
+        if payload_read < payload_len {
+            scan.report.valid = false;
+            scan.report.truncated_tail = true;
+            break;
+        }
+        let mut frame = Vec::with_capacity(MARKET_DATA_WAL_HEADER_LEN + payload_len);
+        frame.extend_from_slice(&header);
+        frame.extend_from_slice(&payload);
+        let actual_checksum = market_data_wal_checksum(&frame);
+        if actual_checksum != expected_checksum {
+            scan.report.valid = false;
+            scan.report.checksum_failures = scan.report.checksum_failures.saturating_add(1);
+        }
+        if let Some(records) = out.as_deref_mut() {
+            records.push(MarketDataWalRecord {
+                sequence: MarketDataWalSequence(sequence),
+                kind,
+                provider_sequence,
+                event_sequence,
+                ts_exchange_ns,
+                ts_recv_ns,
+                payload,
+            });
+        }
+        scan.report.records = scan.report.records.saturating_add(1);
+        scan.report.bytes = scan
+            .report
+            .bytes
+            .saturating_add((MARKET_DATA_WAL_HEADER_LEN + payload_len) as u64);
+        scan.report.last_sequence = Some(MarketDataWalSequence(sequence));
+        scan.previous_checksum = expected_checksum;
+        expected_sequence = sequence.saturating_add(1);
+    }
+    Ok(scan)
+}
+
+fn read_exact_or_tail(file: &mut File, buf: &mut [u8]) -> PersistResult<usize> {
+    let mut offset = 0;
+    while offset < buf.len() {
+        match file.read(&mut buf[offset..]) {
+            Ok(0) => break,
+            Ok(n) => offset += n,
+            Err(err) => return Err(err.into()),
+        }
+    }
+    Ok(offset)
+}
+
+fn market_data_wal_checksum(frame: &[u8]) -> u32 {
+    let mut hash = 0x811c9dc5_u32;
+    for (idx, byte) in frame.iter().enumerate() {
+        if (52..56).contains(&idx) {
+            hash ^= 0;
+        } else {
+            hash ^= u32::from(*byte);
+        }
+        hash = hash.wrapping_mul(0x01000193);
+    }
+    hash
+}
+
+fn read_u16(bytes: &[u8]) -> u16 {
+    u16::from_le_bytes([bytes[0], bytes[1]])
+}
+
+fn read_u32(bytes: &[u8]) -> u32 {
+    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
+fn read_u64(bytes: &[u8]) -> u64 {
+    u64::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ])
+}
+
+fn write_u16(out: &mut [u8], value: u16) {
+    out.copy_from_slice(&value.to_le_bytes());
+}
+
+fn write_u32(out: &mut [u8], value: u32) {
+    out.copy_from_slice(&value.to_le_bytes());
+}
+
+fn write_u64(out: &mut [u8], value: u64) {
+    out.copy_from_slice(&value.to_le_bytes());
+}
 
 /// Retention policy used by [`RollingStore`].
 #[derive(Debug, Clone, Copy)]
@@ -898,6 +1380,78 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].sequence(), 10);
         assert_eq!(events[1].sequence(), 11);
+    }
+
+    #[test]
+    fn market_data_wal_appends_and_replays_records() {
+        let root = temp_dir("persist_market_data_wal");
+        let path = root.join("normalized.wal");
+        let mut wal = MarketDataWal::open(MarketDataWalConfig::new(&path)).expect("open wal");
+
+        let first = wal
+            .append_record(
+                MarketDataWalRecordKind::TradePrint,
+                10,
+                20,
+                30,
+                40,
+                b"trade",
+            )
+            .expect("append first");
+        let second = wal
+            .append_record(MarketDataWalRecordKind::BookUpdate, 11, 21, 31, 41, b"book")
+            .expect("append second");
+
+        assert_eq!(first, MarketDataWalSequence(1));
+        assert_eq!(second, MarketDataWalSequence(2));
+        assert_eq!(wal.metrics().records_written, 2);
+
+        let mut records = Vec::new();
+        let replay = wal.replay(&mut records).expect("replay");
+        assert_eq!(replay.records, 2);
+        assert_eq!(replay.first_sequence, Some(MarketDataWalSequence(1)));
+        assert_eq!(replay.last_sequence, Some(MarketDataWalSequence(2)));
+        assert_eq!(records[0].kind, MarketDataWalRecordKind::TradePrint);
+        assert_eq!(records[0].payload, b"trade");
+        assert_eq!(records[1].kind, MarketDataWalRecordKind::BookUpdate);
+        assert_eq!(records[1].payload, b"book");
+    }
+
+    #[test]
+    fn market_data_wal_reopens_after_valid_existing_records() {
+        let root = temp_dir("persist_market_data_wal_reopen");
+        let path = root.join("normalized.wal");
+        {
+            let mut wal = MarketDataWal::open(MarketDataWalConfig::new(&path)).expect("open wal");
+            wal.append_record(MarketDataWalRecordKind::Heartbeat, 0, 0, 1, 2, b"")
+                .expect("append");
+        }
+
+        let wal = MarketDataWal::open(MarketDataWalConfig::new(&path)).expect("reopen wal");
+        assert_eq!(wal.next_sequence(), MarketDataWalSequence(2));
+        let report = MarketDataWal::inspect_path(&path).expect("inspect");
+        assert!(report.valid);
+        assert_eq!(report.records, 1);
+        assert_eq!(report.last_sequence, Some(MarketDataWalSequence(1)));
+    }
+
+    #[test]
+    fn market_data_wal_detects_corruption() {
+        let root = temp_dir("persist_market_data_wal_corrupt");
+        let path = root.join("normalized.wal");
+        let mut wal = MarketDataWal::open(MarketDataWalConfig::new(&path)).expect("open wal");
+        wal.append_record(MarketDataWalRecordKind::GapMarker, 0, 9, 1, 2, b"gap")
+            .expect("append");
+
+        let mut bytes = fs::read(&path).expect("read wal");
+        let last = bytes.last_mut().expect("last byte");
+        *last ^= 0x01;
+        fs::write(&path, bytes).expect("corrupt wal");
+
+        let report = MarketDataWal::inspect_path(&path).expect("inspect");
+        assert!(!report.valid);
+        assert_eq!(report.checksum_failures, 1);
+        assert!(MarketDataWal::open(MarketDataWalConfig::new(&path)).is_err());
     }
 
     fn temp_dir(name: &str) -> PathBuf {

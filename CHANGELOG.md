@@ -33,6 +33,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added production deployment templates covering simulation, paper trading,
   shadow mode, live trading, capture, replay, active/passive recovery, and
   disaster recovery drills.
+- Added additive `of_persist` binary normalized market-data WAL primitives with
+  fixed-frame append, replay, checksum/sequence integrity inspection, sync
+  policy, and write metrics while preserving existing JSONL APIs.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,
