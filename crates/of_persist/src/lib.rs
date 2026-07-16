@@ -169,6 +169,179 @@ pub struct MarketDataWalMetrics {
     pub sync_failures: u64,
 }
 
+/// Production market-data persistence writer mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum MarketDataPersistenceMode {
+    /// Production market-data persistence is disabled.
+    #[default]
+    Disabled,
+    /// Writes occur on the caller path and errors are returned immediately.
+    InlineStrict,
+    /// Writes are expected to be queued to a bounded single-writer worker.
+    BoundedAsync,
+    /// Writes may be dropped according to policy, with every drop counted.
+    BestEffort,
+}
+
+/// Host action when production market-data persistence is degraded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum MarketDataPersistenceFailureAction {
+    /// Continue processing and mark persistence degraded.
+    #[default]
+    MarkDegraded,
+    /// Stop market-data processing.
+    StopMarketData,
+    /// Stop trading while allowing market-data processing to continue.
+    StopTrading,
+    /// Fail the process.
+    FailProcess,
+    /// Switch to memory-only retention.
+    MemoryOnly,
+}
+
+/// Production market-data persistence policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MarketDataPersistencePolicy {
+    /// Writer mode.
+    pub mode: MarketDataPersistenceMode,
+    /// Bounded queue depth for async writer modes. Zero means unspecified.
+    pub max_queue_depth: u32,
+    /// Failure action selected by the host.
+    pub failure_action: MarketDataPersistenceFailureAction,
+}
+
+impl MarketDataPersistencePolicy {
+    /// Creates a disabled persistence policy.
+    pub const fn disabled() -> Self {
+        Self {
+            mode: MarketDataPersistenceMode::Disabled,
+            max_queue_depth: 0,
+            failure_action: MarketDataPersistenceFailureAction::MarkDegraded,
+        }
+    }
+
+    /// Creates an inline strict persistence policy.
+    pub const fn inline_strict() -> Self {
+        Self {
+            mode: MarketDataPersistenceMode::InlineStrict,
+            max_queue_depth: 0,
+            failure_action: MarketDataPersistenceFailureAction::StopTrading,
+        }
+    }
+
+    /// Creates a bounded async persistence policy.
+    pub const fn bounded_async(max_queue_depth: u32) -> Self {
+        Self {
+            mode: MarketDataPersistenceMode::BoundedAsync,
+            max_queue_depth,
+            failure_action: MarketDataPersistenceFailureAction::MarkDegraded,
+        }
+    }
+
+    /// Sets the failure action.
+    pub const fn with_failure_action(
+        mut self,
+        failure_action: MarketDataPersistenceFailureAction,
+    ) -> Self {
+        self.failure_action = failure_action;
+        self
+    }
+
+    /// Returns true when production persistence is enabled.
+    pub const fn enabled(self) -> bool {
+        !matches!(self.mode, MarketDataPersistenceMode::Disabled)
+    }
+}
+
+impl Default for MarketDataPersistencePolicy {
+    fn default() -> Self {
+        Self::disabled()
+    }
+}
+
+/// Production market-data persistence health snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct MarketDataPersistenceHealth {
+    /// Configured persistence mode.
+    pub mode: MarketDataPersistenceMode,
+    /// True when production persistence is enabled.
+    pub enabled: bool,
+    /// True when the persistence path is degraded.
+    pub degraded: bool,
+    /// Current writer queue depth.
+    pub queue_depth: u32,
+    /// Writer lag measured in records.
+    pub records_lag: u64,
+    /// Writer lag measured in nanoseconds.
+    pub lag_ns: u64,
+    /// Bytes waiting to be persisted.
+    pub bytes_pending: u64,
+    /// Number of dropped records.
+    pub dropped_records: u64,
+    /// Number of WAL write failures.
+    pub write_failures: u64,
+    /// Number of WAL sync failures.
+    pub sync_failures: u64,
+    /// Last persistence error text.
+    pub last_error: Option<String>,
+}
+
+impl MarketDataPersistenceHealth {
+    /// Creates a health snapshot from policy and WAL metrics.
+    pub fn from_wal_metrics(
+        policy: MarketDataPersistencePolicy,
+        metrics: MarketDataWalMetrics,
+    ) -> Self {
+        let degraded = metrics.write_failures > 0 || metrics.sync_failures > 0;
+        Self {
+            mode: policy.mode,
+            enabled: policy.enabled(),
+            degraded,
+            write_failures: metrics.write_failures,
+            sync_failures: metrics.sync_failures,
+            ..Self::default()
+        }
+    }
+
+    /// Sets queue and lag fields.
+    pub const fn with_lag(
+        mut self,
+        queue_depth: u32,
+        records_lag: u64,
+        lag_ns: u64,
+        bytes_pending: u64,
+    ) -> Self {
+        self.queue_depth = queue_depth;
+        self.records_lag = records_lag;
+        self.lag_ns = lag_ns;
+        self.bytes_pending = bytes_pending;
+        self
+    }
+
+    /// Sets drop count and marks the path degraded when records were dropped.
+    pub const fn with_dropped_records(mut self, dropped_records: u64) -> Self {
+        self.dropped_records = dropped_records;
+        self.degraded = self.degraded || dropped_records > 0;
+        self
+    }
+
+    /// Sets the last error and marks the path degraded.
+    pub fn with_error(mut self, error: impl Into<String>) -> Self {
+        self.last_error = Some(error.into());
+        self.degraded = true;
+        self
+    }
+
+    /// Returns true when the configured persistence path is enabled and not degraded.
+    pub const fn is_healthy(&self) -> bool {
+        self.enabled && !self.degraded
+    }
+}
+
 /// Single-file binary WAL for normalized market-data events.
 #[derive(Debug)]
 pub struct MarketDataWal {
@@ -1452,6 +1625,48 @@ mod tests {
         assert!(!report.valid);
         assert_eq!(report.checksum_failures, 1);
         assert!(MarketDataWal::open(MarketDataWalConfig::new(&path)).is_err());
+    }
+
+    #[test]
+    fn market_data_persistence_policy_reports_enabled_modes() {
+        let disabled = MarketDataPersistencePolicy::default();
+        let strict = MarketDataPersistencePolicy::inline_strict();
+        let async_policy = MarketDataPersistencePolicy::bounded_async(1024)
+            .with_failure_action(MarketDataPersistenceFailureAction::StopTrading);
+
+        assert!(!disabled.enabled());
+        assert!(strict.enabled());
+        assert_eq!(strict.mode, MarketDataPersistenceMode::InlineStrict);
+        assert!(async_policy.enabled());
+        assert_eq!(async_policy.max_queue_depth, 1024);
+        assert_eq!(
+            async_policy.failure_action,
+            MarketDataPersistenceFailureAction::StopTrading
+        );
+    }
+
+    #[test]
+    fn market_data_persistence_health_marks_failures_and_drops_degraded() {
+        let policy = MarketDataPersistencePolicy::bounded_async(64);
+        let metrics = MarketDataWalMetrics {
+            write_failures: 1,
+            ..MarketDataWalMetrics::default()
+        };
+
+        let health = MarketDataPersistenceHealth::from_wal_metrics(policy, metrics)
+            .with_lag(3, 9, 100, 4096)
+            .with_dropped_records(2)
+            .with_error("disk full");
+
+        assert!(health.enabled);
+        assert!(health.degraded);
+        assert!(!health.is_healthy());
+        assert_eq!(health.queue_depth, 3);
+        assert_eq!(health.records_lag, 9);
+        assert_eq!(health.bytes_pending, 4096);
+        assert_eq!(health.dropped_records, 2);
+        assert_eq!(health.write_failures, 1);
+        assert_eq!(health.last_error.as_deref(), Some("disk full"));
     }
 
     fn temp_dir(name: &str) -> PathBuf {

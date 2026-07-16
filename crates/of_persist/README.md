@@ -20,6 +20,10 @@ production capture paths.
 - [`MarketDataWalReplayResult`] - replay summary.
 - [`MarketDataWalIntegrityReport`] - checksum and sequence validation summary.
 - [`MarketDataWalMetrics`] - append/sync counters.
+- [`MarketDataPersistenceMode`] - production writer mode vocabulary.
+- [`MarketDataPersistenceFailureAction`] - host action when persistence degrades.
+- [`MarketDataPersistencePolicy`] - configured persistence mode and failure action.
+- [`MarketDataPersistenceHealth`] - health, lag, drop, and error snapshot.
 - [`PersistError`] / [`PersistResult<T>`] - persistence error contract.
 
 ## New In 0.4.0
@@ -40,6 +44,8 @@ What changes for persistence users:
   audit, retention, and recovery policies can differ;
 - binary normalized market-data WAL helpers are available as additive building
   blocks for production capture without replacing JSONL workflows;
+- production persistence policy and health helpers let hosts tie writer
+  degradation into execution safety policy;
 - production deployments should keep market-data replay files and execution
   command/event journals correlated by strategy id, session id, and timestamp.
 
@@ -66,6 +72,10 @@ Public types:
 - [`MarketDataWalReplayResult`]
 - [`MarketDataWalIntegrityReport`]
 - [`MarketDataWalMetrics`]
+- [`MarketDataPersistenceMode`]
+- [`MarketDataPersistenceFailureAction`]
+- [`MarketDataPersistencePolicy`]
+- [`MarketDataPersistenceHealth`]
 - [`MarketDataWal`]
 
 Public methods:
@@ -95,6 +105,16 @@ Public methods:
 - [`MarketDataWal::append_record`]
 - [`MarketDataWal::replay`]
 - [`MarketDataWal::inspect_path`]
+- [`MarketDataPersistencePolicy::disabled`]
+- [`MarketDataPersistencePolicy::inline_strict`]
+- [`MarketDataPersistencePolicy::bounded_async`]
+- [`MarketDataPersistencePolicy::with_failure_action`]
+- [`MarketDataPersistencePolicy::enabled`]
+- [`MarketDataPersistenceHealth::from_wal_metrics`]
+- [`MarketDataPersistenceHealth::with_lag`]
+- [`MarketDataPersistenceHealth::with_dropped_records`]
+- [`MarketDataPersistenceHealth::with_error`]
+- [`MarketDataPersistenceHealth::is_healthy`]
 
 ## Storage Layout
 
@@ -192,6 +212,28 @@ Sync policy is intentionally small in this first foundation:
 
 Segment rotation, async writer queues, raw provider capture, and cold-store
 export remain higher-level integration work.
+
+## Production Persistence Policy And Health
+
+[`MarketDataPersistencePolicy`] gives hosts an explicit vocabulary for
+production market-data persistence modes:
+
+- [`MarketDataPersistenceMode::Disabled`]
+- [`MarketDataPersistenceMode::InlineStrict`]
+- [`MarketDataPersistenceMode::BoundedAsync`]
+- [`MarketDataPersistenceMode::BestEffort`]
+
+[`MarketDataPersistenceFailureAction`] records what the host should do when the
+path degrades: mark degraded, stop market data, stop trading, fail the process,
+or switch to memory-only retention. The policy does not start a worker or change
+[`MarketDataWal`] behavior; it is stable configuration metadata for runtimes,
+dashboards, and safety-policy integration.
+
+[`MarketDataPersistenceHealth`] reports whether persistence is enabled,
+degraded, lagging, dropping records, or surfacing write/sync errors. Hosts can
+derive it from [`MarketDataWalMetrics`] with
+[`MarketDataPersistenceHealth::from_wal_metrics`] and then attach queue-depth,
+lag, pending bytes, drops, or last-error metadata from their writer.
 
 ## Quick Example
 

@@ -23,6 +23,10 @@ foundation for lower-latency production capture paths.
 | `MarketDataWalReplayResult` | struct | Binary WAL replay summary |
 | `MarketDataWalIntegrityReport` | struct | Checksum/sequence integrity report |
 | `MarketDataWalMetrics` | struct | Binary WAL append/sync counters |
+| `MarketDataPersistenceMode` | enum | Production writer mode vocabulary |
+| `MarketDataPersistenceFailureAction` | enum | Host action when persistence degrades |
+| `MarketDataPersistencePolicy` | struct | Production persistence policy |
+| `MarketDataPersistenceHealth` | struct | Production persistence health snapshot |
 | `MarketDataWal` | struct | Single-file binary normalized market-data WAL |
 
 ## Storage Layout
@@ -163,6 +167,18 @@ validate before append state is initialized.
 The first implementation is intentionally single-file. Segment rotation,
 bounded async writer queues, raw provider-message capture, and cold research
 export remain separate integration layers.
+
+## Production Persistence Policy And Health
+
+`MarketDataPersistencePolicy` describes the host's production writer mode:
+disabled, inline strict, bounded async, or best effort. It also records the
+failure action to take when persistence degrades.
+
+`MarketDataPersistenceHealth` reports enabled/degraded state, queue depth,
+record lag, nanosecond lag, pending bytes, dropped records, WAL write/sync
+failures, and last error text. These fields are intentionally host-owned so a
+runtime can wire persistence degradation into OMS safety policy without forcing
+an async writer into `of_persist`.
 
 ## Ordering and Range Rules
 

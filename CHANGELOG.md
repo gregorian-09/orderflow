@@ -36,6 +36,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added additive `of_persist` binary normalized market-data WAL primitives with
   fixed-frame append, replay, checksum/sequence integrity inspection, sync
   policy, and write metrics while preserving existing JSONL APIs.
+- Added additive `of_persist` production market-data persistence policy and
+  health snapshots for writer mode, failure action, lag, drops, and error
+  reporting.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,
