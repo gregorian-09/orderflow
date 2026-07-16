@@ -218,6 +218,9 @@ offline examples.
   `set_raw_capture_capacity(...)`; the default capacity `0` disables capture.
 - Drops oldest captured raw messages when capture capacity is full and reports
   raw capture depth, capacity, and drop counters in health metadata.
+- Replays raw Binance JSON fixtures through the same parser and normalizer with
+  `replay_raw_messages(...)`, using deterministic local receive timestamps for
+  repeatable fixture tests.
 - Supervises live activity timeout and reconnects with backoff.
 - Exposes Binance health metadata for messages received, normalized events,
   parse errors, dropped events, backpressure events, duplicate depth updates,

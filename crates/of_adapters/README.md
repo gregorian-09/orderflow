@@ -155,6 +155,9 @@ Current provider notes:
   - raw capture keeps the newest provider messages, drops the oldest captured
     message when full, and exposes capture depth/capacity/drop counters in
     health metadata
+  - `replay_raw_messages(...)` replays captured or fixture Binance JSON through
+    the same parser/normalizer used by live ingestion and appends newly produced
+    normalized events to a caller-owned buffer
   - live mode schedules reconnect with backoff on disconnect or market-data timeout
   - reconnect replays active subscriptions automatically
   - health metadata includes reconnect attempt, subscription count, message/data

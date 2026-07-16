@@ -15,6 +15,7 @@ use crate::{
 
 const PRICE_SCALE: i64 = 1_000_000;
 const SIZE_SCALE: i64 = 1_000;
+const REPLAY_RECV_TS_NS: u64 = 0;
 
 #[derive(Debug, Clone, Copy, Default)]
 struct BinanceDepthState {
@@ -401,6 +402,23 @@ impl BinanceAdapter {
         n
     }
 
+    /// Replays raw Binance JSON messages into normalized events.
+    ///
+    /// This helper is intended for fixture tests and incident reproduction. It
+    /// uses the same parser and normalizer as the live path, records the same
+    /// parse/normalization counters, honors raw capture and queue bounds, and
+    /// appends newly produced events to `out`. Fixture replay sets local receive
+    /// timestamps to `0` so repeated fixture runs are deterministic.
+    pub fn replay_raw_messages(&mut self, messages: &[&str], out: &mut Vec<RawEvent>) -> usize {
+        let queue_start = self.queue.len();
+        for msg in messages {
+            self.process_raw_message(msg, REPLAY_RECV_TS_NS);
+        }
+        let produced = self.queue.len().saturating_sub(queue_start);
+        out.extend(self.queue.drain(queue_start..));
+        produced
+    }
+
     fn is_mock_mode(&self) -> bool {
         matches!(self.transport, BinanceTransport::Mock)
     }
@@ -485,6 +503,13 @@ impl BinanceAdapter {
         self.normalization_latency_max_ns = self.normalization_latency_max_ns.max(elapsed_ns);
     }
 
+    fn process_raw_message(&mut self, msg: &str, ts_recv_ns: u64) {
+        self.capture_raw_message(msg);
+        let parse_started = Instant::now();
+        self.parse_live_message(msg, ts_recv_ns);
+        self.record_parse_latency(parse_started.elapsed());
+    }
+
     fn send_binance_subscribe(&mut self, symbol: &SymbolId) -> AdapterResult<()> {
         let sym = symbol.symbol.to_ascii_lowercase();
         let payload = format!(
@@ -513,7 +538,7 @@ impl BinanceAdapter {
         }
     }
 
-    fn parse_live_message(&mut self, msg: &str) {
+    fn parse_live_message(&mut self, msg: &str, ts_recv_ns: u64) {
         self.last_message_at = Some(Instant::now());
         self.messages_received = self.messages_received.saturating_add(1);
         let payload = extract_data_object(msg).unwrap_or(msg);
@@ -532,7 +557,7 @@ impl BinanceAdapter {
         }
         if payload.contains("\"e\":\"aggTrade\"") {
             let normalization_started = Instant::now();
-            if let Some(trade) = parse_agg_trade(payload, &mut self.seq) {
+            if let Some(trade) = parse_agg_trade(payload, &mut self.seq, ts_recv_ns) {
                 self.push_event(RawEvent::Trade(trade));
                 self.record_normalization_latency(normalization_started.elapsed());
                 self.last_market_data_at = Some(Instant::now());
@@ -599,7 +624,6 @@ impl BinanceAdapter {
             let ts_exchange_ns = extract_u64_field(payload, "E")
                 .map(|ms| ms.saturating_mul(1_000_000))
                 .unwrap_or_else(Self::now_ns);
-            let ts_recv_ns = Self::now_ns();
             let mut accepted_depth_event = false;
             let mut candidate_depth_events = 0u64;
             let normalization_started = Instant::now();
@@ -832,10 +856,7 @@ impl MarketDataAdapter for BinanceAdapter {
                 }
             }
             for msg in inbound {
-                self.capture_raw_message(&msg);
-                let parse_started = Instant::now();
-                self.parse_live_message(&msg);
-                self.record_parse_latency(parse_started.elapsed());
+                self.process_raw_message(&msg, Self::now_ns());
             }
             self.maybe_clear_degraded();
         }
@@ -1242,7 +1263,7 @@ fn extract_depth_pairs(raw: &str, key: &str) -> Vec<(i64, i64)> {
     out
 }
 
-fn parse_agg_trade(raw: &str, seq: &mut u64) -> Option<TradePrint> {
+fn parse_agg_trade(raw: &str, seq: &mut u64, ts_recv_ns: u64) -> Option<TradePrint> {
     let symbol = extract_string_field(raw, "s")?.to_string();
     let price = parse_scaled_decimal(extract_string_field(raw, "p")?, PRICE_SCALE)?;
     let size = parse_scaled_decimal(extract_string_field(raw, "q")?, SIZE_SCALE).unwrap_or(1);
@@ -1263,7 +1284,7 @@ fn parse_agg_trade(raw: &str, seq: &mut u64) -> Option<TradePrint> {
         aggressor_side,
         sequence: *seq,
         ts_exchange_ns,
-        ts_recv_ns: BinanceAdapter::now_ns(),
+        ts_recv_ns,
     })
 }
 
@@ -1341,11 +1362,12 @@ mod tests {
     fn parses_agg_trade_payload() {
         let raw = r#"{"e":"aggTrade","E":1710000000123,"s":"BTCUSDT","a":1,"p":"66107.98000000","q":"0.01200000","f":1,"l":1,"T":1710000000001,"m":true,"M":true}"#;
         let mut seq = 0;
-        let trade = parse_agg_trade(raw, &mut seq).expect("trade");
+        let trade = parse_agg_trade(raw, &mut seq, 123).expect("trade");
         assert_eq!(trade.symbol.symbol, "BTCUSDT");
         assert_eq!(trade.price, 66_107_980_000);
         assert_eq!(trade.size, 12);
         assert_eq!(trade.aggressor_side, Side::Bid);
+        assert_eq!(trade.ts_recv_ns, 123);
     }
 
     #[test]
@@ -1537,6 +1559,42 @@ mod tests {
 
         adapter.set_raw_capture_capacity(0);
         assert_eq!(adapter.raw_capture_capacity(), 0);
+    }
+
+    #[test]
+    fn fixture_replay_uses_live_parser_with_deterministic_receive_time() {
+        let fixtures = [
+            r#"{"e":"aggTrade","E":1710000000123,"s":"BTCUSDT","a":1,"p":"66107.98000000","q":"0.01200000","f":1,"l":1,"T":1710000000001,"m":true,"M":true}"#,
+            r#"{"e":"depthUpdate","E":1710000000124,"s":"BTCUSDT","U":157,"u":160,"b":[["66107.97","1.99161"]],"a":[["66107.98","1.83166"]]}"#,
+        ];
+        let mut first = BinanceAdapter::from_config(&cfg("mock://binance"))
+            .expect("cfg")
+            .with_raw_capture_capacity(4);
+        let mut second = BinanceAdapter::from_config(&cfg("mock://binance")).expect("cfg");
+        let mut out_first = Vec::new();
+        let mut out_second = Vec::new();
+
+        assert_eq!(first.replay_raw_messages(&fixtures, &mut out_first), 3);
+        assert_eq!(second.replay_raw_messages(&fixtures, &mut out_second), 3);
+
+        assert_eq!(format!("{out_first:?}"), format!("{out_second:?}"));
+        assert!(matches!(out_first[0], RawEvent::Trade(_)));
+        assert!(out_first[1..]
+            .iter()
+            .all(|event| matches!(event, RawEvent::Book(_))));
+        for event in &out_first {
+            match event {
+                RawEvent::Trade(trade) => assert_eq!(trade.ts_recv_ns, REPLAY_RECV_TS_NS),
+                RawEvent::Book(book) => assert_eq!(book.ts_recv_ns, REPLAY_RECV_TS_NS),
+            }
+        }
+        assert_eq!(first.raw_capture_len(), 2);
+        assert_eq!(first.raw_capture_dropped(), 0);
+        assert!(first
+            .health()
+            .protocol_info
+            .unwrap_or_default()
+            .contains("parse_latency_samples=2"));
     }
 
     #[test]

@@ -69,6 +69,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added opt-in bounded Binance raw inbound message capture for incident
   analysis and fixture generation, with capture depth, capacity, and drop
   health counters.
+- Added Binance raw fixture replay through the live parser/normalizer path with
+  deterministic receive timestamps for repeatable adapter tests.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,
