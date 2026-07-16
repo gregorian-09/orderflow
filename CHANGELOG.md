@@ -39,6 +39,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added additive `of_persist` production market-data persistence policy and
   health snapshots for writer mode, failure action, lag, drops, and error
   reporting.
+- Added additive `of_persist` market-data backpressure policy helpers for
+  queue-depth, lag, pending-byte, degraded-state, drop-policy, trade-preserve,
+  and critical-record decisions.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

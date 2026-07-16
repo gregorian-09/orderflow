@@ -342,6 +342,309 @@ impl MarketDataPersistenceHealth {
     }
 }
 
+/// Relative importance of a market-data persistence record under backpressure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[non_exhaustive]
+pub enum MarketDataRecordCriticality {
+    /// Low-priority diagnostic or redundant depth record.
+    Low,
+    /// Normal market-data record.
+    #[default]
+    Normal,
+    /// High-priority state transition or quality marker.
+    High,
+    /// Critical record that should not be dropped by policy helpers.
+    Critical,
+}
+
+/// Backpressure drop policy for bounded market-data persistence writers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum MarketDataBackpressureDropPolicy {
+    /// Reject new persistence records when limits are exceeded.
+    #[default]
+    RejectNew,
+    /// Drop the candidate record.
+    DropNewest,
+    /// Ask the host queue to drop its oldest queued record.
+    DropOldest,
+    /// Ask the host queue to drop a queued low-priority record.
+    DropLowestPriority,
+    /// Preserve trade records and drop lower-priority non-trade records first.
+    PreserveTrades,
+}
+
+/// Backpressure condition that triggered a decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum MarketDataBackpressureReason {
+    /// No backpressure condition is active.
+    #[default]
+    None,
+    /// Writer queue depth reached or exceeded the configured bound.
+    QueueDepth,
+    /// Writer record lag reached or exceeded the configured bound.
+    RecordsLag,
+    /// Writer lag in nanoseconds reached or exceeded the configured bound.
+    TimeLag,
+    /// Pending bytes reached or exceeded the configured bound.
+    BytesPending,
+    /// Persistence path is already degraded.
+    Degraded,
+}
+
+/// Backpressure action for one candidate persistence record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum MarketDataBackpressureAction {
+    /// Accept the candidate record.
+    #[default]
+    Accept,
+    /// Reject the candidate record without selecting a queued record to drop.
+    Reject,
+    /// Drop the candidate record.
+    DropCurrent,
+    /// Ask the host queue to drop its oldest queued record before accepting.
+    DropQueuedOldest,
+    /// Ask the host queue to drop a queued low-priority record before accepting.
+    DropQueuedLowestPriority,
+    /// Stop market-data processing.
+    StopMarketData,
+    /// Stop trading while allowing market-data processing to continue.
+    StopTrading,
+    /// Fail the process.
+    FailProcess,
+    /// Switch the host to memory-only retention.
+    MemoryOnly,
+}
+
+/// Bounded writer backpressure policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MarketDataBackpressurePolicy {
+    /// Maximum writer queue depth. Zero disables this bound.
+    pub max_queue_depth: u32,
+    /// Maximum writer lag in records. Zero disables this bound.
+    pub max_records_lag: u64,
+    /// Maximum writer lag in nanoseconds. Zero disables this bound.
+    pub max_lag_ns: u64,
+    /// Maximum pending bytes. Zero disables this bound.
+    pub max_bytes_pending: u64,
+    /// Drop policy used when a limit is exceeded.
+    pub drop_policy: MarketDataBackpressureDropPolicy,
+    /// Minimum criticality that cannot be dropped by policy helpers.
+    pub protected_criticality: MarketDataRecordCriticality,
+    /// Failure action used when the persistence path is already degraded.
+    pub failure_action: MarketDataPersistenceFailureAction,
+}
+
+impl MarketDataBackpressurePolicy {
+    /// Creates a reject-new policy with queue-depth bound.
+    pub const fn reject_new(max_queue_depth: u32) -> Self {
+        Self {
+            max_queue_depth,
+            max_records_lag: 0,
+            max_lag_ns: 0,
+            max_bytes_pending: 0,
+            drop_policy: MarketDataBackpressureDropPolicy::RejectNew,
+            protected_criticality: MarketDataRecordCriticality::Critical,
+            failure_action: MarketDataPersistenceFailureAction::MarkDegraded,
+        }
+    }
+
+    /// Sets record lag bound.
+    pub const fn with_max_records_lag(mut self, max_records_lag: u64) -> Self {
+        self.max_records_lag = max_records_lag;
+        self
+    }
+
+    /// Sets nanosecond lag bound.
+    pub const fn with_max_lag_ns(mut self, max_lag_ns: u64) -> Self {
+        self.max_lag_ns = max_lag_ns;
+        self
+    }
+
+    /// Sets pending-byte bound.
+    pub const fn with_max_bytes_pending(mut self, max_bytes_pending: u64) -> Self {
+        self.max_bytes_pending = max_bytes_pending;
+        self
+    }
+
+    /// Sets drop policy.
+    pub const fn with_drop_policy(mut self, drop_policy: MarketDataBackpressureDropPolicy) -> Self {
+        self.drop_policy = drop_policy;
+        self
+    }
+
+    /// Sets minimum protected criticality.
+    pub const fn with_protected_criticality(
+        mut self,
+        protected_criticality: MarketDataRecordCriticality,
+    ) -> Self {
+        self.protected_criticality = protected_criticality;
+        self
+    }
+
+    /// Sets failure action for degraded persistence.
+    pub const fn with_failure_action(
+        mut self,
+        failure_action: MarketDataPersistenceFailureAction,
+    ) -> Self {
+        self.failure_action = failure_action;
+        self
+    }
+}
+
+impl Default for MarketDataBackpressurePolicy {
+    fn default() -> Self {
+        Self::reject_new(0)
+    }
+}
+
+/// Backpressure decision for one candidate market-data persistence record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct MarketDataBackpressureDecision {
+    /// Selected action.
+    pub action: MarketDataBackpressureAction,
+    /// Triggering reason.
+    pub reason: MarketDataBackpressureReason,
+    /// True when any backpressure condition was active.
+    pub backpressured: bool,
+    /// True when the selected action allows the candidate to be persisted.
+    pub accepts_current: bool,
+    /// True when the selected action drops a record.
+    pub drops_record: bool,
+    /// True when the selected action preserves trade records over lower-priority records.
+    pub preserves_trade: bool,
+}
+
+impl MarketDataBackpressureDecision {
+    /// Returns true when the decision is a hard stop instead of a drop/reject.
+    pub const fn is_stop(self) -> bool {
+        matches!(
+            self.action,
+            MarketDataBackpressureAction::StopMarketData
+                | MarketDataBackpressureAction::StopTrading
+                | MarketDataBackpressureAction::FailProcess
+        )
+    }
+}
+
+/// Evaluates backpressure policy for one candidate persistence record.
+pub fn evaluate_market_data_backpressure(
+    policy: MarketDataBackpressurePolicy,
+    health: &MarketDataPersistenceHealth,
+    record_kind: MarketDataWalRecordKind,
+    criticality: MarketDataRecordCriticality,
+) -> MarketDataBackpressureDecision {
+    let reason = active_backpressure_reason(policy, health);
+    if reason == MarketDataBackpressureReason::None {
+        return MarketDataBackpressureDecision {
+            action: MarketDataBackpressureAction::Accept,
+            reason,
+            backpressured: false,
+            accepts_current: true,
+            drops_record: false,
+            preserves_trade: false,
+        };
+    }
+    let action = if reason == MarketDataBackpressureReason::Degraded {
+        failure_action_to_backpressure_action(policy.failure_action)
+    } else if criticality >= policy.protected_criticality {
+        MarketDataBackpressureAction::Reject
+    } else {
+        drop_policy_to_action(policy.drop_policy, record_kind)
+    };
+    MarketDataBackpressureDecision {
+        action,
+        reason,
+        backpressured: true,
+        accepts_current: matches!(
+            action,
+            MarketDataBackpressureAction::Accept
+                | MarketDataBackpressureAction::DropQueuedOldest
+                | MarketDataBackpressureAction::DropQueuedLowestPriority
+        ),
+        drops_record: matches!(
+            action,
+            MarketDataBackpressureAction::DropCurrent
+                | MarketDataBackpressureAction::DropQueuedOldest
+                | MarketDataBackpressureAction::DropQueuedLowestPriority
+        ),
+        preserves_trade: action == MarketDataBackpressureAction::DropQueuedLowestPriority
+            && matches!(
+                policy.drop_policy,
+                MarketDataBackpressureDropPolicy::PreserveTrades
+            )
+            && record_kind == MarketDataWalRecordKind::TradePrint,
+    }
+}
+
+fn active_backpressure_reason(
+    policy: MarketDataBackpressurePolicy,
+    health: &MarketDataPersistenceHealth,
+) -> MarketDataBackpressureReason {
+    if health.degraded {
+        return MarketDataBackpressureReason::Degraded;
+    }
+    if policy.max_queue_depth > 0 && health.queue_depth >= policy.max_queue_depth {
+        return MarketDataBackpressureReason::QueueDepth;
+    }
+    if policy.max_records_lag > 0 && health.records_lag >= policy.max_records_lag {
+        return MarketDataBackpressureReason::RecordsLag;
+    }
+    if policy.max_lag_ns > 0 && health.lag_ns >= policy.max_lag_ns {
+        return MarketDataBackpressureReason::TimeLag;
+    }
+    if policy.max_bytes_pending > 0 && health.bytes_pending >= policy.max_bytes_pending {
+        return MarketDataBackpressureReason::BytesPending;
+    }
+    MarketDataBackpressureReason::None
+}
+
+fn drop_policy_to_action(
+    drop_policy: MarketDataBackpressureDropPolicy,
+    record_kind: MarketDataWalRecordKind,
+) -> MarketDataBackpressureAction {
+    match drop_policy {
+        MarketDataBackpressureDropPolicy::RejectNew => MarketDataBackpressureAction::Reject,
+        MarketDataBackpressureDropPolicy::DropNewest => MarketDataBackpressureAction::DropCurrent,
+        MarketDataBackpressureDropPolicy::DropOldest => {
+            MarketDataBackpressureAction::DropQueuedOldest
+        }
+        MarketDataBackpressureDropPolicy::DropLowestPriority => {
+            MarketDataBackpressureAction::DropQueuedLowestPriority
+        }
+        MarketDataBackpressureDropPolicy::PreserveTrades
+            if record_kind == MarketDataWalRecordKind::TradePrint =>
+        {
+            MarketDataBackpressureAction::DropQueuedLowestPriority
+        }
+        MarketDataBackpressureDropPolicy::PreserveTrades => {
+            MarketDataBackpressureAction::DropCurrent
+        }
+    }
+}
+
+fn failure_action_to_backpressure_action(
+    failure_action: MarketDataPersistenceFailureAction,
+) -> MarketDataBackpressureAction {
+    match failure_action {
+        MarketDataPersistenceFailureAction::MarkDegraded => MarketDataBackpressureAction::Reject,
+        MarketDataPersistenceFailureAction::StopMarketData => {
+            MarketDataBackpressureAction::StopMarketData
+        }
+        MarketDataPersistenceFailureAction::StopTrading => {
+            MarketDataBackpressureAction::StopTrading
+        }
+        MarketDataPersistenceFailureAction::FailProcess => {
+            MarketDataBackpressureAction::FailProcess
+        }
+        MarketDataPersistenceFailureAction::MemoryOnly => MarketDataBackpressureAction::MemoryOnly,
+    }
+}
+
 /// Single-file binary WAL for normalized market-data events.
 #[derive(Debug)]
 pub struct MarketDataWal {
@@ -1667,6 +1970,109 @@ mod tests {
         assert_eq!(health.dropped_records, 2);
         assert_eq!(health.write_failures, 1);
         assert_eq!(health.last_error.as_deref(), Some("disk full"));
+    }
+
+    #[test]
+    fn market_data_backpressure_accepts_when_under_limits() {
+        let policy = MarketDataBackpressurePolicy::reject_new(8);
+        let health = MarketDataPersistenceHealth {
+            enabled: true,
+            queue_depth: 4,
+            ..MarketDataPersistenceHealth::default()
+        };
+
+        let decision = evaluate_market_data_backpressure(
+            policy,
+            &health,
+            MarketDataWalRecordKind::BookUpdate,
+            MarketDataRecordCriticality::Normal,
+        );
+
+        assert_eq!(decision.action, MarketDataBackpressureAction::Accept);
+        assert!(!decision.backpressured);
+        assert!(decision.accepts_current);
+        assert!(!decision.drops_record);
+    }
+
+    #[test]
+    fn market_data_backpressure_preserves_trades_under_queue_pressure() {
+        let policy = MarketDataBackpressurePolicy::reject_new(8)
+            .with_drop_policy(MarketDataBackpressureDropPolicy::PreserveTrades);
+        let health = MarketDataPersistenceHealth {
+            enabled: true,
+            queue_depth: 8,
+            ..MarketDataPersistenceHealth::default()
+        };
+
+        let trade_decision = evaluate_market_data_backpressure(
+            policy,
+            &health,
+            MarketDataWalRecordKind::TradePrint,
+            MarketDataRecordCriticality::Normal,
+        );
+        let book_decision = evaluate_market_data_backpressure(
+            policy,
+            &health,
+            MarketDataWalRecordKind::BookUpdate,
+            MarketDataRecordCriticality::Normal,
+        );
+
+        assert_eq!(
+            trade_decision.action,
+            MarketDataBackpressureAction::DropQueuedLowestPriority
+        );
+        assert!(trade_decision.preserves_trade);
+        assert!(trade_decision.accepts_current);
+        assert_eq!(
+            book_decision.action,
+            MarketDataBackpressureAction::DropCurrent
+        );
+        assert!(!book_decision.accepts_current);
+    }
+
+    #[test]
+    fn market_data_backpressure_protects_critical_records() {
+        let policy = MarketDataBackpressurePolicy::reject_new(1)
+            .with_drop_policy(MarketDataBackpressureDropPolicy::DropNewest)
+            .with_protected_criticality(MarketDataRecordCriticality::High);
+        let health = MarketDataPersistenceHealth {
+            enabled: true,
+            queue_depth: 1,
+            ..MarketDataPersistenceHealth::default()
+        };
+
+        let decision = evaluate_market_data_backpressure(
+            policy,
+            &health,
+            MarketDataWalRecordKind::GapMarker,
+            MarketDataRecordCriticality::High,
+        );
+
+        assert_eq!(decision.action, MarketDataBackpressureAction::Reject);
+        assert!(decision.backpressured);
+        assert!(!decision.drops_record);
+    }
+
+    #[test]
+    fn market_data_backpressure_maps_degraded_failure_action() {
+        let policy = MarketDataBackpressurePolicy::reject_new(8)
+            .with_failure_action(MarketDataPersistenceFailureAction::StopTrading);
+        let health = MarketDataPersistenceHealth {
+            enabled: true,
+            degraded: true,
+            ..MarketDataPersistenceHealth::default()
+        };
+
+        let decision = evaluate_market_data_backpressure(
+            policy,
+            &health,
+            MarketDataWalRecordKind::TradePrint,
+            MarketDataRecordCriticality::Normal,
+        );
+
+        assert_eq!(decision.reason, MarketDataBackpressureReason::Degraded);
+        assert_eq!(decision.action, MarketDataBackpressureAction::StopTrading);
+        assert!(decision.is_stop());
     }
 
     fn temp_dir(name: &str) -> PathBuf {

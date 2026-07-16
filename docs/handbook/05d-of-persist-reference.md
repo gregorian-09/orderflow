@@ -27,6 +27,13 @@ foundation for lower-latency production capture paths.
 | `MarketDataPersistenceFailureAction` | enum | Host action when persistence degrades |
 | `MarketDataPersistencePolicy` | struct | Production persistence policy |
 | `MarketDataPersistenceHealth` | struct | Production persistence health snapshot |
+| `MarketDataRecordCriticality` | enum | Relative record importance under pressure |
+| `MarketDataBackpressureDropPolicy` | enum | Bounded writer drop strategy |
+| `MarketDataBackpressureReason` | enum | Active pressure reason |
+| `MarketDataBackpressureAction` | enum | Selected action for one candidate record |
+| `MarketDataBackpressurePolicy` | struct | Queue/lag/byte pressure thresholds |
+| `MarketDataBackpressureDecision` | struct | Evaluated action and flags |
+| `evaluate_market_data_backpressure` | function | Evaluates one candidate persistence record |
 | `MarketDataWal` | struct | Single-file binary normalized market-data WAL |
 
 ## Storage Layout
@@ -179,6 +186,19 @@ record lag, nanosecond lag, pending bytes, dropped records, WAL write/sync
 failures, and last error text. These fields are intentionally host-owned so a
 runtime can wire persistence degradation into OMS safety policy without forcing
 an async writer into `of_persist`.
+
+## Backpressure Policy
+
+`MarketDataBackpressurePolicy` evaluates writer queue depth, record lag,
+nanosecond lag, pending bytes, and degraded persistence state for one candidate
+record. `evaluate_market_data_backpressure` returns a deterministic decision
+that tells the host whether to accept, reject, drop current, drop queued oldest,
+drop queued lowest-priority, stop market data, stop trading, fail the process,
+or switch to memory-only retention.
+
+The helper does not own a queue or spawn a writer. It is a stable policy surface
+for runtimes that need explicit slow-consumer handling without silently losing
+market-data evidence.
 
 ## Ordering and Range Rules
 

@@ -24,6 +24,12 @@ production capture paths.
 - [`MarketDataPersistenceFailureAction`] - host action when persistence degrades.
 - [`MarketDataPersistencePolicy`] - configured persistence mode and failure action.
 - [`MarketDataPersistenceHealth`] - health, lag, drop, and error snapshot.
+- [`MarketDataRecordCriticality`] - relative record importance under pressure.
+- [`MarketDataBackpressureDropPolicy`] - bounded writer drop strategy.
+- [`MarketDataBackpressureReason`] - active pressure reason.
+- [`MarketDataBackpressureAction`] - selected action for one candidate record.
+- [`MarketDataBackpressurePolicy`] - queue/lag/byte pressure thresholds.
+- [`MarketDataBackpressureDecision`] - evaluated action and flags.
 - [`PersistError`] / [`PersistResult<T>`] - persistence error contract.
 
 ## New In 0.4.0
@@ -46,6 +52,8 @@ What changes for persistence users:
   blocks for production capture without replacing JSONL workflows;
 - production persistence policy and health helpers let hosts tie writer
   degradation into execution safety policy;
+- market-data backpressure helpers make slow-consumer and bounded-writer
+  behavior explicit without silently dropping records;
 - production deployments should keep market-data replay files and execution
   command/event journals correlated by strategy id, session id, and timestamp.
 
@@ -76,6 +84,12 @@ Public types:
 - [`MarketDataPersistenceFailureAction`]
 - [`MarketDataPersistencePolicy`]
 - [`MarketDataPersistenceHealth`]
+- [`MarketDataRecordCriticality`]
+- [`MarketDataBackpressureDropPolicy`]
+- [`MarketDataBackpressureReason`]
+- [`MarketDataBackpressureAction`]
+- [`MarketDataBackpressurePolicy`]
+- [`MarketDataBackpressureDecision`]
 - [`MarketDataWal`]
 
 Public methods:
@@ -115,6 +129,15 @@ Public methods:
 - [`MarketDataPersistenceHealth::with_dropped_records`]
 - [`MarketDataPersistenceHealth::with_error`]
 - [`MarketDataPersistenceHealth::is_healthy`]
+- [`MarketDataBackpressurePolicy::reject_new`]
+- [`MarketDataBackpressurePolicy::with_max_records_lag`]
+- [`MarketDataBackpressurePolicy::with_max_lag_ns`]
+- [`MarketDataBackpressurePolicy::with_max_bytes_pending`]
+- [`MarketDataBackpressurePolicy::with_drop_policy`]
+- [`MarketDataBackpressurePolicy::with_protected_criticality`]
+- [`MarketDataBackpressurePolicy::with_failure_action`]
+- [`MarketDataBackpressureDecision::is_stop`]
+- [`evaluate_market_data_backpressure`]
 
 ## Storage Layout
 
@@ -234,6 +257,27 @@ degraded, lagging, dropping records, or surfacing write/sync errors. Hosts can
 derive it from [`MarketDataWalMetrics`] with
 [`MarketDataPersistenceHealth::from_wal_metrics`] and then attach queue-depth,
 lag, pending bytes, drops, or last-error metadata from their writer.
+
+## Backpressure Policy
+
+[`MarketDataBackpressurePolicy`] evaluates writer queue depth, record lag,
+nanosecond lag, pending bytes, and degraded persistence state for one candidate
+record. It returns a [`MarketDataBackpressureDecision`] with a single action:
+accept, reject, drop the current record, ask the host queue to drop an older or
+lower-priority record, stop market data, stop trading, fail the process, or
+switch to memory-only retention.
+
+The helper is deterministic and allocation-free. Hosts still own the actual
+queue, circuit breaker, adapter disconnect, and alerting behavior.
+
+Useful policies:
+
+- [`MarketDataBackpressureDropPolicy::RejectNew`] for strict capture paths,
+- [`MarketDataBackpressureDropPolicy::DropNewest`] for best-effort diagnostics,
+- [`MarketDataBackpressureDropPolicy::DropOldest`] for bounded rolling queues,
+- [`MarketDataBackpressureDropPolicy::DropLowestPriority`] for priority queues,
+- [`MarketDataBackpressureDropPolicy::PreserveTrades`] when trades should be
+  retained before ordinary depth updates.
 
 ## Quick Example
 
