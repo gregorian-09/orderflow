@@ -139,9 +139,14 @@ Current provider notes:
   - reconnect/resubscribe and sequencing logic are implemented
 - `Binance`:
   - live websocket transport parses trade and depth events
+  - depth updates track Binance `U`/`u`/`pu` continuity per symbol
+  - duplicate depth updates are dropped before normalization
+  - update-id gaps mark the adapter degraded and schedule rebuild/reconnect handling
   - live mode schedules reconnect with backoff on disconnect or market-data timeout
   - reconnect replays active subscriptions automatically
-  - health metadata includes reconnect attempt, subscription count, and message/data ages
+  - health metadata includes reconnect attempt, subscription count, message/data
+    ages, parse errors, normalized event count, duplicate depth updates, gap
+    count, snapshot rebuild count, and queue depth
 
 ## Trait Contract
 

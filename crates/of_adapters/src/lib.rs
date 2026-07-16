@@ -253,9 +253,9 @@ const ADAPTER_DESCRIPTORS: [AdapterDescriptor; 4] = [
         supports_order_book: true,
         supports_level2: true,
         supports_reconnect: cfg!(feature = "binance"),
-        supports_gap_recovery: false,
+        supports_gap_recovery: cfg!(feature = "binance"),
         supports_polling: true,
-        notes: "feature-gated crypto adapter scaffold; streaming production path is still maturing",
+        notes: "feature-gated crypto adapter with websocket trade/depth parsing, reconnects, and depth update-id gap detection",
     },
 ];
 

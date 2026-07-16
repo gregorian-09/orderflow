@@ -203,7 +203,15 @@ offline examples.
 ### Binance
 
 - Parses public trade and depth events.
+- Tracks depth update-id continuity per symbol using Binance `U`, `u`, and
+  `pu` fields.
+- Drops duplicate depth updates before normalization.
+- Marks the adapter degraded and schedules rebuild/reconnect handling on depth
+  gaps.
 - Supervises live activity timeout and reconnects with backoff.
+- Exposes Binance health metadata for messages received, normalized events,
+  parse errors, duplicate depth updates, gap count, snapshot rebuild count, and
+  queue depth.
 
 ## Choosing `of_adapters`
 

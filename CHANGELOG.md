@@ -56,6 +56,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   research export files.
 - Added additive `of_persist` retention/tiering planner helpers for hot WAL,
   verified cold export, checkpoint dependency, and incident-window decisions.
+- Added Binance adapter depth update-id continuity tracking with duplicate
+  depth-update suppression, gap degradation, snapshot rebuild counters, and
+  expanded health metadata.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

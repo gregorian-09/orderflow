@@ -16,6 +16,47 @@ use crate::{
 const PRICE_SCALE: i64 = 1_000_000;
 const SIZE_SCALE: i64 = 1_000;
 
+#[derive(Debug, Clone, Copy, Default)]
+struct BinanceDepthState {
+    last_update_id: Option<u64>,
+}
+
+impl BinanceDepthState {
+    fn classify(
+        &mut self,
+        first_update_id: u64,
+        final_update_id: u64,
+        previous_update_id: Option<u64>,
+    ) -> BinanceDepthDecision {
+        let last = self.last_update_id;
+        if let Some(last_update_id) = last {
+            if final_update_id <= last_update_id {
+                return BinanceDepthDecision::Duplicate;
+            }
+            if let Some(previous_update_id) = previous_update_id {
+                if previous_update_id != last_update_id {
+                    return BinanceDepthDecision::Gap;
+                }
+            } else if first_update_id <= last_update_id {
+                self.last_update_id = Some(final_update_id);
+                return BinanceDepthDecision::ApplyOutOfOrder;
+            } else if first_update_id > last_update_id.saturating_add(1) {
+                return BinanceDepthDecision::Gap;
+            }
+        }
+        self.last_update_id = Some(final_update_id);
+        BinanceDepthDecision::Apply
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BinanceDepthDecision {
+    Apply,
+    ApplyOutOfOrder,
+    Duplicate,
+    Gap,
+}
+
 /// Resolved Binance adapter configuration.
 #[derive(Debug, Clone)]
 pub struct BinanceConfig {
@@ -203,9 +244,17 @@ pub struct BinanceAdapter {
     degraded: bool,
     last_error: Option<String>,
     subscribed: HashMap<SymbolId, u16>,
+    depth_state: HashMap<SymbolId, BinanceDepthState>,
     queue: VecDeque<RawEvent>,
     seq: u64,
     request_id: u64,
+    messages_received: u64,
+    normalized_events: u64,
+    parse_errors: u64,
+    duplicate_depth_updates: u64,
+    out_of_order_depth_updates: u64,
+    gap_count: u64,
+    snapshot_rebuild_count: u64,
     reconnect_attempt: u32,
     next_reconnect_at: Option<Instant>,
     last_message_at: Option<Instant>,
@@ -229,9 +278,17 @@ impl BinanceAdapter {
             degraded: false,
             last_error: None,
             subscribed: HashMap::new(),
+            depth_state: HashMap::new(),
             queue: VecDeque::new(),
             seq: 0,
             request_id: 0,
+            messages_received: 0,
+            normalized_events: 0,
+            parse_errors: 0,
+            duplicate_depth_updates: 0,
+            out_of_order_depth_updates: 0,
+            gap_count: 0,
+            snapshot_rebuild_count: 0,
             reconnect_attempt: 0,
             next_reconnect_at: None,
             last_message_at: None,
@@ -308,6 +365,7 @@ impl BinanceAdapter {
 
     fn parse_live_message(&mut self, msg: &str) {
         self.last_message_at = Some(Instant::now());
+        self.messages_received = self.messages_received.saturating_add(1);
         let payload = extract_data_object(msg).unwrap_or(msg);
         if payload.contains("\"result\":null") || payload.contains("\"type\":\"subscribed\"") {
             self.healthy_since.get_or_insert_with(Instant::now);
@@ -325,8 +383,11 @@ impl BinanceAdapter {
         if payload.contains("\"e\":\"aggTrade\"") {
             if let Some(trade) = parse_agg_trade(payload, &mut self.seq) {
                 self.queue.push_back(RawEvent::Trade(trade));
+                self.normalized_events = self.normalized_events.saturating_add(1);
                 self.last_market_data_at = Some(Instant::now());
                 self.healthy_since.get_or_insert_with(Instant::now);
+            } else {
+                self.parse_errors = self.parse_errors.saturating_add(1);
             }
             return;
         }
@@ -334,17 +395,56 @@ impl BinanceAdapter {
         if payload.contains("\"e\":\"depthUpdate\"") {
             let symbol = match extract_string_field(payload, "s") {
                 Some(s) => s.to_string(),
-                None => return,
+                None => {
+                    self.parse_errors = self.parse_errors.saturating_add(1);
+                    return;
+                }
             };
             let sym_id = SymbolId {
                 venue: "BINANCE".to_string(),
                 symbol,
             };
             let depth_limit = self.subscribed.get(&sym_id).copied().unwrap_or(10) as usize;
-            let sequence = extract_u64_field(payload, "u").unwrap_or_else(|| {
-                self.seq = self.seq.saturating_add(1);
-                self.seq
-            });
+            let first_update_id = extract_u64_field(payload, "U");
+            let final_update_id = extract_u64_field(payload, "u");
+            let Some(final_update_id) = final_update_id else {
+                self.parse_errors = self.parse_errors.saturating_add(1);
+                return;
+            };
+            let first_update_id = first_update_id.unwrap_or(final_update_id);
+            let previous_update_id = extract_u64_field(payload, "pu");
+            match self
+                .depth_state
+                .entry(sym_id.clone())
+                .or_default()
+                .classify(first_update_id, final_update_id, previous_update_id)
+            {
+                BinanceDepthDecision::Apply => {}
+                BinanceDepthDecision::ApplyOutOfOrder => {
+                    self.out_of_order_depth_updates =
+                        self.out_of_order_depth_updates.saturating_add(1);
+                }
+                BinanceDepthDecision::Duplicate => {
+                    self.duplicate_depth_updates = self.duplicate_depth_updates.saturating_add(1);
+                    return;
+                }
+                BinanceDepthDecision::Gap => {
+                    self.gap_count = self.gap_count.saturating_add(1);
+                    self.snapshot_rebuild_count = self.snapshot_rebuild_count.saturating_add(1);
+                    self.degraded = true;
+                    self.healthy_since = None;
+                    self.last_error = Some(format!(
+                        "binance depth gap symbol={} first_update_id={} final_update_id={} previous_update_id={:?}",
+                        sym_id.symbol, first_update_id, final_update_id, previous_update_id
+                    ));
+                    self.depth_state.remove(&sym_id);
+                    if self.next_reconnect_at.is_none() {
+                        self.schedule_reconnect();
+                    }
+                    return;
+                }
+            }
+            let sequence = final_update_id;
             let ts_exchange_ns = extract_u64_field(payload, "E")
                 .map(|ms| ms.saturating_mul(1_000_000))
                 .unwrap_or_else(Self::now_ns);
@@ -370,6 +470,7 @@ impl BinanceAdapter {
                     ts_exchange_ns,
                     ts_recv_ns,
                 }));
+                self.normalized_events = self.normalized_events.saturating_add(1);
             }
             for (level, (price, size)) in extract_depth_pairs(payload, "a")
                 .into_iter()
@@ -391,6 +492,7 @@ impl BinanceAdapter {
                     ts_exchange_ns,
                     ts_recv_ns,
                 }));
+                self.normalized_events = self.normalized_events.saturating_add(1);
             }
             self.last_market_data_at = Some(Instant::now());
             self.healthy_since.get_or_insert_with(Instant::now);
@@ -423,6 +525,7 @@ impl BinanceAdapter {
         }
         self.connected = true;
         let existing: Vec<SymbolId> = self.subscribed.keys().cloned().collect();
+        self.depth_state.clear();
         for sym in existing {
             self.send_binance_subscribe(&sym)?;
         }
@@ -504,11 +607,13 @@ impl MarketDataAdapter for BinanceAdapter {
         }
         if req.depth_levels == 0 {
             self.subscribed.remove(&req.symbol);
+            self.depth_state.remove(&req.symbol);
             self.send_binance_unsubscribe(&req.symbol)?;
             return Ok(());
         }
 
         self.subscribed.insert(req.symbol.clone(), req.depth_levels);
+        self.depth_state.remove(&req.symbol);
         if self.is_mock_mode() {
             self.synth_trade(&req.symbol);
             return Ok(());
@@ -522,6 +627,7 @@ impl MarketDataAdapter for BinanceAdapter {
             return Err(AdapterError::Disconnected);
         }
         self.subscribed.remove(&symbol);
+        self.depth_state.remove(&symbol);
         self.send_binance_unsubscribe(&symbol)
     }
 
@@ -591,6 +697,7 @@ impl MarketDataAdapter for BinanceAdapter {
             .last_market_data_at
             .map(|t| t.elapsed().as_millis() as u64)
             .unwrap_or(0);
+        let queue_depth = self.queue.len();
         AdapterHealth {
             connected: self.connected
                 && match &self.transport {
@@ -600,10 +707,17 @@ impl MarketDataAdapter for BinanceAdapter {
             degraded: self.degraded,
             last_error: self.last_error.clone(),
             protocol_info: Some(format!(
-                "provider=binance;market=crypto;mode={mode};endpoint={};reconnect_attempt={};subscribed={};last_message_age_ms={last_message_age_ms};last_market_data_age_ms={last_market_data_age_ms}",
+                "provider=binance;market=crypto;mode={mode};endpoint={};reconnect_attempt={};subscribed={};messages_received={};normalized_events={};parse_errors={};duplicate_depth_updates={};out_of_order_depth_updates={};gap_count={};snapshot_rebuild_count={};queue_depth={queue_depth};last_message_age_ms={last_message_age_ms};last_market_data_age_ms={last_market_data_age_ms}",
                 self.cfg.endpoint,
                 self.reconnect_attempt,
-                self.subscribed.len()
+                self.subscribed.len(),
+                self.messages_received,
+                self.normalized_events,
+                self.parse_errors,
+                self.duplicate_depth_updates,
+                self.out_of_order_depth_updates,
+                self.gap_count,
+                self.snapshot_rebuild_count
             )),
         }
     }
@@ -1068,6 +1182,105 @@ mod tests {
             .protocol_info
             .unwrap_or_default()
             .contains("subscribed=1"));
+    }
+
+    #[test]
+    fn live_mode_drops_duplicate_depth_updates() {
+        let mut adapter = BinanceAdapter::from_config(&cfg("ws://test.live/ws")).expect("cfg");
+        adapter.connect().expect("connect");
+        let symbol = SymbolId {
+            venue: "BINANCE".to_string(),
+            symbol: "BTCUSDT".to_string(),
+        };
+        adapter
+            .subscribe(SubscribeReq {
+                symbol,
+                depth_levels: 5,
+            })
+            .expect("sub");
+
+        if let BinanceTransport::Live(ws) = &mut adapter.transport {
+            ws.inject_text(r#"{"e":"depthUpdate","E":1710000000123,"s":"BTCUSDT","U":157,"u":160,"b":[["66107.97","1.99161"]],"a":[]}"#);
+            ws.inject_text(r#"{"e":"depthUpdate","E":1710000000124,"s":"BTCUSDT","U":157,"u":160,"b":[["66107.96","2.00000"]],"a":[]}"#);
+        }
+
+        let mut out = Vec::new();
+        adapter.poll(&mut out).expect("poll");
+        let protocol = adapter.health().protocol_info.unwrap_or_default();
+
+        assert_eq!(
+            out.iter()
+                .filter(|event| matches!(event, RawEvent::Book(_)))
+                .count(),
+            1
+        );
+        assert!(protocol.contains("duplicate_depth_updates=1"));
+        assert!(protocol.contains("gap_count=0"));
+    }
+
+    #[test]
+    fn live_mode_detects_depth_update_gap_from_previous_update_id() {
+        let mut adapter = BinanceAdapter::from_config(&cfg("ws://test.live/ws")).expect("cfg");
+        adapter.connect().expect("connect");
+        let symbol = SymbolId {
+            venue: "BINANCE".to_string(),
+            symbol: "BTCUSDT".to_string(),
+        };
+        adapter
+            .subscribe(SubscribeReq {
+                symbol,
+                depth_levels: 5,
+            })
+            .expect("sub");
+
+        if let BinanceTransport::Live(ws) = &mut adapter.transport {
+            ws.inject_text(r#"{"e":"depthUpdate","E":1710000000123,"s":"BTCUSDT","U":157,"u":160,"b":[["66107.97","1.99161"]],"a":[]}"#);
+            ws.inject_text(r#"{"e":"depthUpdate","E":1710000000124,"s":"BTCUSDT","U":170,"u":175,"pu":169,"b":[["66107.96","2.00000"]],"a":[]}"#);
+        }
+
+        let mut out = Vec::new();
+        adapter.poll(&mut out).expect("poll");
+        let health = adapter.health();
+        let protocol = health.protocol_info.unwrap_or_default();
+
+        assert!(health.degraded);
+        assert!(adapter.next_reconnect_at.is_some());
+        assert!(protocol.contains("gap_count=1"));
+        assert!(protocol.contains("snapshot_rebuild_count=1"));
+        assert!(adapter
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("binance depth gap"));
+        assert_eq!(
+            out.iter()
+                .filter(|event| matches!(event, RawEvent::Book(_)))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn depth_state_accepts_contiguous_previous_update_id() {
+        let mut state = BinanceDepthState::default();
+
+        assert_eq!(state.classify(157, 160, None), BinanceDepthDecision::Apply);
+        assert_eq!(
+            state.classify(161, 165, Some(160)),
+            BinanceDepthDecision::Apply
+        );
+        assert_eq!(
+            state.classify(164, 166, None),
+            BinanceDepthDecision::ApplyOutOfOrder
+        );
+        assert_eq!(
+            state.classify(161, 165, Some(160)),
+            BinanceDepthDecision::Duplicate
+        );
+        assert_eq!(
+            state.classify(180, 185, Some(179)),
+            BinanceDepthDecision::Gap
+        );
     }
 
     #[test]
