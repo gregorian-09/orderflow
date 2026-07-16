@@ -139,6 +139,17 @@ OMS helpers:
 - [`reconcile_open_orders`]
 - [`reconcile_open_orders_detailed`]
 - [`evaluate_reconciliation_policy`]
+- [`AllocationMethod`]
+- [`AllocationLeg`]
+- [`AllocationGroup`]
+- [`AllocationFill`]
+- [`AllocationReport`]
+- [`AllocationError`]
+- [`AllocationReconciliationIssue`]
+- [`AllocationReconciliationDetail`]
+- [`AllocationReconciliationReport`]
+- [`allocate_block_fill`]
+- [`reconcile_allocations`]
 - [`DisconnectPolicy`]
 - [`RouteSafetyPolicy`]
 - [`AdvancedRiskLimits`]
@@ -759,6 +770,23 @@ host action completes.
 [`ExecutionEngine::reconcile_open_orders_with`] and
 [`ExecutionEngine::evaluate_reconciliation`] apply the same logic to the
 engine's current local non-terminal orders and a venue open-order snapshot.
+
+### Multi-account allocation
+
+[`AllocationGroup`] defines optional post-trade allocation across account,
+route, and strategy legs. [`allocate_block_fill`] supports deterministic
+average-price block allocation with:
+
+- [`AllocationMethod::Proportional`] using largest-remainder balancing, and
+- [`AllocationMethod::Priority`] using priority and target quantities.
+
+[`AllocationReport`] records the balanced allocated quantity, average price, and
+per-leg [`AllocationFill`] values. [`reconcile_allocations`] compares expected
+and actual fills with allocation-native mismatch classes such as missing actual
+fills, unexpected actual fills, quantity mismatch, and price mismatch. These
+helpers do not submit child orders or mutate OMS state; hosts decide when to
+emit allocations to middle-office, FIX allocation, file export, or accounting
+systems.
 
 ### Safety policies
 

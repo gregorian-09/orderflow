@@ -22,6 +22,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `ExecutionEngine::audit_bundle_manifest()` and
   `ExecutionEngine::audit_bundle_manifest_at(...)` for read-only OMS incident
   export inventories.
+- Added optional multi-account allocation primitives with proportional and
+  priority average-price allocation reports plus allocation reconciliation.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

@@ -313,6 +313,7 @@ The `oms` module is re-exported from `of_execution`.
 | Lifecycle | `ExecutionLifecycle`, `ExecutionAdapterState`, `ExecutionLifecycleSnapshot` |
 | Durable journal | `FileExecutionJournal` |
 | Reconciliation | `reconcile_open_orders`, `reconcile_open_orders_detailed`, `evaluate_reconciliation_policy`, `ReconciliationReport`, `VenueReconciliationReport`, `ReconciliationPolicy` |
+| Allocation | `AllocationGroup`, `AllocationLeg`, `AllocationMethod`, `AllocationReport`, `allocate_block_fill`, `reconcile_allocations` |
 | Safety policies | `DisconnectPolicy`, `RouteSafetyPolicy` |
 | Advanced risk | `AdvancedRiskLimits`, `AdvancedRiskGate` |
 | Ledger | `PositionLedger`, `Position`, `PositionKey` |
