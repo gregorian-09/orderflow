@@ -20,6 +20,7 @@ The first foundation focuses on deterministic parent/child order handling:
 - progress folding from canonical `ExecutionEvent` reports,
 - deterministic TWAP slice planning with explicit clip limits,
 - deterministic POV/participation planning from observed market volume,
+- deterministic VWAP planning from a borrowed cumulative volume curve,
 - deterministic TWAP replay over explicit timer/execution/status inputs.
 
 The crate does not submit orders, open sockets, own an OMS, bypass risk, or
@@ -163,6 +164,59 @@ let plan = planner
         2_000,
     )?
     .expect("volume participation slice is due");
+
+assert_eq!(plan.request().quantity, OrderQty(25));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## VWAP Example
+
+`VwapSlicePlanner` follows a historical or configured cumulative volume curve.
+The curve is borrowed and pre-cumulative so live planning does not sum the
+profile on every decision.
+
+```rust
+use of_execution_algos::{
+    AlgoProgress, ChildOrderId, ParentOrder, ParentOrderId, VwapSlicePlanner,
+    VwapVolumeCurve,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let curve = VwapVolumeCurve::new(1_000, 1_000, &[10, 30, 60, 100])?;
+let planner = VwapSlicePlanner::new(curve);
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-1")?,
+    AccountId::new("acct")?,
+    RouteId::new("sim")?,
+    StrategyId::new("vwap")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+
+let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+let plan = planner
+    .plan_curve_slice(
+        &parent,
+        progress,
+        2_000,
+        ChildOrderId::new("child-1")?,
+        ClientOrderId::new("cl-1")?,
+        2_000,
+    )?
+    .expect("curve slice is due");
 
 assert_eq!(plan.request().quantity, OrderQty(25));
 # Ok::<(), Box<dyn std::error::Error>>(())

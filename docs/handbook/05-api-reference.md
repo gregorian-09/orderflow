@@ -601,6 +601,8 @@ Public parent/child and decision types:
 - `AlgoReplaySummary`
 - `replay_twap_into`
 - `PovSlicePlanner`
+- `VwapVolumeCurve`
+- `VwapSlicePlanner`
 
 Public constants:
 

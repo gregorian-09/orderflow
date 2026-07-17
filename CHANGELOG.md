@@ -135,6 +135,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added deterministic POV participation planning in `of_execution_algos` with
   target/max participation rates, parent participation caps, observed volume
   inputs, and explicit clip handling.
+- Added deterministic VWAP curve planning in `of_execution_algos` with borrowed
+  cumulative volume profiles, O(1) bucket lookup, and explicit clip handling.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

@@ -141,6 +141,8 @@ pub enum AlgoError {
     GeneratedIdentifierTooLong,
     /// Participation rate must be positive and no greater than the cap.
     InvalidParticipationRate,
+    /// VWAP volume profile is empty, non-monotonic, or has zero total weight.
+    InvalidVolumeProfile,
 }
 
 impl fmt::Display for AlgoError {
@@ -161,6 +163,7 @@ impl fmt::Display for AlgoError {
             Self::InvalidParticipationRate => {
                 write!(f, "participation rate must be positive and <= cap")
             }
+            Self::InvalidVolumeProfile => write!(f, "invalid VWAP volume profile"),
         }
     }
 }
@@ -904,6 +907,178 @@ impl PovSlicePlanner {
     }
 }
 
+/// Borrowed cumulative volume curve for VWAP planning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VwapVolumeCurve<'a> {
+    start_ns: u64,
+    bucket_interval_ns: u64,
+    cumulative_weights: &'a [u64],
+}
+
+impl<'a> VwapVolumeCurve<'a> {
+    /// Creates a borrowed cumulative VWAP volume curve.
+    ///
+    /// `cumulative_weights` must be non-empty, strictly positive at the end,
+    /// and monotonically non-decreasing. The last element is the total expected
+    /// volume weight for the parent interval.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError::InvalidVolumeProfile`] when the interval is zero,
+    /// the curve is empty, total weight is zero, or cumulative weights regress.
+    pub fn new(
+        start_ns: u64,
+        bucket_interval_ns: u64,
+        cumulative_weights: &'a [u64],
+    ) -> Result<Self, AlgoError> {
+        if bucket_interval_ns == 0 || cumulative_weights.is_empty() {
+            return Err(AlgoError::InvalidVolumeProfile);
+        }
+        let Some(total) = cumulative_weights.last().copied() else {
+            return Err(AlgoError::InvalidVolumeProfile);
+        };
+        if total == 0 {
+            return Err(AlgoError::InvalidVolumeProfile);
+        }
+        let mut previous = 0_u64;
+        for weight in cumulative_weights {
+            if *weight < previous {
+                return Err(AlgoError::InvalidVolumeProfile);
+            }
+            previous = *weight;
+        }
+        Ok(Self {
+            start_ns,
+            bucket_interval_ns,
+            cumulative_weights,
+        })
+    }
+
+    /// Returns curve start timestamp.
+    pub const fn start_ns(&self) -> u64 {
+        self.start_ns
+    }
+
+    /// Returns bucket interval in nanoseconds.
+    pub const fn bucket_interval_ns(&self) -> u64 {
+        self.bucket_interval_ns
+    }
+
+    /// Returns cumulative profile weights.
+    pub const fn cumulative_weights(&self) -> &'a [u64] {
+        self.cumulative_weights
+    }
+
+    /// Returns total curve weight.
+    pub fn total_weight(&self) -> u64 {
+        self.cumulative_weights
+            .last()
+            .copied()
+            .expect("validated curve is non-empty")
+    }
+
+    fn cumulative_weight_at(&self, now_ns: u64) -> u64 {
+        if now_ns < self.start_ns {
+            return 0;
+        }
+        let elapsed = now_ns.saturating_sub(self.start_ns);
+        let index = (elapsed / self.bucket_interval_ns) as usize;
+        let capped = index.min(self.cumulative_weights.len().saturating_sub(1));
+        self.cumulative_weights[capped]
+    }
+}
+
+/// Deterministic VWAP child slice planner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VwapSlicePlanner<'a> {
+    curve: VwapVolumeCurve<'a>,
+}
+
+impl<'a> VwapSlicePlanner<'a> {
+    /// Creates a VWAP planner from a validated volume curve.
+    pub const fn new(curve: VwapVolumeCurve<'a>) -> Self {
+        Self { curve }
+    }
+
+    /// Returns the borrowed volume curve.
+    pub const fn curve(&self) -> VwapVolumeCurve<'a> {
+        self.curve
+    }
+
+    /// Plans one child slice from the expected cumulative volume curve.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError`] when parent/progress state is invalid or the
+    /// generated child order would be invalid.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "caller owns identifiers and timestamps"
+    )]
+    pub fn plan_curve_slice(
+        &self,
+        parent: &ParentOrder,
+        progress: AlgoProgress,
+        now_ns: u64,
+        child_id: ChildOrderId,
+        client_order_id: ClientOrderId,
+        ts_recv_ns: u64,
+    ) -> Result<Option<ChildOrderPlan>, AlgoError> {
+        parent.validate()?;
+        if parent.status().is_terminal() {
+            return Err(AlgoError::ParentTerminal);
+        }
+        if progress.parent_id() != parent.id() || progress.target_qty() != parent.total_qty() {
+            return Err(AlgoError::InvalidProgress);
+        }
+        if now_ns < parent.start_ns() || progress.is_complete() {
+            return Ok(None);
+        }
+
+        let cumulative_weight = self.curve.cumulative_weight_at(now_ns);
+        if cumulative_weight == 0 {
+            return Ok(None);
+        }
+        let desired = vwap_target_qty(
+            parent.total_qty().0,
+            cumulative_weight,
+            self.curve.total_weight(),
+        );
+        let due_qty = desired.saturating_sub(progress.released_qty().0);
+        if due_qty <= 0 {
+            return Ok(None);
+        }
+
+        let leaves = parent
+            .total_qty()
+            .0
+            .saturating_sub(progress.released_qty().0);
+        let mut child_qty = due_qty.min(parent.max_clip().0).min(leaves);
+        let final_slice = progress.released_qty().0.saturating_add(child_qty)
+            >= parent.total_qty().0
+            || now_ns >= parent.end_ns();
+        if child_qty < parent.min_clip().0 && !final_slice {
+            return Ok(None);
+        }
+        if child_qty <= 0 {
+            return Ok(None);
+        }
+        child_qty = child_qty.min(
+            parent
+                .total_qty()
+                .0
+                .saturating_sub(progress.released_qty().0),
+        );
+        let request = parent.build_order_request(client_order_id, OrderQty(child_qty), ts_recv_ns);
+        Ok(Some(ChildOrderPlan::new(
+            child_id,
+            parent.id(),
+            request,
+            now_ns,
+        )?))
+    }
+}
+
 /// Replay event consumed by an algorithm harness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1162,6 +1337,11 @@ fn div_ceil_i128(lhs: i128, rhs: i128) -> i128 {
 fn participation_qty(volume: i64, bps: u16) -> i64 {
     let value = i128::from(volume) * i128::from(bps);
     i64::try_from(value / 10_000).unwrap_or(i64::MAX)
+}
+
+fn vwap_target_qty(parent_qty: i64, cumulative_weight: u64, total_weight: u64) -> i64 {
+    let value = i128::from(parent_qty) * i128::from(cumulative_weight);
+    i64::try_from(value / i128::from(total_weight)).unwrap_or(i64::MAX)
 }
 
 fn fixed_id_with_index<const N: usize>(
@@ -1630,6 +1810,61 @@ mod tests {
                 2_000,
             ),
             Err(AlgoError::InvalidParticipationRate)
+        );
+    }
+
+    #[test]
+    fn vwap_plans_from_cumulative_curve() {
+        let parent = parent();
+        let curve = VwapVolumeCurve::new(1_000, 1_000, &[10, 30, 60, 100]).expect("curve");
+        let planner = VwapSlicePlanner::new(curve);
+        let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+
+        let child = planner
+            .plan_curve_slice(
+                &parent,
+                progress,
+                2_000,
+                ChildOrderId::new("child-vwap").expect("child"),
+                ClientOrderId::new("cl-vwap").expect("client"),
+                2_000,
+            )
+            .expect("plan")
+            .expect("due");
+
+        assert_eq!(child.request().quantity, OrderQty(25));
+    }
+
+    #[test]
+    fn vwap_waits_for_min_clip() {
+        let parent = parent();
+        let curve = VwapVolumeCurve::new(1_000, 1_000, &[1, 2, 100]).expect("curve");
+        let planner = VwapSlicePlanner::new(curve);
+        let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+
+        let child = planner
+            .plan_curve_slice(
+                &parent,
+                progress,
+                1_000,
+                ChildOrderId::new("child-small").expect("child"),
+                ClientOrderId::new("cl-small").expect("client"),
+                1_000,
+            )
+            .expect("plan");
+
+        assert!(child.is_none());
+    }
+
+    #[test]
+    fn vwap_rejects_invalid_curve() {
+        assert_eq!(
+            VwapVolumeCurve::new(1, 1, &[10, 9]),
+            Err(AlgoError::InvalidVolumeProfile)
+        );
+        assert_eq!(
+            VwapVolumeCurve::new(1, 0, &[10]),
+            Err(AlgoError::InvalidVolumeProfile)
         );
     }
 }

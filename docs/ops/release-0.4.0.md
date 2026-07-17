@@ -141,6 +141,9 @@ foundation:
 - deterministic `PovSlicePlanner` for volume-responsive participation planning
   from observed market volume, target/max participation bps, parent caps, and
   explicit clip limits
+- deterministic `VwapVolumeCurve` and `VwapSlicePlanner` for historical
+  volume-curve execution using borrowed cumulative weights and O(1) bucket
+  lookup on the planning path
 
 The crate does not bypass OMS risk, journaling, adapter capability checks, kill
 switches, or reconciliation. Hosts should submit child orders through

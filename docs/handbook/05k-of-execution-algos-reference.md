@@ -51,6 +51,8 @@ Lifecycle and planning types:
 - `AlgoReplaySummary`
 - `replay_twap_into`
 - `PovSlicePlanner`
+- `VwapVolumeCurve`
+- `VwapSlicePlanner`
 
 ## Parent Orders
 
@@ -310,6 +312,70 @@ let child = planner
         &parent,
         progress,
         OrderQty::new(1_000)?,
+        2_000,
+        ChildOrderId::new("child-1")?,
+        ClientOrderId::new("cl-1")?,
+        2_000,
+    )?
+    .expect("slice due");
+
+assert_eq!(child.request().quantity, OrderQty(25));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## VWAP Planner
+
+`VwapSlicePlanner` follows a borrowed cumulative volume profile. The profile is
+pre-cumulative so live planning can read one bucket and avoid summing a full
+curve on every timer tick.
+
+`VwapVolumeCurve` requires:
+
+- non-empty cumulative weights,
+- positive final total weight,
+- non-decreasing cumulative values,
+- positive bucket interval.
+
+The planner maps elapsed time to a profile bucket, computes the target parent
+quantity from cumulative weight divided by total weight, subtracts released
+quantity, and applies the same min/max clip rules used by TWAP and POV.
+
+```rust
+use of_execution_algos::{
+    AlgoProgress, ChildOrderId, ParentOrder, ParentOrderId, VwapSlicePlanner,
+    VwapVolumeCurve,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let curve = VwapVolumeCurve::new(1_000, 1_000, &[10, 30, 60, 100])?;
+let planner = VwapSlicePlanner::new(curve);
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-1")?,
+    AccountId::new("acct")?,
+    RouteId::new("sim")?,
+    StrategyId::new("vwap")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+
+let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+let child = planner
+    .plan_curve_slice(
+        &parent,
+        progress,
         2_000,
         ChildOrderId::new("child-1")?,
         ClientOrderId::new("cl-1")?,
