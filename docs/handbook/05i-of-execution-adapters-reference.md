@@ -7,13 +7,13 @@ core execution crate.
 
 Current adapter scaffold:
 
-- `fix` feature: FIX execution-report mapping and adapter shell.
+- `fix` feature: FIX execution-report parsing, mapping, and adapter shell.
 
 ## Feature Flags
 
 | Feature | Purpose |
 | --- | --- |
-| `fix` | Enables FIX execution adapter scaffold and report mapper |
+| `fix` | Enables FIX execution adapter scaffold, `of_fix` parser bridge, and report mapper |
 
 The crate should stay dependency-light. New providers should be optional
 features unless they are pure standard-library mappings.
@@ -25,8 +25,11 @@ It contains:
 
 - `FixSessionConfig`
 - `FixExecutionReport`
+- `FixReportParseConfig`
+- `FixReportParseError`
 - `FixExecType`
 - `FixOrdStatus`
+- `parse_execution_report`
 - `map_execution_report`
 - `FixExecutionAdapter`
 
@@ -45,8 +48,9 @@ the execution core.
 ### `FixExecutionReport`
 
 This is the normalized result of parsing a FIX execution report. It is not the
-raw tag map. A real FIX adapter should parse transport bytes into this struct
-or an equivalent internal representation, then call `map_execution_report`.
+raw tag map. A real FIX adapter can parse transport bytes with `of_fix`, convert
+the validated message view with `parse_execution_report`, then call
+`map_execution_report`.
 
 Important fields:
 
@@ -68,6 +72,33 @@ Important fields:
 - `ts_recv_ns`
 - `text`
 
+### `FixReportParseConfig`
+
+`FixReportParseConfig` supplies session context for converting a raw
+`of_fix::FixMessageView` into a canonical report:
+
+- default account id when `Account(1)` is absent;
+- route id associated with the FIX session;
+- venue id attached to `Symbol(55)`;
+- quantity scale for integer-normalized `OrderQty`;
+- price scale for integer-normalized `OrderPrice`.
+
+The scale fields keep decimal policy explicit. A quantity scale of `100` maps
+`LastQty(32)=1.25` to `OrderQty(125)`.
+
+### `parse_execution_report`
+
+`parse_execution_report(message, config, ts_recv_ns)` converts a validated
+FIX `ExecutionReport(35=8)` into `FixExecutionReport`.
+
+It fails closed when:
+
+- `MsgType(35)` is not `8`;
+- required identifiers are missing;
+- `ExecType(150)` or `OrdStatus(39)` is unsupported;
+- a fixed-size ASCII field is too long or non-ASCII;
+- a decimal field cannot be represented with the configured scale.
+
 ### Mapping Semantics
 
 `map_execution_report` converts FIX-style `ExecType` and `OrdStatus` into the
@@ -85,8 +116,9 @@ Examples:
 | Replaced | `ExecutionType::ReplaceAck`, `OrderStatus::Replaced` |
 | Restated | `ExecutionType::Restated` |
 
-The mapper is deliberately narrow. It does not hide transport behavior,
-sequence recovery, session reset, resend, or store management.
+The parser and mapper are deliberately narrow. They do not hide transport
+behavior, sequence recovery, session reset, resend, duplicate suppression, or
+store management.
 
 ## `FixExecutionAdapter`
 

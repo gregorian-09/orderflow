@@ -5,10 +5,14 @@ use of_execution::{
     ExecutionResult, LatencyClass,
 };
 use of_execution_core::{
-    AccountId, AmendRequest, CancelRequest, ClientOrderId, ExecutionEvent, ExecutionId,
-    ExecutionSymbol, ExecutionText, ExecutionType, FixedAscii, OrderPrice, OrderQty, OrderRequest,
-    OrderStatus, RiskRejectReason, RouteId, VenueOrderId,
+    AccountId, AmendRequest, CancelRequest, ClientOrderId, ExecutionCoreError, ExecutionEvent,
+    ExecutionId, ExecutionSymbol, ExecutionText, ExecutionType, FixedAscii, InstrumentId,
+    OrderPrice, OrderQty, OrderRequest, OrderStatus, RiskRejectReason, RouteId, VenueId,
+    VenueOrderId,
 };
+use of_fix::{FixMessageView, FixMsgType, FixTag};
+use std::error::Error;
+use std::fmt;
 
 /// FIX sender/target configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +87,95 @@ pub struct FixExecutionReport {
     pub text: ExecutionText,
 }
 
+/// Context required to map raw FIX execution reports into canonical OMS fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixReportParseConfig {
+    /// Default account used when `Account(1)` is absent.
+    pub account_id: AccountId,
+    /// Route associated with this FIX session.
+    pub route_id: RouteId,
+    /// Venue/exchange identifier assigned to parsed `Symbol(55)` values.
+    pub venue: VenueId,
+    /// Decimal scale for quantity fields. For example, `100` maps `1.25` to
+    /// `OrderQty(125)`.
+    pub quantity_scale: i64,
+    /// Decimal scale for price fields. For example, `10` maps `65000.5` to
+    /// `OrderPrice(650005)`.
+    pub price_scale: i64,
+}
+
+impl FixReportParseConfig {
+    /// Creates a parse config with unit quantity and price scales.
+    pub const fn new(account_id: AccountId, route_id: RouteId, venue: VenueId) -> Self {
+        Self {
+            account_id,
+            route_id,
+            venue,
+            quantity_scale: 1,
+            price_scale: 1,
+        }
+    }
+
+    /// Sets the quantity scale. Values lower than one are clamped to one.
+    pub const fn with_quantity_scale(mut self, quantity_scale: i64) -> Self {
+        self.quantity_scale = if quantity_scale < 1 {
+            1
+        } else {
+            quantity_scale
+        };
+        self
+    }
+
+    /// Sets the price scale. Values lower than one are clamped to one.
+    pub const fn with_price_scale(mut self, price_scale: i64) -> Self {
+        self.price_scale = if price_scale < 1 { 1 } else { price_scale };
+        self
+    }
+}
+
+/// Errors returned while converting a parsed FIX execution report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FixReportParseError {
+    /// The message is not `ExecutionReport(35=8)`.
+    InvalidMsgType,
+    /// A required tag is missing.
+    MissingTag(FixTag),
+    /// `ExecType(150)` is not supported by the mapper.
+    InvalidExecType,
+    /// `OrdStatus(39)` is not supported by the mapper.
+    InvalidOrdStatus,
+    /// A fixed ASCII canonical field could not be built from this tag.
+    InvalidAscii {
+        /// Source FIX tag.
+        tag: FixTag,
+        /// Underlying execution-core validation error.
+        source: ExecutionCoreError,
+    },
+    /// A numeric field could not be parsed or scaled.
+    InvalidNumber(FixTag),
+}
+
+impl fmt::Display for FixReportParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidMsgType => write!(f, "FIX message is not an ExecutionReport(35=8)"),
+            Self::MissingTag(tag) => write!(f, "FIX execution report is missing tag {tag}"),
+            Self::InvalidExecType => write!(f, "FIX ExecType(150) is unsupported"),
+            Self::InvalidOrdStatus => write!(f, "FIX OrdStatus(39) is unsupported"),
+            Self::InvalidAscii { tag, source } => {
+                write!(
+                    f,
+                    "FIX tag {tag} cannot be converted to fixed ASCII: {source}"
+                )
+            }
+            Self::InvalidNumber(tag) => write!(f, "FIX numeric tag {tag} is invalid"),
+        }
+    }
+}
+
+impl Error for FixReportParseError {}
+
 /// FIX ExecType values normalized for mapping.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,6 +230,83 @@ pub enum FixOrdStatus {
     Expired = 12,
     /// Pending replace.
     PendingReplace = 13,
+}
+
+/// Parses a validated FIX `ExecutionReport(35=8)` into a normalized report.
+///
+/// The mapper is deliberately profile-aware through `config`: quantity and
+/// price fields are scaled into Orderflow's integer-normalized OMS types using
+/// caller-provided scale factors.
+///
+/// # Errors
+///
+/// Returns [`FixReportParseError`] when required fields are absent, enum values
+/// are unsupported, ASCII identifiers cannot fit their canonical bounds, or
+/// decimal fields cannot be represented with the configured scale.
+pub fn parse_execution_report(
+    message: &FixMessageView<'_>,
+    config: FixReportParseConfig,
+    ts_recv_ns: u64,
+) -> Result<FixExecutionReport, FixReportParseError> {
+    if message.msg_type() != Some(FixMsgType::EXECUTION_REPORT.as_bytes()) {
+        return Err(FixReportParseError::InvalidMsgType);
+    }
+
+    let exec_type = parse_exec_type(required(message, FixTag::EXEC_TYPE)?)?;
+    let ord_status = parse_ord_status(required(message, FixTag::ORD_STATUS)?)?;
+    let cl_ord_id = fixed_required(message, FixTag::CL_ORD_ID)?;
+    let orig_cl_ord_id = fixed_optional(message, FixTag::ORIG_CL_ORD_ID)?;
+    let order_id = fixed_required(message, FixTag::ORDER_ID)?;
+    let exec_id = fixed_required(message, FixTag::EXEC_ID)?;
+    let account_id = if let Some(account) = message.get(FixTag(1)) {
+        fixed_from_bytes(FixTag(1), account)?
+    } else {
+        config.account_id
+    };
+    let instrument: InstrumentId = fixed_required(message, FixTag::SYMBOL)?;
+
+    Ok(FixExecutionReport {
+        exec_type,
+        ord_status,
+        cl_ord_id,
+        orig_cl_ord_id,
+        order_id,
+        exec_id,
+        account_id,
+        route_id: config.route_id,
+        symbol: ExecutionSymbol {
+            venue: config.venue,
+            instrument,
+        },
+        last_qty: OrderQty(parse_optional_scaled(
+            message,
+            FixTag::LAST_QTY,
+            config.quantity_scale,
+        )?),
+        last_price: OrderPrice(parse_optional_scaled(
+            message,
+            FixTag::LAST_PX,
+            config.price_scale,
+        )?),
+        cumulative_qty: OrderQty(parse_optional_scaled(
+            message,
+            FixTag::CUM_QTY,
+            config.quantity_scale,
+        )?),
+        leaves_qty: OrderQty(parse_optional_scaled(
+            message,
+            FixTag::LEAVES_QTY,
+            config.quantity_scale,
+        )?),
+        average_price: OrderPrice(parse_optional_scaled(
+            message,
+            FixTag::AVG_PX,
+            config.price_scale,
+        )?),
+        ts_exchange_ns: parse_optional_u64(message, FixTag::TRANSACT_TIME)?,
+        ts_recv_ns,
+        text: fixed_optional(message, FixTag::TEXT)?,
+    })
 }
 
 /// Maps a parsed FIX execution report into a canonical execution event.
@@ -295,12 +465,163 @@ fn map_ord_status(value: FixOrdStatus) -> OrderStatus {
     }
 }
 
+fn parse_exec_type(value: &[u8]) -> Result<FixExecType, FixReportParseError> {
+    match value {
+        b"0" => Ok(FixExecType::New),
+        b"1" | b"2" => Ok(FixExecType::Trade),
+        b"4" => Ok(FixExecType::Canceled),
+        b"5" => Ok(FixExecType::Replaced),
+        b"6" => Ok(FixExecType::PendingCancel),
+        b"8" => Ok(FixExecType::Rejected),
+        b"C" => Ok(FixExecType::Expired),
+        b"D" => Ok(FixExecType::Restated),
+        b"E" => Ok(FixExecType::PendingReplace),
+        _ => Err(FixReportParseError::InvalidExecType),
+    }
+}
+
+fn parse_ord_status(value: &[u8]) -> Result<FixOrdStatus, FixReportParseError> {
+    match value {
+        b"0" => Ok(FixOrdStatus::New),
+        b"1" => Ok(FixOrdStatus::PartiallyFilled),
+        b"2" => Ok(FixOrdStatus::Filled),
+        b"3" => Ok(FixOrdStatus::DoneForDay),
+        b"4" => Ok(FixOrdStatus::Canceled),
+        b"5" => Ok(FixOrdStatus::Replaced),
+        b"6" => Ok(FixOrdStatus::PendingCancel),
+        b"7" => Ok(FixOrdStatus::Stopped),
+        b"8" => Ok(FixOrdStatus::Rejected),
+        b"9" => Ok(FixOrdStatus::Suspended),
+        b"A" => Ok(FixOrdStatus::PendingNew),
+        b"C" => Ok(FixOrdStatus::Expired),
+        b"E" => Ok(FixOrdStatus::PendingReplace),
+        _ => Err(FixReportParseError::InvalidOrdStatus),
+    }
+}
+
+fn required<'a>(
+    message: &FixMessageView<'a>,
+    tag: FixTag,
+) -> Result<&'a [u8], FixReportParseError> {
+    message.get(tag).ok_or(FixReportParseError::MissingTag(tag))
+}
+
+fn fixed_required<const N: usize>(
+    message: &FixMessageView<'_>,
+    tag: FixTag,
+) -> Result<FixedAscii<N>, FixReportParseError> {
+    fixed_from_bytes(tag, required(message, tag)?)
+}
+
+fn fixed_optional<const N: usize>(
+    message: &FixMessageView<'_>,
+    tag: FixTag,
+) -> Result<FixedAscii<N>, FixReportParseError> {
+    if let Some(value) = message.get(tag) {
+        fixed_from_bytes(tag, value)
+    } else {
+        Ok(FixedAscii::empty())
+    }
+}
+
+fn fixed_from_bytes<const N: usize>(
+    tag: FixTag,
+    value: &[u8],
+) -> Result<FixedAscii<N>, FixReportParseError> {
+    let value = std::str::from_utf8(value).map_err(|_| FixReportParseError::InvalidAscii {
+        tag,
+        source: ExecutionCoreError::NonAsciiIdentifier,
+    })?;
+    FixedAscii::new(value).map_err(|source| FixReportParseError::InvalidAscii { tag, source })
+}
+
+fn parse_optional_scaled(
+    message: &FixMessageView<'_>,
+    tag: FixTag,
+    scale: i64,
+) -> Result<i64, FixReportParseError> {
+    if let Some(value) = message.get(tag) {
+        parse_scaled(value, scale).ok_or(FixReportParseError::InvalidNumber(tag))
+    } else {
+        Ok(0)
+    }
+}
+
+fn parse_optional_u64(
+    message: &FixMessageView<'_>,
+    tag: FixTag,
+) -> Result<u64, FixReportParseError> {
+    if let Some(value) = message.get(tag) {
+        parse_u64_digits(value).ok_or(FixReportParseError::InvalidNumber(tag))
+    } else {
+        Ok(0)
+    }
+}
+
+fn parse_scaled(value: &[u8], scale: i64) -> Option<i64> {
+    if value.is_empty() || scale < 1 {
+        return None;
+    }
+
+    let mut int = 0i64;
+    let mut frac = 0i64;
+    let mut frac_divisor = 1i64;
+    let mut seen_dot = false;
+
+    for byte in value {
+        if *byte == b'.' && !seen_dot {
+            seen_dot = true;
+            continue;
+        }
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        let digit = i64::from(*byte - b'0');
+        if seen_dot {
+            frac_divisor = frac_divisor.checked_mul(10)?;
+            frac = frac.checked_mul(10)?.checked_add(digit)?;
+        } else {
+            int = int.checked_mul(10)?.checked_add(digit)?;
+        }
+    }
+
+    let scaled_int = int.checked_mul(scale)?;
+    if frac_divisor == 1 {
+        return Some(scaled_int);
+    }
+    if scale % frac_divisor != 0 {
+        return None;
+    }
+    scaled_int.checked_add(frac.checked_mul(scale / frac_divisor)?)
+}
+
+fn parse_u64_digits(value: &[u8]) -> Option<u64> {
+    if value.is_empty() {
+        return None;
+    }
+    let mut out = 0u64;
+    for byte in value {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        out = out.checked_mul(10)?.checked_add(u64::from(*byte - b'0'))?;
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use of_fix::{encode_message, parse_message, FixFieldView};
 
     fn id<const N: usize>(value: &str) -> FixedAscii<N> {
         FixedAscii::new(value).unwrap()
+    }
+
+    fn parse_config() -> FixReportParseConfig {
+        FixReportParseConfig::new(id("ACC"), id("FIX"), id("BINANCE"))
+            .with_quantity_scale(100)
+            .with_price_scale(10)
     }
 
     #[test]
@@ -329,6 +650,131 @@ mod tests {
         assert_eq!(event.exec_type, ExecutionType::Trade);
         assert_eq!(event.order_status, OrderStatus::PartiallyFilled);
         assert_eq!(event.cumulative_qty, OrderQty(5));
+    }
+
+    #[test]
+    fn parses_fix_execution_report_from_message_view() {
+        let mut raw = Vec::new();
+        encode_message(
+            &mut raw,
+            b"FIX.4.4",
+            b"8",
+            &[
+                (FixTag::EXEC_TYPE, b"1".as_slice()),
+                (FixTag::ORD_STATUS, b"1".as_slice()),
+                (FixTag::CL_ORD_ID, b"C1".as_slice()),
+                (FixTag::ORDER_ID, b"V1".as_slice()),
+                (FixTag::EXEC_ID, b"E1".as_slice()),
+                (FixTag::SYMBOL, b"BTCUSDT".as_slice()),
+                (FixTag::LAST_QTY, b"1.25".as_slice()),
+                (FixTag::LAST_PX, b"65000.5".as_slice()),
+                (FixTag::CUM_QTY, b"1.25".as_slice()),
+                (FixTag::LEAVES_QTY, b"0.75".as_slice()),
+                (FixTag::AVG_PX, b"65000.5".as_slice()),
+                (FixTag::TRANSACT_TIME, b"1784275200000000000".as_slice()),
+                (FixTag::TEXT, b"partial".as_slice()),
+            ],
+        )
+        .expect("encode");
+
+        let mut scratch = [FixFieldView::empty(); 32];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        let report =
+            parse_execution_report(&message, parse_config(), 1784275200000000100).expect("map");
+
+        assert_eq!(report.exec_type, FixExecType::Trade);
+        assert_eq!(report.ord_status, FixOrdStatus::PartiallyFilled);
+        assert_eq!(report.cl_ord_id, id("C1"));
+        assert_eq!(report.order_id, id("V1"));
+        assert_eq!(report.exec_id, id("E1"));
+        assert_eq!(report.account_id, id("ACC"));
+        assert_eq!(report.route_id, id("FIX"));
+        assert_eq!(report.symbol.venue, id("BINANCE"));
+        assert_eq!(report.symbol.instrument, id("BTCUSDT"));
+        assert_eq!(report.last_qty, OrderQty(125));
+        assert_eq!(report.last_price, OrderPrice(650005));
+        assert_eq!(report.cumulative_qty, OrderQty(125));
+        assert_eq!(report.leaves_qty, OrderQty(75));
+        assert_eq!(report.average_price, OrderPrice(650005));
+        assert_eq!(report.ts_exchange_ns, 1_784_275_200_000_000_000);
+        assert_eq!(report.ts_recv_ns, 1_784_275_200_000_000_100);
+        assert_eq!(report.text, id("partial"));
+    }
+
+    #[test]
+    fn parses_account_from_fix_when_present() {
+        let mut raw = Vec::new();
+        encode_message(
+            &mut raw,
+            b"FIX.4.4",
+            b"8",
+            &[
+                (FixTag::EXEC_TYPE, b"0".as_slice()),
+                (FixTag::ORD_STATUS, b"0".as_slice()),
+                (FixTag::CL_ORD_ID, b"C1".as_slice()),
+                (FixTag::ORDER_ID, b"V1".as_slice()),
+                (FixTag::EXEC_ID, b"E1".as_slice()),
+                (FixTag::SYMBOL, b"BTCUSDT".as_slice()),
+                (FixTag(1), b"SUBACC".as_slice()),
+            ],
+        )
+        .expect("encode");
+
+        let mut scratch = [FixFieldView::empty(); 32];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        let report = parse_execution_report(&message, parse_config(), 10).expect("map");
+        assert_eq!(report.account_id, id("SUBACC"));
+        assert_eq!(report.exec_type, FixExecType::New);
+        assert_eq!(report.ord_status, FixOrdStatus::New);
+    }
+
+    #[test]
+    fn rejects_missing_required_report_tag() {
+        let mut raw = Vec::new();
+        encode_message(
+            &mut raw,
+            b"FIX.4.4",
+            b"8",
+            &[
+                (FixTag::EXEC_TYPE, b"0".as_slice()),
+                (FixTag::ORD_STATUS, b"0".as_slice()),
+            ],
+        )
+        .expect("encode");
+
+        let mut scratch = [FixFieldView::empty(); 16];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(
+            parse_execution_report(&message, parse_config(), 0),
+            Err(FixReportParseError::MissingTag(FixTag::CL_ORD_ID))
+        );
+    }
+
+    #[test]
+    fn rejects_unrepresentable_decimal_scale() {
+        let mut raw = Vec::new();
+        encode_message(
+            &mut raw,
+            b"FIX.4.4",
+            b"8",
+            &[
+                (FixTag::EXEC_TYPE, b"1".as_slice()),
+                (FixTag::ORD_STATUS, b"1".as_slice()),
+                (FixTag::CL_ORD_ID, b"C1".as_slice()),
+                (FixTag::ORDER_ID, b"V1".as_slice()),
+                (FixTag::EXEC_ID, b"E1".as_slice()),
+                (FixTag::SYMBOL, b"BTCUSDT".as_slice()),
+                (FixTag::LAST_QTY, b"1.234".as_slice()),
+            ],
+        )
+        .expect("encode");
+
+        let mut scratch = [FixFieldView::empty(); 32];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(
+            parse_execution_report(&message, parse_config(), 0),
+            Err(FixReportParseError::InvalidNumber(FixTag::LAST_QTY))
+        );
     }
 
     #[test]

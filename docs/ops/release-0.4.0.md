@@ -22,6 +22,17 @@ public package family. The execution/FIX crates are new public Rust surfaces and
 should start at `0.1.0` so their traits, codec APIs, and adapter contracts can mature
 honestly.
 
+Rust publish order for the new crate family:
+
+1. `of_execution_core`
+2. `of_fix`
+3. `of_execution`
+4. `of_execution_adapters`
+
+`of_execution_adapters`' `fix` feature depends on `of_fix`, so local
+`cargo package -p of_execution_adapters` verification can only resolve the
+registry dependency after `of_fix 0.1.0` is published.
+
 ## What Is New
 
 ### 1. Execution core
@@ -84,6 +95,7 @@ of the codec.
 
 - FIX-style session config
 - normalized execution-report struct
+- validated `of_fix::FixMessageView` execution-report parser bridge
 - FIX exec type/status mapping
 - canonical `ExecutionEvent` conversion
 - fail-closed adapter shell

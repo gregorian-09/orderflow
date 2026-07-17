@@ -18,8 +18,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = []
-fix = []
+fix = ["dep:of_fix"]
 
 [dependencies]
 of_execution = { path = "../of_execution", version = "0.1.0" }
 of_execution_core = { path = "../of_execution_core", version = "0.1.0" }
+of_fix = { path = "../of_fix", version = "0.1.0", optional = true }

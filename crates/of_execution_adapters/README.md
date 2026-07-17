@@ -48,7 +48,7 @@ Versioning rules:
 
 | Feature | Default | Purpose |
 | --- | --- | --- |
-| `fix` | no | Enables `of_execution_adapters::fix` |
+| `fix` | no | Enables `of_execution_adapters::fix` and its `of_fix` parser bridge |
 
 The crate has `default = []`. Consumers opt in to provider scaffolds explicitly:
 
@@ -63,21 +63,25 @@ With the `fix` feature enabled:
 
 - [`fix::FixSessionConfig`]
 - [`fix::FixExecutionReport`]
+- [`fix::FixReportParseConfig`]
+- [`fix::FixReportParseError`]
 - [`fix::FixExecType`]
 - [`fix::FixOrdStatus`]
+- [`fix::parse_execution_report`]
 - [`fix::map_execution_report`]
 - [`fix::FixExecutionAdapter`]
 
 ## FIX Scaffold
 
 The FIX module is not a full FIX engine. It does not implement TCP/TLS,
-logon/logout, heartbeats, resend requests, sequence reset, session stores,
-message parsing, or exchange-specific certification behavior.
+logon/logout, heartbeats, resend requests, sequence reset, session stores, or
+exchange-specific certification behavior.
 
 It provides the reusable pieces that are safe to share at this layer:
 
 - session configuration shape,
 - normalized execution-report struct,
+- validated `of_fix::FixMessageView` to `FixExecutionReport` conversion,
 - FIX-style exec type/status enums,
 - mapping into the canonical execution model,
 - adapter shell implementing the `ExecutionAdapter` trait,
@@ -132,8 +136,34 @@ Important fields:
 - `ts_recv_ns`
 - `text`
 
-A real FIX adapter should parse bytes or tag maps into this struct, then call
+A real FIX adapter can parse bytes with `of_fix::parse_message`, call
+[`fix::parse_execution_report`] to produce this struct, then call
 [`fix::map_execution_report`] to produce a canonical `ExecutionEvent`.
+
+## FixReportParseConfig
+
+[`fix::FixReportParseConfig`] supplies the venue/session context that raw FIX
+execution reports do not fully encode in a canonical Orderflow form:
+
+- default `account_id` when `Account(1)` is absent;
+- `route_id` associated with the session;
+- `venue` assigned to parsed `Symbol(55)` values;
+- quantity scale for integer-normalized `OrderQty`;
+- price scale for integer-normalized `OrderPrice`.
+
+This keeps decimal/tick-size assumptions out of the parser. For example, a
+quantity scale of `100` maps `LastQty(32)=1.25` to `OrderQty(125)`.
+
+## parse_execution_report
+
+[`fix::parse_execution_report`] converts a validated `of_fix::FixMessageView`
+with `MsgType(35)=8` into [`fix::FixExecutionReport`].
+
+It requires common report identifiers such as `ExecType(150)`, `OrdStatus(39)`,
+`ClOrdID(11)`, `OrderID(37)`, `ExecID(17)`, and `Symbol(55)`. Optional fill
+fields default to zero when absent. Decimal fields must be representable with
+the configured scale; otherwise the parser fails closed with
+[`fix::FixReportParseError`].
 
 ## FIX Exec Type And Status
 

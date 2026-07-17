@@ -632,12 +632,15 @@ Feature-gated public FIX scaffold types under `of_execution_adapters::fix`:
 
 - `FixSessionConfig`
 - `FixExecutionReport`
+- `FixReportParseConfig`
+- `FixReportParseError`
 - `FixExecType`
 - `FixOrdStatus`
 - `FixExecutionAdapter`
 
 Feature-gated public FIX helper functions under `of_execution_adapters::fix`:
 
+- `parse_execution_report(message, config, ts_recv_ns) -> FixExecutionReport`
 - `map_execution_report(report) -> ExecutionEvent`
 
 For mapping rules and adapter implementation guidance, see
