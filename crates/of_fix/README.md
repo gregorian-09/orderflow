@@ -37,7 +37,8 @@ Included now:
   ResendRequest, SequenceReset gap fill, and Logout;
 - typed order-entry builders for NewOrderSingle, OrderCancelRequest,
   OrderCancelReplaceRequest, OrderStatusRequest, OrderMassCancelRequest, and
-  OrderMassStatusRequest;
+  OrderMassStatusRequest, including optional `Account(1)` on single-order
+  entry/cancel/replace messages;
 - common tag constants and extraction helpers;
 - caller-owned encode buffers that fill `BodyLength` and `CheckSum`;
 - debug rendering with `|` delimiters outside the live hot path.
@@ -408,8 +409,9 @@ OrderCancelRequest, OrderCancelReplaceRequest, OrderStatusRequest,
 OrderMassCancelRequest, and OrderMassStatusRequest. They do not decide whether
 a limit price is required, whether a field can be changed on replace, how
 quantities are rounded, whether a mass-cancel or mass-status scope is enabled
-at a venue, or which custom tags a venue requires. Those checks belong in
-profile/certification layers above the codec.
+at a venue, or which party groups, clearing instructions, or custom tags a
+venue requires. Those checks belong in profile/certification layers above the
+codec.
 
 ## Roadmap
 

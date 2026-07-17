@@ -7,10 +7,15 @@ use of_execution::{
 use of_execution_core::{
     AccountId, AmendRequest, CancelRequest, ClientOrderId, ExecutionCoreError, ExecutionEvent,
     ExecutionId, ExecutionSymbol, ExecutionText, ExecutionType, FixedAscii, InstrumentId,
-    OrderPrice, OrderQty, OrderRequest, OrderStatus, RiskRejectReason, RouteId, VenueId,
-    VenueOrderId,
+    OrderPrice, OrderQty, OrderRequest, OrderSide, OrderStatus, OrderType, RiskRejectReason,
+    RouteId, TimeInForce, VenueId, VenueOrderId,
 };
-use of_fix::{FixMessageView, FixMsgType, FixTag};
+use of_fix::{
+    encode_new_order_single, encode_order_cancel_replace_request, encode_order_cancel_request,
+    FixEncodeError, FixMessageView, FixMsgType, FixNewOrderSingle, FixOrdType,
+    FixOrderCancelReplaceRequest, FixOrderCancelRequest, FixOrderSide, FixSessionHeader, FixTag,
+    FixTimeInForce, FixVersion,
+};
 use std::error::Error;
 use std::fmt;
 
@@ -163,6 +168,137 @@ impl FixReportParseConfig {
     pub const fn with_price_scale(mut self, price_scale: i64) -> Self {
         self.price_scale = if price_scale < 1 { 1 } else { price_scale };
         self
+    }
+}
+
+/// Context required to encode canonical OMS requests as FIX order-entry frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixRequestEncodeConfig {
+    /// Decimal scale for quantity fields. For example, `100` maps
+    /// `OrderQty(125)` to `1.25`.
+    pub quantity_scale: i64,
+    /// Decimal scale for price fields. For example, `10` maps
+    /// `OrderPrice(650005)` to `65000.5`.
+    pub price_scale: i64,
+}
+
+impl FixRequestEncodeConfig {
+    /// Creates a request encode config with unit quantity and price scales.
+    pub const fn new() -> Self {
+        Self {
+            quantity_scale: 1,
+            price_scale: 1,
+        }
+    }
+
+    /// Sets the quantity scale. Values lower than one are clamped to one.
+    pub const fn with_quantity_scale(mut self, quantity_scale: i64) -> Self {
+        self.quantity_scale = if quantity_scale < 1 {
+            1
+        } else {
+            quantity_scale
+        };
+        self
+    }
+
+    /// Sets the price scale. Values lower than one are clamped to one.
+    pub const fn with_price_scale(mut self, price_scale: i64) -> Self {
+        self.price_scale = if price_scale < 1 { 1 } else { price_scale };
+        self
+    }
+}
+
+impl Default for FixRequestEncodeConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Extra fields required to encode a canonical cancel request as FIX.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixCancelEncodeContext<'a> {
+    /// Side of the original order.
+    pub side: OrderSide,
+    /// FIX wire-format `TransactTime(60)` bytes.
+    pub transact_time: &'a [u8],
+}
+
+impl<'a> FixCancelEncodeContext<'a> {
+    /// Creates cancel encode context.
+    pub const fn new(side: OrderSide, transact_time: &'a [u8]) -> Self {
+        Self {
+            side,
+            transact_time,
+        }
+    }
+}
+
+/// Extra fields required to encode a canonical amend request as FIX.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixAmendEncodeContext<'a> {
+    /// Side of the original order.
+    pub side: OrderSide,
+    /// Replacement FIX order type.
+    pub order_type: OrderType,
+    /// Replacement time-in-force.
+    pub time_in_force: TimeInForce,
+    /// FIX wire-format `TransactTime(60)` bytes.
+    pub transact_time: &'a [u8],
+}
+
+impl<'a> FixAmendEncodeContext<'a> {
+    /// Creates amend encode context.
+    pub const fn new(
+        side: OrderSide,
+        order_type: OrderType,
+        time_in_force: TimeInForce,
+        transact_time: &'a [u8],
+    ) -> Self {
+        Self {
+            side,
+            order_type,
+            time_in_force,
+            transact_time,
+        }
+    }
+}
+
+/// Errors returned while encoding canonical OMS requests as FIX frames.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FixRequestEncodeError {
+    /// Quantity scale or price scale is not a positive power of ten.
+    InvalidScale,
+    /// Quantity must be positive.
+    InvalidQuantity,
+    /// Price must be positive for this order type.
+    InvalidPrice,
+    /// The canonical order type needs fields this bridge does not encode yet.
+    UnsupportedOrderType,
+    /// The underlying FIX encoder rejected the frame.
+    Encode(FixEncodeError),
+}
+
+impl fmt::Display for FixRequestEncodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidScale => write!(f, "FIX request encode scale must be a power of ten"),
+            Self::InvalidQuantity => write!(f, "FIX request quantity must be positive"),
+            Self::InvalidPrice => write!(f, "FIX request price must be positive"),
+            Self::UnsupportedOrderType => write!(
+                f,
+                "FIX request order type requires fields not encoded by this bridge"
+            ),
+            Self::Encode(source) => write!(f, "FIX request encode failed: {source}"),
+        }
+    }
+}
+
+impl Error for FixRequestEncodeError {}
+
+impl From<FixEncodeError> for FixRequestEncodeError {
+    fn from(source: FixEncodeError) -> Self {
+        Self::Encode(source)
     }
 }
 
@@ -403,6 +539,134 @@ pub fn parse_order_cancel_reject(
     })
 }
 
+/// Encodes a canonical new-order request as FIX NewOrderSingle `<D>`.
+///
+/// `transact_time` must already be in the venue/profile's accepted FIX wire
+/// format. The bridge scales integer-normalized quantity and price fields into
+/// decimal ASCII using `config`.
+///
+/// # Errors
+///
+/// Returns [`FixRequestEncodeError`] when scales are invalid, required
+/// quantity/price fields are not positive, the order type needs unsupported
+/// fields, or the underlying FIX encoder rejects a field value.
+pub fn encode_order_request(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    header: FixSessionHeader<'_>,
+    config: FixRequestEncodeConfig,
+    request: &OrderRequest,
+    transact_time: &[u8],
+) -> Result<(), FixRequestEncodeError> {
+    let mut qty_buf = [0u8; 40];
+    let qty = encode_scaled(
+        &mut qty_buf,
+        request.quantity.0,
+        config.quantity_scale,
+        ScaledField::Quantity,
+    )?;
+    let mut price_buf = [0u8; 40];
+    let price = encode_order_price(
+        &mut price_buf,
+        request.order_type,
+        request.limit_price,
+        config,
+    )?;
+    let mut fix_request = FixNewOrderSingle::new(
+        request.client_order_id.as_str().as_bytes(),
+        request.symbol.instrument.as_str().as_bytes(),
+        map_side_to_fix(request.side),
+        transact_time,
+        qty,
+        map_order_type_to_fix(request.order_type)?,
+    )
+    .with_account(request.account_id.as_str().as_bytes())
+    .with_time_in_force(map_tif_to_fix(request.time_in_force));
+    if let Some(price) = price {
+        fix_request = fix_request.with_price(price);
+    }
+    encode_new_order_single(out, version, header, fix_request)?;
+    Ok(())
+}
+
+/// Encodes a canonical cancel request as FIX OrderCancelRequest `<F>`.
+///
+/// Canonical cancel requests do not carry side, so callers must supply the side
+/// from local order state or venue profile context.
+///
+/// # Errors
+///
+/// Returns [`FixRequestEncodeError`] when the underlying FIX encoder rejects a
+/// field value.
+pub fn encode_cancel_request(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    header: FixSessionHeader<'_>,
+    request: &CancelRequest,
+    context: FixCancelEncodeContext<'_>,
+) -> Result<(), FixRequestEncodeError> {
+    let fix_request = FixOrderCancelRequest::new(
+        request.orig_client_order_id.as_str().as_bytes(),
+        request.client_order_id.as_str().as_bytes(),
+        request.symbol.instrument.as_str().as_bytes(),
+        map_side_to_fix(context.side),
+        context.transact_time,
+    )
+    .with_account(request.account_id.as_str().as_bytes());
+    encode_order_cancel_request(out, version, header, fix_request)?;
+    Ok(())
+}
+
+/// Encodes a canonical amend request as FIX OrderCancelReplaceRequest `<G>`.
+///
+/// Canonical amend requests do not carry side, order type, or TIF, so callers
+/// must supply them from local order state or venue profile context.
+///
+/// # Errors
+///
+/// Returns [`FixRequestEncodeError`] when scales are invalid, required
+/// quantity/price fields are not positive, the order type needs unsupported
+/// fields, or the underlying FIX encoder rejects a field value.
+pub fn encode_amend_request(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    header: FixSessionHeader<'_>,
+    config: FixRequestEncodeConfig,
+    request: &AmendRequest,
+    context: FixAmendEncodeContext<'_>,
+) -> Result<(), FixRequestEncodeError> {
+    let mut qty_buf = [0u8; 40];
+    let qty = encode_scaled(
+        &mut qty_buf,
+        request.quantity.0,
+        config.quantity_scale,
+        ScaledField::Quantity,
+    )?;
+    let mut price_buf = [0u8; 40];
+    let price = encode_order_price(
+        &mut price_buf,
+        context.order_type,
+        request.limit_price,
+        config,
+    )?;
+    let mut fix_request = FixOrderCancelReplaceRequest::new(
+        request.orig_client_order_id.as_str().as_bytes(),
+        request.client_order_id.as_str().as_bytes(),
+        request.symbol.instrument.as_str().as_bytes(),
+        map_side_to_fix(context.side),
+        context.transact_time,
+        qty,
+        map_order_type_to_fix(context.order_type)?,
+    )
+    .with_account(request.account_id.as_str().as_bytes())
+    .with_time_in_force(map_tif_to_fix(context.time_in_force));
+    if let Some(price) = price {
+        fix_request = fix_request.with_price(price);
+    }
+    encode_order_cancel_replace_request(out, version, header, fix_request)?;
+    Ok(())
+}
+
 /// Maps a parsed FIX execution report into a canonical execution event.
 pub fn map_execution_report(report: &FixExecutionReport) -> ExecutionEvent {
     ExecutionEvent {
@@ -628,6 +892,140 @@ fn parse_cancel_reject_response_to(
         b"2" => Ok(FixCancelRejectResponseTo::OrderCancelReplaceRequest),
         _ => Err(FixReportParseError::InvalidCancelRejectResponseTo),
     }
+}
+
+fn map_side_to_fix(value: OrderSide) -> FixOrderSide {
+    match value {
+        OrderSide::Buy => FixOrderSide::Buy,
+        OrderSide::Sell => FixOrderSide::Sell,
+    }
+}
+
+fn map_order_type_to_fix(value: OrderType) -> Result<FixOrdType, FixRequestEncodeError> {
+    match value {
+        OrderType::Market => Ok(FixOrdType::Market),
+        OrderType::Limit => Ok(FixOrdType::Limit),
+        OrderType::Stop | OrderType::StopLimit => Err(FixRequestEncodeError::UnsupportedOrderType),
+    }
+}
+
+fn map_tif_to_fix(value: TimeInForce) -> FixTimeInForce {
+    match value {
+        TimeInForce::Day => FixTimeInForce::Day,
+        TimeInForce::Gtc => FixTimeInForce::GoodTillCancel,
+        TimeInForce::Ioc => FixTimeInForce::ImmediateOrCancel,
+        TimeInForce::Fok => FixTimeInForce::FillOrKill,
+        TimeInForce::Gtd => FixTimeInForce::GoodTillDate,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ScaledField {
+    Quantity,
+    Price,
+}
+
+fn encode_order_price(
+    buf: &mut [u8; 40],
+    order_type: OrderType,
+    price: OrderPrice,
+    config: FixRequestEncodeConfig,
+) -> Result<Option<&[u8]>, FixRequestEncodeError> {
+    match order_type {
+        OrderType::Market => Ok(None),
+        OrderType::Limit => {
+            encode_scaled(buf, price.0, config.price_scale, ScaledField::Price).map(Some)
+        }
+        OrderType::Stop | OrderType::StopLimit => Err(FixRequestEncodeError::UnsupportedOrderType),
+    }
+}
+
+fn encode_scaled(
+    buf: &mut [u8; 40],
+    value: i64,
+    scale: i64,
+    field: ScaledField,
+) -> Result<&[u8], FixRequestEncodeError> {
+    if value <= 0 {
+        return Err(match field {
+            ScaledField::Quantity => FixRequestEncodeError::InvalidQuantity,
+            ScaledField::Price => FixRequestEncodeError::InvalidPrice,
+        });
+    }
+    let places = decimal_places(scale)?;
+    let value = u64::try_from(value).map_err(|_| match field {
+        ScaledField::Quantity => FixRequestEncodeError::InvalidQuantity,
+        ScaledField::Price => FixRequestEncodeError::InvalidPrice,
+    })?;
+    let scale = u64::try_from(scale).map_err(|_| FixRequestEncodeError::InvalidScale)?;
+    let whole = value / scale;
+    let mut pos = write_u64_ascii(buf, whole);
+    let rem = value % scale;
+    if rem == 0 {
+        return Ok(&buf[..pos]);
+    }
+    buf[pos] = b'.';
+    pos += 1;
+    let frac_start = pos;
+    pos += write_padded_u64_ascii(&mut buf[pos..], rem, places);
+    while pos > frac_start && buf[pos - 1] == b'0' {
+        pos -= 1;
+    }
+    Ok(&buf[..pos])
+}
+
+fn decimal_places(scale: i64) -> Result<usize, FixRequestEncodeError> {
+    if scale < 1 {
+        return Err(FixRequestEncodeError::InvalidScale);
+    }
+    let mut scale = scale;
+    let mut places = 0usize;
+    while scale > 1 {
+        if scale % 10 != 0 {
+            return Err(FixRequestEncodeError::InvalidScale);
+        }
+        scale /= 10;
+        places += 1;
+    }
+    Ok(places)
+}
+
+fn write_u64_ascii(buf: &mut [u8], value: u64) -> usize {
+    if value == 0 {
+        buf[0] = b'0';
+        return 1;
+    }
+    let mut tmp = [0u8; 20];
+    let mut len = 0usize;
+    let mut n = value;
+    while n > 0 {
+        tmp[len] = b'0' + (n % 10) as u8;
+        n /= 10;
+        len += 1;
+    }
+    for idx in 0..len {
+        buf[idx] = tmp[len - idx - 1];
+    }
+    len
+}
+
+fn write_padded_u64_ascii(buf: &mut [u8], value: u64, width: usize) -> usize {
+    let mut tmp = [b'0'; 20];
+    let mut len = 0usize;
+    let mut n = value;
+    while n > 0 {
+        tmp[len] = b'0' + (n % 10) as u8;
+        n /= 10;
+        len += 1;
+    }
+    let padding = width.saturating_sub(len);
+    for slot in buf.iter_mut().take(padding) {
+        *slot = b'0';
+    }
+    for idx in 0..len {
+        buf[padding + idx] = tmp[len - idx - 1];
+    }
+    padding + len
 }
 
 fn required<'a>(
@@ -1012,6 +1410,170 @@ mod tests {
         assert_eq!(
             parse_execution_report(&message, parse_config(), 0),
             Err(FixReportParseError::InvalidNumber(FixTag::LAST_QTY))
+        );
+    }
+
+    #[test]
+    fn encodes_order_request_to_fix_new_order_single() {
+        let request = OrderRequest {
+            client_order_id: id("C1"),
+            account_id: id("ACC"),
+            route_id: id("FIX"),
+            strategy_id: id("S1"),
+            symbol: ExecutionSymbol::new("BINANCE", "BTCUSDT").unwrap(),
+            side: OrderSide::Buy,
+            order_type: OrderType::Limit,
+            time_in_force: TimeInForce::Day,
+            quantity: OrderQty(125),
+            limit_price: OrderPrice(650005),
+            stop_price: OrderPrice(0),
+            ts_exchange_ns: 0,
+            ts_recv_ns: 10,
+        };
+        let config = FixRequestEncodeConfig::new()
+            .with_quantity_scale(100)
+            .with_price_scale(10);
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 7, b"20260717-12:00:00.000");
+        let mut raw = Vec::new();
+        encode_order_request(
+            &mut raw,
+            FixVersion::Fix44,
+            header,
+            config,
+            &request,
+            b"20260717-12:00:00.000",
+        )
+        .expect("encode");
+
+        let mut scratch = [FixFieldView::empty(); 32];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(message.msg_type(), Some(b"D".as_slice()));
+        assert_eq!(message.get(FixTag::CL_ORD_ID), Some(b"C1".as_slice()));
+        assert_eq!(message.get(FixTag::ACCOUNT), Some(b"ACC".as_slice()));
+        assert_eq!(message.get(FixTag::SYMBOL), Some(b"BTCUSDT".as_slice()));
+        assert_eq!(message.get(FixTag::SIDE), Some(b"1".as_slice()));
+        assert_eq!(message.get(FixTag::ORDER_QTY), Some(b"1.25".as_slice()));
+        assert_eq!(message.get(FixTag::PRICE), Some(b"65000.5".as_slice()));
+        assert_eq!(message.get(FixTag::TIME_IN_FORCE), Some(b"0".as_slice()));
+    }
+
+    #[test]
+    fn encodes_cancel_request_with_explicit_side_context() {
+        let request = CancelRequest {
+            client_order_id: id("CXL-1"),
+            orig_client_order_id: id("C1"),
+            venue_order_id: id("V1"),
+            account_id: id("ACC"),
+            route_id: id("FIX"),
+            symbol: ExecutionSymbol::new("BINANCE", "BTCUSDT").unwrap(),
+            ts_recv_ns: 10,
+        };
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 8, b"20260717-12:00:01.000");
+        let context = FixCancelEncodeContext::new(OrderSide::Sell, b"20260717-12:00:01.000");
+        let mut raw = Vec::new();
+        encode_cancel_request(&mut raw, FixVersion::Fix44, header, &request, context)
+            .expect("encode");
+
+        let mut scratch = [FixFieldView::empty(); 24];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(message.msg_type(), Some(b"F".as_slice()));
+        assert_eq!(message.get(FixTag::ORIG_CL_ORD_ID), Some(b"C1".as_slice()));
+        assert_eq!(message.get(FixTag::CL_ORD_ID), Some(b"CXL-1".as_slice()));
+        assert_eq!(message.get(FixTag::ACCOUNT), Some(b"ACC".as_slice()));
+        assert_eq!(message.get(FixTag::SIDE), Some(b"2".as_slice()));
+    }
+
+    #[test]
+    fn encodes_amend_request_with_explicit_order_context() {
+        let request = AmendRequest {
+            client_order_id: id("RPL-1"),
+            orig_client_order_id: id("C1"),
+            venue_order_id: id("V1"),
+            account_id: id("ACC"),
+            route_id: id("FIX"),
+            symbol: ExecutionSymbol::new("BINANCE", "BTCUSDT").unwrap(),
+            quantity: OrderQty(200),
+            limit_price: OrderPrice(650100),
+            ts_recv_ns: 10,
+        };
+        let config = FixRequestEncodeConfig::new()
+            .with_quantity_scale(100)
+            .with_price_scale(10);
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 9, b"20260717-12:00:02.000");
+        let context = FixAmendEncodeContext::new(
+            OrderSide::Buy,
+            OrderType::Limit,
+            TimeInForce::Gtc,
+            b"20260717-12:00:02.000",
+        );
+        let mut raw = Vec::new();
+        encode_amend_request(
+            &mut raw,
+            FixVersion::Fix44,
+            header,
+            config,
+            &request,
+            context,
+        )
+        .expect("encode");
+
+        let mut scratch = [FixFieldView::empty(); 32];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(message.msg_type(), Some(b"G".as_slice()));
+        assert_eq!(message.get(FixTag::ORIG_CL_ORD_ID), Some(b"C1".as_slice()));
+        assert_eq!(message.get(FixTag::CL_ORD_ID), Some(b"RPL-1".as_slice()));
+        assert_eq!(message.get(FixTag::ACCOUNT), Some(b"ACC".as_slice()));
+        assert_eq!(message.get(FixTag::ORDER_QTY), Some(b"2".as_slice()));
+        assert_eq!(message.get(FixTag::PRICE), Some(b"65010".as_slice()));
+        assert_eq!(message.get(FixTag::TIME_IN_FORCE), Some(b"1".as_slice()));
+    }
+
+    #[test]
+    fn request_encoder_rejects_unsupported_shapes() {
+        let mut request = OrderRequest {
+            client_order_id: id("C1"),
+            account_id: id("ACC"),
+            route_id: id("FIX"),
+            strategy_id: id("S1"),
+            symbol: ExecutionSymbol::new("BINANCE", "BTCUSDT").unwrap(),
+            side: OrderSide::Buy,
+            order_type: OrderType::Stop,
+            time_in_force: TimeInForce::Day,
+            quantity: OrderQty(125),
+            limit_price: OrderPrice(0),
+            stop_price: OrderPrice(650005),
+            ts_exchange_ns: 0,
+            ts_recv_ns: 10,
+        };
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 7, b"20260717-12:00:00.000");
+        let mut raw = Vec::new();
+        assert_eq!(
+            encode_order_request(
+                &mut raw,
+                FixVersion::Fix44,
+                header,
+                FixRequestEncodeConfig::new().with_quantity_scale(100),
+                &request,
+                b"20260717-12:00:00.000",
+            ),
+            Err(FixRequestEncodeError::UnsupportedOrderType)
+        );
+
+        request.order_type = OrderType::Limit;
+        request.limit_price = OrderPrice(650005);
+        assert_eq!(
+            encode_order_request(
+                &mut raw,
+                FixVersion::Fix44,
+                header,
+                FixRequestEncodeConfig {
+                    quantity_scale: 3,
+                    price_scale: 10,
+                },
+                &request,
+                b"20260717-12:00:00.000",
+            ),
+            Err(FixRequestEncodeError::InvalidScale)
         );
     }
 

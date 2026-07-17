@@ -65,12 +65,19 @@ With the `fix` feature enabled:
 - [`fix::FixExecutionReport`]
 - [`fix::FixOrderCancelReject`]
 - [`fix::FixReportParseConfig`]
+- [`fix::FixRequestEncodeConfig`]
+- [`fix::FixCancelEncodeContext`]
+- [`fix::FixAmendEncodeContext`]
 - [`fix::FixReportParseError`]
+- [`fix::FixRequestEncodeError`]
 - [`fix::FixExecType`]
 - [`fix::FixOrdStatus`]
 - [`fix::FixCancelRejectResponseTo`]
 - [`fix::parse_execution_report`]
 - [`fix::parse_order_cancel_reject`]
+- [`fix::encode_order_request`]
+- [`fix::encode_cancel_request`]
+- [`fix::encode_amend_request`]
 - [`fix::map_execution_report`]
 - [`fix::map_order_cancel_reject`]
 - [`fix::FixExecutionAdapter`]
@@ -88,6 +95,8 @@ It provides the reusable pieces that are safe to share at this layer:
 - normalized order-cancel-reject struct,
 - validated `of_fix::FixMessageView` to `FixExecutionReport` conversion,
 - validated `of_fix::FixMessageView` to `FixOrderCancelReject` conversion,
+- canonical OMS request to FIX NewOrderSingle, OrderCancelRequest, and
+  OrderCancelReplaceRequest encoding helpers,
 - FIX-style exec type/status enums,
 - mapping into the canonical execution model,
 - adapter shell implementing the `ExecutionAdapter` trait,
@@ -160,6 +169,18 @@ execution reports do not fully encode in a canonical Orderflow form:
 This keeps decimal/tick-size assumptions out of the parser. For example, a
 quantity scale of `100` maps `LastQty(32)=1.25` to `OrderQty(125)`.
 
+## FixRequestEncodeConfig
+
+[`fix::FixRequestEncodeConfig`] supplies the inverse scaling policy for
+canonical OMS requests:
+
+- quantity scale for integer-normalized `OrderQty`;
+- price scale for integer-normalized `OrderPrice`.
+
+The encode helpers require scales to be powers of ten. This keeps decimal
+rendering deterministic and avoids silently converting fixed-point quantities
+into ambiguous FIX decimals.
+
 ## parse_execution_report
 
 [`fix::parse_execution_report`] converts a validated `of_fix::FixMessageView`
@@ -183,6 +204,31 @@ It requires `ClOrdID(11)`, `OrigClOrdID(41)`, `OrdStatus(39)`, and
 present. The mapper emits `ExecutionType::CancelReject` for rejected cancel
 requests and `ExecutionType::ReplaceReject` for rejected cancel/replace
 requests.
+
+## Request Encoding
+
+The outbound bridge converts canonical OMS requests into low-allocation FIX
+wire frames through `of_fix` builders:
+
+- [`fix::encode_order_request`] -> NewOrderSingle `<D>`
+- [`fix::encode_cancel_request`] -> OrderCancelRequest `<F>`
+- [`fix::encode_amend_request`] -> OrderCancelReplaceRequest `<G>`
+
+The helpers encode into caller-owned `Vec<u8>` buffers. The caller supplies a
+`FixSessionHeader` with sequence and sending-time fields, and supplies
+wire-format `TransactTime(60)` bytes explicitly so venue profiles can choose
+the exact timestamp representation.
+
+Cancel and amend encoding use explicit context structs because the canonical
+`CancelRequest` and `AmendRequest` do not carry every FIX-required field:
+
+- [`fix::FixCancelEncodeContext`] supplies original side and transact time.
+- [`fix::FixAmendEncodeContext`] supplies original side, replacement order
+  type, replacement TIF, and transact time.
+
+The bridge currently encodes market and limit new/replace orders. Stop and
+stop-limit orders fail closed with [`fix::FixRequestEncodeError`] because the
+shared low-level builder does not yet expose `StopPx(99)`.
 
 ## FIX Exec Type And Status
 

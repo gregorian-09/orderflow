@@ -600,8 +600,8 @@ Order-builder boundary:
 - the codec does not decide which replace fields a venue allows to change;
 - the codec does not decide whether a mass-cancel or mass-status scope is
   permitted by a venue;
-- custom tags, account fields, parties, clearing instructions, and venue
-  certification rules belong in profiles or higher adapter layers.
+- party groups, clearing instructions, custom tags, and venue certification
+  rules belong in profiles or higher adapter layers.
 
 ## Validation Semantics
 

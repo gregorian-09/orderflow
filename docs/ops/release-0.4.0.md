@@ -89,6 +89,8 @@ registry dependency after `of_fix 0.1.0` is published.
 - typed order-entry builders for NewOrderSingle, OrderCancelRequest,
   OrderCancelReplaceRequest, OrderStatusRequest, OrderMassCancelRequest, and
   OrderMassStatusRequest
+- optional `Account(1)` support on NewOrderSingle, OrderCancelRequest, and
+  OrderCancelReplaceRequest builders
 - common FIX tag constants and extraction helpers
 - caller-owned encoding buffers with computed body length and checksum
 - diagnostic rendering with `|` separators outside hot paths
@@ -106,6 +108,9 @@ of the codec.
 - normalized execution-report struct
 - validated `of_fix::FixMessageView` execution-report parser bridge
 - validated `of_fix::FixMessageView` order-cancel-reject parser bridge
+- canonical OMS request to FIX NewOrderSingle, OrderCancelRequest, and
+  OrderCancelReplaceRequest encoding bridge with explicit decimal scales,
+  caller-provided FIX timestamps, and `Account(1)` propagation
 - FIX exec type/status mapping
 - canonical `ExecutionEvent` conversion
 - fail-closed adapter shell

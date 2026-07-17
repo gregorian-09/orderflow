@@ -27,12 +27,19 @@ It contains:
 - `FixExecutionReport`
 - `FixOrderCancelReject`
 - `FixReportParseConfig`
+- `FixRequestEncodeConfig`
+- `FixCancelEncodeContext`
+- `FixAmendEncodeContext`
 - `FixReportParseError`
+- `FixRequestEncodeError`
 - `FixExecType`
 - `FixOrdStatus`
 - `FixCancelRejectResponseTo`
 - `parse_execution_report`
 - `parse_order_cancel_reject`
+- `encode_order_request`
+- `encode_cancel_request`
+- `encode_amend_request`
 - `map_execution_report`
 - `map_order_cancel_reject`
 - `FixExecutionAdapter`
@@ -89,6 +96,33 @@ Important fields:
 
 The scale fields keep decimal policy explicit. A quantity scale of `100` maps
 `LastQty(32)=1.25` to `OrderQty(125)`.
+
+### Request Encoding
+
+`FixRequestEncodeConfig` supplies quantity and price scales for converting
+integer-normalized OMS request fields back into FIX decimal ASCII. Scales must
+be powers of ten.
+
+Outbound helpers:
+
+- `encode_order_request(out, version, header, config, request, transact_time)`
+  emits NewOrderSingle `<D>`.
+- `encode_cancel_request(out, version, header, request, context)` emits
+  OrderCancelRequest `<F>`.
+- `encode_amend_request(out, version, header, config, request, context)` emits
+  OrderCancelReplaceRequest `<G>`.
+
+The caller owns the `Vec<u8>` buffer and the `FixSessionHeader`, including
+sequence and sending-time fields. `transact_time` is passed as FIX wire bytes
+instead of being formatted by the scaffold, because venues differ in timestamp
+precision and format policy.
+
+Cancel and amend helpers require context because canonical `CancelRequest` and
+`AmendRequest` intentionally do not carry every FIX-required field. The context
+supplies original side for cancels, and side/order-type/TIF for amends.
+
+The bridge fails closed for stop and stop-limit orders until the lower-level
+shared FIX builder exposes `StopPx(99)`.
 
 ### `parse_execution_report`
 

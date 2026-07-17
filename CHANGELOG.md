@@ -98,6 +98,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `of_fix` typed order-entry builders for NewOrderSingle,
   OrderCancelRequest, and OrderCancelReplaceRequest with borrowed wire-format
   quantity and price fields.
+- Added optional `Account(1)` support to `of_fix` NewOrderSingle,
+  OrderCancelRequest, and OrderCancelReplaceRequest builders.
 - Added `of_fix` OrderStatusRequest `<H>` builder with required `ClOrdID(11)`
   and optional `OrderID(37)`.
 - Added `of_fix` OrderMassCancelRequest `<q>` builder with typed
@@ -111,6 +113,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `of_execution_adapters::fix::parse_order_cancel_reject` and
   `map_order_cancel_reject` to convert FIX `OrderCancelReject(35=9)` messages
   into canonical cancel/replace reject execution events.
+- Added `of_execution_adapters::fix` outbound request encoding bridge for
+  canonical OMS order, cancel, and amend requests using `of_fix` builders,
+  explicit decimal scales, caller-provided FIX timestamps, and `Account(1)`
+  propagation.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

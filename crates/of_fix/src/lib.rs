@@ -1954,6 +1954,7 @@ impl<'a> FixSessionHeader<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FixNewOrderSingle<'a> {
     cl_ord_id: &'a [u8],
+    account: Option<&'a [u8]>,
     symbol: &'a [u8],
     side: FixOrderSide,
     transact_time: &'a [u8],
@@ -1975,6 +1976,7 @@ impl<'a> FixNewOrderSingle<'a> {
     ) -> Self {
         Self {
             cl_ord_id,
+            account: None,
             symbol,
             side,
             transact_time,
@@ -1983,6 +1985,12 @@ impl<'a> FixNewOrderSingle<'a> {
             price: None,
             time_in_force: None,
         }
+    }
+
+    /// Adds `Account(1)`.
+    pub const fn with_account(mut self, account: &'a [u8]) -> Self {
+        self.account = Some(account);
+        self
     }
 
     /// Adds `Price(44)`.
@@ -2003,6 +2011,7 @@ impl<'a> FixNewOrderSingle<'a> {
 pub struct FixOrderCancelRequest<'a> {
     orig_cl_ord_id: &'a [u8],
     cl_ord_id: &'a [u8],
+    account: Option<&'a [u8]>,
     symbol: &'a [u8],
     side: FixOrderSide,
     transact_time: &'a [u8],
@@ -2020,10 +2029,17 @@ impl<'a> FixOrderCancelRequest<'a> {
         Self {
             orig_cl_ord_id,
             cl_ord_id,
+            account: None,
             symbol,
             side,
             transact_time,
         }
+    }
+
+    /// Adds `Account(1)`.
+    pub const fn with_account(mut self, account: &'a [u8]) -> Self {
+        self.account = Some(account);
+        self
     }
 }
 
@@ -2032,6 +2048,7 @@ impl<'a> FixOrderCancelRequest<'a> {
 pub struct FixOrderCancelReplaceRequest<'a> {
     orig_cl_ord_id: &'a [u8],
     cl_ord_id: &'a [u8],
+    account: Option<&'a [u8]>,
     symbol: &'a [u8],
     side: FixOrderSide,
     transact_time: &'a [u8],
@@ -2055,6 +2072,7 @@ impl<'a> FixOrderCancelReplaceRequest<'a> {
         Self {
             orig_cl_ord_id,
             cl_ord_id,
+            account: None,
             symbol,
             side,
             transact_time,
@@ -2063,6 +2081,12 @@ impl<'a> FixOrderCancelReplaceRequest<'a> {
             price: None,
             time_in_force: None,
         }
+    }
+
+    /// Adds `Account(1)`.
+    pub const fn with_account(mut self, account: &'a [u8]) -> Self {
+        self.account = Some(account);
+        self
     }
 
     /// Adds `Price(44)`.
@@ -2634,6 +2658,7 @@ pub fn encode_new_order_single(
 ) -> Result<(), FixEncodeError> {
     let mut fields = [
         (FixTag::CL_ORD_ID, request.cl_ord_id),
+        (FixTag::ACCOUNT, b"".as_slice()),
         (FixTag::SYMBOL, request.symbol),
         (FixTag::SIDE, request.side.as_bytes()),
         (FixTag::TRANSACT_TIME, request.transact_time),
@@ -2642,7 +2667,21 @@ pub fn encode_new_order_single(
         (FixTag::PRICE, b"".as_slice()),
         (FixTag::TIME_IN_FORCE, b"".as_slice()),
     ];
-    let mut len = 6usize;
+    let mut len = 1usize;
+    if let Some(account) = request.account {
+        fields[len] = (FixTag::ACCOUNT, account);
+        len += 1;
+    }
+    fields[len] = (FixTag::SYMBOL, request.symbol);
+    len += 1;
+    fields[len] = (FixTag::SIDE, request.side.as_bytes());
+    len += 1;
+    fields[len] = (FixTag::TRANSACT_TIME, request.transact_time);
+    len += 1;
+    fields[len] = (FixTag::ORDER_QTY, request.order_qty);
+    len += 1;
+    fields[len] = (FixTag::ORD_TYPE, request.ord_type.as_bytes());
+    len += 1;
     if let Some(price) = request.price {
         fields[len] = (FixTag::PRICE, price);
         len += 1;
@@ -2671,19 +2710,31 @@ pub fn encode_order_cancel_request(
     header: FixSessionHeader<'_>,
     request: FixOrderCancelRequest<'_>,
 ) -> Result<(), FixEncodeError> {
-    let fields = [
+    let mut fields = [
         (FixTag::ORIG_CL_ORD_ID, request.orig_cl_ord_id),
         (FixTag::CL_ORD_ID, request.cl_ord_id),
+        (FixTag::ACCOUNT, b"".as_slice()),
         (FixTag::SYMBOL, request.symbol),
         (FixTag::SIDE, request.side.as_bytes()),
         (FixTag::TRANSACT_TIME, request.transact_time),
     ];
+    let mut len = 2usize;
+    if let Some(account) = request.account {
+        fields[len] = (FixTag::ACCOUNT, account);
+        len += 1;
+    }
+    fields[len] = (FixTag::SYMBOL, request.symbol);
+    len += 1;
+    fields[len] = (FixTag::SIDE, request.side.as_bytes());
+    len += 1;
+    fields[len] = (FixTag::TRANSACT_TIME, request.transact_time);
+    len += 1;
     encode_session_message(
         out,
         version,
         FixMsgType::ORDER_CANCEL_REQUEST,
         header,
-        &fields,
+        &fields[..len],
     )
 }
 
@@ -2704,6 +2755,7 @@ pub fn encode_order_cancel_replace_request(
     let mut fields = [
         (FixTag::ORIG_CL_ORD_ID, request.orig_cl_ord_id),
         (FixTag::CL_ORD_ID, request.cl_ord_id),
+        (FixTag::ACCOUNT, b"".as_slice()),
         (FixTag::SYMBOL, request.symbol),
         (FixTag::SIDE, request.side.as_bytes()),
         (FixTag::TRANSACT_TIME, request.transact_time),
@@ -2712,7 +2764,21 @@ pub fn encode_order_cancel_replace_request(
         (FixTag::PRICE, b"".as_slice()),
         (FixTag::TIME_IN_FORCE, b"".as_slice()),
     ];
-    let mut len = 7usize;
+    let mut len = 2usize;
+    if let Some(account) = request.account {
+        fields[len] = (FixTag::ACCOUNT, account);
+        len += 1;
+    }
+    fields[len] = (FixTag::SYMBOL, request.symbol);
+    len += 1;
+    fields[len] = (FixTag::SIDE, request.side.as_bytes());
+    len += 1;
+    fields[len] = (FixTag::TRANSACT_TIME, request.transact_time);
+    len += 1;
+    fields[len] = (FixTag::ORDER_QTY, request.order_qty);
+    len += 1;
+    fields[len] = (FixTag::ORD_TYPE, request.ord_type.as_bytes());
+    len += 1;
     if let Some(price) = request.price {
         fields[len] = (FixTag::PRICE, price);
         len += 1;
@@ -3974,6 +4040,7 @@ mod tests {
             b"1.25",
             FixOrdType::Limit,
         )
+        .with_account(b"ACC")
         .with_price(b"65000.5")
         .with_time_in_force(FixTimeInForce::Day);
 
@@ -3984,6 +4051,7 @@ mod tests {
         let message = parse_message(&raw, &mut scratch).expect("parse");
         assert_eq!(message.typed_msg_type(), Some(FixMsgType::NEW_ORDER_SINGLE));
         assert_eq!(message.get(FixTag::CL_ORD_ID), Some(b"ORD-1".as_slice()));
+        assert_eq!(message.get(FixTag::ACCOUNT), Some(b"ACC".as_slice()));
         assert_eq!(message.get(FixTag::SYMBOL), Some(b"BTCUSDT".as_slice()));
         assert_eq!(message.get(FixTag::SIDE), Some(b"1".as_slice()));
         assert_eq!(message.get(FixTag::ORDER_QTY), Some(b"1.25".as_slice()));
@@ -3999,7 +4067,8 @@ mod tests {
             b"BTCUSDT",
             FixOrderSide::Buy,
             b"20260717-12:00:06.000",
-        );
+        )
+        .with_account(b"ACC");
 
         let mut raw = Vec::new();
         encode_order_cancel_request(&mut raw, FixVersion::Fix44, header, request).expect("cancel");
@@ -4018,6 +4087,7 @@ mod tests {
             message.get(FixTag::CL_ORD_ID),
             Some(b"ORD-1-CXL".as_slice())
         );
+        assert_eq!(message.get(FixTag::ACCOUNT), Some(b"ACC".as_slice()));
     }
 
     #[test]
@@ -4032,6 +4102,7 @@ mod tests {
             b"2.00",
             FixOrdType::Limit,
         )
+        .with_account(b"ACC")
         .with_price(b"65100")
         .with_time_in_force(FixTimeInForce::ImmediateOrCancel);
 
@@ -4050,6 +4121,7 @@ mod tests {
             Some(b"ORD-1".as_slice())
         );
         assert_eq!(message.get(FixTag::CL_ORD_ID), Some(b"ORD-2".as_slice()));
+        assert_eq!(message.get(FixTag::ACCOUNT), Some(b"ACC".as_slice()));
         assert_eq!(message.get(FixTag::ORDER_QTY), Some(b"2.00".as_slice()));
         assert_eq!(message.get(FixTag::TIME_IN_FORCE), Some(b"3".as_slice()));
     }
