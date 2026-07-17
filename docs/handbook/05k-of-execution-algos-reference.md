@@ -44,6 +44,12 @@ Lifecycle and planning types:
 - `AlgoAction`
 - `AlgoDecision`
 - `TwapSlicePlanner`
+- `AlgoReplayEvent`
+- `AlgoReplayInput`
+- `AlgoReplayIdScheme`
+- `AlgoReplayStep`
+- `AlgoReplaySummary`
+- `replay_twap_into`
 
 ## Parent Orders
 
@@ -181,6 +187,70 @@ let child = planner
 assert_eq!(child.request().quantity, OrderQty(10));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+## Deterministic Replay
+
+`replay_twap_into` runs TWAP planning over caller-provided input events and
+writes replay steps into a caller-owned `Vec`.
+
+Replay inputs are explicit:
+
+- `AlgoReplayEvent::Timer` drives schedule evaluation,
+- `AlgoReplayEvent::Execution` folds canonical OMS reports into progress,
+- `AlgoReplayEvent::ParentStatus` changes parent lifecycle state.
+
+The harness does not read wall-clock time, does not submit orders, and does not
+generate random child ids. `AlgoReplayIdScheme` derives child and client ids
+from deterministic prefixes plus a child counter.
+
+```rust
+use of_execution_algos::{
+    replay_twap_into, AlgoReplayEvent, AlgoReplayIdScheme, AlgoReplayInput,
+    ParentOrder, ParentOrderId, TwapSlicePlanner,
+};
+use of_execution_core::{
+    AccountId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide, OrderType,
+    RouteId, StrategyId, TimeInForce,
+};
+
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-1")?,
+    AccountId::new("acct")?,
+    RouteId::new("sim")?,
+    StrategyId::new("twap")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+
+let inputs = [
+    AlgoReplayInput::new(1, AlgoReplayEvent::Timer { timestamp_ns: 1_000 }),
+    AlgoReplayInput::new(2, AlgoReplayEvent::Timer { timestamp_ns: 2_000 }),
+];
+let mut steps = Vec::new();
+let summary = replay_twap_into::<16>(
+    parent,
+    TwapSlicePlanner::new(1_000),
+    &inputs,
+    AlgoReplayIdScheme::default(),
+    &mut steps,
+)?;
+
+assert_eq!(summary.submitted_children(), 2);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Use `AlgoReplaySummary::deterministic_hash()` in regression tests when you want
+to compare replay outputs without diffing every step.
 
 ## Compatibility
 

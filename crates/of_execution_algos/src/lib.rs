@@ -14,6 +14,9 @@ use of_execution_core::{
 /// Default maximum number of actions retained in an [`AlgoDecision`].
 pub const DEFAULT_ALGO_DECISION_CAPACITY: usize = 16;
 
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
 /// Algorithm parent-order identifier.
 pub type ParentOrderId = FixedAscii<40>;
 /// Algorithm child-order identifier.
@@ -134,6 +137,8 @@ pub enum AlgoError {
         /// Configured decision capacity.
         capacity: usize,
     },
+    /// Deterministic replay generated an identifier that exceeded capacity.
+    GeneratedIdentifierTooLong,
 }
 
 impl fmt::Display for AlgoError {
@@ -150,6 +155,7 @@ impl fmt::Display for AlgoError {
             Self::DecisionFull { capacity } => {
                 write!(f, "algorithm decision capacity {capacity} is full")
             }
+            Self::GeneratedIdentifierTooLong => write!(f, "generated identifier is too long"),
         }
     }
 }
@@ -750,12 +756,334 @@ impl TwapSlicePlanner {
     }
 }
 
+/// Replay event consumed by an algorithm harness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "replay events remain Copy so caller-owned replay buffers avoid boxing"
+)]
+pub enum AlgoReplayEvent {
+    /// Deterministic timer tick at `timestamp_ns`.
+    Timer {
+        /// Timer timestamp in nanoseconds.
+        timestamp_ns: u64,
+    },
+    /// Canonical OMS execution event.
+    Execution(ExecutionEvent),
+    /// Parent lifecycle status update.
+    ParentStatus {
+        /// New parent status.
+        status: ParentOrderStatus,
+    },
+}
+
+/// Sequenced replay input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoReplayInput {
+    sequence: u64,
+    event: AlgoReplayEvent,
+}
+
+impl AlgoReplayInput {
+    /// Creates a replay input.
+    pub const fn new(sequence: u64, event: AlgoReplayEvent) -> Self {
+        Self { sequence, event }
+    }
+
+    /// Returns the replay input sequence.
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// Returns the replay event.
+    pub const fn event(&self) -> AlgoReplayEvent {
+        self.event
+    }
+}
+
+/// Deterministic child/client id generation prefixes for replay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoReplayIdScheme {
+    child_prefix: FixedAscii<24>,
+    client_prefix: FixedAscii<24>,
+}
+
+impl AlgoReplayIdScheme {
+    /// Creates replay id prefixes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExecutionCoreError`] when a prefix is non-ASCII or too long.
+    pub fn new(child_prefix: &str, client_prefix: &str) -> Result<Self, ExecutionCoreError> {
+        Ok(Self {
+            child_prefix: FixedAscii::new(child_prefix)?,
+            client_prefix: FixedAscii::new(client_prefix)?,
+        })
+    }
+
+    /// Returns the child id prefix.
+    pub const fn child_prefix(&self) -> FixedAscii<24> {
+        self.child_prefix
+    }
+
+    /// Returns the client order id prefix.
+    pub const fn client_prefix(&self) -> FixedAscii<24> {
+        self.client_prefix
+    }
+
+    fn child_id(&self, index: u64) -> Result<ChildOrderId, AlgoError> {
+        fixed_id_with_index(self.child_prefix.as_str(), index)
+    }
+
+    fn client_order_id(&self, index: u64) -> Result<ClientOrderId, AlgoError> {
+        fixed_id_with_index(self.client_prefix.as_str(), index)
+    }
+}
+
+impl Default for AlgoReplayIdScheme {
+    fn default() -> Self {
+        Self::new("child", "cl").expect("static replay id prefixes are valid")
+    }
+}
+
+/// Replay step emitted for one input event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoReplayStep<const N: usize = DEFAULT_ALGO_DECISION_CAPACITY> {
+    input_sequence: u64,
+    event: AlgoReplayEvent,
+    progress_before: AlgoProgress,
+    progress_after: AlgoProgress,
+    decision: AlgoDecision<N>,
+}
+
+impl<const N: usize> AlgoReplayStep<N> {
+    /// Returns the replay input sequence.
+    pub const fn input_sequence(&self) -> u64 {
+        self.input_sequence
+    }
+
+    /// Returns the replay event.
+    pub const fn event(&self) -> AlgoReplayEvent {
+        self.event
+    }
+
+    /// Returns progress before applying the event.
+    pub const fn progress_before(&self) -> AlgoProgress {
+        self.progress_before
+    }
+
+    /// Returns progress after applying the event and any generated decision.
+    pub const fn progress_after(&self) -> AlgoProgress {
+        self.progress_after
+    }
+
+    /// Returns the decision generated for this input.
+    pub const fn decision(&self) -> &AlgoDecision<N> {
+        &self.decision
+    }
+}
+
+/// Summary returned by deterministic TWAP replay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoReplaySummary {
+    input_events: u64,
+    decisions: u64,
+    actions: u64,
+    submitted_children: u64,
+    final_progress: AlgoProgress,
+    deterministic_hash: u64,
+}
+
+impl AlgoReplaySummary {
+    /// Returns replay input event count.
+    pub const fn input_events(&self) -> u64 {
+        self.input_events
+    }
+
+    /// Returns emitted decision count.
+    pub const fn decisions(&self) -> u64 {
+        self.decisions
+    }
+
+    /// Returns total emitted action count.
+    pub const fn actions(&self) -> u64 {
+        self.actions
+    }
+
+    /// Returns submitted child action count.
+    pub const fn submitted_children(&self) -> u64 {
+        self.submitted_children
+    }
+
+    /// Returns final parent progress.
+    pub const fn final_progress(&self) -> AlgoProgress {
+        self.final_progress
+    }
+
+    /// Returns deterministic replay hash for regression checks.
+    pub const fn deterministic_hash(&self) -> u64 {
+        self.deterministic_hash
+    }
+}
+
+/// Replays TWAP planning over explicit deterministic inputs.
+///
+/// `out` is caller-owned and cleared before replay. This keeps allocation
+/// policy outside the harness and lets test/benchmark callers reuse capacity.
+///
+/// # Errors
+///
+/// Returns [`AlgoError`] when parent/progress state is invalid, a generated
+/// child plan is invalid, or the fixed-capacity decision cannot hold a due
+/// action.
+pub fn replay_twap_into<const N: usize>(
+    parent: ParentOrder,
+    planner: TwapSlicePlanner,
+    inputs: &[AlgoReplayInput],
+    id_scheme: AlgoReplayIdScheme,
+    out: &mut Vec<AlgoReplayStep<N>>,
+) -> Result<AlgoReplaySummary, AlgoError> {
+    parent.validate()?;
+    out.clear();
+
+    let mut active_parent = parent;
+    let mut progress = AlgoProgress::new(parent.id(), parent.total_qty());
+    let mut decisions = 0_u64;
+    let mut actions = 0_u64;
+    let mut submitted_children = 0_u64;
+    let mut hash = FNV_OFFSET_BASIS;
+
+    for input in inputs {
+        let before = progress;
+        let mut decision = AlgoDecision::<N>::new(decisions.saturating_add(1));
+        match input.event() {
+            AlgoReplayEvent::Timer { timestamp_ns } => {
+                let next_child = submitted_children.saturating_add(1);
+                if let Some(plan) = planner.plan_due_slice(
+                    &active_parent,
+                    progress,
+                    timestamp_ns,
+                    id_scheme.child_id(next_child)?,
+                    id_scheme.client_order_id(next_child)?,
+                    timestamp_ns,
+                )? {
+                    decision.push(AlgoAction::SubmitChild(plan))?;
+                    progress.on_child_released(&plan)?;
+                    submitted_children = submitted_children.saturating_add(1);
+                }
+            }
+            AlgoReplayEvent::Execution(event) => {
+                progress.on_execution_event(&event);
+            }
+            AlgoReplayEvent::ParentStatus { status } => {
+                active_parent = active_parent.with_status(status);
+            }
+        }
+
+        decisions = decisions.saturating_add(1);
+        actions = actions.saturating_add(usize_to_u64(decision.len()));
+        hash = hash_replay_step(hash, input.sequence(), input.event(), progress, &decision);
+        out.push(AlgoReplayStep {
+            input_sequence: input.sequence(),
+            event: input.event(),
+            progress_before: before,
+            progress_after: progress,
+            decision,
+        });
+    }
+
+    Ok(AlgoReplaySummary {
+        input_events: usize_to_u64(inputs.len()),
+        decisions,
+        actions,
+        submitted_children,
+        final_progress: progress,
+        deterministic_hash: hash,
+    })
+}
+
 fn div_ceil_u64(lhs: u64, rhs: u64) -> u64 {
     lhs / rhs + u64::from(!lhs.is_multiple_of(rhs))
 }
 
 fn div_ceil_i128(lhs: i128, rhs: i128) -> i128 {
     lhs / rhs + i128::from(lhs % rhs != 0)
+}
+
+fn fixed_id_with_index<const N: usize>(
+    prefix: &str,
+    index: u64,
+) -> Result<FixedAscii<N>, AlgoError> {
+    let mut bytes = [0_u8; N];
+    let prefix_bytes = prefix.as_bytes();
+    if prefix_bytes.len().saturating_add(1) > N {
+        return Err(AlgoError::GeneratedIdentifierTooLong);
+    }
+    bytes[..prefix_bytes.len()].copy_from_slice(prefix_bytes);
+    let mut len = prefix_bytes.len();
+    bytes[len] = b'-';
+    len += 1;
+
+    let mut digits = [0_u8; 20];
+    let mut value = index;
+    let mut digit_len = 0_usize;
+    loop {
+        digits[digit_len] = b'0' + u8::try_from(value % 10).unwrap_or(0);
+        digit_len += 1;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    if len.saturating_add(digit_len) > N {
+        return Err(AlgoError::GeneratedIdentifierTooLong);
+    }
+    for digit in digits[..digit_len].iter().rev() {
+        bytes[len] = *digit;
+        len += 1;
+    }
+    let value =
+        std::str::from_utf8(&bytes[..len]).expect("prefix is ASCII and generated digits are ASCII");
+    Ok(FixedAscii::new(value)?)
+}
+
+fn usize_to_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn hash_u64(mut hash: u64, value: u64) -> u64 {
+    for byte in value.to_le_bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+fn hash_i64(hash: u64, value: i64) -> u64 {
+    hash_u64(hash, value as u64)
+}
+
+fn hash_replay_step<const N: usize>(
+    mut hash: u64,
+    input_sequence: u64,
+    event: AlgoReplayEvent,
+    progress: AlgoProgress,
+    decision: &AlgoDecision<N>,
+) -> u64 {
+    hash = hash_u64(hash, input_sequence);
+    hash = match event {
+        AlgoReplayEvent::Timer { timestamp_ns } => hash_u64(hash_u64(hash, 1), timestamp_ns),
+        AlgoReplayEvent::Execution(event) => hash_i64(
+            hash_u64(hash_u64(hash, 2), u64::from(event.order_status as u8)),
+            event.last_qty.0,
+        ),
+        AlgoReplayEvent::ParentStatus { status } => hash_u64(hash_u64(hash, 3), status as u64),
+    };
+    hash = hash_i64(hash, progress.released_qty().0);
+    hash = hash_i64(hash, progress.completed_qty().0);
+    hash = hash_i64(hash, progress.open_qty().0);
+    hash_u64(hash, usize_to_u64(decision.len()))
 }
 
 #[cfg(test)]
@@ -945,5 +1273,128 @@ mod tests {
             ),
             Err(AlgoError::InvalidTimeWindow)
         );
+    }
+
+    #[test]
+    fn replay_twap_is_deterministic() {
+        let parent = parent();
+        let planner = TwapSlicePlanner::new(1_000);
+        let inputs = [
+            AlgoReplayInput::new(
+                1,
+                AlgoReplayEvent::Timer {
+                    timestamp_ns: 1_000,
+                },
+            ),
+            AlgoReplayInput::new(
+                2,
+                AlgoReplayEvent::Timer {
+                    timestamp_ns: 2_000,
+                },
+            ),
+            AlgoReplayInput::new(
+                3,
+                AlgoReplayEvent::Timer {
+                    timestamp_ns: 3_000,
+                },
+            ),
+        ];
+        let mut first_steps = Vec::new();
+        let mut second_steps = Vec::new();
+        let first = replay_twap_into::<DEFAULT_ALGO_DECISION_CAPACITY>(
+            parent,
+            planner,
+            &inputs,
+            AlgoReplayIdScheme::default(),
+            &mut first_steps,
+        )
+        .expect("first replay");
+        let second = replay_twap_into::<DEFAULT_ALGO_DECISION_CAPACITY>(
+            parent,
+            planner,
+            &inputs,
+            AlgoReplayIdScheme::default(),
+            &mut second_steps,
+        )
+        .expect("second replay");
+
+        assert_eq!(first, second);
+        assert_eq!(first_steps, second_steps);
+        assert_eq!(first.input_events(), 3);
+        assert_eq!(first.submitted_children(), 3);
+        assert_eq!(first.final_progress().released_qty(), OrderQty(30));
+    }
+
+    #[test]
+    fn replay_folds_execution_events() {
+        let parent = parent();
+        let planner = TwapSlicePlanner::new(1_000);
+        let fill = ExecutionEvent {
+            exec_type: of_execution_core::ExecutionType::Trade,
+            order_status: OrderStatus::Filled,
+            client_order_id: ClientOrderId::new("cl-1").expect("client"),
+            orig_client_order_id: ClientOrderId::empty(),
+            venue_order_id: VenueOrderId::new("venue-1").expect("venue"),
+            execution_id: ExecutionId::new("exec-1").expect("exec"),
+            account_id: parent.account_id(),
+            route_id: parent.route_id(),
+            symbol: parent.symbol(),
+            last_qty: OrderQty(10),
+            last_price: OrderPrice(500_000),
+            cumulative_qty: OrderQty(10),
+            leaves_qty: OrderQty(0),
+            average_price: OrderPrice(500_000),
+            ts_exchange_ns: 2,
+            ts_recv_ns: 3,
+            reason: RiskRejectReason::None,
+            text: of_execution_core::ExecutionText::empty(),
+        };
+        let inputs = [
+            AlgoReplayInput::new(
+                1,
+                AlgoReplayEvent::Timer {
+                    timestamp_ns: 1_000,
+                },
+            ),
+            AlgoReplayInput::new(2, AlgoReplayEvent::Execution(fill)),
+        ];
+        let mut steps = Vec::new();
+        let summary = replay_twap_into::<DEFAULT_ALGO_DECISION_CAPACITY>(
+            parent,
+            planner,
+            &inputs,
+            AlgoReplayIdScheme::default(),
+            &mut steps,
+        )
+        .expect("replay");
+
+        assert_eq!(summary.final_progress().released_qty(), OrderQty(10));
+        assert_eq!(summary.final_progress().completed_qty(), OrderQty(10));
+        assert_eq!(summary.final_progress().open_qty(), OrderQty(0));
+        assert_eq!(steps[0].decision().len(), 1);
+        assert!(steps[1].decision().is_empty());
+    }
+
+    #[test]
+    fn replay_reports_decision_capacity_errors() {
+        let parent = parent();
+        let inputs = [AlgoReplayInput::new(
+            1,
+            AlgoReplayEvent::Timer {
+                timestamp_ns: 1_000,
+            },
+        )];
+        let mut steps = Vec::new();
+        assert_eq!(
+            replay_twap_into::<0>(
+                parent,
+                TwapSlicePlanner::new(1_000),
+                &inputs,
+                AlgoReplayIdScheme::default(),
+                &mut steps,
+            ),
+            Err(AlgoError::DecisionFull { capacity: 0 })
+        );
+        assert!(steps.is_empty());
     }
 }

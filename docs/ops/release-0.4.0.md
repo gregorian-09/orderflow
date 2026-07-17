@@ -135,6 +135,9 @@ foundation:
 - fixed-capacity `AlgoDecision` buffers for allocation-aware live decision paths
 - deterministic `TwapSlicePlanner` with explicit time window, clip bounds,
   caller-supplied ids, and caller-supplied timestamps
+- deterministic TWAP replay primitives with explicit timer/execution/status
+  inputs, caller-owned step output, generated replay ids, and summary hashes
+  for regression checks
 
 The crate does not bypass OMS risk, journaling, adapter capability checks, kill
 switches, or reconciliation. Hosts should submit child orders through

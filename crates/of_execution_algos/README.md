@@ -18,7 +18,8 @@ The first foundation focuses on deterministic parent/child order handling:
 - child order plans that convert into canonical OMS `OrderRequest` values,
 - fixed-capacity `AlgoDecision` buffers for allocation-aware decision paths,
 - progress folding from canonical `ExecutionEvent` reports,
-- deterministic TWAP slice planning with explicit clip limits.
+- deterministic TWAP slice planning with explicit clip limits,
+- deterministic TWAP replay over explicit timer/execution/status inputs.
 
 The crate does not submit orders, open sockets, own an OMS, bypass risk, or
 claim strategy profitability. Host applications still send every child order
@@ -98,6 +99,21 @@ let plan = planner
 assert_eq!(plan.request().quantity, OrderQty(10));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+## Deterministic Replay
+
+`replay_twap_into` evaluates TWAP planning over explicit replay inputs:
+
+- `AlgoReplayInput` carries a monotonic input sequence and an `AlgoReplayEvent`;
+- `AlgoReplayEvent::Timer` drives schedule decisions;
+- `AlgoReplayEvent::Execution` folds canonical OMS events into progress;
+- `AlgoReplayEvent::ParentStatus` changes parent lifecycle status;
+- `AlgoReplayIdScheme` deterministically generates child/client ids;
+- `AlgoReplayStep` captures progress before/after each input and the decision;
+- `AlgoReplaySummary` reports final progress and a deterministic hash.
+
+The replay output vector is caller-owned and cleared before use. This keeps
+allocation policy visible to test, benchmark, and simulation hosts.
 
 ## Compatibility
 

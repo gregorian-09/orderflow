@@ -594,6 +594,12 @@ Public parent/child and decision types:
 - `AlgoAction`
 - `AlgoDecision`
 - `TwapSlicePlanner`
+- `AlgoReplayEvent`
+- `AlgoReplayInput`
+- `AlgoReplayIdScheme`
+- `AlgoReplayStep`
+- `AlgoReplaySummary`
+- `replay_twap_into`
 
 Public constants:
 
