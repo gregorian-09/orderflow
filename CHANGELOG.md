@@ -126,6 +126,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `of_execution_adapters::fix` outbound request bridge.
 - Added `of_execution_adapters::fix::encode_stop_amend_request` and
   `FixStopAmendEncodeContext` for explicit stop/stop-limit amend encoding.
+- Added new `of_execution_algos` crate with parent/child execution-algorithm
+  identifiers, lifecycle statuses, child-order plans, fixed-capacity decisions,
+  execution-event progress folding, and deterministic TWAP slice planning.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

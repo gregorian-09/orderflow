@@ -12,8 +12,10 @@ Python classes, and Java classes, so existing analytics integrations remain
 stable. The execution layer provides typed order requests, FIX-style state
 transitions, structured risk rejection, simulated execution, bounded
 concurrent command workers, journals, recovery helpers, C/Python/Java bindings,
-a reusable low-allocation FIX codec foundation, and a FIX mapping scaffold. It is not a broker-certified production OMS by
-itself; it is the reusable foundation developers use to build one.
+a reusable low-allocation FIX codec foundation, a FIX mapping scaffold, and a
+separate parent/child execution-algorithm crate. It is not a broker-certified
+production OMS by itself; it is the reusable foundation developers use to build
+one.
 
 ## What's New In 0.4.0
 
@@ -29,7 +31,7 @@ Package versions for this release:
 | Existing Rust crates: `of_core`, `of_adapters`, `of_signals`, `of_persist`, `of_runtime`, `of_ffi_c` | `0.4.0` | Same established API line, additive analytics/execution exposure |
 | Python binding: `orderflow-gregorian09` | `0.4.0` | Matches the native `of_ffi_c` ABI package line |
 | Java binding: `orderflow-java-binding` | `0.4.0` | Matches the native `of_ffi_c` ABI package line |
-| New Rust crates: `of_execution_core`, `of_fix`, `of_execution`, `of_execution_adapters` | `0.1.0` | New execution/FIX crate family, intentionally versioned from its own first public release |
+| New Rust crates: `of_execution_core`, `of_fix`, `of_execution`, `of_execution_adapters`, `of_execution_algos` | `0.1.0` | New execution/FIX/algo crate family, intentionally versioned from its own first public release |
 
 Major additions:
 
@@ -49,6 +51,9 @@ Major additions:
   buffers, and debug rendering outside the hot path
 - adapter scaffolding: FIX execution-report mapping and fail-closed adapter shell
   for provider adapter authors
+- execution algorithms: additive parent/child order primitives, fixed-capacity
+  decision buffers, OMS execution-event progress folding, and deterministic
+  TWAP slice planning in `of_execution_algos`
 - bindings: additive C ABI, Python, and Java execution APIs that do not change
   existing analytics APIs
 - documentation: end-to-end strategy workflow, OMS architecture, OMS cookbook,
@@ -99,6 +104,7 @@ Start here:
 | FIX codec | `of_fix` borrowed tag-value parser, validator, profile rules, and encoder |
 | Rust engine | `of_execution` adapter trait, bounded event buffer, simulator, journal hooks |
 | Adapter scaffold | `of_execution_adapters::fix` execution-report mapper and FIX capabilities |
+| Execution algos | `of_execution_algos` parent/child substrate and deterministic TWAP planner |
 | C ABI | `of_execution_engine_t`, submit/cancel/amend/poll/state/health/metrics |
 | Python | `ExecutionEngine`, `OrderRequest`, `CancelRequest`, `AmendRequest` |
 | Java | `OrderflowExecutionEngine`, `OrderRequest`, `CancelRequest`, `AmendRequest` |

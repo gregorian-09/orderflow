@@ -574,6 +574,34 @@ Public helper functions:
 For lifecycle, routing, concurrency, and OMS helper details, see
 [`of_execution` reference](./05h-of-execution-reference.md).
 
+### `of_execution_algos`
+
+Public execution-algorithm identifier types:
+
+- `ParentOrderId`
+- `ChildOrderId`
+- `AlgoIntentId`
+- `AlgoInstanceId`
+
+Public parent/child and decision types:
+
+- `ParentOrderStatus`
+- `ChildOrderStatus`
+- `AlgoError`
+- `ParentOrder`
+- `ChildOrderPlan`
+- `AlgoProgress`
+- `AlgoAction`
+- `AlgoDecision`
+- `TwapSlicePlanner`
+
+Public constants:
+
+- `DEFAULT_ALGO_DECISION_CAPACITY`
+
+For parent/child and TWAP planning details, see
+[`of_execution_algos` reference](./05k-of-execution-algos-reference.md).
+
 ### `of_fix`
 
 Public FIX codec types:

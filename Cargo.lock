@@ -162,6 +162,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "of_execution_algos"
+version = "0.1.0"
+dependencies = [
+ "of_execution_core",
+]
+
+[[package]]
 name = "of_execution_core"
 version = "0.1.0"
 

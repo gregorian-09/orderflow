@@ -15,7 +15,7 @@ This release uses a split version model:
 | Existing Rust crates: `of_core`, `of_adapters`, `of_signals`, `of_persist`, `of_runtime`, `of_ffi_c` | `0.4.0` |
 | Python binding: `orderflow-gregorian09` | `0.4.0` |
 | Java binding: `orderflow-java-binding` | `0.4.0` |
-| New Rust execution/FIX crates: `of_execution_core`, `of_fix`, `of_execution`, `of_execution_adapters` | `0.1.0` |
+| New Rust execution/FIX/algo crates: `of_execution_core`, `of_fix`, `of_execution`, `of_execution_adapters`, `of_execution_algos` | `0.1.0` |
 
 The split is intentional. The analytics/runtime/binding stack is the existing
 public package family. The execution/FIX crates are new public Rust surfaces and
@@ -28,6 +28,7 @@ Rust publish order for the new crate family:
 2. `of_fix`
 3. `of_execution`
 4. `of_execution_adapters`
+5. `of_execution_algos`
 
 `of_execution_adapters`' `fix` feature depends on `of_fix`, so local
 `cargo package -p of_execution_adapters` verification can only resolve the
@@ -118,6 +119,26 @@ of the codec.
 - stop and stop-limit new-order encoding through the FIX request bridge
 - explicit stop and stop-limit amend encoding through
   `encode_stop_amend_request`
+
+### 5. Execution algorithm foundation
+
+`of_execution_algos 0.1.0` adds an optional parent/child execution-algorithm
+foundation:
+
+- fixed-size parent, child, intent, and algo-instance identifiers
+- parent lifecycle status and child lifecycle status vocabularies
+- `ParentOrder` metadata that mirrors OMS order ticket fields without changing
+  existing `of_execution` APIs
+- `ChildOrderPlan` values that convert algorithm decisions into canonical OMS
+  `OrderRequest` submissions
+- `AlgoProgress` folding from canonical `ExecutionEvent` reports
+- fixed-capacity `AlgoDecision` buffers for allocation-aware live decision paths
+- deterministic `TwapSlicePlanner` with explicit time window, clip bounds,
+  caller-supplied ids, and caller-supplied timestamps
+
+The crate does not bypass OMS risk, journaling, adapter capability checks, kill
+switches, or reconciliation. Hosts should submit child orders through
+`of_execution` and feed resulting execution events back into algo progress.
 - FIX exec type/status mapping
 - canonical `ExecutionEvent` conversion
 - fail-closed adapter shell

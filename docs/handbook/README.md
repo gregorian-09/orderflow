@@ -42,6 +42,8 @@ It is written for three audiences:
    Provider execution adapter scaffolds, FIX mapping, and adapter boundaries.
 5j. [of_fix Reference](./05j-of-fix-reference.md)
    Low-allocation FIX tag-value codec, borrowed parser, validation, and encoder.
+5k. [of_execution_algos Reference](./05k-of-execution-algos-reference.md)
+   Parent/child execution-algorithm primitives and deterministic TWAP planning.
 6. [Contributor Guide](./06-contributor-guide.md)  
    Build/test/extend instructions and implementation notes.
 7. [References](./07-references.md)  
