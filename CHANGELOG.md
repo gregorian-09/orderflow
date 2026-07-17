@@ -85,6 +85,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `of_fix` session-state and sequence-tracking primitives with
   deterministic accept/gap/duplicate/too-low outcomes, resend ranges, monotonic
   outbound assignment, and guarded sequence-reset advancement.
+- Added `of_fix` borrowed session identity and sequence snapshot primitives for
+  storage-neutral persistence of next inbound/outbound sequence counters.
 - Added `of_fix` session/admin builders for Logon, Heartbeat, TestRequest,
   ResendRequest, SequenceReset gap fill, and Logout using caller-owned buffers.
 - Added `of_fix` typed order-entry builders for NewOrderSingle,

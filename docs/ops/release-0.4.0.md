@@ -76,6 +76,8 @@ registry dependency after `of_fix 0.1.0` is published.
 - reusable `FixDecoder` and `FixEncoder` facades
 - `FixSessionState`, `FixSequenceTracker`, `FixSequenceAction`, and
   `FixResendRange` primitives for deterministic session sequence handling
+- `FixSessionId` and `FixSequenceSnapshot` primitives for storage-neutral
+  session sequence persistence
 - typed session/admin builders for Logon, Heartbeat, TestRequest,
   ResendRequest, SequenceReset gap fill, and Logout
 - typed order-entry builders for NewOrderSingle, OrderCancelRequest, and

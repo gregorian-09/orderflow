@@ -27,6 +27,8 @@ maps parsed execution reports into canonical OMS events.
 | `FixSequenceAction` | enum | Result of observing an inbound sequence number |
 | `FixSequenceError` | enum | Sequence validation/reset errors |
 | `FixResendRange` | struct | Missing sequence range for resend request generation |
+| `FixSessionId` | struct | Borrowed FIX session identity |
+| `FixSequenceSnapshot` | struct | Borrowed persistable sequence-state snapshot |
 | `FixSessionHeader` | struct | Borrowed standard header fields for admin builders |
 | `FixOrderSide` | enum | Common `Side(54)` values |
 | `FixOrdType` | enum | Common `OrdType(40)` values |
@@ -67,6 +69,7 @@ Included:
   objects;
 - session-state and sequence-tracking primitives for future transports and
   adapters;
+- borrowed session identity and sequence snapshot primitives;
 - typed session/admin message builders for common session flow;
 - typed order-entry builders for common single-order flow;
 - encoding into caller-owned buffers with computed `BodyLength` and `CheckSum`;
@@ -96,6 +99,7 @@ The codec follows the production FIX plan in `new_features.md`:
 - validate body length and checksum directly over the raw buffer;
 - keep dictionary rules as static borrowed slices;
 - track sequence state with plain integer counters;
+- keep persistence snapshots storage-neutral;
 - encode admin/session messages with preallocated caller buffers;
 - pass order identifiers, quantities, prices, and timestamps as borrowed bytes;
 - keep debug formatting opt-in;
@@ -262,6 +266,35 @@ Sequence behavior:
 - outbound sequence numbers are assigned monotonically;
 - `apply_sequence_reset` can advance, but not decrease, the next expected
   inbound sequence.
+
+## Sequence Snapshot Example
+
+`FixSessionId` and `FixSequenceSnapshot` give storage layers a stable, borrowed
+shape for persistence without forcing a file format, database schema, or serde
+dependency into the codec crate.
+
+```rust
+use of_fix::{FixSequenceTracker, FixSessionId, FixVersion};
+
+let session = FixSessionId::new(FixVersion::Fix44, b"CLIENT", b"BROKER")?;
+let tracker = FixSequenceTracker::from_next(12, 34);
+
+let snapshot = tracker.snapshot(session, b"20260717")?;
+let restored = FixSequenceTracker::from_snapshot(&snapshot);
+
+assert_eq!(restored.next_inbound(), 12);
+assert_eq!(restored.next_outbound(), 34);
+# Ok::<(), of_fix::FixEncodeError>(())
+```
+
+Snapshot boundary:
+
+- captures session identity, trading day, next inbound, and next outbound;
+- clamps zero counters to one;
+- rejects SOH in identity/session-date values;
+- does not persist to disk;
+- does not decide end-of-day reset policy;
+- does not retain sent application messages for resend replay.
 
 ## Session Admin Builder Example
 

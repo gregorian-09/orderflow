@@ -27,6 +27,7 @@ Included now:
 - session-state and sequence-tracking primitives;
 - resend-range detection for inbound sequence gaps;
 - sequence-reset guardrails that reject decreasing next expected sequence;
+- borrowed session identity and sequence snapshot primitives for persistence;
 - typed session/admin builders for Logon, Heartbeat, TestRequest,
   ResendRequest, SequenceReset gap fill, and Logout;
 - typed order-entry builders for NewOrderSingle, OrderCancelRequest, and
@@ -56,6 +57,7 @@ The codec is designed for execution hot paths:
 - validate `BodyLength` and `CheckSum` directly over the raw byte buffer;
 - keep profile rules as static borrowed slices;
 - track inbound/outbound sequence numbers with plain integer state;
+- snapshot sequence counters without tying the codec to a storage backend;
 - build session/admin messages into reusable buffers without `format!`;
 - build order-entry messages from borrowed identifiers, symbols, quantities,
   prices, and timestamps;
@@ -154,6 +156,22 @@ assert!(matches!(
 # Ok::<(), of_fix::FixSequenceError>(())
 ```
 
+## Sequence Snapshot Example
+
+```rust
+use of_fix::{FixSequenceTracker, FixSessionId, FixVersion};
+
+let session = FixSessionId::new(FixVersion::Fix44, b"CLIENT", b"BROKER")?;
+let tracker = FixSequenceTracker::from_next(12, 34);
+
+let snapshot = tracker.snapshot(session, b"20260717")?;
+let restored = FixSequenceTracker::from_snapshot(&snapshot);
+
+assert_eq!(restored.next_inbound(), 12);
+assert_eq!(restored.next_outbound(), 34);
+# Ok::<(), of_fix::FixEncodeError>(())
+```
+
 ## Session Admin Builder Example
 
 ```rust
@@ -232,6 +250,12 @@ engines and adapters. It accepts expected inbound sequence numbers, reports
 missing ranges as `FixSequenceAction::Gap`, treats lower `PossDupFlag=Y`
 messages as duplicates, flags unmarked lower sequence numbers as too-low, and
 assigns outbound sequence numbers monotonically.
+
+`FixSessionId` and `FixSequenceSnapshot` provide borrowed, storage-neutral
+state snapshots. They do not write files or choose durability policy; WAL,
+checkpoint, or database layers can serialize the session id, trading day, and
+next inbound/outbound counters according to their own latency and durability
+requirements.
 
 The session/admin builders are intentionally small protocol helpers. They write
 the common standard header fields and the required admin body fields into the

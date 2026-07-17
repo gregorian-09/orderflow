@@ -709,6 +709,126 @@ impl fmt::Display for FixSequenceError {
 
 impl Error for FixSequenceError {}
 
+/// Borrowed FIX session identity.
+///
+/// A FIX session is commonly identified by begin string, sender, target, and an
+/// optional qualifier used to disambiguate otherwise identical sessions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixSessionId<'a> {
+    version: FixVersion,
+    sender_comp_id: &'a [u8],
+    target_comp_id: &'a [u8],
+    qualifier: &'a [u8],
+}
+
+impl<'a> FixSessionId<'a> {
+    /// Creates a session id without a qualifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixEncodeError`] when a value contains SOH.
+    pub fn new(
+        version: FixVersion,
+        sender_comp_id: &'a [u8],
+        target_comp_id: &'a [u8],
+    ) -> Result<Self, FixEncodeError> {
+        Self::with_qualifier(version, sender_comp_id, target_comp_id, b"")
+    }
+
+    /// Creates a session id with an optional qualifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixEncodeError`] when a value contains SOH.
+    pub fn with_qualifier(
+        version: FixVersion,
+        sender_comp_id: &'a [u8],
+        target_comp_id: &'a [u8],
+        qualifier: &'a [u8],
+    ) -> Result<Self, FixEncodeError> {
+        validate_value(FixTag::SENDER_COMP_ID, sender_comp_id)?;
+        validate_value(FixTag::TARGET_COMP_ID, target_comp_id)?;
+        validate_value(FixTag::TEXT, qualifier)?;
+        Ok(Self {
+            version,
+            sender_comp_id,
+            target_comp_id,
+            qualifier,
+        })
+    }
+
+    /// Returns the FIX version.
+    pub const fn version(&self) -> FixVersion {
+        self.version
+    }
+
+    /// Returns `SenderCompID(49)`.
+    pub const fn sender_comp_id(&self) -> &'a [u8] {
+        self.sender_comp_id
+    }
+
+    /// Returns `TargetCompID(56)`.
+    pub const fn target_comp_id(&self) -> &'a [u8] {
+        self.target_comp_id
+    }
+
+    /// Returns the optional session qualifier bytes.
+    pub const fn qualifier(&self) -> &'a [u8] {
+        self.qualifier
+    }
+}
+
+/// Borrowed persistable sequence-state snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixSequenceSnapshot<'a> {
+    session_id: FixSessionId<'a>,
+    next_inbound: u64,
+    next_outbound: u64,
+    trading_day: &'a [u8],
+}
+
+impl<'a> FixSequenceSnapshot<'a> {
+    /// Creates a sequence snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixEncodeError`] when `trading_day` contains SOH.
+    pub fn new(
+        session_id: FixSessionId<'a>,
+        next_inbound: u64,
+        next_outbound: u64,
+        trading_day: &'a [u8],
+    ) -> Result<Self, FixEncodeError> {
+        validate_value(FixTag::TEXT, trading_day)?;
+        Ok(Self {
+            session_id,
+            next_inbound: clamp_seq_no(next_inbound),
+            next_outbound: clamp_seq_no(next_outbound),
+            trading_day,
+        })
+    }
+
+    /// Returns the session id.
+    pub const fn session_id(&self) -> FixSessionId<'a> {
+        self.session_id
+    }
+
+    /// Returns the next inbound sequence number.
+    pub const fn next_inbound(&self) -> u64 {
+        self.next_inbound
+    }
+
+    /// Returns the next outbound sequence number.
+    pub const fn next_outbound(&self) -> u64 {
+        self.next_outbound
+    }
+
+    /// Returns the trading day or session date bytes.
+    pub const fn trading_day(&self) -> &'a [u8] {
+        self.trading_day
+    }
+}
+
 /// Deterministic inbound/outbound FIX sequence tracker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FixSequenceTracker {
@@ -840,6 +960,35 @@ impl FixSequenceTracker {
     /// Sets the next outbound sequence number from trusted persisted state.
     pub fn set_next_outbound(&mut self, next_outbound: u64) {
         self.next_outbound = clamp_seq_no(next_outbound);
+    }
+
+    /// Creates a persistable snapshot for this tracker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixEncodeError`] when `trading_day` contains SOH.
+    pub fn snapshot<'a>(
+        &self,
+        session_id: FixSessionId<'a>,
+        trading_day: &'a [u8],
+    ) -> Result<FixSequenceSnapshot<'a>, FixEncodeError> {
+        FixSequenceSnapshot::new(
+            session_id,
+            self.next_inbound,
+            self.next_outbound,
+            trading_day,
+        )
+    }
+
+    /// Restores tracker counters from a sequence snapshot.
+    pub const fn from_snapshot(snapshot: &FixSequenceSnapshot<'_>) -> Self {
+        Self::from_next(snapshot.next_inbound(), snapshot.next_outbound())
+    }
+
+    /// Resets both inbound and outbound counters to `1`.
+    pub fn reset_to_one(&mut self) {
+        self.next_inbound = 1;
+        self.next_outbound = 1;
     }
 }
 
@@ -2140,6 +2289,50 @@ mod tests {
                 requested: 14,
             })
         );
+    }
+
+    #[test]
+    fn session_id_rejects_soh() {
+        let err = FixSessionId::new(FixVersion::Fix44, b"CLIENT\x01", b"BROKER").expect_err("soh");
+        assert_eq!(
+            err,
+            FixEncodeError::ValueContainsSoh(FixTag::SENDER_COMP_ID)
+        );
+    }
+
+    #[test]
+    fn sequence_snapshot_round_trips_tracker_state() {
+        let session_id =
+            FixSessionId::with_qualifier(FixVersion::Fix44, b"CLIENT", b"BROKER", b"A")
+                .expect("session");
+        let tracker = FixSequenceTracker::from_next(12, 34);
+        let snapshot = tracker.snapshot(session_id, b"20260717").expect("snapshot");
+
+        assert_eq!(snapshot.session_id(), session_id);
+        assert_eq!(snapshot.trading_day(), b"20260717");
+        assert_eq!(snapshot.next_inbound(), 12);
+        assert_eq!(snapshot.next_outbound(), 34);
+
+        let restored = FixSequenceTracker::from_snapshot(&snapshot);
+        assert_eq!(restored.next_inbound(), 12);
+        assert_eq!(restored.next_outbound(), 34);
+    }
+
+    #[test]
+    fn sequence_snapshot_clamps_zero_counters() {
+        let session_id =
+            FixSessionId::new(FixVersion::Fix44, b"CLIENT", b"BROKER").expect("session");
+        let snapshot = FixSequenceSnapshot::new(session_id, 0, 0, b"20260717").expect("snapshot");
+        assert_eq!(snapshot.next_inbound(), 1);
+        assert_eq!(snapshot.next_outbound(), 1);
+    }
+
+    #[test]
+    fn sequence_tracker_resets_to_one() {
+        let mut tracker = FixSequenceTracker::from_next(99, 100);
+        tracker.reset_to_one();
+        assert_eq!(tracker.next_inbound(), 1);
+        assert_eq!(tracker.next_outbound(), 1);
     }
 
     #[test]

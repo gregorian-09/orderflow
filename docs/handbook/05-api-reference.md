@@ -595,6 +595,8 @@ Public FIX codec types:
 - `FixSequenceAction`
 - `FixSequenceError`
 - `FixResendRange`
+- `FixSessionId`
+- `FixSequenceSnapshot`
 - `FixSessionHeader`
 - `FixOrderSide`
 - `FixOrdType`
