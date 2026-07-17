@@ -603,6 +603,7 @@ Public parent/child and decision types:
 - `PovSlicePlanner`
 - `VwapVolumeCurve`
 - `VwapSlicePlanner`
+- `IcebergSlicePlanner`
 
 Public constants:
 

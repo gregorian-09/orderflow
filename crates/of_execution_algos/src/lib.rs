@@ -143,6 +143,8 @@ pub enum AlgoError {
     InvalidParticipationRate,
     /// VWAP volume profile is empty, non-monotonic, or has zero total weight.
     InvalidVolumeProfile,
+    /// Iceberg display quantity or replenish threshold is invalid.
+    InvalidDisplayQuantity,
 }
 
 impl fmt::Display for AlgoError {
@@ -164,6 +166,7 @@ impl fmt::Display for AlgoError {
                 write!(f, "participation rate must be positive and <= cap")
             }
             Self::InvalidVolumeProfile => write!(f, "invalid VWAP volume profile"),
+            Self::InvalidDisplayQuantity => write!(f, "invalid iceberg display quantity"),
         }
     }
 }
@@ -1079,6 +1082,129 @@ impl<'a> VwapSlicePlanner<'a> {
     }
 }
 
+/// Deterministic synthetic iceberg replenishment planner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IcebergSlicePlanner {
+    display_qty: OrderQty,
+    replenish_threshold: OrderQty,
+}
+
+impl IcebergSlicePlanner {
+    /// Creates an iceberg planner.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError::InvalidDisplayQuantity`] when display quantity is
+    /// non-positive, threshold is negative, or threshold exceeds display size.
+    pub const fn try_new(
+        display_qty: OrderQty,
+        replenish_threshold: OrderQty,
+    ) -> Result<Self, AlgoError> {
+        if display_qty.0 <= 0 || replenish_threshold.0 < 0 || replenish_threshold.0 > display_qty.0
+        {
+            return Err(AlgoError::InvalidDisplayQuantity);
+        }
+        Ok(Self {
+            display_qty,
+            replenish_threshold,
+        })
+    }
+
+    /// Creates an iceberg planner, panicking when display settings are invalid.
+    pub const fn new(display_qty: OrderQty, replenish_threshold: OrderQty) -> Self {
+        assert!(
+            display_qty.0 > 0
+                && replenish_threshold.0 >= 0
+                && replenish_threshold.0 <= display_qty.0,
+            "iceberg display quantity must be positive and threshold must be within display"
+        );
+        Self {
+            display_qty,
+            replenish_threshold,
+        }
+    }
+
+    /// Returns the target displayed child quantity.
+    pub const fn display_qty(&self) -> OrderQty {
+        self.display_qty
+    }
+
+    /// Returns the open-quantity threshold at or below which replenishment is
+    /// due.
+    pub const fn replenish_threshold(&self) -> OrderQty {
+        self.replenish_threshold
+    }
+
+    /// Plans one synthetic iceberg replenishment child.
+    ///
+    /// The host remains responsible for deciding whether to use native venue
+    /// reserve/iceberg order support or submit synthetic child orders through
+    /// the OMS.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError`] when parent/progress state is invalid or the
+    /// generated child order would be invalid.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "caller owns identifiers and timestamps"
+    )]
+    pub fn plan_replenishment(
+        &self,
+        parent: &ParentOrder,
+        progress: AlgoProgress,
+        now_ns: u64,
+        child_id: ChildOrderId,
+        client_order_id: ClientOrderId,
+        ts_recv_ns: u64,
+    ) -> Result<Option<ChildOrderPlan>, AlgoError> {
+        parent.validate()?;
+        if parent.status().is_terminal() {
+            return Err(AlgoError::ParentTerminal);
+        }
+        if progress.parent_id() != parent.id() || progress.target_qty() != parent.total_qty() {
+            return Err(AlgoError::InvalidProgress);
+        }
+        if now_ns < parent.start_ns()
+            || progress.is_complete()
+            || progress.open_qty().0 > self.replenish_threshold.0
+        {
+            return Ok(None);
+        }
+
+        let leaves = parent
+            .total_qty()
+            .0
+            .saturating_sub(progress.released_qty().0);
+        if leaves <= 0 {
+            return Ok(None);
+        }
+        let mut child_qty = self.display_qty.0.min(parent.max_clip().0).min(leaves);
+        let final_slice = progress.released_qty().0.saturating_add(child_qty)
+            >= parent.total_qty().0
+            || now_ns >= parent.end_ns();
+        if child_qty < parent.min_clip().0 && !final_slice {
+            return Ok(None);
+        }
+        if child_qty <= 0 {
+            return Ok(None);
+        }
+        child_qty = child_qty.min(
+            parent
+                .total_qty()
+                .0
+                .saturating_sub(progress.released_qty().0),
+        );
+        let request = parent.build_order_request(client_order_id, OrderQty(child_qty), ts_recv_ns);
+        Ok(Some(ChildOrderPlan::new(
+            child_id,
+            parent.id(),
+            request,
+            now_ns,
+        )?))
+    }
+}
+
 /// Replay event consumed by an algorithm harness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1865,6 +1991,71 @@ mod tests {
         assert_eq!(
             VwapVolumeCurve::new(1, 0, &[10]),
             Err(AlgoError::InvalidVolumeProfile)
+        );
+    }
+
+    #[test]
+    fn iceberg_replenishes_when_open_quantity_is_at_threshold() {
+        let parent = parent();
+        let planner = IcebergSlicePlanner::new(OrderQty(20), OrderQty(0));
+        let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+
+        let child = planner
+            .plan_replenishment(
+                &parent,
+                progress,
+                1_000,
+                ChildOrderId::new("child-ice").expect("child"),
+                ClientOrderId::new("cl-ice").expect("client"),
+                1_000,
+            )
+            .expect("plan")
+            .expect("due");
+
+        assert_eq!(child.request().quantity, OrderQty(20));
+    }
+
+    #[test]
+    fn iceberg_waits_while_display_quantity_is_working() {
+        let parent = parent();
+        let planner = IcebergSlicePlanner::new(OrderQty(20), OrderQty(0));
+        let mut progress = AlgoProgress::new(parent.id(), parent.total_qty());
+        let working = ChildOrderPlan::new(
+            ChildOrderId::new("child-ice").expect("child"),
+            parent.id(),
+            parent.build_order_request(
+                ClientOrderId::new("cl-ice").expect("client"),
+                OrderQty(20),
+                1,
+            ),
+            1,
+        )
+        .expect("child");
+        progress.on_child_released(&working).expect("release");
+
+        let child = planner
+            .plan_replenishment(
+                &parent,
+                progress,
+                2_000,
+                ChildOrderId::new("child-next").expect("child"),
+                ClientOrderId::new("cl-next").expect("client"),
+                2_000,
+            )
+            .expect("plan");
+
+        assert!(child.is_none());
+    }
+
+    #[test]
+    fn iceberg_rejects_invalid_display_settings() {
+        assert_eq!(
+            IcebergSlicePlanner::try_new(OrderQty(0), OrderQty(0)),
+            Err(AlgoError::InvalidDisplayQuantity)
+        );
+        assert_eq!(
+            IcebergSlicePlanner::try_new(OrderQty(10), OrderQty(11)),
+            Err(AlgoError::InvalidDisplayQuantity)
         );
     }
 }

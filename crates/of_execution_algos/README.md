@@ -21,6 +21,7 @@ The first foundation focuses on deterministic parent/child order handling:
 - deterministic TWAP slice planning with explicit clip limits,
 - deterministic POV/participation planning from observed market volume,
 - deterministic VWAP planning from a borrowed cumulative volume curve,
+- deterministic synthetic iceberg replenishment planning,
 - deterministic TWAP replay over explicit timer/execution/status inputs.
 
 The crate does not submit orders, open sockets, own an OMS, bypass risk, or
@@ -166,6 +167,57 @@ let plan = planner
     .expect("volume participation slice is due");
 
 assert_eq!(plan.request().quantity, OrderQty(25));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Iceberg Example
+
+`IcebergSlicePlanner` keeps the displayed child quantity bounded and plans a
+new child when the open displayed quantity falls to the configured replenish
+threshold.
+
+```rust
+use of_execution_algos::{
+    AlgoProgress, ChildOrderId, IcebergSlicePlanner, ParentOrder, ParentOrderId,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-1")?,
+    AccountId::new("acct")?,
+    RouteId::new("sim")?,
+    StrategyId::new("iceberg")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+
+let planner = IcebergSlicePlanner::new(OrderQty::new(20)?, OrderQty(0));
+let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+let plan = planner
+    .plan_replenishment(
+        &parent,
+        progress,
+        1_000,
+        ChildOrderId::new("child-1")?,
+        ClientOrderId::new("cl-1")?,
+        1_000,
+    )?
+    .expect("displayed child is due");
+
+assert_eq!(plan.request().quantity, OrderQty(20));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

@@ -53,6 +53,7 @@ Lifecycle and planning types:
 - `PovSlicePlanner`
 - `VwapVolumeCurve`
 - `VwapSlicePlanner`
+- `IcebergSlicePlanner`
 
 ## Parent Orders
 
@@ -384,6 +385,65 @@ let child = planner
     .expect("slice due");
 
 assert_eq!(child.request().quantity, OrderQty(25));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Iceberg Planner
+
+`IcebergSlicePlanner` is a synthetic reserve/iceberg replenishment helper. It
+does not assume a venue-native reserve order type. Instead, it plans another
+canonical child order when the parent has remaining unreleased quantity and the
+current open displayed quantity is at or below the replenish threshold.
+
+The host decides whether to:
+
+- submit the child as a normal synthetic slice,
+- map it to venue-native reserve/iceberg tags,
+- wait for a refresh delay,
+- add randomized display sizing in a future policy layer.
+
+```rust
+use of_execution_algos::{
+    AlgoProgress, ChildOrderId, IcebergSlicePlanner, ParentOrder, ParentOrderId,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-1")?,
+    AccountId::new("acct")?,
+    RouteId::new("sim")?,
+    StrategyId::new("iceberg")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+
+let planner = IcebergSlicePlanner::new(OrderQty::new(20)?, OrderQty(0));
+let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+let child = planner
+    .plan_replenishment(
+        &parent,
+        progress,
+        1_000,
+        ChildOrderId::new("child-1")?,
+        ClientOrderId::new("cl-1")?,
+        1_000,
+    )?
+    .expect("slice due");
+
+assert_eq!(child.request().quantity, OrderQty(20));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

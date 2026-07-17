@@ -137,6 +137,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   inputs, and explicit clip handling.
 - Added deterministic VWAP curve planning in `of_execution_algos` with borrowed
   cumulative volume profiles, O(1) bucket lookup, and explicit clip handling.
+- Added deterministic synthetic iceberg replenishment planning in
+  `of_execution_algos` with display quantity, replenish threshold, and
+  remaining-parent leaves handling.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,
