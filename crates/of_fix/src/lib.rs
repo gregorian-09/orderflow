@@ -67,6 +67,8 @@ impl FixTag {
     pub const PRICE: Self = Self(44);
     /// `TimeInForce(59)`.
     pub const TIME_IN_FORCE: Self = Self(59);
+    /// `StopPx(99)`.
+    pub const STOP_PX: Self = Self(99);
     /// `LastQty(32)`.
     pub const LAST_QTY: Self = Self(32);
     /// `LastPx(31)`.
@@ -1961,6 +1963,7 @@ pub struct FixNewOrderSingle<'a> {
     order_qty: &'a [u8],
     ord_type: FixOrdType,
     price: Option<&'a [u8]>,
+    stop_px: Option<&'a [u8]>,
     time_in_force: Option<FixTimeInForce>,
 }
 
@@ -1983,6 +1986,7 @@ impl<'a> FixNewOrderSingle<'a> {
             order_qty,
             ord_type,
             price: None,
+            stop_px: None,
             time_in_force: None,
         }
     }
@@ -1996,6 +2000,12 @@ impl<'a> FixNewOrderSingle<'a> {
     /// Adds `Price(44)`.
     pub const fn with_price(mut self, price: &'a [u8]) -> Self {
         self.price = Some(price);
+        self
+    }
+
+    /// Adds `StopPx(99)`.
+    pub const fn with_stop_px(mut self, stop_px: &'a [u8]) -> Self {
+        self.stop_px = Some(stop_px);
         self
     }
 
@@ -2055,6 +2065,7 @@ pub struct FixOrderCancelReplaceRequest<'a> {
     order_qty: &'a [u8],
     ord_type: FixOrdType,
     price: Option<&'a [u8]>,
+    stop_px: Option<&'a [u8]>,
     time_in_force: Option<FixTimeInForce>,
 }
 
@@ -2079,6 +2090,7 @@ impl<'a> FixOrderCancelReplaceRequest<'a> {
             order_qty,
             ord_type,
             price: None,
+            stop_px: None,
             time_in_force: None,
         }
     }
@@ -2092,6 +2104,12 @@ impl<'a> FixOrderCancelReplaceRequest<'a> {
     /// Adds `Price(44)`.
     pub const fn with_price(mut self, price: &'a [u8]) -> Self {
         self.price = Some(price);
+        self
+    }
+
+    /// Adds `StopPx(99)`.
+    pub const fn with_stop_px(mut self, stop_px: &'a [u8]) -> Self {
+        self.stop_px = Some(stop_px);
         self
     }
 
@@ -2665,6 +2683,7 @@ pub fn encode_new_order_single(
         (FixTag::ORDER_QTY, request.order_qty),
         (FixTag::ORD_TYPE, request.ord_type.as_bytes()),
         (FixTag::PRICE, b"".as_slice()),
+        (FixTag::STOP_PX, b"".as_slice()),
         (FixTag::TIME_IN_FORCE, b"".as_slice()),
     ];
     let mut len = 1usize;
@@ -2684,6 +2703,10 @@ pub fn encode_new_order_single(
     len += 1;
     if let Some(price) = request.price {
         fields[len] = (FixTag::PRICE, price);
+        len += 1;
+    }
+    if let Some(stop_px) = request.stop_px {
+        fields[len] = (FixTag::STOP_PX, stop_px);
         len += 1;
     }
     if let Some(time_in_force) = request.time_in_force {
@@ -2762,6 +2785,7 @@ pub fn encode_order_cancel_replace_request(
         (FixTag::ORDER_QTY, request.order_qty),
         (FixTag::ORD_TYPE, request.ord_type.as_bytes()),
         (FixTag::PRICE, b"".as_slice()),
+        (FixTag::STOP_PX, b"".as_slice()),
         (FixTag::TIME_IN_FORCE, b"".as_slice()),
     ];
     let mut len = 2usize;
@@ -2781,6 +2805,10 @@ pub fn encode_order_cancel_replace_request(
     len += 1;
     if let Some(price) = request.price {
         fields[len] = (FixTag::PRICE, price);
+        len += 1;
+    }
+    if let Some(stop_px) = request.stop_px {
+        fields[len] = (FixTag::STOP_PX, stop_px);
         len += 1;
     }
     if let Some(time_in_force) = request.time_in_force {
@@ -4042,6 +4070,7 @@ mod tests {
         )
         .with_account(b"ACC")
         .with_price(b"65000.5")
+        .with_stop_px(b"64950")
         .with_time_in_force(FixTimeInForce::Day);
 
         let mut raw = Vec::new();
@@ -4056,6 +4085,7 @@ mod tests {
         assert_eq!(message.get(FixTag::SIDE), Some(b"1".as_slice()));
         assert_eq!(message.get(FixTag::ORDER_QTY), Some(b"1.25".as_slice()));
         assert_eq!(message.get(FixTag::PRICE), Some(b"65000.5".as_slice()));
+        assert_eq!(message.get(FixTag::STOP_PX), Some(b"64950".as_slice()));
     }
 
     #[test]
@@ -4104,6 +4134,7 @@ mod tests {
         )
         .with_account(b"ACC")
         .with_price(b"65100")
+        .with_stop_px(b"65000")
         .with_time_in_force(FixTimeInForce::ImmediateOrCancel);
 
         let mut raw = Vec::new();
@@ -4123,6 +4154,7 @@ mod tests {
         assert_eq!(message.get(FixTag::CL_ORD_ID), Some(b"ORD-2".as_slice()));
         assert_eq!(message.get(FixTag::ACCOUNT), Some(b"ACC".as_slice()));
         assert_eq!(message.get(FixTag::ORDER_QTY), Some(b"2.00".as_slice()));
+        assert_eq!(message.get(FixTag::STOP_PX), Some(b"65000".as_slice()));
         assert_eq!(message.get(FixTag::TIME_IN_FORCE), Some(b"3".as_slice()));
     }
 

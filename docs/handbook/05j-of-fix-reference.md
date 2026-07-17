@@ -596,7 +596,8 @@ Order-builder boundary:
 
 - quantities and prices are borrowed wire-format bytes;
 - the codec does not round, scale, or validate tick size;
-- the codec does not enforce that limit/stop orders include price fields;
+- the codec does not enforce that limit orders include price fields or that
+  stop orders include stop-price fields;
 - the codec does not decide which replace fields a venue allows to change;
 - the codec does not decide whether a mass-cancel or mass-status scope is
   permitted by a venue;

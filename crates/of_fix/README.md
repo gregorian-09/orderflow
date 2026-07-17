@@ -38,7 +38,8 @@ Included now:
 - typed order-entry builders for NewOrderSingle, OrderCancelRequest,
   OrderCancelReplaceRequest, OrderStatusRequest, OrderMassCancelRequest, and
   OrderMassStatusRequest, including optional `Account(1)` on single-order
-  entry/cancel/replace messages;
+  entry/cancel/replace messages and optional `StopPx(99)` on single-order
+  entry/replace messages;
 - common tag constants and extraction helpers;
 - caller-owned encode buffers that fill `BodyLength` and `CheckSum`;
 - debug rendering with `|` delimiters outside the live hot path.

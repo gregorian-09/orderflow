@@ -121,8 +121,10 @@ Cancel and amend helpers require context because canonical `CancelRequest` and
 `AmendRequest` intentionally do not carry every FIX-required field. The context
 supplies original side for cancels, and side/order-type/TIF for amends.
 
-The bridge fails closed for stop and stop-limit orders until the lower-level
-shared FIX builder exposes `StopPx(99)`.
+The bridge encodes market, limit, stop, and stop-limit new orders. Amend
+encoding currently supports market and limit replacements; stop and stop-limit
+amends fail closed until a dedicated amend context can carry an explicit
+replacement `StopPx(99)`.
 
 ### `parse_execution_report`
 

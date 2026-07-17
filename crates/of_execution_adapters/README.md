@@ -226,9 +226,10 @@ Cancel and amend encoding use explicit context structs because the canonical
 - [`fix::FixAmendEncodeContext`] supplies original side, replacement order
   type, replacement TIF, and transact time.
 
-The bridge currently encodes market and limit new/replace orders. Stop and
-stop-limit orders fail closed with [`fix::FixRequestEncodeError`] because the
-shared low-level builder does not yet expose `StopPx(99)`.
+The bridge encodes market, limit, stop, and stop-limit new orders. Amend
+encoding currently supports market and limit replacements; stop and stop-limit
+amends fail closed with [`fix::FixRequestEncodeError`] until a dedicated amend
+context can carry an explicit replacement `StopPx(99)`.
 
 ## FIX Exec Type And Status
 
