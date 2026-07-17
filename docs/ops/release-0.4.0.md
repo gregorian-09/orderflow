@@ -73,6 +73,7 @@ registry dependency after `of_fix 0.1.0` is published.
 - typed `FixVersion` and common `FixMsgType` helpers
 - static `FixDictionary`/`FixMessageRule` profile validation for required and
   disallowed tags
+- borrowed Reject `<3>` and BusinessMessageReject `<j>` diagnostic parsers
 - reusable `FixDecoder` and `FixEncoder` facades
 - `FixSessionState`, `FixSequenceTracker`, `FixSequenceAction`, and
   `FixResendRange` primitives for deterministic session sequence handling

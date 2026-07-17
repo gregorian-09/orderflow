@@ -23,6 +23,8 @@ Included now:
 - FIX `CheckSum(10)` validation;
 - typed FIX versions and common `MsgType(35)` constants;
 - static dictionary/profile validation for required and disallowed tags;
+- borrowed Session Reject and BusinessMessageReject parsers for counterparty
+  diagnostics;
 - reusable `FixDecoder` and `FixEncoder` facades;
 - session-state and sequence-tracking primitives;
 - resend-range detection for inbound sequence gaps;
@@ -60,6 +62,7 @@ The codec is designed for execution hot paths:
 - avoid `HashMap<Tag, String>` as the primary representation;
 - validate `BodyLength` and `CheckSum` directly over the raw byte buffer;
 - keep profile rules as static borrowed slices;
+- expose reject diagnostics as borrowed views;
 - track inbound/outbound sequence numbers with plain integer state;
 - snapshot sequence counters without tying the codec to a storage backend;
 - retain outbound resend frames behind explicit message/byte bounds;
@@ -141,6 +144,35 @@ encode_message(
 let mut scratch = [FixFieldView::empty(); 16];
 let msg = parse_message(&raw, &mut scratch)?;
 dictionary.validate(&msg)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Reject Parsing Example
+
+```rust
+use of_fix::{encode_message, parse_message, parse_session_reject, FixFieldView, FixTag};
+
+let mut raw = Vec::new();
+encode_message(
+    &mut raw,
+    b"FIX.4.4",
+    b"3",
+    &[
+        (FixTag::REF_SEQ_NUM, b"12".as_slice()),
+        (FixTag::REF_TAG_ID, b"55".as_slice()),
+        (FixTag::REF_MSG_TYPE, b"D".as_slice()),
+        (FixTag::SESSION_REJECT_REASON, b"1".as_slice()),
+        (FixTag::TEXT, b"missing symbol".as_slice()),
+    ],
+)?;
+
+let mut scratch = [FixFieldView::empty(); 16];
+let msg = parse_message(&raw, &mut scratch)?;
+let reject = parse_session_reject(&msg)?;
+
+assert_eq!(reject.ref_seq_num(), 12);
+assert_eq!(reject.ref_tag_id(), Some(FixTag::SYMBOL));
+assert_eq!(reject.ref_msg_type(), Some(b"D".as_slice()));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
@@ -330,6 +362,13 @@ valid. It checks the parsed `BeginString(8)` against a configured
 required and disallowed tags using borrowed field views. It does not allocate,
 does not perform transport/session validation, and does not imply venue
 certification.
+
+`parse_session_reject` and `parse_business_message_reject` expose borrowed
+views over Reject `<3>` and BusinessMessageReject `<j>` diagnostics. They parse
+numeric reason fields and referenced sequence/tag values, but they do not
+allocate strings, classify venue severity, or decide whether trading should
+stop. Session engines and adapter profiles should turn these diagnostics into
+health, metrics, and fail-closed policies.
 
 `FixSequenceTracker` adds deterministic sequence bookkeeping for future session
 engines and adapters. It accepts expected inbound sequence numbers, reports

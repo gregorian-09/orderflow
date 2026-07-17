@@ -82,6 +82,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `of_fix` typed `FixVersion`/`FixMsgType` helpers, reusable
   `FixEncoder`/`FixDecoder` facades, and static `FixDictionary` profile
   validation for required and disallowed message tags.
+- Added `of_fix` borrowed Reject `<3>` and BusinessMessageReject `<j>` parsers
+  for low-allocation counterparty/session diagnostics.
 - Added `of_fix` session-state and sequence-tracking primitives with
   deterministic accept/gap/duplicate/too-low outcomes, resend ranges, monotonic
   outbound assignment, and guarded sequence-reset advancement.

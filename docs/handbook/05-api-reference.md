@@ -586,6 +586,9 @@ Public FIX codec types:
 - `FixParseError`
 - `FixEncodeError`
 - `FixProfileError`
+- `FixRejectParseError`
+- `FixSessionRejectView`
+- `FixBusinessMessageRejectView`
 - `FixMessageRule`
 - `FixDictionary`
 - `FixDecoder`
@@ -621,6 +624,8 @@ Public FIX codec constants:
 Public FIX codec functions:
 
 - `parse_message(raw, scratch) -> FixMessageView`
+- `parse_session_reject(message) -> FixSessionRejectView`
+- `parse_business_message_reject(message) -> FixBusinessMessageRejectView`
 - `encode_message(out, begin_string, msg_type, fields)`
 - `encode_poss_dup_replay(out, source, sending_time)`
 - `checksum(bytes) -> u8`

@@ -18,6 +18,9 @@ maps parsed execution reports into canonical OMS events.
 | `FixParseError` | enum | Strict parse and validation failures |
 | `FixEncodeError` | enum | Encode-time validation failures |
 | `FixProfileError` | enum | Dictionary/profile validation failures |
+| `FixRejectParseError` | enum | Reject-message parse failures |
+| `FixSessionRejectView` | struct | Borrowed Session Reject `<3>` diagnostics |
+| `FixBusinessMessageRejectView` | struct | Borrowed BusinessMessageReject `<j>` diagnostics |
 | `FixMessageRule` | struct | Required/disallowed tag rule for one message type |
 | `FixDictionary` | struct | Static FIX version/profile rule set |
 | `FixDecoder` | struct | Stateless decoder facade over caller-owned scratch |
@@ -46,6 +49,8 @@ maps parsed execution reports into canonical OMS events.
 | `FixOrderCancelRequest` | struct | Borrowed OrderCancelRequest `<F>` request fields |
 | `FixOrderCancelReplaceRequest` | struct | Borrowed OrderCancelReplaceRequest `<G>` request fields |
 | `parse_message` | function | Parses and validates raw FIX bytes into caller scratch |
+| `parse_session_reject` | function | Parses Reject `<3>` into a borrowed diagnostic view |
+| `parse_business_message_reject` | function | Parses BusinessMessageReject `<j>` into a borrowed diagnostic view |
 | `encode_message` | function | Encodes a message into a caller-owned `Vec<u8>` |
 | `encode_logon` | function | Encodes Logon `<A>` |
 | `encode_heartbeat` | function | Encodes Heartbeat `<0>` |
@@ -75,6 +80,7 @@ Included:
 - direct extraction helpers for `MsgType(35)`, `MsgSeqNum(34)`, and
   `PossDupFlag(43)`;
 - static dictionary/profile validation for required and disallowed tags;
+- borrowed Session Reject and BusinessMessageReject diagnostics;
 - reusable encoder/decoder facades for components that prefer explicit codec
   objects;
 - session-state and sequence-tracking primitives for future transports and
@@ -112,6 +118,7 @@ The codec follows the production FIX plan in `new_features.md`:
 - avoid allocation during parse after the caller supplies scratch;
 - validate body length and checksum directly over the raw buffer;
 - keep dictionary rules as static borrowed slices;
+- expose reject diagnostics as borrowed views;
 - track sequence state with plain integer counters;
 - keep persistence snapshots storage-neutral;
 - keep resend retention bounded by message and byte budgets;
@@ -248,6 +255,48 @@ Profile validation checks:
 
 It does not replace session validation, resend handling, venue certification, or
 counterparty-specific business validation.
+
+## Reject Parsing Example
+
+Reject parsers provide borrowed diagnostics for session and business rejects.
+They validate message type, required reject fields, and numeric reason fields,
+but do not allocate diagnostic strings or decide operational policy.
+
+```rust
+use of_fix::{encode_message, parse_message, parse_session_reject, FixFieldView, FixTag};
+
+let mut raw = Vec::new();
+encode_message(
+    &mut raw,
+    b"FIX.4.4",
+    b"3",
+    &[
+        (FixTag::REF_SEQ_NUM, b"12".as_slice()),
+        (FixTag::REF_TAG_ID, b"55".as_slice()),
+        (FixTag::REF_MSG_TYPE, b"D".as_slice()),
+        (FixTag::SESSION_REJECT_REASON, b"1".as_slice()),
+        (FixTag::TEXT, b"missing symbol".as_slice()),
+    ],
+)?;
+
+let mut scratch = [FixFieldView::empty(); 16];
+let message = parse_message(&raw, &mut scratch)?;
+let reject = parse_session_reject(&message)?;
+
+assert_eq!(reject.ref_seq_num(), 12);
+assert_eq!(reject.ref_tag_id(), Some(FixTag::SYMBOL));
+assert_eq!(reject.ref_msg_type(), Some(b"D".as_slice()));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Reject parser boundary:
+
+- `parse_session_reject` handles Reject `<3>` and requires `RefSeqNum(45)`;
+- `parse_business_message_reject` handles BusinessMessageReject `<j>` and
+  requires `RefMsgType(372)` plus `BusinessRejectReason(380)`;
+- optional `Text(58)` and reference ids remain borrowed slices;
+- severity classification, disconnect policy, and trading safety policy belong
+  in the session/adapter layer.
 
 ## Sequence Tracking Example
 

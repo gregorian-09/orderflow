@@ -29,6 +29,8 @@ impl FixTag {
     pub const NEW_SEQ_NO: Self = Self(36);
     /// `PossDupFlag(43)`.
     pub const POSS_DUP_FLAG: Self = Self(43);
+    /// `RefSeqNum(45)`.
+    pub const REF_SEQ_NUM: Self = Self(45);
     /// `SenderCompID(49)`.
     pub const SENDER_COMP_ID: Self = Self(49);
     /// `SendingTime(52)`.
@@ -85,6 +87,16 @@ impl FixTag {
     pub const GAP_FILL_FLAG: Self = Self(123);
     /// `ResetSeqNumFlag(141)`.
     pub const RESET_SEQ_NUM_FLAG: Self = Self(141);
+    /// `RefTagID(371)`.
+    pub const REF_TAG_ID: Self = Self(371);
+    /// `RefMsgType(372)`.
+    pub const REF_MSG_TYPE: Self = Self(372);
+    /// `SessionRejectReason(373)`.
+    pub const SESSION_REJECT_REASON: Self = Self(373);
+    /// `BusinessRejectRefID(379)`.
+    pub const BUSINESS_REJECT_REF_ID: Self = Self(379);
+    /// `BusinessRejectReason(380)`.
+    pub const BUSINESS_REJECT_REASON: Self = Self(380);
     /// `CheckSum(10)`.
     pub const CHECK_SUM: Self = Self(10);
 }
@@ -611,6 +623,104 @@ impl fmt::Display for FixProfileError {
 }
 
 impl Error for FixProfileError {}
+
+/// FIX reject-message parse errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FixRejectParseError {
+    /// Message type does not match the requested reject parser.
+    InvalidMsgType,
+    /// A required reject tag is missing.
+    MissingTag(FixTag),
+    /// A numeric reject field is malformed or overflows.
+    InvalidNumber(FixTag),
+}
+
+impl fmt::Display for FixRejectParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidMsgType => write!(f, "FIX message type is not a reject message"),
+            Self::MissingTag(tag) => write!(f, "FIX reject message is missing tag {tag}"),
+            Self::InvalidNumber(tag) => write!(f, "FIX reject numeric tag {tag} is invalid"),
+        }
+    }
+}
+
+impl Error for FixRejectParseError {}
+
+/// Borrowed Session Reject `<3>` view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixSessionRejectView<'a> {
+    ref_seq_num: u64,
+    ref_tag_id: Option<FixTag>,
+    ref_msg_type: Option<&'a [u8]>,
+    session_reject_reason: Option<u64>,
+    text: Option<&'a [u8]>,
+}
+
+impl<'a> FixSessionRejectView<'a> {
+    /// Returns `RefSeqNum(45)`.
+    pub const fn ref_seq_num(&self) -> u64 {
+        self.ref_seq_num
+    }
+
+    /// Returns `RefTagID(371)` when present.
+    pub const fn ref_tag_id(&self) -> Option<FixTag> {
+        self.ref_tag_id
+    }
+
+    /// Returns `RefMsgType(372)` when present.
+    pub const fn ref_msg_type(&self) -> Option<&'a [u8]> {
+        self.ref_msg_type
+    }
+
+    /// Returns `SessionRejectReason(373)` when present.
+    pub const fn session_reject_reason(&self) -> Option<u64> {
+        self.session_reject_reason
+    }
+
+    /// Returns `Text(58)` when present.
+    pub const fn text(&self) -> Option<&'a [u8]> {
+        self.text
+    }
+}
+
+/// Borrowed BusinessMessageReject `<j>` view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixBusinessMessageRejectView<'a> {
+    ref_seq_num: Option<u64>,
+    ref_msg_type: &'a [u8],
+    business_reject_ref_id: Option<&'a [u8]>,
+    business_reject_reason: u64,
+    text: Option<&'a [u8]>,
+}
+
+impl<'a> FixBusinessMessageRejectView<'a> {
+    /// Returns `RefSeqNum(45)` when present.
+    pub const fn ref_seq_num(&self) -> Option<u64> {
+        self.ref_seq_num
+    }
+
+    /// Returns required `RefMsgType(372)`.
+    pub const fn ref_msg_type(&self) -> &'a [u8] {
+        self.ref_msg_type
+    }
+
+    /// Returns `BusinessRejectRefID(379)` when present.
+    pub const fn business_reject_ref_id(&self) -> Option<&'a [u8]> {
+        self.business_reject_ref_id
+    }
+
+    /// Returns required `BusinessRejectReason(380)`.
+    pub const fn business_reject_reason(&self) -> u64 {
+        self.business_reject_reason
+    }
+
+    /// Returns `Text(58)` when present.
+    pub const fn text(&self) -> Option<&'a [u8]> {
+        self.text
+    }
+}
 
 /// FIX session lifecycle state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1974,6 +2084,51 @@ pub fn parse_message<'a>(
     })
 }
 
+/// Parses a validated Session Reject `<3>` message into a borrowed view.
+///
+/// # Errors
+///
+/// Returns [`FixRejectParseError`] when `MsgType(35)` is not `3`, required
+/// `RefSeqNum(45)` is absent, or numeric reject fields are malformed.
+pub fn parse_session_reject<'a>(
+    message: &FixMessageView<'a>,
+) -> Result<FixSessionRejectView<'a>, FixRejectParseError> {
+    if message.msg_type() != Some(FixMsgType::REJECT.as_bytes()) {
+        return Err(FixRejectParseError::InvalidMsgType);
+    }
+    Ok(FixSessionRejectView {
+        ref_seq_num: parse_required_u64(message, FixTag::REF_SEQ_NUM)?,
+        ref_tag_id: parse_optional_fix_tag(message, FixTag::REF_TAG_ID)?,
+        ref_msg_type: message.get(FixTag::REF_MSG_TYPE),
+        session_reject_reason: parse_optional_reject_u64(message, FixTag::SESSION_REJECT_REASON)?,
+        text: message.get(FixTag::TEXT),
+    })
+}
+
+/// Parses a validated BusinessMessageReject `<j>` message into a borrowed view.
+///
+/// # Errors
+///
+/// Returns [`FixRejectParseError`] when `MsgType(35)` is not `j`, required
+/// fields are absent, or numeric reject fields are malformed.
+pub fn parse_business_message_reject<'a>(
+    message: &FixMessageView<'a>,
+) -> Result<FixBusinessMessageRejectView<'a>, FixRejectParseError> {
+    if message.msg_type() != Some(FixMsgType::BUSINESS_MESSAGE_REJECT.as_bytes()) {
+        return Err(FixRejectParseError::InvalidMsgType);
+    }
+    let ref_msg_type = message
+        .get(FixTag::REF_MSG_TYPE)
+        .ok_or(FixRejectParseError::MissingTag(FixTag::REF_MSG_TYPE))?;
+    Ok(FixBusinessMessageRejectView {
+        ref_seq_num: parse_optional_reject_u64(message, FixTag::REF_SEQ_NUM)?,
+        ref_msg_type,
+        business_reject_ref_id: message.get(FixTag::BUSINESS_REJECT_REF_ID),
+        business_reject_reason: parse_required_u64(message, FixTag::BUSINESS_REJECT_REASON)?,
+        text: message.get(FixTag::TEXT),
+    })
+}
+
 /// Encodes a FIX tag-value message into `out`.
 ///
 /// `out` is cleared before encoding. Tags `8`, `9`, `35`, and `10` are owned by
@@ -2442,6 +2597,44 @@ fn validate_value(tag: FixTag, value: &[u8]) -> Result<(), FixEncodeError> {
         Err(FixEncodeError::ValueContainsSoh(tag))
     } else {
         Ok(())
+    }
+}
+
+fn parse_required_u64(
+    message: &FixMessageView<'_>,
+    tag: FixTag,
+) -> Result<u64, FixRejectParseError> {
+    parse_u64(
+        message
+            .get(tag)
+            .ok_or(FixRejectParseError::MissingTag(tag))?,
+    )
+    .map_err(|()| FixRejectParseError::InvalidNumber(tag))
+}
+
+fn parse_optional_reject_u64(
+    message: &FixMessageView<'_>,
+    tag: FixTag,
+) -> Result<Option<u64>, FixRejectParseError> {
+    if let Some(value) = message.get(tag) {
+        parse_u64(value)
+            .map(Some)
+            .map_err(|()| FixRejectParseError::InvalidNumber(tag))
+    } else {
+        Ok(None)
+    }
+}
+
+fn parse_optional_fix_tag(
+    message: &FixMessageView<'_>,
+    tag: FixTag,
+) -> Result<Option<FixTag>, FixRejectParseError> {
+    if let Some(value) = message.get(tag) {
+        parse_u32(value)
+            .map(|value| Some(FixTag(value)))
+            .map_err(|()| FixRejectParseError::InvalidNumber(tag))
+    } else {
+        Ok(None)
     }
 }
 
@@ -3181,6 +3374,99 @@ mod tests {
         assert_eq!(
             err,
             FixEncodeError::MissingRequiredTag(FixTag::SENDING_TIME)
+        );
+    }
+
+    #[test]
+    fn parses_session_reject_view() {
+        let mut raw = Vec::new();
+        encode_message(
+            &mut raw,
+            b"FIX.4.4",
+            b"3",
+            &[
+                (FixTag::REF_SEQ_NUM, b"12".as_slice()),
+                (FixTag::REF_TAG_ID, b"55".as_slice()),
+                (FixTag::REF_MSG_TYPE, b"D".as_slice()),
+                (FixTag::SESSION_REJECT_REASON, b"1".as_slice()),
+                (FixTag::TEXT, b"missing symbol".as_slice()),
+            ],
+        )
+        .expect("encode");
+
+        let mut scratch = [FixFieldView::empty(); 16];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        let reject = parse_session_reject(&message).expect("reject");
+
+        assert_eq!(reject.ref_seq_num(), 12);
+        assert_eq!(reject.ref_tag_id(), Some(FixTag::SYMBOL));
+        assert_eq!(reject.ref_msg_type(), Some(b"D".as_slice()));
+        assert_eq!(reject.session_reject_reason(), Some(1));
+        assert_eq!(reject.text(), Some(b"missing symbol".as_slice()));
+    }
+
+    #[test]
+    fn session_reject_requires_ref_seq_num() {
+        let mut raw = Vec::new();
+        encode_message(&mut raw, b"FIX.4.4", b"3", &[]).expect("encode");
+
+        let mut scratch = [FixFieldView::empty(); 8];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(
+            parse_session_reject(&message),
+            Err(FixRejectParseError::MissingTag(FixTag::REF_SEQ_NUM))
+        );
+    }
+
+    #[test]
+    fn parses_business_message_reject_view() {
+        let mut raw = Vec::new();
+        encode_message(
+            &mut raw,
+            b"FIX.4.4",
+            b"j",
+            &[
+                (FixTag::REF_SEQ_NUM, b"21".as_slice()),
+                (FixTag::REF_MSG_TYPE, b"D".as_slice()),
+                (FixTag::BUSINESS_REJECT_REF_ID, b"ORD-1".as_slice()),
+                (FixTag::BUSINESS_REJECT_REASON, b"3".as_slice()),
+                (FixTag::TEXT, b"unsupported order".as_slice()),
+            ],
+        )
+        .expect("encode");
+
+        let mut scratch = [FixFieldView::empty(); 16];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        let reject = parse_business_message_reject(&message).expect("reject");
+
+        assert_eq!(reject.ref_seq_num(), Some(21));
+        assert_eq!(reject.ref_msg_type(), b"D".as_slice());
+        assert_eq!(reject.business_reject_ref_id(), Some(b"ORD-1".as_slice()));
+        assert_eq!(reject.business_reject_reason(), 3);
+        assert_eq!(reject.text(), Some(b"unsupported order".as_slice()));
+    }
+
+    #[test]
+    fn business_message_reject_validates_required_numeric_reason() {
+        let mut raw = Vec::new();
+        encode_message(
+            &mut raw,
+            b"FIX.4.4",
+            b"j",
+            &[
+                (FixTag::REF_MSG_TYPE, b"D".as_slice()),
+                (FixTag::BUSINESS_REJECT_REASON, b"bad".as_slice()),
+            ],
+        )
+        .expect("encode");
+
+        let mut scratch = [FixFieldView::empty(); 16];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(
+            parse_business_message_reject(&message),
+            Err(FixRejectParseError::InvalidNumber(
+                FixTag::BUSINESS_REJECT_REASON
+            ))
         );
     }
 
