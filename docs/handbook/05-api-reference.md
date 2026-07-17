@@ -614,11 +614,13 @@ Public FIX codec types:
 - `FixOrdType`
 - `FixTimeInForce`
 - `FixMassCancelRequestType`
+- `FixMassStatusReqType`
 - `FixNewOrderSingle`
 - `FixOrderCancelRequest`
 - `FixOrderCancelReplaceRequest`
 - `FixOrderStatusRequest`
 - `FixOrderMassCancelRequest`
+- `FixOrderMassStatusRequest`
 
 Public FIX codec constants:
 
@@ -644,6 +646,7 @@ Public FIX codec functions:
 - `encode_order_cancel_replace_request(out, version, header, request)`
 - `encode_order_status_request(out, version, header, request)`
 - `encode_order_mass_cancel_request(out, version, header, request)`
+- `encode_order_mass_status_request(out, version, header, request)`
 
 For low-allocation FIX parsing, validation, and encoding details, see
 [`of_fix` reference](./05j-of-fix-reference.md).

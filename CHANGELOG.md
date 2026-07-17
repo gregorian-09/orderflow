@@ -102,6 +102,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   and optional `OrderID(37)`.
 - Added `of_fix` OrderMassCancelRequest `<q>` builder with typed
   `MassCancelRequestType(530)` scopes and optional qualifier fields.
+- Added `of_fix` OrderMassStatusRequest `<AF>` builder with typed
+  `MassStatusReqType(585)` scopes and optional account/session/symbol/side
+  qualifiers.
 - Added `of_execution_adapters::fix::parse_execution_report`, parse config, and
   parse errors to convert validated `of_fix::FixMessageView` execution reports
   into canonical FIX execution reports with explicit quantity/price scales.

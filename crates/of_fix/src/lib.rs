@@ -15,6 +15,8 @@ pub struct FixTag(pub u32);
 impl FixTag {
     /// `BeginString(8)`.
     pub const BEGIN_STRING: Self = Self(8);
+    /// `Account(1)`.
+    pub const ACCOUNT: Self = Self(1);
     /// `BodyLength(9)`.
     pub const BODY_LENGTH: Self = Self(9);
     /// `BeginSeqNo(7)`.
@@ -105,8 +107,14 @@ impl FixTag {
     pub const SECONDARY_CL_ORD_ID: Self = Self(526);
     /// `MassCancelRequestType(530)`.
     pub const MASS_CANCEL_REQUEST_TYPE: Self = Self(530);
+    /// `MassStatusReqID(584)`.
+    pub const MASS_STATUS_REQ_ID: Self = Self(584);
+    /// `MassStatusReqType(585)`.
+    pub const MASS_STATUS_REQ_TYPE: Self = Self(585);
     /// `TradingSessionSubID(625)`.
     pub const TRADING_SESSION_SUB_ID: Self = Self(625);
+    /// `AcctIDSource(660)`.
+    pub const ACCT_ID_SOURCE: Self = Self(660);
     /// `CheckSum(10)`.
     pub const CHECK_SUM: Self = Self(10);
 }
@@ -207,6 +215,8 @@ impl FixMsgType {
     pub const BUSINESS_MESSAGE_REJECT: Self = Self(b"j");
     /// `OrderMassCancelRequest(q)`.
     pub const ORDER_MASS_CANCEL_REQUEST: Self = Self(b"q");
+    /// `OrderMassStatusRequest(AF)`.
+    pub const ORDER_MASS_STATUS_REQUEST: Self = Self(b"AF");
 
     /// Creates a message type from a static byte slice.
     ///
@@ -232,6 +242,7 @@ impl FixMsgType {
             b"F" => Some(Self::ORDER_CANCEL_REQUEST),
             b"G" => Some(Self::ORDER_CANCEL_REPLACE_REQUEST),
             b"H" => Some(Self::ORDER_STATUS_REQUEST),
+            b"AF" => Some(Self::ORDER_MASS_STATUS_REQUEST),
             b"j" => Some(Self::BUSINESS_MESSAGE_REJECT),
             b"q" => Some(Self::ORDER_MASS_CANCEL_REQUEST),
             _ => None,
@@ -259,6 +270,7 @@ impl FixMsgType {
             b"F" => "OrderCancelRequest",
             b"G" => "OrderCancelReplaceRequest",
             b"H" => "OrderStatusRequest",
+            b"AF" => "OrderMassStatusRequest",
             b"j" => "BusinessMessageReject",
             b"q" => "OrderMassCancelRequest",
             _ => "Custom",
@@ -414,6 +426,44 @@ impl FixMassCancelRequestType {
             Self::SecurityType => b"5",
             Self::TradingSession => b"6",
             Self::AllOrders => b"7",
+        }
+    }
+}
+
+/// Common FIX `MassStatusReqType(585)` values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum FixMassStatusReqType {
+    /// Status for orders for a security (`1`).
+    Security,
+    /// Status for orders for an underlying security (`2`).
+    UnderlyingSecurity,
+    /// Status for orders for a product (`3`).
+    Product,
+    /// Status for orders for a CFICode (`4`).
+    CfiCode,
+    /// Status for orders for a security type (`5`).
+    SecurityType,
+    /// Status for orders for a trading session (`6`).
+    TradingSession,
+    /// Status for all orders (`7`).
+    AllOrders,
+    /// Status for orders for a PartyID (`8`).
+    PartyId,
+}
+
+impl FixMassStatusReqType {
+    /// Returns the wire value.
+    pub const fn as_bytes(self) -> &'static [u8] {
+        match self {
+            Self::Security => b"1",
+            Self::UnderlyingSecurity => b"2",
+            Self::Product => b"3",
+            Self::CfiCode => b"4",
+            Self::SecurityType => b"5",
+            Self::TradingSession => b"6",
+            Self::AllOrders => b"7",
+            Self::PartyId => b"8",
         }
     }
 }
@@ -2122,6 +2172,74 @@ impl<'a> FixOrderMassCancelRequest<'a> {
     }
 }
 
+/// Borrowed OrderMassStatusRequest `<AF>` request fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixOrderMassStatusRequest<'a> {
+    mass_status_req_id: &'a [u8],
+    mass_status_req_type: FixMassStatusReqType,
+    account: Option<&'a [u8]>,
+    acct_id_source: Option<&'a [u8]>,
+    trading_session_id: Option<&'a [u8]>,
+    trading_session_sub_id: Option<&'a [u8]>,
+    symbol: Option<&'a [u8]>,
+    side: Option<FixOrderSide>,
+}
+
+impl<'a> FixOrderMassStatusRequest<'a> {
+    /// Creates an OrderMassStatusRequest.
+    pub const fn new(
+        mass_status_req_id: &'a [u8],
+        mass_status_req_type: FixMassStatusReqType,
+    ) -> Self {
+        Self {
+            mass_status_req_id,
+            mass_status_req_type,
+            account: None,
+            acct_id_source: None,
+            trading_session_id: None,
+            trading_session_sub_id: None,
+            symbol: None,
+            side: None,
+        }
+    }
+
+    /// Adds `Account(1)`.
+    pub const fn with_account(mut self, account: &'a [u8]) -> Self {
+        self.account = Some(account);
+        self
+    }
+
+    /// Adds `AcctIDSource(660)`.
+    pub const fn with_acct_id_source(mut self, acct_id_source: &'a [u8]) -> Self {
+        self.acct_id_source = Some(acct_id_source);
+        self
+    }
+
+    /// Adds `TradingSessionID(336)`.
+    pub const fn with_trading_session_id(mut self, trading_session_id: &'a [u8]) -> Self {
+        self.trading_session_id = Some(trading_session_id);
+        self
+    }
+
+    /// Adds `TradingSessionSubID(625)`.
+    pub const fn with_trading_session_sub_id(mut self, trading_session_sub_id: &'a [u8]) -> Self {
+        self.trading_session_sub_id = Some(trading_session_sub_id);
+        self
+    }
+
+    /// Adds `Symbol(55)`.
+    pub const fn with_symbol(mut self, symbol: &'a [u8]) -> Self {
+        self.symbol = Some(symbol);
+        self
+    }
+
+    /// Adds `Side(54)`.
+    pub const fn with_side(mut self, side: FixOrderSide) -> Self {
+        self.side = Some(side);
+        self
+    }
+}
+
 /// Parses and validates a FIX tag-value message into `scratch`.
 ///
 /// The returned message borrows both `raw` and the initialized prefix of
@@ -2695,6 +2813,64 @@ pub fn encode_order_mass_cancel_request(
         out,
         version,
         FixMsgType::ORDER_MASS_CANCEL_REQUEST,
+        header,
+        &fields[..len],
+    )
+}
+
+/// Encodes an OrderMassStatusRequest `<AF>` application message.
+///
+/// # Errors
+///
+/// Returns [`FixEncodeError`] when a field value contains SOH.
+pub fn encode_order_mass_status_request(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    header: FixSessionHeader<'_>,
+    request: FixOrderMassStatusRequest<'_>,
+) -> Result<(), FixEncodeError> {
+    let mut fields = [
+        (FixTag::MASS_STATUS_REQ_ID, request.mass_status_req_id),
+        (
+            FixTag::MASS_STATUS_REQ_TYPE,
+            request.mass_status_req_type.as_bytes(),
+        ),
+        (FixTag::ACCOUNT, b"".as_slice()),
+        (FixTag::ACCT_ID_SOURCE, b"".as_slice()),
+        (FixTag::TRADING_SESSION_ID, b"".as_slice()),
+        (FixTag::TRADING_SESSION_SUB_ID, b"".as_slice()),
+        (FixTag::SYMBOL, b"".as_slice()),
+        (FixTag::SIDE, b"".as_slice()),
+    ];
+    let mut len = 2usize;
+    if let Some(account) = request.account {
+        fields[len] = (FixTag::ACCOUNT, account);
+        len += 1;
+    }
+    if let Some(acct_id_source) = request.acct_id_source {
+        fields[len] = (FixTag::ACCT_ID_SOURCE, acct_id_source);
+        len += 1;
+    }
+    if let Some(trading_session_id) = request.trading_session_id {
+        fields[len] = (FixTag::TRADING_SESSION_ID, trading_session_id);
+        len += 1;
+    }
+    if let Some(trading_session_sub_id) = request.trading_session_sub_id {
+        fields[len] = (FixTag::TRADING_SESSION_SUB_ID, trading_session_sub_id);
+        len += 1;
+    }
+    if let Some(symbol) = request.symbol {
+        fields[len] = (FixTag::SYMBOL, symbol);
+        len += 1;
+    }
+    if let Some(side) = request.side {
+        fields[len] = (FixTag::SIDE, side.as_bytes());
+        len += 1;
+    }
+    encode_session_message(
+        out,
+        version,
+        FixMsgType::ORDER_MASS_STATUS_REQUEST,
         header,
         &fields[..len],
     )
@@ -3988,6 +4164,67 @@ mod tests {
         let err = encode_order_mass_cancel_request(&mut raw, FixVersion::Fix44, header, request)
             .expect_err("soh");
         assert_eq!(err, FixEncodeError::ValueContainsSoh(FixTag::TEXT));
+    }
+
+    #[test]
+    fn encodes_order_mass_status_request() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 12, b"20260717-12:00:10.000");
+        let request = FixOrderMassStatusRequest::new(b"MS-1", FixMassStatusReqType::Security)
+            .with_account(b"ACC")
+            .with_acct_id_source(b"1")
+            .with_trading_session_id(b"REG")
+            .with_trading_session_sub_id(b"AM")
+            .with_symbol(b"BTCUSDT")
+            .with_side(FixOrderSide::Sell);
+        let mut raw = Vec::new();
+        encode_order_mass_status_request(&mut raw, FixVersion::Fix44, header, request)
+            .expect("mass status");
+        let mut scratch = [FixFieldView::empty(); 24];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(
+            message.msg_type(),
+            Some(FixMsgType::ORDER_MASS_STATUS_REQUEST.as_bytes())
+        );
+        assert_eq!(
+            message.get(FixTag::MASS_STATUS_REQ_ID),
+            Some(b"MS-1".as_slice())
+        );
+        assert_eq!(
+            message.get(FixTag::MASS_STATUS_REQ_TYPE),
+            Some(b"1".as_slice())
+        );
+        assert_eq!(message.get(FixTag::ACCOUNT), Some(b"ACC".as_slice()));
+        assert_eq!(message.get(FixTag::SYMBOL), Some(b"BTCUSDT".as_slice()));
+        assert_eq!(message.get(FixTag::SIDE), Some(b"2".as_slice()));
+    }
+
+    #[test]
+    fn order_mass_status_request_allows_minimal_required_shape() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 12, b"20260717-12:00:10.000");
+        let request = FixOrderMassStatusRequest::new(b"MS-1", FixMassStatusReqType::AllOrders);
+        let mut raw = Vec::new();
+        encode_order_mass_status_request(&mut raw, FixVersion::Fix44, header, request)
+            .expect("mass status");
+        let mut scratch = [FixFieldView::empty(); 16];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(
+            message.get(FixTag::MASS_STATUS_REQ_TYPE),
+            Some(b"7".as_slice())
+        );
+        assert_eq!(message.get(FixTag::ACCOUNT), None);
+    }
+
+    #[test]
+    fn order_mass_status_request_rejects_soh() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 12, b"20260717-12:00:10.000");
+        let request = FixOrderMassStatusRequest::new(b"MS\x01", FixMassStatusReqType::AllOrders);
+        let mut raw = Vec::new();
+        let err = encode_order_mass_status_request(&mut raw, FixVersion::Fix44, header, request)
+            .expect_err("soh");
+        assert_eq!(
+            err,
+            FixEncodeError::ValueContainsSoh(FixTag::MASS_STATUS_REQ_ID)
+        );
     }
 
     #[test]
