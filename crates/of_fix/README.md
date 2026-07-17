@@ -28,6 +28,7 @@ Included now:
 - resend-range detection for inbound sequence gaps;
 - sequence-reset guardrails that reject decreasing next expected sequence;
 - borrowed session identity and sequence snapshot primitives for persistence;
+- bounded in-memory resend-store primitives for replay/gap-fill planning;
 - typed session/admin builders for Logon, Heartbeat, TestRequest,
   ResendRequest, SequenceReset gap fill, and Logout;
 - typed order-entry builders for NewOrderSingle, OrderCancelRequest, and
@@ -40,7 +41,8 @@ Not included yet:
 
 - TCP/TLS transport;
 - TCP/TLS-driven Logon/Logout/Heartbeat/TestRequest lifecycle;
-- resend message replay and gap-fill generation;
+- durable resend message persistence;
+- automatic resend response transmission;
 - persistent session store;
 - repeating group dictionaries;
 - venue certification harness;
@@ -58,6 +60,8 @@ The codec is designed for execution hot paths:
 - keep profile rules as static borrowed slices;
 - track inbound/outbound sequence numbers with plain integer state;
 - snapshot sequence counters without tying the codec to a storage backend;
+- retain outbound resend frames behind explicit message/byte bounds;
+- plan replay versus gap-fill actions into caller-owned buffers;
 - build session/admin messages into reusable buffers without `format!`;
 - build order-entry messages from borrowed identifiers, symbols, quantities,
   prices, and timestamps;
@@ -222,6 +226,49 @@ encode_new_order_single(&mut out, FixVersion::Fix44, header, order)?;
 # Ok::<(), of_fix::FixEncodeError>(())
 ```
 
+## Resend Planning Example
+
+```rust
+use of_fix::{
+    FixResendAction, FixResendRange, FixResendStore, FixResendStoreConfig,
+    FixSentMessageKind,
+};
+
+let mut store = FixResendStore::new(FixResendStoreConfig::new(128, 64 * 1024));
+store.record_sent(1, FixSentMessageKind::Application, b"raw-new-order")?;
+store.record_sent(2, FixSentMessageKind::Administrative, b"raw-heartbeat")?;
+store.record_sent(3, FixSentMessageKind::Application, b"raw-cancel")?;
+
+let mut actions = Vec::new();
+let summary = store.plan_resend_range(
+    FixResendRange {
+        begin_seq_no: 1,
+        end_seq_no: 3,
+    },
+    &mut actions,
+);
+
+assert_eq!(summary.replay_messages(), 2);
+assert_eq!(
+    actions,
+    vec![
+        FixResendAction::Replay {
+            seq_no: 1,
+            raw: b"raw-new-order".as_slice(),
+        },
+        FixResendAction::GapFill {
+            begin_seq_no: 2,
+            end_seq_no: 2,
+        },
+        FixResendAction::Replay {
+            seq_no: 3,
+            raw: b"raw-cancel".as_slice(),
+        },
+    ]
+);
+# Ok::<(), of_fix::FixResendStoreError>(())
+```
+
 ## Validation Semantics
 
 `parse_message` rejects frames when:
@@ -257,10 +304,18 @@ checkpoint, or database layers can serialize the session id, trading day, and
 next inbound/outbound counters according to their own latency and durability
 requirements.
 
+`FixResendStore` retains original outbound FIX frames behind explicit message
+and byte budgets. It produces caller-owned resend plans with replay actions for
+retained application/reject messages and gap-fill actions for administrative,
+missing, aged, or evicted ranges. It is not durable storage and does not
+transmit responses; a session engine remains responsible for encoding
+SequenceReset gap fills, setting `PossDupFlag(43)`/`OrigSendingTime(122)` on
+replayed messages where required by profile, and enforcing counterparty policy.
+
 The session/admin builders are intentionally small protocol helpers. They write
 the common standard header fields and the required admin body fields into the
 same strict encoder path used by `encode_message`; they do not manage sockets,
-timers, resend stores, or authentication extensions.
+timers, durable resend stores, or authentication extensions.
 
 The order-entry builders provide common message shapes for NewOrderSingle,
 OrderCancelRequest, and OrderCancelReplaceRequest. They do not decide whether a
@@ -273,7 +328,8 @@ belong in profile/certification layers above the codec.
 The planned next layers are:
 
 - FIX 4.2/4.4 message builders for order entry;
-- sequence persistence and resend message stores;
-- resend/gap-fill policy;
+- durable session sequence persistence;
+- outbound resend message encoding with `PossDupFlag(43)` and
+  `OrigSendingTime(122)` policy;
 - certification transcript capture;
 - integration with `of_execution_adapters::fix`.

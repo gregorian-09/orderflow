@@ -1,6 +1,7 @@
 //! Low-allocation FIX tag-value codec primitives for Orderflow.
 #![doc = include_str!("../README.md")]
 
+use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 
@@ -826,6 +827,479 @@ impl<'a> FixSequenceSnapshot<'a> {
     /// Returns the trading day or session date bytes.
     pub const fn trading_day(&self) -> &'a [u8] {
         self.trading_day
+    }
+}
+
+/// Classification for outbound messages retained for resend handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum FixSentMessageKind {
+    /// Application-level order or execution-flow message that may be replayed.
+    Application,
+    /// Session administrative message that should normally be gap-filled.
+    Administrative,
+    /// Session-level reject. FIX recovery rules allow reject messages to be
+    /// replayed when a profile chooses to retain them.
+    Reject,
+}
+
+impl FixSentMessageKind {
+    /// Returns whether this message kind is replayable by default.
+    pub const fn replayable(self) -> bool {
+        matches!(self, Self::Application | Self::Reject)
+    }
+}
+
+/// Bounded resend-store configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixResendStoreConfig {
+    max_messages: usize,
+    max_bytes: usize,
+}
+
+impl FixResendStoreConfig {
+    /// Creates a bounded resend-store configuration.
+    ///
+    /// A zero `max_messages` or `max_bytes` disables retention while keeping
+    /// counters observable through [`FixResendStore::metrics`].
+    pub const fn new(max_messages: usize, max_bytes: usize) -> Self {
+        Self {
+            max_messages,
+            max_bytes,
+        }
+    }
+
+    /// Returns the maximum retained message count.
+    pub const fn max_messages(&self) -> usize {
+        self.max_messages
+    }
+
+    /// Returns the maximum retained raw-byte count.
+    pub const fn max_bytes(&self) -> usize {
+        self.max_bytes
+    }
+}
+
+impl Default for FixResendStoreConfig {
+    fn default() -> Self {
+        Self {
+            max_messages: 1024,
+            max_bytes: 1024 * 1024,
+        }
+    }
+}
+
+/// Resend-store append errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FixResendStoreError {
+    /// FIX sequence numbers are one-based.
+    ZeroSeqNo,
+    /// A retained outbound message was recorded out of order or reused a
+    /// sequence number already observed by the store.
+    SequenceRegression {
+        /// Latest retained or observed outbound sequence.
+        latest: u64,
+        /// Sequence number supplied by the caller.
+        received: u64,
+    },
+}
+
+impl fmt::Display for FixResendStoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroSeqNo => write!(
+                f,
+                "FIX resend store sequence number must be greater than zero"
+            ),
+            Self::SequenceRegression { latest, received } => write!(
+                f,
+                "FIX resend store sequence regression: latest {latest}, received {received}"
+            ),
+        }
+    }
+}
+
+impl Error for FixResendStoreError {}
+
+/// Retained outbound FIX frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FixStoredMessage {
+    seq_no: u64,
+    kind: FixSentMessageKind,
+    raw: Vec<u8>,
+}
+
+impl FixStoredMessage {
+    /// Returns the outbound `MsgSeqNum(34)`.
+    pub const fn seq_no(&self) -> u64 {
+        self.seq_no
+    }
+
+    /// Returns the retained message kind.
+    pub const fn kind(&self) -> FixSentMessageKind {
+        self.kind
+    }
+
+    /// Returns the retained raw FIX frame.
+    pub fn raw(&self) -> &[u8] {
+        &self.raw
+    }
+
+    /// Returns whether the message is replayable by default.
+    pub const fn replayable(&self) -> bool {
+        self.kind.replayable()
+    }
+}
+
+/// Result of recording a sent message into a resend store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixResendRetention {
+    retained: bool,
+    evicted_messages: u64,
+    evicted_bytes: u64,
+}
+
+impl FixResendRetention {
+    /// Returns whether the message was retained.
+    pub const fn retained(&self) -> bool {
+        self.retained
+    }
+
+    /// Returns messages evicted to satisfy configured bounds.
+    pub const fn evicted_messages(&self) -> u64 {
+        self.evicted_messages
+    }
+
+    /// Returns bytes evicted to satisfy configured bounds.
+    pub const fn evicted_bytes(&self) -> u64 {
+        self.evicted_bytes
+    }
+}
+
+/// Snapshot of resend-store counters and retained range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixResendStoreMetrics {
+    retained_messages: u64,
+    retained_bytes: u64,
+    dropped_messages: u64,
+    dropped_bytes: u64,
+    evicted_messages: u64,
+    evicted_bytes: u64,
+    oldest_seq_no: Option<u64>,
+    newest_seq_no: Option<u64>,
+}
+
+impl FixResendStoreMetrics {
+    /// Returns the number of retained messages.
+    pub const fn retained_messages(&self) -> u64 {
+        self.retained_messages
+    }
+
+    /// Returns the number of retained raw bytes.
+    pub const fn retained_bytes(&self) -> u64 {
+        self.retained_bytes
+    }
+
+    /// Returns messages dropped because retention was disabled or the frame
+    /// exceeded the byte budget.
+    pub const fn dropped_messages(&self) -> u64 {
+        self.dropped_messages
+    }
+
+    /// Returns bytes dropped because retention was disabled or the frame
+    /// exceeded the byte budget.
+    pub const fn dropped_bytes(&self) -> u64 {
+        self.dropped_bytes
+    }
+
+    /// Returns messages evicted by bounded retention.
+    pub const fn evicted_messages(&self) -> u64 {
+        self.evicted_messages
+    }
+
+    /// Returns bytes evicted by bounded retention.
+    pub const fn evicted_bytes(&self) -> u64 {
+        self.evicted_bytes
+    }
+
+    /// Returns the oldest retained outbound sequence number.
+    pub const fn oldest_seq_no(&self) -> Option<u64> {
+        self.oldest_seq_no
+    }
+
+    /// Returns the newest observed outbound sequence number.
+    pub const fn newest_seq_no(&self) -> Option<u64> {
+        self.newest_seq_no
+    }
+}
+
+/// One planned response for an outbound resend request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FixResendAction<'a> {
+    /// Replay a retained application or reject frame.
+    Replay {
+        /// Original outbound sequence number.
+        seq_no: u64,
+        /// Retained raw FIX frame.
+        raw: &'a [u8],
+    },
+    /// Emit a SequenceReset `<4>` gap-fill for an inclusive sequence range.
+    GapFill {
+        /// First skipped sequence number.
+        begin_seq_no: u64,
+        /// Last skipped sequence number.
+        end_seq_no: u64,
+    },
+}
+
+/// Summary produced while planning a resend response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixResendPlanSummary {
+    replay_messages: u64,
+    gap_fill_messages: u64,
+    gap_fill_sequences: u64,
+}
+
+impl FixResendPlanSummary {
+    /// Returns replay actions produced by the planner.
+    pub const fn replay_messages(&self) -> u64 {
+        self.replay_messages
+    }
+
+    /// Returns gap-fill actions produced by the planner.
+    pub const fn gap_fill_messages(&self) -> u64 {
+        self.gap_fill_messages
+    }
+
+    /// Returns total skipped sequence numbers covered by gap fills.
+    pub const fn gap_fill_sequences(&self) -> u64 {
+        self.gap_fill_sequences
+    }
+}
+
+/// Bounded in-memory FIX resend store.
+///
+/// The store is intentionally storage-neutral. It retains outbound raw frames
+/// in memory for fast resend planning, while durable session stores can persist
+/// the same frames separately according to their own latency and sync policy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FixResendStore {
+    config: FixResendStoreConfig,
+    messages: VecDeque<FixStoredMessage>,
+    retained_bytes: usize,
+    dropped_messages: u64,
+    dropped_bytes: u64,
+    evicted_messages: u64,
+    evicted_bytes: u64,
+    newest_seq_no: Option<u64>,
+}
+
+impl Default for FixResendStore {
+    fn default() -> Self {
+        Self::new(FixResendStoreConfig::default())
+    }
+}
+
+impl FixResendStore {
+    /// Creates an empty resend store.
+    pub fn new(config: FixResendStoreConfig) -> Self {
+        Self {
+            config,
+            messages: VecDeque::with_capacity(config.max_messages.min(64)),
+            retained_bytes: 0,
+            dropped_messages: 0,
+            dropped_bytes: 0,
+            evicted_messages: 0,
+            evicted_bytes: 0,
+            newest_seq_no: None,
+        }
+    }
+
+    /// Returns the configured retention bounds.
+    pub const fn config(&self) -> FixResendStoreConfig {
+        self.config
+    }
+
+    /// Returns retained messages in sequence order.
+    pub fn messages(&self) -> impl Iterator<Item = &FixStoredMessage> {
+        self.messages.iter()
+    }
+
+    /// Returns a retained message by outbound sequence number.
+    pub fn get(&self, seq_no: u64) -> Option<&FixStoredMessage> {
+        self.messages
+            .iter()
+            .find(|message| message.seq_no == seq_no)
+    }
+
+    /// Records a sent outbound frame.
+    ///
+    /// Call this only for original outbound sends. Retransmitted `PossDupFlag`
+    /// messages should not be recorded as new sends because their original
+    /// sequence number may be lower than the latest observed sequence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixResendStoreError`] when `seq_no` is zero or lower than the
+    /// latest sequence already observed by this store.
+    pub fn record_sent(
+        &mut self,
+        seq_no: u64,
+        kind: FixSentMessageKind,
+        raw: &[u8],
+    ) -> Result<FixResendRetention, FixResendStoreError> {
+        if seq_no == 0 {
+            return Err(FixResendStoreError::ZeroSeqNo);
+        }
+        if let Some(latest) = self.newest_seq_no {
+            if seq_no <= latest {
+                return Err(FixResendStoreError::SequenceRegression {
+                    latest,
+                    received: seq_no,
+                });
+            }
+        }
+        self.newest_seq_no = Some(seq_no);
+
+        if self.config.max_messages == 0
+            || self.config.max_bytes == 0
+            || raw.len() > self.config.max_bytes
+        {
+            self.dropped_messages = self.dropped_messages.saturating_add(1);
+            self.dropped_bytes = self.dropped_bytes.saturating_add(raw.len() as u64);
+            return Ok(FixResendRetention {
+                retained: false,
+                evicted_messages: 0,
+                evicted_bytes: 0,
+            });
+        }
+
+        self.messages.push_back(FixStoredMessage {
+            seq_no,
+            kind,
+            raw: raw.to_vec(),
+        });
+        self.retained_bytes = self.retained_bytes.saturating_add(raw.len());
+
+        let mut evicted_messages = 0_u64;
+        let mut evicted_bytes = 0_u64;
+        while self.messages.len() > self.config.max_messages
+            || self.retained_bytes > self.config.max_bytes
+        {
+            if let Some(evicted) = self.messages.pop_front() {
+                let len = evicted.raw.len();
+                self.retained_bytes = self.retained_bytes.saturating_sub(len);
+                evicted_messages = evicted_messages.saturating_add(1);
+                evicted_bytes = evicted_bytes.saturating_add(len as u64);
+            } else {
+                break;
+            }
+        }
+        self.evicted_messages = self.evicted_messages.saturating_add(evicted_messages);
+        self.evicted_bytes = self.evicted_bytes.saturating_add(evicted_bytes);
+
+        Ok(FixResendRetention {
+            retained: true,
+            evicted_messages,
+            evicted_bytes,
+        })
+    }
+
+    /// Plans replay and gap-fill actions for an inclusive resend range.
+    ///
+    /// `EndSeqNo(16)=0` is interpreted as "through the newest observed outbound
+    /// sequence" for the purpose of bounded planning. The `out` vector is
+    /// cleared before actions are appended.
+    pub fn plan_resend_range<'a>(
+        &'a self,
+        range: FixResendRange,
+        out: &mut Vec<FixResendAction<'a>>,
+    ) -> FixResendPlanSummary {
+        out.clear();
+        let Some(end_seq_no) = self.resolve_resend_end(range.end_seq_no) else {
+            return FixResendPlanSummary {
+                replay_messages: 0,
+                gap_fill_messages: 0,
+                gap_fill_sequences: 0,
+            };
+        };
+        if range.begin_seq_no == 0 || range.begin_seq_no > end_seq_no {
+            return FixResendPlanSummary {
+                replay_messages: 0,
+                gap_fill_messages: 0,
+                gap_fill_sequences: 0,
+            };
+        }
+
+        let mut cursor = range.begin_seq_no;
+        let mut replay_messages = 0_u64;
+        let mut gap_fill_messages = 0_u64;
+        let mut gap_fill_sequences = 0_u64;
+
+        for message in self
+            .messages
+            .iter()
+            .filter(|message| message.seq_no >= range.begin_seq_no && message.seq_no <= end_seq_no)
+        {
+            if !message.replayable() {
+                continue;
+            }
+            if cursor < message.seq_no {
+                push_gap_fill(
+                    out,
+                    cursor,
+                    message.seq_no.saturating_sub(1),
+                    &mut gap_fill_messages,
+                    &mut gap_fill_sequences,
+                );
+            }
+            out.push(FixResendAction::Replay {
+                seq_no: message.seq_no,
+                raw: message.raw(),
+            });
+            replay_messages = replay_messages.saturating_add(1);
+            cursor = message.seq_no.saturating_add(1);
+        }
+
+        if cursor <= end_seq_no {
+            push_gap_fill(
+                out,
+                cursor,
+                end_seq_no,
+                &mut gap_fill_messages,
+                &mut gap_fill_sequences,
+            );
+        }
+
+        FixResendPlanSummary {
+            replay_messages,
+            gap_fill_messages,
+            gap_fill_sequences,
+        }
+    }
+
+    /// Returns resend-store metrics.
+    pub fn metrics(&self) -> FixResendStoreMetrics {
+        FixResendStoreMetrics {
+            retained_messages: self.messages.len() as u64,
+            retained_bytes: self.retained_bytes as u64,
+            dropped_messages: self.dropped_messages,
+            dropped_bytes: self.dropped_bytes,
+            evicted_messages: self.evicted_messages,
+            evicted_bytes: self.evicted_bytes,
+            oldest_seq_no: self.messages.front().map(|message| message.seq_no),
+            newest_seq_no: self.newest_seq_no,
+        }
+    }
+
+    fn resolve_resend_end(&self, requested_end: u64) -> Option<u64> {
+        if requested_end == 0 {
+            self.newest_seq_no
+        } else {
+            Some(requested_end)
+        }
     }
 }
 
@@ -1889,6 +2363,25 @@ fn validate_value(tag: FixTag, value: &[u8]) -> Result<(), FixEncodeError> {
     }
 }
 
+fn push_gap_fill<'a>(
+    out: &mut Vec<FixResendAction<'a>>,
+    begin_seq_no: u64,
+    end_seq_no: u64,
+    gap_fill_messages: &mut u64,
+    gap_fill_sequences: &mut u64,
+) {
+    if begin_seq_no == 0 || begin_seq_no > end_seq_no {
+        return;
+    }
+    out.push(FixResendAction::GapFill {
+        begin_seq_no,
+        end_seq_no,
+    });
+    *gap_fill_messages = gap_fill_messages.saturating_add(1);
+    *gap_fill_sequences = gap_fill_sequences
+        .saturating_add(end_seq_no.saturating_sub(begin_seq_no).saturating_add(1));
+}
+
 const fn clamp_seq_no(value: u64) -> u64 {
     if value == 0 {
         1
@@ -2333,6 +2826,183 @@ mod tests {
         tracker.reset_to_one();
         assert_eq!(tracker.next_inbound(), 1);
         assert_eq!(tracker.next_outbound(), 1);
+    }
+
+    #[test]
+    fn resend_store_plans_replay_and_gap_fills() {
+        let mut store = FixResendStore::new(FixResendStoreConfig::new(8, 1024));
+        store
+            .record_sent(1, FixSentMessageKind::Application, b"app-1")
+            .expect("seq 1");
+        store
+            .record_sent(2, FixSentMessageKind::Administrative, b"admin-2")
+            .expect("seq 2");
+        store
+            .record_sent(3, FixSentMessageKind::Reject, b"reject-3")
+            .expect("seq 3");
+        store
+            .record_sent(5, FixSentMessageKind::Application, b"app-5")
+            .expect("seq 5");
+
+        let mut actions = Vec::new();
+        let summary = store.plan_resend_range(
+            FixResendRange {
+                begin_seq_no: 1,
+                end_seq_no: 5,
+            },
+            &mut actions,
+        );
+
+        assert_eq!(summary.replay_messages(), 3);
+        assert_eq!(summary.gap_fill_messages(), 2);
+        assert_eq!(summary.gap_fill_sequences(), 2);
+        assert_eq!(
+            actions,
+            vec![
+                FixResendAction::Replay {
+                    seq_no: 1,
+                    raw: b"app-1"
+                },
+                FixResendAction::GapFill {
+                    begin_seq_no: 2,
+                    end_seq_no: 2
+                },
+                FixResendAction::Replay {
+                    seq_no: 3,
+                    raw: b"reject-3"
+                },
+                FixResendAction::GapFill {
+                    begin_seq_no: 4,
+                    end_seq_no: 4
+                },
+                FixResendAction::Replay {
+                    seq_no: 5,
+                    raw: b"app-5"
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn resend_store_uses_newest_sequence_for_open_ended_range() {
+        let mut store = FixResendStore::new(FixResendStoreConfig::new(8, 1024));
+        store
+            .record_sent(1, FixSentMessageKind::Application, b"app-1")
+            .expect("seq 1");
+        store
+            .record_sent(2, FixSentMessageKind::Administrative, b"admin-2")
+            .expect("seq 2");
+
+        let mut actions = vec![FixResendAction::GapFill {
+            begin_seq_no: 99,
+            end_seq_no: 99,
+        }];
+        let summary = store.plan_resend_range(
+            FixResendRange {
+                begin_seq_no: 1,
+                end_seq_no: 0,
+            },
+            &mut actions,
+        );
+
+        assert_eq!(summary.replay_messages(), 1);
+        assert_eq!(summary.gap_fill_sequences(), 1);
+        assert_eq!(
+            actions,
+            vec![
+                FixResendAction::Replay {
+                    seq_no: 1,
+                    raw: b"app-1"
+                },
+                FixResendAction::GapFill {
+                    begin_seq_no: 2,
+                    end_seq_no: 2
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn resend_store_eviction_turns_old_sequences_into_gap_fill() {
+        let mut store = FixResendStore::new(FixResendStoreConfig::new(2, 1024));
+        store
+            .record_sent(1, FixSentMessageKind::Application, b"app-1")
+            .expect("seq 1");
+        store
+            .record_sent(2, FixSentMessageKind::Application, b"app-2")
+            .expect("seq 2");
+        let retention = store
+            .record_sent(3, FixSentMessageKind::Application, b"app-3")
+            .expect("seq 3");
+        assert!(retention.retained());
+        assert_eq!(retention.evicted_messages(), 1);
+
+        let metrics = store.metrics();
+        assert_eq!(metrics.retained_messages(), 2);
+        assert_eq!(metrics.oldest_seq_no(), Some(2));
+        assert_eq!(metrics.newest_seq_no(), Some(3));
+        assert_eq!(metrics.evicted_messages(), 1);
+
+        let mut actions = Vec::new();
+        store.plan_resend_range(
+            FixResendRange {
+                begin_seq_no: 1,
+                end_seq_no: 3,
+            },
+            &mut actions,
+        );
+        assert_eq!(
+            actions,
+            vec![
+                FixResendAction::GapFill {
+                    begin_seq_no: 1,
+                    end_seq_no: 1
+                },
+                FixResendAction::Replay {
+                    seq_no: 2,
+                    raw: b"app-2"
+                },
+                FixResendAction::Replay {
+                    seq_no: 3,
+                    raw: b"app-3"
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn resend_store_reports_disabled_or_oversized_drops() {
+        let mut disabled = FixResendStore::new(FixResendStoreConfig::new(0, 1024));
+        let retention = disabled
+            .record_sent(1, FixSentMessageKind::Application, b"app-1")
+            .expect("disabled retention");
+        assert!(!retention.retained());
+        assert_eq!(disabled.metrics().dropped_messages(), 1);
+
+        let mut bounded = FixResendStore::new(FixResendStoreConfig::new(4, 4));
+        let retention = bounded
+            .record_sent(1, FixSentMessageKind::Application, b"app-1")
+            .expect("oversized retention");
+        assert!(!retention.retained());
+        assert_eq!(bounded.metrics().dropped_bytes(), 5);
+    }
+
+    #[test]
+    fn resend_store_rejects_non_increasing_sequences() {
+        let mut store = FixResendStore::default();
+        store
+            .record_sent(10, FixSentMessageKind::Application, b"app-10")
+            .expect("seq 10");
+        let err = store
+            .record_sent(10, FixSentMessageKind::Application, b"app-10-again")
+            .expect_err("same sequence");
+        assert_eq!(
+            err,
+            FixResendStoreError::SequenceRegression {
+                latest: 10,
+                received: 10
+            }
+        );
     }
 
     #[test]

@@ -29,6 +29,15 @@ maps parsed execution reports into canonical OMS events.
 | `FixResendRange` | struct | Missing sequence range for resend request generation |
 | `FixSessionId` | struct | Borrowed FIX session identity |
 | `FixSequenceSnapshot` | struct | Borrowed persistable sequence-state snapshot |
+| `FixSentMessageKind` | enum | Replayability classification for outbound messages |
+| `FixResendStoreConfig` | struct | Bounded in-memory resend-store limits |
+| `FixResendStore` | struct | Retained outbound frame store for resend planning |
+| `FixStoredMessage` | struct | Retained outbound FIX frame |
+| `FixResendRetention` | struct | Result of recording a sent frame |
+| `FixResendStoreMetrics` | struct | Retention/drop/eviction counters |
+| `FixResendStoreError` | enum | Resend-store append validation errors |
+| `FixResendAction` | enum | Replay or gap-fill action for a resend response |
+| `FixResendPlanSummary` | struct | Replay/gap-fill counts from planning |
 | `FixSessionHeader` | struct | Borrowed standard header fields for admin builders |
 | `FixOrderSide` | enum | Common `Side(54)` values |
 | `FixOrdType` | enum | Common `OrdType(40)` values |
@@ -70,6 +79,7 @@ Included:
 - session-state and sequence-tracking primitives for future transports and
   adapters;
 - borrowed session identity and sequence snapshot primitives;
+- bounded in-memory resend-store planning for replay versus gap-fill decisions;
 - typed session/admin message builders for common session flow;
 - typed order-entry builders for common single-order flow;
 - encoding into caller-owned buffers with computed `BodyLength` and `CheckSum`;
@@ -79,7 +89,8 @@ Not included:
 
 - TCP/TLS transport;
 - TCP/TLS-driven Logon/Logout/Heartbeat/TestRequest lifecycle;
-- resend message replay and gap-fill generation;
+- durable resend message storage;
+- automatic resend response transmission;
 - persistent session store;
 - repeating group dictionaries;
 - certification harness;
@@ -100,6 +111,8 @@ The codec follows the production FIX plan in `new_features.md`:
 - keep dictionary rules as static borrowed slices;
 - track sequence state with plain integer counters;
 - keep persistence snapshots storage-neutral;
+- keep resend retention bounded by message and byte budgets;
+- write resend plans into caller-owned buffers;
 - encode admin/session messages with preallocated caller buffers;
 - pass order identifiers, quantities, prices, and timestamps as borrowed bytes;
 - keep debug formatting opt-in;
@@ -295,6 +308,73 @@ Snapshot boundary:
 - does not persist to disk;
 - does not decide end-of-day reset policy;
 - does not retain sent application messages for resend replay.
+
+## Resend Store Example
+
+`FixResendStore` is a bounded in-memory helper for the resend path. A session
+engine records original outbound frames after assigning `MsgSeqNum(34)` and
+then asks the store to plan a counterparty `ResendRequest(2)` range.
+
+```rust
+use of_fix::{
+    FixResendAction, FixResendRange, FixResendStore, FixResendStoreConfig,
+    FixSentMessageKind,
+};
+
+let mut store = FixResendStore::new(FixResendStoreConfig::new(128, 64 * 1024));
+store.record_sent(1, FixSentMessageKind::Application, b"new-order")?;
+store.record_sent(2, FixSentMessageKind::Administrative, b"heartbeat")?;
+store.record_sent(3, FixSentMessageKind::Application, b"cancel")?;
+
+let mut actions = Vec::new();
+let summary = store.plan_resend_range(
+    FixResendRange {
+        begin_seq_no: 1,
+        end_seq_no: 3,
+    },
+    &mut actions,
+);
+
+assert_eq!(summary.replay_messages(), 2);
+assert_eq!(
+    actions,
+    vec![
+        FixResendAction::Replay {
+            seq_no: 1,
+            raw: b"new-order".as_slice(),
+        },
+        FixResendAction::GapFill {
+            begin_seq_no: 2,
+            end_seq_no: 2,
+        },
+        FixResendAction::Replay {
+            seq_no: 3,
+            raw: b"cancel".as_slice(),
+        },
+    ],
+);
+# Ok::<(), of_fix::FixResendStoreError>(())
+```
+
+Resend-store behavior:
+
+- `Application` and `Reject` messages are replayable by default;
+- `Administrative` messages are gap-filled by default;
+- missing, aged, evicted, or disabled-retention ranges become gap-fill spans;
+- `EndSeqNo(16)=0` is interpreted as "through newest observed outbound
+  sequence" for bounded planning;
+- original outbound sequence numbers must be strictly increasing;
+- retention metrics expose retained, dropped, and evicted messages and bytes.
+
+Resend-store boundary:
+
+- it does not persist frames durably;
+- it does not mutate sequence counters;
+- it does not encode `PossDupFlag(43)` or `OrigSendingTime(122)` on replayed
+  frames;
+- it does not send SequenceReset gap fills;
+- it does not decide whether an aged application message should be suppressed
+  by venue policy.
 
 ## Session Admin Builder Example
 

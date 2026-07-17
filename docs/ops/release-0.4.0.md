@@ -78,6 +78,8 @@ registry dependency after `of_fix 0.1.0` is published.
   `FixResendRange` primitives for deterministic session sequence handling
 - `FixSessionId` and `FixSequenceSnapshot` primitives for storage-neutral
   session sequence persistence
+- bounded `FixResendStore` primitives for in-memory outbound frame retention,
+  replay/gap-fill planning, and retention/drop/eviction metrics
 - typed session/admin builders for Logon, Heartbeat, TestRequest,
   ResendRequest, SequenceReset gap fill, and Logout
 - typed order-entry builders for NewOrderSingle, OrderCancelRequest, and

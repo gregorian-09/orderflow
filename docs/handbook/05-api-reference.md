@@ -597,6 +597,15 @@ Public FIX codec types:
 - `FixResendRange`
 - `FixSessionId`
 - `FixSequenceSnapshot`
+- `FixSentMessageKind`
+- `FixResendStoreConfig`
+- `FixResendStore`
+- `FixStoredMessage`
+- `FixResendRetention`
+- `FixResendStoreMetrics`
+- `FixResendStoreError`
+- `FixResendAction`
+- `FixResendPlanSummary`
 - `FixSessionHeader`
 - `FixOrderSide`
 - `FixOrdType`
