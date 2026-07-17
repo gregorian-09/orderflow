@@ -72,10 +72,16 @@ impl FixTag {
     pub const TRANSACT_TIME: Self = Self(60);
     /// `Text(58)`.
     pub const TEXT: Self = Self(58);
+    /// `EncryptMethod(98)`.
+    pub const ENCRYPT_METHOD: Self = Self(98);
     /// `TestReqID(112)`.
     pub const TEST_REQ_ID: Self = Self(112);
+    /// `HeartBtInt(108)`.
+    pub const HEART_BT_INT: Self = Self(108);
     /// `GapFillFlag(123)`.
     pub const GAP_FILL_FLAG: Self = Self(123);
+    /// `ResetSeqNumFlag(141)`.
+    pub const RESET_SEQ_NUM_FLAG: Self = Self(141);
     /// `CheckSum(10)`.
     pub const CHECK_SUM: Self = Self(10);
 }
@@ -950,6 +956,52 @@ impl FixEncoder {
     }
 }
 
+/// Borrowed standard FIX session header fields used by admin builders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixSessionHeader<'a> {
+    sender_comp_id: &'a [u8],
+    target_comp_id: &'a [u8],
+    msg_seq_num: u64,
+    sending_time: &'a [u8],
+}
+
+impl<'a> FixSessionHeader<'a> {
+    /// Creates a standard session header.
+    pub const fn new(
+        sender_comp_id: &'a [u8],
+        target_comp_id: &'a [u8],
+        msg_seq_num: u64,
+        sending_time: &'a [u8],
+    ) -> Self {
+        Self {
+            sender_comp_id,
+            target_comp_id,
+            msg_seq_num,
+            sending_time,
+        }
+    }
+
+    /// Returns `SenderCompID(49)`.
+    pub const fn sender_comp_id(&self) -> &'a [u8] {
+        self.sender_comp_id
+    }
+
+    /// Returns `TargetCompID(56)`.
+    pub const fn target_comp_id(&self) -> &'a [u8] {
+        self.target_comp_id
+    }
+
+    /// Returns `MsgSeqNum(34)`.
+    pub const fn msg_seq_num(&self) -> u64 {
+        self.msg_seq_num
+    }
+
+    /// Returns `SendingTime(52)`.
+    pub const fn sending_time(&self) -> &'a [u8] {
+        self.sending_time
+    }
+}
+
 /// Parses and validates a FIX tag-value message into `scratch`.
 ///
 /// The returned message borrows both `raw` and the initialized prefix of
@@ -1070,6 +1122,179 @@ pub fn encode_message(
     msg_type: &[u8],
     fields: &[(FixTag, &[u8])],
 ) -> Result<(), FixEncodeError> {
+    encode_message_parts(out, begin_string, msg_type, &[], fields)
+}
+
+/// Encodes a Logon `<A>` admin message.
+///
+/// The builder writes standard header fields, `EncryptMethod(98)=0`,
+/// `HeartBtInt(108)`, and optional `ResetSeqNumFlag(141)=Y`.
+///
+/// # Errors
+///
+/// Returns [`FixEncodeError`] when a field value contains SOH.
+pub fn encode_logon(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    header: FixSessionHeader<'_>,
+    heartbeat_interval_secs: u64,
+    reset_seq_num: bool,
+) -> Result<(), FixEncodeError> {
+    let mut heartbeat = [0u8; 20];
+    let heartbeat_len = write_u64_digits(&mut heartbeat, heartbeat_interval_secs);
+    let extra = [
+        (FixTag::ENCRYPT_METHOD, b"0".as_slice()),
+        (FixTag::HEART_BT_INT, &heartbeat[..heartbeat_len]),
+        (FixTag::RESET_SEQ_NUM_FLAG, b"Y".as_slice()),
+    ];
+    let extra_len = if reset_seq_num { 3 } else { 2 };
+    encode_session_message(out, version, FixMsgType::LOGON, header, &extra[..extra_len])
+}
+
+/// Encodes a Heartbeat `<0>` admin message.
+///
+/// `test_req_id` should be supplied when replying to a TestRequest `<1>`.
+///
+/// # Errors
+///
+/// Returns [`FixEncodeError`] when a field value contains SOH.
+pub fn encode_heartbeat(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    header: FixSessionHeader<'_>,
+    test_req_id: Option<&[u8]>,
+) -> Result<(), FixEncodeError> {
+    let mut extra = [(FixTag::TEST_REQ_ID, b"".as_slice())];
+    let extra_len = if let Some(test_req_id) = test_req_id {
+        extra[0] = (FixTag::TEST_REQ_ID, test_req_id);
+        1
+    } else {
+        0
+    };
+    encode_session_message(
+        out,
+        version,
+        FixMsgType::HEARTBEAT,
+        header,
+        &extra[..extra_len],
+    )
+}
+
+/// Encodes a TestRequest `<1>` admin message.
+///
+/// # Errors
+///
+/// Returns [`FixEncodeError`] when a field value contains SOH.
+pub fn encode_test_request(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    header: FixSessionHeader<'_>,
+    test_req_id: &[u8],
+) -> Result<(), FixEncodeError> {
+    let extra = [(FixTag::TEST_REQ_ID, test_req_id)];
+    encode_session_message(out, version, FixMsgType::TEST_REQUEST, header, &extra)
+}
+
+/// Encodes a ResendRequest `<2>` admin message.
+///
+/// # Errors
+///
+/// Returns [`FixEncodeError`] when a field value contains SOH.
+pub fn encode_resend_request(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    header: FixSessionHeader<'_>,
+    range: FixResendRange,
+) -> Result<(), FixEncodeError> {
+    let mut begin = [0u8; 20];
+    let begin_len = write_u64_digits(&mut begin, range.begin_seq_no);
+    let mut end = [0u8; 20];
+    let end_len = write_u64_digits(&mut end, range.end_seq_no);
+    let extra = [
+        (FixTag::BEGIN_SEQ_NO, &begin[..begin_len]),
+        (FixTag::END_SEQ_NO, &end[..end_len]),
+    ];
+    encode_session_message(out, version, FixMsgType::RESEND_REQUEST, header, &extra)
+}
+
+/// Encodes a SequenceReset `<4>` gap-fill admin message.
+///
+/// # Errors
+///
+/// Returns [`FixEncodeError`] when a field value contains SOH.
+pub fn encode_sequence_reset_gap_fill(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    header: FixSessionHeader<'_>,
+    new_seq_no: u64,
+) -> Result<(), FixEncodeError> {
+    let mut new_seq = [0u8; 20];
+    let new_seq_len = write_u64_digits(&mut new_seq, new_seq_no);
+    let extra = [
+        (FixTag::GAP_FILL_FLAG, b"Y".as_slice()),
+        (FixTag::NEW_SEQ_NO, &new_seq[..new_seq_len]),
+    ];
+    encode_session_message(out, version, FixMsgType::SEQUENCE_RESET, header, &extra)
+}
+
+/// Encodes a Logout `<5>` admin message.
+///
+/// # Errors
+///
+/// Returns [`FixEncodeError`] when a field value contains SOH.
+pub fn encode_logout(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    header: FixSessionHeader<'_>,
+    text: Option<&[u8]>,
+) -> Result<(), FixEncodeError> {
+    let mut extra = [(FixTag::TEXT, b"".as_slice())];
+    let extra_len = if let Some(text) = text {
+        extra[0] = (FixTag::TEXT, text);
+        1
+    } else {
+        0
+    };
+    encode_session_message(
+        out,
+        version,
+        FixMsgType::LOGOUT,
+        header,
+        &extra[..extra_len],
+    )
+}
+
+fn encode_session_message(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    msg_type: FixMsgType,
+    header: FixSessionHeader<'_>,
+    fields: &[(FixTag, &[u8])],
+) -> Result<(), FixEncodeError> {
+    let mut seq_no = [0u8; 20];
+    let seq_len = write_u64_digits(&mut seq_no, header.msg_seq_num());
+    let header_fields = [
+        (FixTag::SENDER_COMP_ID, header.sender_comp_id()),
+        (FixTag::TARGET_COMP_ID, header.target_comp_id()),
+        (FixTag::MSG_SEQ_NUM, &seq_no[..seq_len]),
+        (FixTag::SENDING_TIME, header.sending_time()),
+    ];
+    encode_message_parts(
+        out,
+        version.as_bytes(),
+        msg_type.as_bytes(),
+        &header_fields,
+        fields,
+    )
+}
+
+fn encode_message_parts(
+    out: &mut Vec<u8>,
+    begin_string: &[u8],
+    msg_type: &[u8],
+    header_fields: &[(FixTag, &[u8])],
+    fields: &[(FixTag, &[u8])],
+) -> Result<(), FixEncodeError> {
     validate_value(FixTag::BEGIN_STRING, begin_string)?;
     validate_value(FixTag::MSG_TYPE, msg_type)?;
 
@@ -1078,7 +1303,7 @@ pub fn encode_message(
     write_field(out, FixTag::BODY_LENGTH, b"0000000000");
     let body_start = out.len();
     write_field(out, FixTag::MSG_TYPE, msg_type);
-    for (tag, value) in fields {
+    for (tag, value) in header_fields.iter().chain(fields.iter()) {
         if matches!(
             *tag,
             FixTag::BEGIN_STRING | FixTag::BODY_LENGTH | FixTag::MSG_TYPE | FixTag::CHECK_SUM
@@ -1240,6 +1465,24 @@ fn write_u32_digits(out: &mut [u8; 10], mut value: u32) -> usize {
         return 1;
     }
     let mut tmp = [0u8; 10];
+    let mut len = 0usize;
+    while value != 0 {
+        tmp[len] = b'0' + (value % 10) as u8;
+        value /= 10;
+        len += 1;
+    }
+    for i in 0..len {
+        out[i] = tmp[len - 1 - i];
+    }
+    len
+}
+
+fn write_u64_digits(out: &mut [u8; 20], mut value: u64) -> usize {
+    if value == 0 {
+        out[0] = b'0';
+        return 1;
+    }
+    let mut tmp = [0u8; 20];
     let mut len = 0usize;
     while value != 0 {
         tmp[len] = b'0' + (value % 10) as u8;
@@ -1546,5 +1789,91 @@ mod tests {
                 requested: 14,
             })
         );
+    }
+
+    #[test]
+    fn encodes_logon_with_required_admin_fields() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 1, b"20260717-12:00:00.000");
+        let mut raw = Vec::new();
+        encode_logon(&mut raw, FixVersion::Fix44, header, 30, true).expect("logon");
+
+        let mut scratch = [FixFieldView::empty(); 32];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(message.typed_msg_type(), Some(FixMsgType::LOGON));
+        assert_eq!(
+            message.get(FixTag::SENDER_COMP_ID),
+            Some(b"CLIENT".as_slice())
+        );
+        assert_eq!(
+            message.get(FixTag::TARGET_COMP_ID),
+            Some(b"BROKER".as_slice())
+        );
+        assert_eq!(message.get(FixTag::ENCRYPT_METHOD), Some(b"0".as_slice()));
+        assert_eq!(message.get(FixTag::HEART_BT_INT), Some(b"30".as_slice()));
+        assert_eq!(
+            message.get(FixTag::RESET_SEQ_NUM_FLAG),
+            Some(b"Y".as_slice())
+        );
+    }
+
+    #[test]
+    fn encodes_heartbeat_with_test_request_id() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 2, b"20260717-12:00:01.000");
+        let mut raw = Vec::new();
+        encode_heartbeat(&mut raw, FixVersion::Fix44, header, Some(b"T1")).expect("heartbeat");
+
+        let mut scratch = [FixFieldView::empty(); 32];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(message.typed_msg_type(), Some(FixMsgType::HEARTBEAT));
+        assert_eq!(message.get(FixTag::TEST_REQ_ID), Some(b"T1".as_slice()));
+    }
+
+    #[test]
+    fn encodes_resend_request_range() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 3, b"20260717-12:00:02.000");
+        let mut raw = Vec::new();
+        encode_resend_request(
+            &mut raw,
+            FixVersion::Fix44,
+            header,
+            FixResendRange {
+                begin_seq_no: 4,
+                end_seq_no: 9,
+            },
+        )
+        .expect("resend request");
+
+        let mut scratch = [FixFieldView::empty(); 32];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(message.typed_msg_type(), Some(FixMsgType::RESEND_REQUEST));
+        assert_eq!(message.begin_seq_no(), Some(4));
+        assert_eq!(message.end_seq_no(), Some(9));
+    }
+
+    #[test]
+    fn encodes_sequence_reset_gap_fill() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 4, b"20260717-12:00:03.000");
+        let mut raw = Vec::new();
+        encode_sequence_reset_gap_fill(&mut raw, FixVersion::Fix44, header, 12).expect("gap fill");
+
+        let mut scratch = [FixFieldView::empty(); 32];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(message.typed_msg_type(), Some(FixMsgType::SEQUENCE_RESET));
+        assert!(message.gap_fill());
+        assert_eq!(message.new_seq_no(), Some(12));
+    }
+
+    #[test]
+    fn logout_builder_rejects_soh_in_text() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 5, b"20260717-12:00:04.000");
+        let mut raw = Vec::new();
+        let err = encode_logout(
+            &mut raw,
+            FixVersion::Fix44,
+            header,
+            Some(b"bad\x01text".as_slice()),
+        )
+        .expect_err("soh should fail");
+        assert_eq!(err, FixEncodeError::ValueContainsSoh(FixTag::TEXT));
     }
 }

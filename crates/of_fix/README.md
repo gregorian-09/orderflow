@@ -27,6 +27,8 @@ Included now:
 - session-state and sequence-tracking primitives;
 - resend-range detection for inbound sequence gaps;
 - sequence-reset guardrails that reject decreasing next expected sequence;
+- typed session/admin builders for Logon, Heartbeat, TestRequest,
+  ResendRequest, SequenceReset gap fill, and Logout;
 - common tag constants and extraction helpers;
 - caller-owned encode buffers that fill `BodyLength` and `CheckSum`;
 - debug rendering with `|` delimiters outside the live hot path.
@@ -52,6 +54,7 @@ The codec is designed for execution hot paths:
 - validate `BodyLength` and `CheckSum` directly over the raw byte buffer;
 - keep profile rules as static borrowed slices;
 - track inbound/outbound sequence numbers with plain integer state;
+- build session/admin messages into reusable buffers without `format!`;
 - encode into caller-owned `Vec<u8>` buffers;
 - keep debug rendering opt-in and outside hot paths.
 
@@ -147,6 +150,25 @@ assert!(matches!(
 # Ok::<(), of_fix::FixSequenceError>(())
 ```
 
+## Session Admin Builder Example
+
+```rust
+use of_fix::{encode_logon, FixSessionHeader, FixVersion};
+
+let header = FixSessionHeader::new(
+    b"CLIENT",
+    b"BROKER",
+    1,
+    b"20260717-12:00:00.000",
+);
+
+let mut out = Vec::with_capacity(256);
+encode_logon(&mut out, FixVersion::Fix44, header, 30, true)?;
+
+assert!(out.starts_with(b"8=FIX.4.4\x019="));
+# Ok::<(), of_fix::FixEncodeError>(())
+```
+
 ## Validation Semantics
 
 `parse_message` rejects frames when:
@@ -175,6 +197,11 @@ engines and adapters. It accepts expected inbound sequence numbers, reports
 missing ranges as `FixSequenceAction::Gap`, treats lower `PossDupFlag=Y`
 messages as duplicates, flags unmarked lower sequence numbers as too-low, and
 assigns outbound sequence numbers monotonically.
+
+The session/admin builders are intentionally small protocol helpers. They write
+the common standard header fields and the required admin body fields into the
+same strict encoder path used by `encode_message`; they do not manage sockets,
+timers, resend stores, or authentication extensions.
 
 ## Roadmap
 

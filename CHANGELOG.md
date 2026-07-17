@@ -85,6 +85,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `of_fix` session-state and sequence-tracking primitives with
   deterministic accept/gap/duplicate/too-low outcomes, resend ranges, monotonic
   outbound assignment, and guarded sequence-reset advancement.
+- Added `of_fix` session/admin builders for Logon, Heartbeat, TestRequest,
+  ResendRequest, SequenceReset gap fill, and Logout using caller-owned buffers.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

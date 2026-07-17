@@ -65,6 +65,8 @@ honestly.
 - reusable `FixDecoder` and `FixEncoder` facades
 - `FixSessionState`, `FixSequenceTracker`, `FixSequenceAction`, and
   `FixResendRange` primitives for deterministic session sequence handling
+- typed session/admin builders for Logon, Heartbeat, TestRequest,
+  ResendRequest, SequenceReset gap fill, and Logout
 - common FIX tag constants and extraction helpers
 - caller-owned encoding buffers with computed body length and checksum
 - diagnostic rendering with `|` separators outside hot paths

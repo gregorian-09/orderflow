@@ -27,8 +27,15 @@ maps parsed execution reports into canonical OMS events.
 | `FixSequenceAction` | enum | Result of observing an inbound sequence number |
 | `FixSequenceError` | enum | Sequence validation/reset errors |
 | `FixResendRange` | struct | Missing sequence range for resend request generation |
+| `FixSessionHeader` | struct | Borrowed standard header fields for admin builders |
 | `parse_message` | function | Parses and validates raw FIX bytes into caller scratch |
 | `encode_message` | function | Encodes a message into a caller-owned `Vec<u8>` |
+| `encode_logon` | function | Encodes Logon `<A>` |
+| `encode_heartbeat` | function | Encodes Heartbeat `<0>` |
+| `encode_test_request` | function | Encodes TestRequest `<1>` |
+| `encode_resend_request` | function | Encodes ResendRequest `<2>` |
+| `encode_sequence_reset_gap_fill` | function | Encodes SequenceReset `<4>` gap fill |
+| `encode_logout` | function | Encodes Logout `<5>` |
 | `checksum` | function | Computes FIX modulo-256 checksum |
 | `debug_render` | function | Renders diagnostics with `|` separators |
 
@@ -51,6 +58,7 @@ Included:
   objects;
 - session-state and sequence-tracking primitives for future transports and
   adapters;
+- typed session/admin message builders for common session flow;
 - encoding into caller-owned buffers with computed `BodyLength` and `CheckSum`;
 - diagnostic rendering outside the hot path.
 
@@ -78,6 +86,7 @@ The codec follows the production FIX plan in `new_features.md`:
 - validate body length and checksum directly over the raw buffer;
 - keep dictionary rules as static borrowed slices;
 - track sequence state with plain integer counters;
+- encode admin/session messages with preallocated caller buffers;
 - keep debug formatting opt-in;
 - encode into reusable caller-owned buffers.
 
@@ -242,6 +251,54 @@ Sequence behavior:
 - outbound sequence numbers are assigned monotonically;
 - `apply_sequence_reset` can advance, but not decrease, the next expected
   inbound sequence.
+
+## Session Admin Builder Example
+
+The admin builders write standard header fields and common session body fields
+through the same strict encoder path as `encode_message`.
+
+```rust
+use of_fix::{
+    encode_logon, encode_resend_request, FixResendRange, FixSessionHeader, FixVersion,
+};
+
+let header = FixSessionHeader::new(
+    b"CLIENT",
+    b"BROKER",
+    1,
+    b"20260717-12:00:00.000",
+);
+
+let mut out = Vec::with_capacity(256);
+encode_logon(&mut out, FixVersion::Fix44, header, 30, true)?;
+
+let resend_header = FixSessionHeader::new(
+    b"CLIENT",
+    b"BROKER",
+    2,
+    b"20260717-12:00:01.000",
+);
+encode_resend_request(
+    &mut out,
+    FixVersion::Fix44,
+    resend_header,
+    FixResendRange { begin_seq_no: 4, end_seq_no: 9 },
+)?;
+# Ok::<(), of_fix::FixEncodeError>(())
+```
+
+Builder boundary:
+
+- Logon writes `EncryptMethod(98)=0`, `HeartBtInt(108)`, and optional
+  `ResetSeqNumFlag(141)=Y`;
+- Heartbeat optionally writes `TestReqID(112)`;
+- TestRequest writes `TestReqID(112)`;
+- ResendRequest writes `BeginSeqNo(7)` and `EndSeqNo(16)`;
+- SequenceReset gap fill writes `GapFillFlag(123)=Y` and `NewSeqNo(36)`;
+- Logout optionally writes `Text(58)`.
+
+The builders do not authenticate, open connections, run timers, persist sent
+messages, or decide whether an application message may be resent.
 
 ## Validation Semantics
 

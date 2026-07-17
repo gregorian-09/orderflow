@@ -595,6 +595,7 @@ Public FIX codec types:
 - `FixSequenceAction`
 - `FixSequenceError`
 - `FixResendRange`
+- `FixSessionHeader`
 
 Public FIX codec constants:
 
@@ -606,6 +607,12 @@ Public FIX codec functions:
 - `encode_message(out, begin_string, msg_type, fields)`
 - `checksum(bytes) -> u8`
 - `debug_render(raw) -> String`
+- `encode_logon(out, version, header, heartbeat_interval_secs, reset_seq_num)`
+- `encode_heartbeat(out, version, header, test_req_id)`
+- `encode_test_request(out, version, header, test_req_id)`
+- `encode_resend_request(out, version, header, range)`
+- `encode_sequence_reset_gap_fill(out, version, header, new_seq_no)`
+- `encode_logout(out, version, header, text)`
 
 For low-allocation FIX parsing, validation, and encoding details, see
 [`of_fix` reference](./05j-of-fix-reference.md).

@@ -45,8 +45,8 @@ Major additions:
 - FIX foundation: borrowed tag-value codec, `BodyLength(9)` and `CheckSum(10)`
   validation, common tag extraction, typed `FixVersion`/`FixMsgType` helpers,
   static dictionary/profile validation, deterministic session sequence
-  primitives, caller-owned encode buffers, and debug rendering outside the hot
-  path
+  primitives, typed session/admin builders, caller-owned encode buffers, and
+  debug rendering outside the hot path
 - adapter scaffolding: FIX execution-report mapping and fail-closed adapter shell
   for provider adapter authors
 - bindings: additive C ABI, Python, and Java execution APIs that do not change
