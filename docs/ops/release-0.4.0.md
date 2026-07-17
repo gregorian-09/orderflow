@@ -81,6 +81,8 @@ registry dependency after `of_fix 0.1.0` is published.
   session sequence persistence
 - bounded `FixResendStore` primitives for in-memory outbound frame retention,
   replay/gap-fill planning, and retention/drop/eviction metrics
+- bounded `FixTranscriptCapture` primitives for certification/audit transcript
+  evidence with optional raw retention, metadata-only capture, and rolling hash
 - `encode_poss_dup_replay` for possible-duplicate replay encoding with
   current `SendingTime(52)`, preserved `OrigSendingTime(122)`, and recomputed
   body length/checksum

@@ -31,6 +31,8 @@ Included now:
 - sequence-reset guardrails that reject decreasing next expected sequence;
 - borrowed session identity and sequence snapshot primitives for persistence;
 - bounded in-memory resend-store primitives for replay/gap-fill planning;
+- bounded in-memory transcript capture primitives for certification/audit
+  workflows;
 - possible-duplicate replay encoding with `PossDupFlag(43)` and
   `OrigSendingTime(122)`;
 - typed session/admin builders for Logon, Heartbeat, TestRequest,
@@ -70,6 +72,8 @@ The codec is designed for execution hot paths:
 - snapshot sequence counters without tying the codec to a storage backend;
 - retain outbound resend frames behind explicit message/byte bounds;
 - plan replay versus gap-fill actions into caller-owned buffers;
+- capture transcript metadata with bounded optional raw retention and a
+  deterministic rolling hash;
 - rewrite replayed frames without a generic object model;
 - build session/admin messages into reusable buffers without `format!`;
 - build order-entry messages from borrowed identifiers, symbols, quantities,
@@ -307,6 +311,43 @@ assert_eq!(
 # Ok::<(), of_fix::FixResendStoreError>(())
 ```
 
+## Transcript Capture Example
+
+```rust
+use of_fix::{
+    encode_heartbeat, parse_message, FixFieldView, FixSessionHeader,
+    FixTranscriptCapture, FixTranscriptConfig, FixTranscriptDirection,
+    FixVersion,
+};
+
+let header = FixSessionHeader::new(
+    b"CLIENT",
+    b"BROKER",
+    42,
+    b"20260717-12:00:00.000",
+);
+
+let mut raw = Vec::new();
+encode_heartbeat(&mut raw, FixVersion::Fix44, header, None)?;
+
+let mut scratch = [FixFieldView::empty(); 16];
+let message = parse_message(&raw, &mut scratch)?;
+
+let mut transcript =
+    FixTranscriptCapture::new(FixTranscriptConfig::new(128, 64 * 1024, true));
+transcript.record_message(
+    FixTranscriptDirection::Outbound,
+    1_784_275_200_000_000_000,
+    &message,
+)?;
+
+let metrics = transcript.metrics();
+assert_eq!(metrics.captured_records(), 1);
+assert_eq!(metrics.retained_records(), 1);
+assert_ne!(metrics.rolling_hash(), 0);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 ## Possible-Duplicate Replay Example
 
 ```rust
@@ -393,6 +434,13 @@ transmit responses; a session engine remains responsible for encoding
 SequenceReset gap fills, setting `PossDupFlag(43)`/`OrigSendingTime(122)` on
 replayed messages where required by profile, and enforcing counterparty policy.
 
+`FixTranscriptCapture` records certification/audit transcript metadata with
+optional bounded raw frame retention. It updates cumulative counters and a
+deterministic rolling hash even when raw bytes are not retained. It does not
+write files, redact secrets, script certification scenarios, or generate
+counterparty reports; those policies belong in host tooling built on top of the
+capture records.
+
 `encode_poss_dup_replay` handles the common replay rewrite step for retained
 messages. It takes a validated borrowed source message, preserves its original
 sequence number and application fields, writes `PossDupFlag(43)=Y`, replaces
@@ -422,5 +470,5 @@ The planned next layers are:
 - durable session sequence persistence;
 - venue/profile-specific resend suppression policy;
 - order mass cancel/status response parsers;
-- certification transcript capture;
+- scripted certification scenarios and report generation;
 - integration with `of_execution_adapters::fix`.

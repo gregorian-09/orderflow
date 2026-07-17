@@ -91,6 +91,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   storage-neutral persistence of next inbound/outbound sequence counters.
 - Added `of_fix` bounded resend-store primitives for replay/gap-fill planning
   with explicit message/byte retention metrics and sequence guardrails.
+- Added `of_fix` bounded transcript-capture primitives for certification/audit
+  evidence with optional raw retention, metadata-only records, and rolling hash
+  metrics.
 - Added `of_fix::encode_poss_dup_replay` for possible-duplicate resend frame
   encoding with current `SendingTime(52)` and preserved `OrigSendingTime(122)`.
 - Added `of_fix` session/admin builders for Logon, Heartbeat, TestRequest,

@@ -41,6 +41,14 @@ maps parsed execution reports into canonical OMS events.
 | `FixResendStoreError` | enum | Resend-store append validation errors |
 | `FixResendAction` | enum | Replay or gap-fill action for a resend response |
 | `FixResendPlanSummary` | struct | Replay/gap-fill counts from planning |
+| `FixTranscriptDirection` | enum | Inbound/outbound transcript frame direction |
+| `FixTranscriptMsgType` | struct | Fixed-size transcript message-type copy |
+| `FixTranscriptConfig` | struct | Bounded transcript capture limits |
+| `FixTranscriptError` | enum | Transcript capture validation errors |
+| `FixTranscriptRecord` | struct | Retained transcript metadata and optional raw bytes |
+| `FixTranscriptRetention` | struct | Result of recording a transcript frame |
+| `FixTranscriptMetrics` | struct | Transcript counters and rolling hash |
+| `FixTranscriptCapture` | struct | Bounded in-memory transcript capture |
 | `FixSessionHeader` | struct | Borrowed standard header fields for admin builders |
 | `FixOrderSide` | enum | Common `Side(54)` values |
 | `FixOrdType` | enum | Common `OrdType(40)` values |
@@ -95,6 +103,7 @@ Included:
   adapters;
 - borrowed session identity and sequence snapshot primitives;
 - bounded in-memory resend-store planning for replay versus gap-fill decisions;
+- bounded in-memory transcript capture for certification/audit evidence;
 - possible-duplicate replay encoding with `PossDupFlag(43)` and
   `OrigSendingTime(122)`;
 - typed session/admin message builders for common session flow;
@@ -110,7 +119,7 @@ Not included:
 - automatic resend response transmission;
 - persistent session store;
 - repeating group dictionaries;
-- certification harness;
+- scripted certification harness;
 - OMS execution-event mapping.
 
 Those layers should build on top of `of_fix` rather than duplicating wire codec
@@ -435,6 +444,56 @@ Resend-store boundary:
 - it does not decide whether an aged application message should be suppressed
   by venue policy.
 
+## Transcript Capture
+
+`FixTranscriptCapture` keeps bounded transcript metadata for certification,
+audit, and test evidence. It can retain raw FIX frames when they fit configured
+limits, or keep metadata-only records while still advancing counters and the
+rolling hash.
+
+```rust
+use of_fix::{
+    encode_heartbeat, parse_message, FixFieldView, FixSessionHeader,
+    FixTranscriptCapture, FixTranscriptConfig, FixTranscriptDirection,
+    FixVersion,
+};
+
+let header = FixSessionHeader::new(
+    b"CLIENT",
+    b"BROKER",
+    42,
+    b"20260717-12:00:00.000",
+);
+
+let mut raw = Vec::new();
+encode_heartbeat(&mut raw, FixVersion::Fix44, header, None)?;
+
+let mut scratch = [FixFieldView::empty(); 16];
+let message = parse_message(&raw, &mut scratch)?;
+
+let mut capture =
+    FixTranscriptCapture::new(FixTranscriptConfig::new(128, 64 * 1024, true));
+capture.record_message(
+    FixTranscriptDirection::Outbound,
+    1_784_275_200_000_000_000,
+    &message,
+)?;
+
+let metrics = capture.metrics();
+assert_eq!(metrics.captured_records(), 1);
+assert_eq!(metrics.retained_records(), 1);
+assert_ne!(metrics.rolling_hash(), 0);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Transcript-capture boundary:
+
+- it does not open files or sockets;
+- it does not redact credentials or custom sensitive tags;
+- it does not script counterparty scenarios;
+- it does not decide pass/fail certification status;
+- it does not replace durable compliance archival.
+
 ## Possible-Duplicate Replay Encoding
 
 `encode_poss_dup_replay` performs the common resend rewrite for a retained
@@ -618,6 +677,11 @@ Order-builder boundary:
 
 The strict default is intentional. Venue-specific relaxed behavior belongs in a
 future profile layer so operators can see exactly what a counterparty requires.
+
+`FixTranscriptCapture` accepts parsed messages or caller-supplied raw metadata
+and records bounded evidence for certification/debugging workflows. It keeps
+raw retention optional and bounded; when raw bytes are not retained, metadata
+counters and the rolling hash still advance.
 
 ## Encoder Semantics
 

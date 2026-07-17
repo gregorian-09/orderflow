@@ -609,6 +609,14 @@ Public FIX codec types:
 - `FixResendStoreError`
 - `FixResendAction`
 - `FixResendPlanSummary`
+- `FixTranscriptDirection`
+- `FixTranscriptMsgType`
+- `FixTranscriptConfig`
+- `FixTranscriptError`
+- `FixTranscriptRecord`
+- `FixTranscriptRetention`
+- `FixTranscriptMetrics`
+- `FixTranscriptCapture`
 - `FixSessionHeader`
 - `FixOrderSide`
 - `FixOrdType`
