@@ -68,6 +68,7 @@ With the `fix` feature enabled:
 - [`fix::FixRequestEncodeConfig`]
 - [`fix::FixCancelEncodeContext`]
 - [`fix::FixAmendEncodeContext`]
+- [`fix::FixStopAmendEncodeContext`]
 - [`fix::FixReportParseError`]
 - [`fix::FixRequestEncodeError`]
 - [`fix::FixExecType`]
@@ -78,6 +79,7 @@ With the `fix` feature enabled:
 - [`fix::encode_order_request`]
 - [`fix::encode_cancel_request`]
 - [`fix::encode_amend_request`]
+- [`fix::encode_stop_amend_request`]
 - [`fix::map_execution_report`]
 - [`fix::map_order_cancel_reject`]
 - [`fix::FixExecutionAdapter`]
@@ -213,6 +215,8 @@ wire frames through `of_fix` builders:
 - [`fix::encode_order_request`] -> NewOrderSingle `<D>`
 - [`fix::encode_cancel_request`] -> OrderCancelRequest `<F>`
 - [`fix::encode_amend_request`] -> OrderCancelReplaceRequest `<G>`
+- [`fix::encode_stop_amend_request`] -> OrderCancelReplaceRequest `<G>` with
+  explicit `StopPx(99)`
 
 The helpers encode into caller-owned `Vec<u8>` buffers. The caller supplies a
 `FixSessionHeader` with sequence and sending-time fields, and supplies
@@ -225,11 +229,13 @@ Cancel and amend encoding use explicit context structs because the canonical
 - [`fix::FixCancelEncodeContext`] supplies original side and transact time.
 - [`fix::FixAmendEncodeContext`] supplies original side, replacement order
   type, replacement TIF, and transact time.
+- [`fix::FixStopAmendEncodeContext`] supplies original side, stop/stop-limit
+  order type, replacement TIF, explicit stop price, and transact time.
 
-The bridge encodes market, limit, stop, and stop-limit new orders. Amend
-encoding currently supports market and limit replacements; stop and stop-limit
-amends fail closed with [`fix::FixRequestEncodeError`] until a dedicated amend
-context can carry an explicit replacement `StopPx(99)`.
+The bridge encodes market, limit, stop, and stop-limit new orders. Plain amend
+encoding supports market and limit replacements; stop and stop-limit
+replacements use [`fix::encode_stop_amend_request`] so the replacement
+`StopPx(99)` is explicit.
 
 ## FIX Exec Type And Status
 

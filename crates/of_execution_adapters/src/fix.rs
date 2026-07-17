@@ -263,6 +263,40 @@ impl<'a> FixAmendEncodeContext<'a> {
     }
 }
 
+/// Extra fields required to encode a stop/stop-limit amend request as FIX.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixStopAmendEncodeContext<'a> {
+    /// Side of the original order.
+    pub side: OrderSide,
+    /// Replacement FIX order type. Must be stop or stop-limit.
+    pub order_type: OrderType,
+    /// Replacement time-in-force.
+    pub time_in_force: TimeInForce,
+    /// Replacement stop price.
+    pub stop_price: OrderPrice,
+    /// FIX wire-format `TransactTime(60)` bytes.
+    pub transact_time: &'a [u8],
+}
+
+impl<'a> FixStopAmendEncodeContext<'a> {
+    /// Creates stop-amend encode context.
+    pub const fn new(
+        side: OrderSide,
+        order_type: OrderType,
+        time_in_force: TimeInForce,
+        stop_price: OrderPrice,
+        transact_time: &'a [u8],
+    ) -> Self {
+        Self {
+            side,
+            order_type,
+            time_in_force,
+            stop_price,
+            transact_time,
+        }
+    }
+}
+
 /// Errors returned while encoding canonical OMS requests as FIX frames.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -672,6 +706,69 @@ pub fn encode_amend_request(
         map_order_type_to_fix(context.order_type)?,
     )
     .with_account(request.account_id.as_str().as_bytes())
+    .with_time_in_force(map_tif_to_fix(context.time_in_force));
+    if let Some(price) = price {
+        fix_request = fix_request.with_price(price);
+    }
+    encode_order_cancel_replace_request(out, version, header, fix_request)?;
+    Ok(())
+}
+
+/// Encodes a stop/stop-limit amend request as FIX OrderCancelReplaceRequest `<G>`.
+///
+/// This helper is separate from [`encode_amend_request`] because canonical
+/// [`AmendRequest`] carries one replacement limit price but no separate stop
+/// price. Callers supply the stop price explicitly through `context`.
+///
+/// # Errors
+///
+/// Returns [`FixRequestEncodeError`] when scales are invalid, required
+/// quantity/price fields are not positive, `context.order_type` is not stop or
+/// stop-limit, or the underlying FIX encoder rejects a field value.
+pub fn encode_stop_amend_request(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    header: FixSessionHeader<'_>,
+    config: FixRequestEncodeConfig,
+    request: &AmendRequest,
+    context: FixStopAmendEncodeContext<'_>,
+) -> Result<(), FixRequestEncodeError> {
+    if !matches!(context.order_type, OrderType::Stop | OrderType::StopLimit) {
+        return Err(FixRequestEncodeError::UnsupportedOrderType);
+    }
+    let mut qty_buf = [0u8; 40];
+    let qty = encode_scaled(
+        &mut qty_buf,
+        request.quantity.0,
+        config.quantity_scale,
+        ScaledField::Quantity,
+    )?;
+    let mut price_buf = [0u8; 40];
+    let price = encode_order_price(
+        &mut price_buf,
+        context.order_type,
+        request.limit_price,
+        config,
+    )?;
+    let mut stop_px_buf = [0u8; 40];
+    let stop_px = encode_order_stop_price(
+        &mut stop_px_buf,
+        context.order_type,
+        context.stop_price,
+        config,
+    )?
+    .ok_or(FixRequestEncodeError::InvalidPrice)?;
+    let mut fix_request = FixOrderCancelReplaceRequest::new(
+        request.orig_client_order_id.as_str().as_bytes(),
+        request.client_order_id.as_str().as_bytes(),
+        request.symbol.instrument.as_str().as_bytes(),
+        map_side_to_fix(context.side),
+        context.transact_time,
+        qty,
+        map_order_type_to_fix(context.order_type)?,
+    )
+    .with_account(request.account_id.as_str().as_bytes())
+    .with_stop_px(stop_px)
     .with_time_in_force(map_tif_to_fix(context.time_in_force));
     if let Some(price) = price {
         fix_request = fix_request.with_price(price);
@@ -1604,6 +1701,50 @@ mod tests {
     }
 
     #[test]
+    fn encodes_stop_amend_request_with_explicit_stop_context() {
+        let request = AmendRequest {
+            client_order_id: id("RPL-STP"),
+            orig_client_order_id: id("C1"),
+            venue_order_id: id("V1"),
+            account_id: id("ACC"),
+            route_id: id("FIX"),
+            symbol: ExecutionSymbol::new("BINANCE", "BTCUSDT").unwrap(),
+            quantity: OrderQty(200),
+            limit_price: OrderPrice(650100),
+            ts_recv_ns: 10,
+        };
+        let config = FixRequestEncodeConfig::new()
+            .with_quantity_scale(100)
+            .with_price_scale(10);
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 9, b"20260717-12:00:02.000");
+        let context = FixStopAmendEncodeContext::new(
+            OrderSide::Buy,
+            OrderType::StopLimit,
+            TimeInForce::Gtc,
+            OrderPrice(649900),
+            b"20260717-12:00:02.000",
+        );
+        let mut raw = Vec::new();
+        encode_stop_amend_request(
+            &mut raw,
+            FixVersion::Fix44,
+            header,
+            config,
+            &request,
+            context,
+        )
+        .expect("encode");
+
+        let mut scratch = [FixFieldView::empty(); 32];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(message.msg_type(), Some(b"G".as_slice()));
+        assert_eq!(message.get(FixTag::ORD_TYPE), Some(b"4".as_slice()));
+        assert_eq!(message.get(FixTag::PRICE), Some(b"65010".as_slice()));
+        assert_eq!(message.get(FixTag::STOP_PX), Some(b"64990".as_slice()));
+        assert_eq!(message.get(FixTag::TIME_IN_FORCE), Some(b"1".as_slice()));
+    }
+
+    #[test]
     fn request_encoder_rejects_invalid_shapes() {
         let mut request = OrderRequest {
             client_order_id: id("C1"),
@@ -1678,6 +1819,27 @@ mod tests {
                     .with_price_scale(10),
                 &amend,
                 context,
+            ),
+            Err(FixRequestEncodeError::UnsupportedOrderType)
+        );
+
+        let non_stop_context = FixStopAmendEncodeContext::new(
+            OrderSide::Buy,
+            OrderType::Limit,
+            TimeInForce::Day,
+            OrderPrice(650000),
+            b"20260717-12:00:00.000",
+        );
+        assert_eq!(
+            encode_stop_amend_request(
+                &mut raw,
+                FixVersion::Fix44,
+                header,
+                FixRequestEncodeConfig::new()
+                    .with_quantity_scale(100)
+                    .with_price_scale(10),
+                &amend,
+                non_stop_context,
             ),
             Err(FixRequestEncodeError::UnsupportedOrderType)
         );

@@ -121,6 +121,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
   propagation.
 - Added stop and stop-limit new-order encoding support to the
   `of_execution_adapters::fix` outbound request bridge.
+- Added `of_execution_adapters::fix::encode_stop_amend_request` and
+  `FixStopAmendEncodeContext` for explicit stop/stop-limit amend encoding.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

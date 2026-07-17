@@ -662,6 +662,7 @@ Feature-gated public FIX scaffold types under `of_execution_adapters::fix`:
 - `FixRequestEncodeConfig`
 - `FixCancelEncodeContext`
 - `FixAmendEncodeContext`
+- `FixStopAmendEncodeContext`
 - `FixReportParseError`
 - `FixRequestEncodeError`
 - `FixExecType`
@@ -676,6 +677,7 @@ Feature-gated public FIX helper functions under `of_execution_adapters::fix`:
 - `encode_order_request(out, version, header, config, request, transact_time)`
 - `encode_cancel_request(out, version, header, request, context)`
 - `encode_amend_request(out, version, header, config, request, context)`
+- `encode_stop_amend_request(out, version, header, config, request, context)`
 - `map_execution_report(report) -> ExecutionEvent`
 - `map_order_cancel_reject(report) -> ExecutionEvent`
 

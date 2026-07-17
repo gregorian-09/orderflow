@@ -30,6 +30,7 @@ It contains:
 - `FixRequestEncodeConfig`
 - `FixCancelEncodeContext`
 - `FixAmendEncodeContext`
+- `FixStopAmendEncodeContext`
 - `FixReportParseError`
 - `FixRequestEncodeError`
 - `FixExecType`
@@ -40,6 +41,7 @@ It contains:
 - `encode_order_request`
 - `encode_cancel_request`
 - `encode_amend_request`
+- `encode_stop_amend_request`
 - `map_execution_report`
 - `map_order_cancel_reject`
 - `FixExecutionAdapter`
@@ -111,6 +113,8 @@ Outbound helpers:
   OrderCancelRequest `<F>`.
 - `encode_amend_request(out, version, header, config, request, context)` emits
   OrderCancelReplaceRequest `<G>`.
+- `encode_stop_amend_request(out, version, header, config, request, context)`
+  emits OrderCancelReplaceRequest `<G>` with explicit `StopPx(99)`.
 
 The caller owns the `Vec<u8>` buffer and the `FixSessionHeader`, including
 sequence and sending-time fields. `transact_time` is passed as FIX wire bytes
@@ -119,12 +123,13 @@ precision and format policy.
 
 Cancel and amend helpers require context because canonical `CancelRequest` and
 `AmendRequest` intentionally do not carry every FIX-required field. The context
-supplies original side for cancels, and side/order-type/TIF for amends.
+supplies original side for cancels, side/order-type/TIF for ordinary amends,
+and side/order-type/TIF/stop price for stop amends.
 
-The bridge encodes market, limit, stop, and stop-limit new orders. Amend
-encoding currently supports market and limit replacements; stop and stop-limit
-amends fail closed until a dedicated amend context can carry an explicit
-replacement `StopPx(99)`.
+The bridge encodes market, limit, stop, and stop-limit new orders. Ordinary
+amend encoding supports market and limit replacements; stop and stop-limit
+replacements use `encode_stop_amend_request` so replacement `StopPx(99)` is
+explicit.
 
 ### `parse_execution_report`
 

@@ -114,6 +114,8 @@ of the codec.
   OrderCancelReplaceRequest encoding bridge with explicit decimal scales,
   caller-provided FIX timestamps, and `Account(1)` propagation
 - stop and stop-limit new-order encoding through the FIX request bridge
+- explicit stop and stop-limit amend encoding through
+  `encode_stop_amend_request`
 - FIX exec type/status mapping
 - canonical `ExecutionEvent` conversion
 - fail-closed adapter shell
