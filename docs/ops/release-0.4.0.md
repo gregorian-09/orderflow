@@ -80,6 +80,9 @@ registry dependency after `of_fix 0.1.0` is published.
   session sequence persistence
 - bounded `FixResendStore` primitives for in-memory outbound frame retention,
   replay/gap-fill planning, and retention/drop/eviction metrics
+- `encode_poss_dup_replay` for possible-duplicate replay encoding with
+  current `SendingTime(52)`, preserved `OrigSendingTime(122)`, and recomputed
+  body length/checksum
 - typed session/admin builders for Logon, Heartbeat, TestRequest,
   ResendRequest, SequenceReset gap fill, and Logout
 - typed order-entry builders for NewOrderSingle, OrderCancelRequest, and

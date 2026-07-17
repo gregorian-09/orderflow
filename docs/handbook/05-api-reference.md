@@ -622,6 +622,7 @@ Public FIX codec functions:
 
 - `parse_message(raw, scratch) -> FixMessageView`
 - `encode_message(out, begin_string, msg_type, fields)`
+- `encode_poss_dup_replay(out, source, sending_time)`
 - `checksum(bytes) -> u8`
 - `debug_render(raw) -> String`
 - `encode_logon(out, version, header, heartbeat_interval_secs, reset_seq_num)`

@@ -56,6 +56,7 @@ maps parsed execution reports into canonical OMS events.
 | `encode_new_order_single` | function | Encodes NewOrderSingle `<D>` |
 | `encode_order_cancel_request` | function | Encodes OrderCancelRequest `<F>` |
 | `encode_order_cancel_replace_request` | function | Encodes OrderCancelReplaceRequest `<G>` |
+| `encode_poss_dup_replay` | function | Re-encodes a retained frame with `PossDupFlag(43)=Y` |
 | `checksum` | function | Computes FIX modulo-256 checksum |
 | `debug_render` | function | Renders diagnostics with `|` separators |
 
@@ -80,6 +81,8 @@ Included:
   adapters;
 - borrowed session identity and sequence snapshot primitives;
 - bounded in-memory resend-store planning for replay versus gap-fill decisions;
+- possible-duplicate replay encoding with `PossDupFlag(43)` and
+  `OrigSendingTime(122)`;
 - typed session/admin message builders for common session flow;
 - typed order-entry builders for common single-order flow;
 - encoding into caller-owned buffers with computed `BodyLength` and `CheckSum`;
@@ -113,6 +116,7 @@ The codec follows the production FIX plan in `new_features.md`:
 - keep persistence snapshots storage-neutral;
 - keep resend retention bounded by message and byte budgets;
 - write resend plans into caller-owned buffers;
+- rewrite retained replay frames without a generic object model;
 - encode admin/session messages with preallocated caller buffers;
 - pass order identifiers, quantities, prices, and timestamps as borrowed bytes;
 - keep debug formatting opt-in;
@@ -370,11 +374,59 @@ Resend-store boundary:
 
 - it does not persist frames durably;
 - it does not mutate sequence counters;
-- it does not encode `PossDupFlag(43)` or `OrigSendingTime(122)` on replayed
-  frames;
 - it does not send SequenceReset gap fills;
 - it does not decide whether an aged application message should be suppressed
   by venue policy.
+
+## Possible-Duplicate Replay Encoding
+
+`encode_poss_dup_replay` performs the common resend rewrite for a retained
+source message. It preserves the original message sequence number and
+application fields, writes `PossDupFlag(43)=Y`, replaces `SendingTime(52)` with
+the current send time, writes `OrigSendingTime(122)` from the original
+`SendingTime(52)` or existing `OrigSendingTime(122)`, then recomputes
+`BodyLength(9)` and `CheckSum(10)`.
+
+```rust
+use of_fix::{
+    encode_heartbeat, encode_poss_dup_replay, parse_message, FixFieldView,
+    FixSessionHeader, FixTag, FixVersion,
+};
+
+let header = FixSessionHeader::new(
+    b"CLIENT",
+    b"BROKER",
+    42,
+    b"20260717-12:00:00.000",
+);
+
+let mut original = Vec::new();
+encode_heartbeat(&mut original, FixVersion::Fix44, header, None)?;
+
+let mut scratch = [FixFieldView::empty(); 16];
+let source = parse_message(&original, &mut scratch)?;
+
+let mut replay = Vec::new();
+encode_poss_dup_replay(&mut replay, &source, b"20260717-12:00:05.000")?;
+
+let mut replay_scratch = [FixFieldView::empty(); 20];
+let replayed = parse_message(&replay, &mut replay_scratch)?;
+
+assert_eq!(replayed.msg_seq_num(), Some(42));
+assert_eq!(replayed.get(FixTag::POSS_DUP_FLAG), Some(b"Y".as_slice()));
+assert_eq!(
+    replayed.get(FixTag::ORIG_SENDING_TIME),
+    Some(b"20260717-12:00:00.000".as_slice())
+);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Replay encoding boundary:
+
+- it does not decide whether a message should be replayed;
+- it does not send the replayed bytes;
+- it does not persist the replayed bytes as a new outbound send;
+- it does not implement venue-specific aged-order suppression policy.
 
 ## Session Admin Builder Example
 

@@ -77,6 +77,8 @@ impl FixTag {
     pub const ENCRYPT_METHOD: Self = Self(98);
     /// `TestReqID(112)`.
     pub const TEST_REQ_ID: Self = Self(112);
+    /// `OrigSendingTime(122)`.
+    pub const ORIG_SENDING_TIME: Self = Self(122);
     /// `HeartBtInt(108)`.
     pub const HEART_BT_INT: Self = Self(108);
     /// `GapFillFlag(123)`.
@@ -533,6 +535,8 @@ pub enum FixEncodeError {
     ValueContainsSoh(FixTag),
     /// Caller attempted to pass a header/trailer tag that the encoder owns.
     ReservedTag(FixTag),
+    /// A source message is missing a required tag for the requested encoding.
+    MissingRequiredTag(FixTag),
 }
 
 impl fmt::Display for FixEncodeError {
@@ -540,6 +544,7 @@ impl fmt::Display for FixEncodeError {
         match self {
             Self::ValueContainsSoh(tag) => write!(f, "FIX value for tag {tag} contains SOH"),
             Self::ReservedTag(tag) => write!(f, "FIX tag {tag} is owned by the encoder"),
+            Self::MissingRequiredTag(tag) => write!(f, "FIX source message is missing tag {tag}"),
         }
     }
 }
@@ -1987,6 +1992,77 @@ pub fn encode_message(
     encode_message_parts(out, begin_string, msg_type, &[], fields)
 }
 
+/// Encodes a retained source message as a possible-duplicate resend.
+///
+/// The source message must be a validated parsed message. This helper preserves
+/// the original `MsgSeqNum(34)` and application fields, writes
+/// `PossDupFlag(43)=Y`, replaces `SendingTime(52)` with `sending_time`, writes
+/// `OrigSendingTime(122)` from the source `OrigSendingTime(122)` when present
+/// or otherwise from the source `SendingTime(52)`, and recomputes
+/// `BodyLength(9)`/`CheckSum(10)`.
+///
+/// # Errors
+///
+/// Returns [`FixEncodeError`] when required source tags are missing or
+/// `sending_time` contains SOH.
+pub fn encode_poss_dup_replay(
+    out: &mut Vec<u8>,
+    source: &FixMessageView<'_>,
+    sending_time: &[u8],
+) -> Result<(), FixEncodeError> {
+    let begin_string = source
+        .begin_string()
+        .ok_or(FixEncodeError::MissingRequiredTag(FixTag::BEGIN_STRING))?;
+    let msg_type = source
+        .msg_type()
+        .ok_or(FixEncodeError::MissingRequiredTag(FixTag::MSG_TYPE))?;
+    let orig_sending_time = source
+        .get(FixTag::ORIG_SENDING_TIME)
+        .or_else(|| source.get(FixTag::SENDING_TIME))
+        .ok_or(FixEncodeError::MissingRequiredTag(FixTag::SENDING_TIME))?;
+
+    validate_value(FixTag::BEGIN_STRING, begin_string)?;
+    validate_value(FixTag::MSG_TYPE, msg_type)?;
+    validate_value(FixTag::SENDING_TIME, sending_time)?;
+    validate_value(FixTag::ORIG_SENDING_TIME, orig_sending_time)?;
+
+    out.clear();
+    write_field(out, FixTag::BEGIN_STRING, begin_string);
+    write_field(out, FixTag::BODY_LENGTH, b"0000000000");
+    let body_start = out.len();
+    write_field(out, FixTag::MSG_TYPE, msg_type);
+
+    let mut wrote_replay_header = false;
+    for field in source.fields() {
+        match field.tag {
+            FixTag::BEGIN_STRING
+            | FixTag::BODY_LENGTH
+            | FixTag::MSG_TYPE
+            | FixTag::CHECK_SUM
+            | FixTag::POSS_DUP_FLAG
+            | FixTag::ORIG_SENDING_TIME => {}
+            FixTag::SENDING_TIME => {
+                write_replay_header(out, sending_time, orig_sending_time);
+                wrote_replay_header = true;
+            }
+            tag => {
+                validate_value(tag, field.value)?;
+                write_field(out, tag, field.value);
+            }
+        }
+    }
+
+    if !wrote_replay_header {
+        return Err(FixEncodeError::MissingRequiredTag(FixTag::SENDING_TIME));
+    }
+
+    let body_len = out.len().saturating_sub(body_start);
+    patch_body_length(out, body_len);
+    let sum = checksum(out);
+    write_checksum(out, sum);
+    Ok(())
+}
+
 /// Encodes a Logon `<A>` admin message.
 ///
 /// The builder writes standard header fields, `EncryptMethod(98)=0`,
@@ -2316,6 +2392,12 @@ fn write_field(out: &mut Vec<u8>, tag: FixTag, value: &[u8]) {
     out.push(b'=');
     out.extend_from_slice(value);
     out.push(SOH);
+}
+
+fn write_replay_header(out: &mut Vec<u8>, sending_time: &[u8], orig_sending_time: &[u8]) {
+    write_field(out, FixTag::POSS_DUP_FLAG, b"Y");
+    write_field(out, FixTag::SENDING_TIME, sending_time);
+    write_field(out, FixTag::ORIG_SENDING_TIME, orig_sending_time);
 }
 
 fn write_checksum(out: &mut Vec<u8>, sum: u8) {
@@ -3002,6 +3084,103 @@ mod tests {
                 latest: 10,
                 received: 10
             }
+        );
+    }
+
+    #[test]
+    fn encodes_poss_dup_replay_with_orig_sending_time() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 7, b"20260717-12:00:05.000");
+        let order = FixNewOrderSingle::new(
+            b"ORD-1",
+            b"BTCUSDT",
+            FixOrderSide::Buy,
+            b"20260717-12:00:05.000",
+            b"1.25",
+            FixOrdType::Limit,
+        )
+        .with_price(b"65000.5");
+        let mut original = Vec::new();
+        encode_new_order_single(&mut original, FixVersion::Fix44, header, order)
+            .expect("original order");
+        let mut scratch = [FixFieldView::empty(); 32];
+        let original_view = parse_message(&original, &mut scratch).expect("parse original");
+
+        let mut replay = Vec::new();
+        encode_poss_dup_replay(&mut replay, &original_view, b"20260717-12:00:06.000")
+            .expect("replay");
+        let mut replay_scratch = [FixFieldView::empty(); 40];
+        let replay_view = parse_message(&replay, &mut replay_scratch).expect("parse replay");
+
+        assert_eq!(replay_view.msg_seq_num(), Some(7));
+        assert_eq!(
+            replay_view.get(FixTag::POSS_DUP_FLAG),
+            Some(b"Y".as_slice())
+        );
+        assert_eq!(
+            replay_view.get(FixTag::SENDING_TIME),
+            Some(b"20260717-12:00:06.000".as_slice())
+        );
+        assert_eq!(
+            replay_view.get(FixTag::ORIG_SENDING_TIME),
+            Some(b"20260717-12:00:05.000".as_slice())
+        );
+        assert_eq!(
+            replay_view.get(FixTag::CL_ORD_ID),
+            Some(b"ORD-1".as_slice())
+        );
+    }
+
+    #[test]
+    fn poss_dup_replay_preserves_existing_orig_sending_time() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 7, b"20260717-12:00:05.000");
+        let mut original = Vec::new();
+        encode_heartbeat(&mut original, FixVersion::Fix44, header, None).expect("heartbeat");
+        let mut scratch = [FixFieldView::empty(); 16];
+        let original_view = parse_message(&original, &mut scratch).expect("parse original");
+
+        let mut first_replay = Vec::new();
+        encode_poss_dup_replay(&mut first_replay, &original_view, b"20260717-12:00:06.000")
+            .expect("first replay");
+        let mut first_scratch = [FixFieldView::empty(); 20];
+        let first_view = parse_message(&first_replay, &mut first_scratch).expect("parse first");
+
+        let mut second_replay = Vec::new();
+        encode_poss_dup_replay(&mut second_replay, &first_view, b"20260717-12:00:07.000")
+            .expect("second replay");
+        let mut second_scratch = [FixFieldView::empty(); 20];
+        let second_view = parse_message(&second_replay, &mut second_scratch).expect("parse second");
+
+        assert_eq!(
+            second_view.get(FixTag::SENDING_TIME),
+            Some(b"20260717-12:00:07.000".as_slice())
+        );
+        assert_eq!(
+            second_view.get(FixTag::ORIG_SENDING_TIME),
+            Some(b"20260717-12:00:05.000".as_slice())
+        );
+    }
+
+    #[test]
+    fn poss_dup_replay_requires_source_sending_time() {
+        let mut raw = Vec::new();
+        encode_message(
+            &mut raw,
+            b"FIX.4.4",
+            b"0",
+            &[
+                (FixTag::SENDER_COMP_ID, b"CLIENT".as_slice()),
+                (FixTag::TARGET_COMP_ID, b"BROKER".as_slice()),
+                (FixTag::MSG_SEQ_NUM, b"1".as_slice()),
+            ],
+        )
+        .expect("source without sending time");
+        let mut scratch = [FixFieldView::empty(); 16];
+        let view = parse_message(&raw, &mut scratch).expect("parse source");
+        let err = encode_poss_dup_replay(&mut Vec::new(), &view, b"20260717-12:00:06.000")
+            .expect_err("missing sending time");
+        assert_eq!(
+            err,
+            FixEncodeError::MissingRequiredTag(FixTag::SENDING_TIME)
         );
     }
 

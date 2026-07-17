@@ -29,6 +29,8 @@ Included now:
 - sequence-reset guardrails that reject decreasing next expected sequence;
 - borrowed session identity and sequence snapshot primitives for persistence;
 - bounded in-memory resend-store primitives for replay/gap-fill planning;
+- possible-duplicate replay encoding with `PossDupFlag(43)` and
+  `OrigSendingTime(122)`;
 - typed session/admin builders for Logon, Heartbeat, TestRequest,
   ResendRequest, SequenceReset gap fill, and Logout;
 - typed order-entry builders for NewOrderSingle, OrderCancelRequest, and
@@ -62,6 +64,7 @@ The codec is designed for execution hot paths:
 - snapshot sequence counters without tying the codec to a storage backend;
 - retain outbound resend frames behind explicit message/byte bounds;
 - plan replay versus gap-fill actions into caller-owned buffers;
+- rewrite replayed frames without a generic object model;
 - build session/admin messages into reusable buffers without `format!`;
 - build order-entry messages from borrowed identifiers, symbols, quantities,
   prices, and timestamps;
@@ -269,6 +272,42 @@ assert_eq!(
 # Ok::<(), of_fix::FixResendStoreError>(())
 ```
 
+## Possible-Duplicate Replay Example
+
+```rust
+use of_fix::{
+    encode_heartbeat, encode_poss_dup_replay, parse_message, FixFieldView,
+    FixSessionHeader, FixTag, FixVersion,
+};
+
+let header = FixSessionHeader::new(
+    b"CLIENT",
+    b"BROKER",
+    42,
+    b"20260717-12:00:00.000",
+);
+
+let mut original = Vec::new();
+encode_heartbeat(&mut original, FixVersion::Fix44, header, None)?;
+
+let mut scratch = [FixFieldView::empty(); 16];
+let source = parse_message(&original, &mut scratch)?;
+
+let mut replay = Vec::new();
+encode_poss_dup_replay(&mut replay, &source, b"20260717-12:00:05.000")?;
+
+let mut replay_scratch = [FixFieldView::empty(); 20];
+let replayed = parse_message(&replay, &mut replay_scratch)?;
+
+assert_eq!(replayed.msg_seq_num(), Some(42));
+assert_eq!(replayed.get(FixTag::POSS_DUP_FLAG), Some(b"Y".as_slice()));
+assert_eq!(
+    replayed.get(FixTag::ORIG_SENDING_TIME),
+    Some(b"20260717-12:00:00.000".as_slice())
+);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 ## Validation Semantics
 
 `parse_message` rejects frames when:
@@ -312,6 +351,13 @@ transmit responses; a session engine remains responsible for encoding
 SequenceReset gap fills, setting `PossDupFlag(43)`/`OrigSendingTime(122)` on
 replayed messages where required by profile, and enforcing counterparty policy.
 
+`encode_poss_dup_replay` handles the common replay rewrite step for retained
+messages. It takes a validated borrowed source message, preserves its original
+sequence number and application fields, writes `PossDupFlag(43)=Y`, replaces
+`SendingTime(52)` with the current send time, writes `OrigSendingTime(122)`,
+and recomputes `BodyLength(9)` and `CheckSum(10)`. It does not decide which
+messages are replayable or send them on a socket.
+
 The session/admin builders are intentionally small protocol helpers. They write
 the common standard header fields and the required admin body fields into the
 same strict encoder path used by `encode_message`; they do not manage sockets,
@@ -329,7 +375,6 @@ The planned next layers are:
 
 - FIX 4.2/4.4 message builders for order entry;
 - durable session sequence persistence;
-- outbound resend message encoding with `PossDupFlag(43)` and
-  `OrigSendingTime(122)` policy;
+- venue/profile-specific resend suppression policy;
 - certification transcript capture;
 - integration with `of_execution_adapters::fix`.
