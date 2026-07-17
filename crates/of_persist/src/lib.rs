@@ -3017,7 +3017,7 @@ impl RollingStore {
                     .duration_since(f.modified)
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
-                if age > policy.max_age_secs {
+                if age >= policy.max_age_secs {
                     let _ = fs::remove_file(&f.path);
                 }
             }
