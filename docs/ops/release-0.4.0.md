@@ -59,13 +59,17 @@ honestly.
 - borrowed `FixFieldView` and `FixMessageView` parsing from raw bytes
 - caller-provided parse scratch buffers
 - strict `BodyLength(9)` and `CheckSum(10)` validation
+- typed `FixVersion` and common `FixMsgType` helpers
+- static `FixDictionary`/`FixMessageRule` profile validation for required and
+  disallowed tags
+- reusable `FixDecoder` and `FixEncoder` facades
 - common FIX tag constants and extraction helpers
 - caller-owned encoding buffers with computed body length and checksum
 - diagnostic rendering with `|` separators outside hot paths
 
 This is not a full FIX session engine. Transport, logon/logout, resend, sequence
-reset, persistence, venue profiles, and certification tooling remain separate
-future layers built on top of the codec.
+reset, persistence, venue certification, and counterparty-specific business
+rules remain separate future layers built on top of the codec.
 
 ### 4. Execution adapter scaffolding
 

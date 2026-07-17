@@ -579,10 +579,17 @@ For lifecycle, routing, concurrency, and OMS helper details, see
 Public FIX codec types:
 
 - `FixTag`
+- `FixVersion`
+- `FixMsgType`
 - `FixFieldView`
 - `FixMessageView`
 - `FixParseError`
 - `FixEncodeError`
+- `FixProfileError`
+- `FixMessageRule`
+- `FixDictionary`
+- `FixDecoder`
+- `FixEncoder`
 
 Public FIX codec constants:
 

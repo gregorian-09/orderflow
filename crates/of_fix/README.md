@@ -21,6 +21,9 @@ Included now:
 - caller-owned parse scratch buffers;
 - FIX `BodyLength(9)` validation;
 - FIX `CheckSum(10)` validation;
+- typed FIX versions and common `MsgType(35)` constants;
+- static dictionary/profile validation for required and disallowed tags;
+- reusable `FixDecoder` and `FixEncoder` facades;
 - common tag constants and extraction helpers;
 - caller-owned encode buffers that fill `BodyLength` and `CheckSum`;
 - debug rendering with `|` delimiters outside the live hot path.
@@ -44,6 +47,7 @@ The codec is designed for execution hot paths:
 - use caller-provided `&mut [FixFieldView]` scratch for parse output;
 - avoid `HashMap<Tag, String>` as the primary representation;
 - validate `BodyLength` and `CheckSum` directly over the raw byte buffer;
+- keep profile rules as static borrowed slices;
 - encode into caller-owned `Vec<u8>` buffers;
 - keep debug rendering opt-in and outside hot paths.
 
@@ -85,6 +89,41 @@ assert!(out.starts_with(b"8=FIX.4.4\x019="));
 # Ok::<(), of_fix::FixEncodeError>(())
 ```
 
+## Profile Validation Example
+
+```rust
+use of_fix::{
+    encode_message, parse_message, FixDictionary, FixFieldView, FixMessageRule,
+    FixMsgType, FixTag, FixVersion,
+};
+
+static REQUIRED: &[FixTag] = &[FixTag::CL_ORD_ID, FixTag::SYMBOL, FixTag::SIDE];
+static RULES: &[FixMessageRule<'static>] = &[FixMessageRule::new(
+    FixMsgType::NEW_ORDER_SINGLE,
+    REQUIRED,
+    &[],
+)];
+
+let dictionary = FixDictionary::new(FixVersion::Fix44, RULES);
+
+let mut raw = Vec::new();
+encode_message(
+    &mut raw,
+    b"FIX.4.4",
+    b"D",
+    &[
+        (FixTag::CL_ORD_ID, b"ORD-1".as_slice()),
+        (FixTag::SYMBOL, b"BTCUSDT".as_slice()),
+        (FixTag::SIDE, b"1".as_slice()),
+    ],
+)?;
+
+let mut scratch = [FixFieldView::empty(); 16];
+let msg = parse_message(&raw, &mut scratch)?;
+dictionary.validate(&msg)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 ## Validation Semantics
 
 `parse_message` rejects frames when:
@@ -101,11 +140,17 @@ assert!(out.starts_with(b"8=FIX.4.4\x019="));
 This is deliberately strict for production execution paths. If a counterparty
 requires a relaxed policy, that should live in a profile layer above this codec.
 
+`FixDictionary` adds an optional second validation phase after the wire frame is
+valid. It checks the parsed `BeginString(8)` against a configured
+`FixVersion`, locates a `FixMessageRule` by raw `MsgType(35)`, then verifies
+required and disallowed tags using borrowed field views. It does not allocate,
+does not perform transport/session validation, and does not imply venue
+certification.
+
 ## Roadmap
 
 The planned next layers are:
 
-- FIX dictionaries and profile validation;
 - FIX 4.2/4.4 message builders for order entry;
 - session state and sequence persistence;
 - resend/gap-fill policy;

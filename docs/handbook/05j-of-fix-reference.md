@@ -11,10 +11,17 @@ maps parsed execution reports into canonical OMS events.
 | --- | --- | --- |
 | `SOH` | constant | FIX field delimiter byte `0x01` |
 | `FixTag` | struct | Numeric FIX tag identifier with common tag constants |
+| `FixVersion` | enum | Known FIX begin-string versions |
+| `FixMsgType` | struct | Static FIX `MsgType(35)` identifier |
 | `FixFieldView` | struct | Borrowed tag/value field view |
 | `FixMessageView` | struct | Borrowed validated FIX frame view |
 | `FixParseError` | enum | Strict parse and validation failures |
 | `FixEncodeError` | enum | Encode-time validation failures |
+| `FixProfileError` | enum | Dictionary/profile validation failures |
+| `FixMessageRule` | struct | Required/disallowed tag rule for one message type |
+| `FixDictionary` | struct | Static FIX version/profile rule set |
+| `FixDecoder` | struct | Stateless decoder facade over caller-owned scratch |
+| `FixEncoder` | struct | Reusable encoder with an owned output buffer |
 | `parse_message` | function | Parses and validates raw FIX bytes into caller scratch |
 | `encode_message` | function | Encodes a message into a caller-owned `Vec<u8>` |
 | `checksum` | function | Computes FIX modulo-256 checksum |
@@ -31,8 +38,12 @@ Included:
 - caller-provided `&mut [FixFieldView]` scratch;
 - strict `BeginString(8)`, `BodyLength(9)`, and `CheckSum(10)` validation;
 - common execution/session tag constants;
+- typed version and known message-type helpers;
 - direct extraction helpers for `MsgType(35)`, `MsgSeqNum(34)`, and
   `PossDupFlag(43)`;
+- static dictionary/profile validation for required and disallowed tags;
+- reusable encoder/decoder facades for components that prefer explicit codec
+  objects;
 - encoding into caller-owned buffers with computed `BodyLength` and `CheckSum`;
 - diagnostic rendering outside the hot path.
 
@@ -44,7 +55,6 @@ Not included:
 - sequence reset/gap fill;
 - persistent session store;
 - repeating group dictionaries;
-- venue profile validation;
 - certification harness;
 - OMS execution-event mapping.
 
@@ -60,6 +70,7 @@ The codec follows the production FIX plan in `new_features.md`:
 - avoid `HashMap<Tag, String>` as the primary representation;
 - avoid allocation during parse after the caller supplies scratch;
 - validate body length and checksum directly over the raw buffer;
+- keep dictionary rules as static borrowed slices;
 - keep debug formatting opt-in;
 - encode into reusable caller-owned buffers.
 
@@ -118,6 +129,78 @@ assert_eq!(message.get(FixTag::CL_ORD_ID), Some(b"ORD-1".as_slice()));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+## Typed Encoder/Decoder Example
+
+```rust
+use of_fix::{FixDecoder, FixEncoder, FixFieldView, FixMsgType, FixTag, FixVersion};
+
+let mut encoder = FixEncoder::with_capacity(256);
+let raw = encoder.encode_typed(
+    FixVersion::Fix44,
+    FixMsgType::NEW_ORDER_SINGLE,
+    &[
+        (FixTag::MSG_SEQ_NUM, b"7".as_slice()),
+        (FixTag::CL_ORD_ID, b"ORD-1".as_slice()),
+    ],
+)?;
+
+let decoder = FixDecoder::new();
+let mut scratch = [FixFieldView::empty(); 16];
+let message = decoder.parse(raw, &mut scratch)?;
+assert_eq!(message.version(), Some(FixVersion::Fix44));
+assert_eq!(message.typed_msg_type(), Some(FixMsgType::NEW_ORDER_SINGLE));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Profile Validation Example
+
+`FixDictionary` performs an optional validation pass after raw wire validation.
+It is deliberately static and borrowed: rules can be defined once, shared across
+sessions, and evaluated without per-message heap allocation.
+
+```rust
+use of_fix::{
+    encode_message, parse_message, FixDictionary, FixFieldView, FixMessageRule,
+    FixMsgType, FixTag, FixVersion,
+};
+
+static REQUIRED: &[FixTag] = &[FixTag::CL_ORD_ID, FixTag::SYMBOL, FixTag::SIDE];
+static RULES: &[FixMessageRule<'static>] = &[FixMessageRule::new(
+    FixMsgType::NEW_ORDER_SINGLE,
+    REQUIRED,
+    &[],
+)];
+
+let dictionary = FixDictionary::new(FixVersion::Fix44, RULES);
+
+let mut raw = Vec::new();
+encode_message(
+    &mut raw,
+    b"FIX.4.4",
+    b"D",
+    &[
+        (FixTag::CL_ORD_ID, b"ORD-1".as_slice()),
+        (FixTag::SYMBOL, b"BTCUSDT".as_slice()),
+        (FixTag::SIDE, b"1".as_slice()),
+    ],
+)?;
+
+let mut scratch = [FixFieldView::empty(); 16];
+let message = parse_message(&raw, &mut scratch)?;
+dictionary.validate(&message)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Profile validation checks:
+
+- the parsed `BeginString(8)` matches the dictionary `FixVersion`;
+- a rule exists for raw `MsgType(35)`;
+- all configured required tags are present;
+- all configured disallowed tags are absent.
+
+It does not replace session validation, resend handling, venue certification, or
+counterparty-specific business validation.
+
 ## Validation Semantics
 
 `parse_message` rejects:
@@ -157,8 +240,6 @@ It rejects SOH bytes inside values and rejects caller-provided reserved tags.
 
 The next layers should remain additive:
 
-- FIX 4.2/4.4 dictionary helpers;
-- profile validation;
 - typed builders for NewOrderSingle, Cancel, Replace, and session admin
   messages;
 - session sequence state;

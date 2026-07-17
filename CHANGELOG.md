@@ -79,6 +79,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added new `of_fix` crate foundation with borrowed FIX tag-value parsing,
   `BodyLength(9)` and `CheckSum(10)` validation, common tag helpers,
   caller-owned encoding buffers, and diagnostic rendering.
+- Added `of_fix` typed `FixVersion`/`FixMsgType` helpers, reusable
+  `FixEncoder`/`FixDecoder` facades, and static `FixDictionary` profile
+  validation for required and disallowed message tags.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

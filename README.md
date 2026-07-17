@@ -43,7 +43,8 @@ Major additions:
   file journal, reconciliation, safety policies, advanced risk, position ledger,
   order normalization, telemetry, sharding, throttling, and replay simulation
 - FIX foundation: borrowed tag-value codec, `BodyLength(9)` and `CheckSum(10)`
-  validation, common tag extraction, caller-owned encode buffers, and debug
+  validation, common tag extraction, typed `FixVersion`/`FixMsgType` helpers,
+  static dictionary/profile validation, caller-owned encode buffers, and debug
   rendering outside the hot path
 - adapter scaffolding: FIX execution-report mapping and fail-closed adapter shell
   for provider adapter authors
@@ -94,7 +95,7 @@ Start here:
 | Layer | Additive API |
 |------|--------------|
 | Rust core | `of_execution_core` order IDs, requests, events, state machine, risk |
-| FIX codec | `of_fix` borrowed tag-value parser, validator, and encoder |
+| FIX codec | `of_fix` borrowed tag-value parser, validator, profile rules, and encoder |
 | Rust engine | `of_execution` adapter trait, bounded event buffer, simulator, journal hooks |
 | Adapter scaffold | `of_execution_adapters::fix` execution-report mapper and FIX capabilities |
 | C ABI | `of_execution_engine_t`, submit/cancel/amend/poll/state/health/metrics |
