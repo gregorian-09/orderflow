@@ -644,16 +644,20 @@ Feature-gated public FIX scaffold types under `of_execution_adapters::fix`:
 
 - `FixSessionConfig`
 - `FixExecutionReport`
+- `FixOrderCancelReject`
 - `FixReportParseConfig`
 - `FixReportParseError`
 - `FixExecType`
 - `FixOrdStatus`
+- `FixCancelRejectResponseTo`
 - `FixExecutionAdapter`
 
 Feature-gated public FIX helper functions under `of_execution_adapters::fix`:
 
 - `parse_execution_report(message, config, ts_recv_ns) -> FixExecutionReport`
+- `parse_order_cancel_reject(message, config, ts_recv_ns) -> FixOrderCancelReject`
 - `map_execution_report(report) -> ExecutionEvent`
+- `map_order_cancel_reject(report) -> ExecutionEvent`
 
 For mapping rules and adapter implementation guidance, see
 [`of_execution_adapters` reference](./05i-of-execution-adapters-reference.md)

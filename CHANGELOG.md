@@ -99,6 +99,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `of_execution_adapters::fix::parse_execution_report`, parse config, and
   parse errors to convert validated `of_fix::FixMessageView` execution reports
   into canonical FIX execution reports with explicit quantity/price scales.
+- Added `of_execution_adapters::fix::parse_order_cancel_reject` and
+  `map_order_cancel_reject` to convert FIX `OrderCancelReject(35=9)` messages
+  into canonical cancel/replace reject execution events.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

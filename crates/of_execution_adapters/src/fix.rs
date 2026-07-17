@@ -14,6 +14,10 @@ use of_fix::{FixMessageView, FixMsgType, FixTag};
 use std::error::Error;
 use std::fmt;
 
+const ACCOUNT_TAG: FixTag = FixTag(1);
+const CXL_REJ_REASON_TAG: FixTag = FixTag(102);
+const CXL_REJ_RESPONSE_TO_TAG: FixTag = FixTag(434);
+
 /// FIX sender/target configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FixSessionConfig {
@@ -87,6 +91,35 @@ pub struct FixExecutionReport {
     pub text: ExecutionText,
 }
 
+/// Minimal FIX OrderCancelReject payload after transport parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixOrderCancelReject {
+    /// Cancel-reject response target.
+    pub response_to: FixCancelRejectResponseTo,
+    /// Current order status reported by the venue.
+    pub ord_status: FixOrdStatus,
+    /// ClOrdID of the rejected cancel or replace request.
+    pub cl_ord_id: ClientOrderId,
+    /// OrigClOrdID identifying the order that was being cancelled/replaced.
+    pub orig_cl_ord_id: ClientOrderId,
+    /// Venue order id when provided.
+    pub order_id: VenueOrderId,
+    /// Account.
+    pub account_id: AccountId,
+    /// Route id associated with the session.
+    pub route_id: RouteId,
+    /// Symbol when provided by the counterparty.
+    pub symbol: ExecutionSymbol,
+    /// Raw CxlRejReason(102) value when provided.
+    pub cxl_rej_reason: u64,
+    /// TransactTime in nanoseconds when available.
+    pub ts_exchange_ns: u64,
+    /// Local receive timestamp in nanoseconds.
+    pub ts_recv_ns: u64,
+    /// Text.
+    pub text: ExecutionText,
+}
+
 /// Context required to map raw FIX execution reports into canonical OMS fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FixReportParseConfig {
@@ -145,6 +178,8 @@ pub enum FixReportParseError {
     InvalidExecType,
     /// `OrdStatus(39)` is not supported by the mapper.
     InvalidOrdStatus,
+    /// `CxlRejResponseTo(434)` is not supported by the mapper.
+    InvalidCancelRejectResponseTo,
     /// A fixed ASCII canonical field could not be built from this tag.
     InvalidAscii {
         /// Source FIX tag.
@@ -163,6 +198,9 @@ impl fmt::Display for FixReportParseError {
             Self::MissingTag(tag) => write!(f, "FIX execution report is missing tag {tag}"),
             Self::InvalidExecType => write!(f, "FIX ExecType(150) is unsupported"),
             Self::InvalidOrdStatus => write!(f, "FIX OrdStatus(39) is unsupported"),
+            Self::InvalidCancelRejectResponseTo => {
+                write!(f, "FIX CxlRejResponseTo(434) is unsupported")
+            }
             Self::InvalidAscii { tag, source } => {
                 write!(
                     f,
@@ -232,6 +270,16 @@ pub enum FixOrdStatus {
     PendingReplace = 13,
 }
 
+/// FIX CxlRejResponseTo values normalized for mapping.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixCancelRejectResponseTo {
+    /// Response to OrderCancelRequest `<F>`.
+    OrderCancelRequest = 1,
+    /// Response to OrderCancelReplaceRequest `<G>`.
+    OrderCancelReplaceRequest = 2,
+}
+
 /// Parses a validated FIX `ExecutionReport(35=8)` into a normalized report.
 ///
 /// The mapper is deliberately profile-aware through `config`: quantity and
@@ -258,8 +306,8 @@ pub fn parse_execution_report(
     let orig_cl_ord_id = fixed_optional(message, FixTag::ORIG_CL_ORD_ID)?;
     let order_id = fixed_required(message, FixTag::ORDER_ID)?;
     let exec_id = fixed_required(message, FixTag::EXEC_ID)?;
-    let account_id = if let Some(account) = message.get(FixTag(1)) {
-        fixed_from_bytes(FixTag(1), account)?
+    let account_id = if let Some(account) = message.get(ACCOUNT_TAG) {
+        fixed_from_bytes(ACCOUNT_TAG, account)?
     } else {
         config.account_id
     };
@@ -309,6 +357,52 @@ pub fn parse_execution_report(
     })
 }
 
+/// Parses a validated FIX `OrderCancelReject(35=9)` into a normalized report.
+///
+/// # Errors
+///
+/// Returns [`FixReportParseError`] when required fields are absent, enum values
+/// are unsupported, ASCII identifiers cannot fit their canonical bounds, or
+/// numeric fields cannot be parsed.
+pub fn parse_order_cancel_reject(
+    message: &FixMessageView<'_>,
+    config: FixReportParseConfig,
+    ts_recv_ns: u64,
+) -> Result<FixOrderCancelReject, FixReportParseError> {
+    if message.msg_type() != Some(FixMsgType::ORDER_CANCEL_REJECT.as_bytes()) {
+        return Err(FixReportParseError::InvalidMsgType);
+    }
+
+    let response_to = parse_cancel_reject_response_to(required(message, CXL_REJ_RESPONSE_TO_TAG)?)?;
+    let ord_status = parse_ord_status(required(message, FixTag::ORD_STATUS)?)?;
+    let cl_ord_id = fixed_required(message, FixTag::CL_ORD_ID)?;
+    let orig_cl_ord_id = fixed_required(message, FixTag::ORIG_CL_ORD_ID)?;
+    let account_id = if let Some(account) = message.get(ACCOUNT_TAG) {
+        fixed_from_bytes(ACCOUNT_TAG, account)?
+    } else {
+        config.account_id
+    };
+    let instrument: InstrumentId = fixed_optional(message, FixTag::SYMBOL)?;
+
+    Ok(FixOrderCancelReject {
+        response_to,
+        ord_status,
+        cl_ord_id,
+        orig_cl_ord_id,
+        order_id: fixed_optional(message, FixTag::ORDER_ID)?,
+        account_id,
+        route_id: config.route_id,
+        symbol: ExecutionSymbol {
+            venue: config.venue,
+            instrument,
+        },
+        cxl_rej_reason: parse_optional_u64(message, CXL_REJ_REASON_TAG)?,
+        ts_exchange_ns: parse_optional_u64(message, FixTag::TRANSACT_TIME)?,
+        ts_recv_ns,
+        text: fixed_optional(message, FixTag::TEXT)?,
+    })
+}
+
 /// Maps a parsed FIX execution report into a canonical execution event.
 pub fn map_execution_report(report: &FixExecutionReport) -> ExecutionEvent {
     ExecutionEvent {
@@ -333,6 +427,33 @@ pub fn map_execution_report(report: &FixExecutionReport) -> ExecutionEvent {
         } else {
             RiskRejectReason::None
         },
+        text: report.text,
+    }
+}
+
+/// Maps a parsed FIX OrderCancelReject into a canonical execution event.
+pub fn map_order_cancel_reject(report: &FixOrderCancelReject) -> ExecutionEvent {
+    ExecutionEvent {
+        exec_type: match report.response_to {
+            FixCancelRejectResponseTo::OrderCancelRequest => ExecutionType::CancelReject,
+            FixCancelRejectResponseTo::OrderCancelReplaceRequest => ExecutionType::ReplaceReject,
+        },
+        order_status: map_ord_status(report.ord_status),
+        client_order_id: report.cl_ord_id,
+        orig_client_order_id: report.orig_cl_ord_id,
+        venue_order_id: report.order_id,
+        execution_id: ExecutionId::empty(),
+        account_id: report.account_id,
+        route_id: report.route_id,
+        symbol: report.symbol,
+        last_qty: OrderQty(0),
+        last_price: OrderPrice(0),
+        cumulative_qty: OrderQty(0),
+        leaves_qty: OrderQty(0),
+        average_price: OrderPrice(0),
+        ts_exchange_ns: report.ts_exchange_ns,
+        ts_recv_ns: report.ts_recv_ns,
+        reason: RiskRejectReason::None,
         text: report.text,
     }
 }
@@ -496,6 +617,16 @@ fn parse_ord_status(value: &[u8]) -> Result<FixOrdStatus, FixReportParseError> {
         b"C" => Ok(FixOrdStatus::Expired),
         b"E" => Ok(FixOrdStatus::PendingReplace),
         _ => Err(FixReportParseError::InvalidOrdStatus),
+    }
+}
+
+fn parse_cancel_reject_response_to(
+    value: &[u8],
+) -> Result<FixCancelRejectResponseTo, FixReportParseError> {
+    match value {
+        b"1" => Ok(FixCancelRejectResponseTo::OrderCancelRequest),
+        b"2" => Ok(FixCancelRejectResponseTo::OrderCancelReplaceRequest),
+        _ => Err(FixReportParseError::InvalidCancelRejectResponseTo),
     }
 }
 
@@ -726,6 +857,113 @@ mod tests {
         assert_eq!(report.account_id, id("SUBACC"));
         assert_eq!(report.exec_type, FixExecType::New);
         assert_eq!(report.ord_status, FixOrdStatus::New);
+    }
+
+    #[test]
+    fn parses_order_cancel_reject_from_message_view() {
+        let mut raw = Vec::new();
+        encode_message(
+            &mut raw,
+            b"FIX.4.4",
+            b"9",
+            &[
+                (FixTag::ORDER_ID, b"V1".as_slice()),
+                (FixTag::CL_ORD_ID, b"CANCEL-1".as_slice()),
+                (FixTag::ORIG_CL_ORD_ID, b"C1".as_slice()),
+                (FixTag::ORD_STATUS, b"0".as_slice()),
+                (CXL_REJ_RESPONSE_TO_TAG, b"1".as_slice()),
+                (CXL_REJ_REASON_TAG, b"1".as_slice()),
+                (FixTag::SYMBOL, b"BTCUSDT".as_slice()),
+                (FixTag::TRANSACT_TIME, b"1784275200000000000".as_slice()),
+                (FixTag::TEXT, b"too late".as_slice()),
+            ],
+        )
+        .expect("encode");
+
+        let mut scratch = [FixFieldView::empty(); 32];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        let report = parse_order_cancel_reject(&message, parse_config(), 1_784_275_200_000_000_100)
+            .expect("cancel reject");
+
+        assert_eq!(
+            report.response_to,
+            FixCancelRejectResponseTo::OrderCancelRequest
+        );
+        assert_eq!(report.ord_status, FixOrdStatus::New);
+        assert_eq!(report.cl_ord_id, id("CANCEL-1"));
+        assert_eq!(report.orig_cl_ord_id, id("C1"));
+        assert_eq!(report.order_id, id("V1"));
+        assert_eq!(report.account_id, id("ACC"));
+        assert_eq!(report.route_id, id("FIX"));
+        assert_eq!(report.symbol.venue, id("BINANCE"));
+        assert_eq!(report.symbol.instrument, id("BTCUSDT"));
+        assert_eq!(report.cxl_rej_reason, 1);
+        assert_eq!(report.ts_exchange_ns, 1_784_275_200_000_000_000);
+        assert_eq!(report.ts_recv_ns, 1_784_275_200_000_000_100);
+        assert_eq!(report.text, id("too late"));
+
+        let event = map_order_cancel_reject(&report);
+        assert_eq!(event.exec_type, ExecutionType::CancelReject);
+        assert_eq!(event.order_status, OrderStatus::New);
+        assert_eq!(event.client_order_id, id("CANCEL-1"));
+        assert_eq!(event.orig_client_order_id, id("C1"));
+        assert_eq!(event.reason, RiskRejectReason::None);
+    }
+
+    #[test]
+    fn maps_order_cancel_replace_reject() {
+        let mut raw = Vec::new();
+        encode_message(
+            &mut raw,
+            b"FIX.4.4",
+            b"9",
+            &[
+                (FixTag::CL_ORD_ID, b"REPLACE-1".as_slice()),
+                (FixTag::ORIG_CL_ORD_ID, b"C1".as_slice()),
+                (FixTag::ORD_STATUS, b"0".as_slice()),
+                (CXL_REJ_RESPONSE_TO_TAG, b"2".as_slice()),
+                (ACCOUNT_TAG, b"SUBACC".as_slice()),
+            ],
+        )
+        .expect("encode");
+
+        let mut scratch = [FixFieldView::empty(); 24];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        let report = parse_order_cancel_reject(&message, parse_config(), 10).expect("map");
+        let event = map_order_cancel_reject(&report);
+
+        assert_eq!(
+            report.response_to,
+            FixCancelRejectResponseTo::OrderCancelReplaceRequest
+        );
+        assert_eq!(report.account_id, id("SUBACC"));
+        assert_eq!(event.exec_type, ExecutionType::ReplaceReject);
+        assert_eq!(event.venue_order_id, VenueOrderId::empty());
+        assert_eq!(event.symbol.instrument, InstrumentId::empty());
+    }
+
+    #[test]
+    fn rejects_invalid_cancel_reject_response_to() {
+        let mut raw = Vec::new();
+        encode_message(
+            &mut raw,
+            b"FIX.4.4",
+            b"9",
+            &[
+                (FixTag::CL_ORD_ID, b"CANCEL-1".as_slice()),
+                (FixTag::ORIG_CL_ORD_ID, b"C1".as_slice()),
+                (FixTag::ORD_STATUS, b"0".as_slice()),
+                (CXL_REJ_RESPONSE_TO_TAG, b"9".as_slice()),
+            ],
+        )
+        .expect("encode");
+
+        let mut scratch = [FixFieldView::empty(); 24];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(
+            parse_order_cancel_reject(&message, parse_config(), 0),
+            Err(FixReportParseError::InvalidCancelRejectResponseTo)
+        );
     }
 
     #[test]

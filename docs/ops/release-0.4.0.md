@@ -103,6 +103,7 @@ of the codec.
 - FIX-style session config
 - normalized execution-report struct
 - validated `of_fix::FixMessageView` execution-report parser bridge
+- validated `of_fix::FixMessageView` order-cancel-reject parser bridge
 - FIX exec type/status mapping
 - canonical `ExecutionEvent` conversion
 - fail-closed adapter shell

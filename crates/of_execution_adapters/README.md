@@ -63,12 +63,16 @@ With the `fix` feature enabled:
 
 - [`fix::FixSessionConfig`]
 - [`fix::FixExecutionReport`]
+- [`fix::FixOrderCancelReject`]
 - [`fix::FixReportParseConfig`]
 - [`fix::FixReportParseError`]
 - [`fix::FixExecType`]
 - [`fix::FixOrdStatus`]
+- [`fix::FixCancelRejectResponseTo`]
 - [`fix::parse_execution_report`]
+- [`fix::parse_order_cancel_reject`]
 - [`fix::map_execution_report`]
+- [`fix::map_order_cancel_reject`]
 - [`fix::FixExecutionAdapter`]
 
 ## FIX Scaffold
@@ -81,7 +85,9 @@ It provides the reusable pieces that are safe to share at this layer:
 
 - session configuration shape,
 - normalized execution-report struct,
+- normalized order-cancel-reject struct,
 - validated `of_fix::FixMessageView` to `FixExecutionReport` conversion,
+- validated `of_fix::FixMessageView` to `FixOrderCancelReject` conversion,
 - FIX-style exec type/status enums,
 - mapping into the canonical execution model,
 - adapter shell implementing the `ExecutionAdapter` trait,
@@ -164,6 +170,19 @@ It requires common report identifiers such as `ExecType(150)`, `OrdStatus(39)`,
 fields default to zero when absent. Decimal fields must be representable with
 the configured scale; otherwise the parser fails closed with
 [`fix::FixReportParseError`].
+
+## parse_order_cancel_reject
+
+[`fix::parse_order_cancel_reject`] converts a validated
+`of_fix::FixMessageView` with `MsgType(35)=9` into
+[`fix::FixOrderCancelReject`].
+
+It requires `ClOrdID(11)`, `OrigClOrdID(41)`, `OrdStatus(39)`, and
+`CxlRejResponseTo(434)`. Optional `OrderID(37)`, `Account(1)`, `Symbol(55)`,
+`CxlRejReason(102)`, `TransactTime(60)`, and `Text(58)` are copied when
+present. The mapper emits `ExecutionType::CancelReject` for rejected cancel
+requests and `ExecutionType::ReplaceReject` for rejected cancel/replace
+requests.
 
 ## FIX Exec Type And Status
 

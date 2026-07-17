@@ -25,12 +25,16 @@ It contains:
 
 - `FixSessionConfig`
 - `FixExecutionReport`
+- `FixOrderCancelReject`
 - `FixReportParseConfig`
 - `FixReportParseError`
 - `FixExecType`
 - `FixOrdStatus`
+- `FixCancelRejectResponseTo`
 - `parse_execution_report`
+- `parse_order_cancel_reject`
 - `map_execution_report`
+- `map_order_cancel_reject`
 - `FixExecutionAdapter`
 
 ### `FixSessionConfig`
@@ -98,6 +102,24 @@ It fails closed when:
 - `ExecType(150)` or `OrdStatus(39)` is unsupported;
 - a fixed-size ASCII field is too long or non-ASCII;
 - a decimal field cannot be represented with the configured scale.
+
+### `parse_order_cancel_reject`
+
+`parse_order_cancel_reject(message, config, ts_recv_ns)` converts a validated
+FIX `OrderCancelReject(35=9)` into `FixOrderCancelReject`.
+
+It fails closed when:
+
+- `MsgType(35)` is not `9`;
+- `ClOrdID(11)`, `OrigClOrdID(41)`, `OrdStatus(39)`, or
+  `CxlRejResponseTo(434)` is missing;
+- `OrdStatus(39)` or `CxlRejResponseTo(434)` is unsupported;
+- a fixed-size ASCII field is too long or non-ASCII;
+- numeric fields such as `CxlRejReason(102)` cannot be parsed.
+
+`map_order_cancel_reject` emits `ExecutionType::CancelReject` for response
+target `OrderCancelRequest` and `ExecutionType::ReplaceReject` for response
+target `OrderCancelReplaceRequest`.
 
 ### Mapping Semantics
 
