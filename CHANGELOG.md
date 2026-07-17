@@ -76,6 +76,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   metrics.
 - Added deterministic jitter to Binance reconnect backoff and exposed the last
   scheduled reconnect delay in health metadata.
+- Added new `of_fix` crate foundation with borrowed FIX tag-value parsing,
+  `BodyLength(9)` and `CheckSum(10)` validation, common tag helpers,
+  caller-owned encoding buffers, and diagnostic rendering.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

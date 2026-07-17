@@ -33,6 +33,21 @@ This page lists external references used to shape the documentation structure an
 - CME glossary (general derivatives terms):  
   https://www.cmegroup.com/education/glossary
 
+## FIX Protocol References
+
+- FIX Trading Community standards package index:
+  https://fixtrading.org/standards/
+- FIX Trading Community FIX 4.2 specification package:
+  https://fixtrading.org/packages/fix-4-2-specification-with-errata-20010501/
+- FIX Trading Community FIX 4.4 specification package:
+  https://fixtrading.org/packages/fix-4-4-specification-with-20030618-errata/
+- FIX Latest unified repository package:
+  https://fixtrading.org/packages/fix-latest-unified-repository/
+- FIX Latest Orchestra repository package:
+  https://fixtrading.org/packages/fix-latest-orchestra-repository/
+- OnixS FIX 4.2 checksum calculation reference:
+  https://www.onixs.biz/fix-dictionary/4.2/app_b.html
+
 ## Risk and Disclosure References
 
 - CFTC Rule 4.41 (eCFR, official):  

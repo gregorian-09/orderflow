@@ -12,7 +12,7 @@ Python classes, and Java classes, so existing analytics integrations remain
 stable. The execution layer provides typed order requests, FIX-style state
 transitions, structured risk rejection, simulated execution, bounded
 concurrent command workers, journals, recovery helpers, C/Python/Java bindings,
-and a FIX mapping scaffold. It is not a broker-certified production OMS by
+a reusable low-allocation FIX codec foundation, and a FIX mapping scaffold. It is not a broker-certified production OMS by
 itself; it is the reusable foundation developers use to build one.
 
 ## What's New In 0.4.0
@@ -29,7 +29,7 @@ Package versions for this release:
 | Existing Rust crates: `of_core`, `of_adapters`, `of_signals`, `of_persist`, `of_runtime`, `of_ffi_c` | `0.4.0` | Same established API line, additive analytics/execution exposure |
 | Python binding: `orderflow-gregorian09` | `0.4.0` | Matches the native `of_ffi_c` ABI package line |
 | Java binding: `orderflow-java-binding` | `0.4.0` | Matches the native `of_ffi_c` ABI package line |
-| New Rust crates: `of_execution_core`, `of_execution`, `of_execution_adapters` | `0.1.0` | New execution crate family, intentionally versioned from its own first public release |
+| New Rust crates: `of_execution_core`, `of_fix`, `of_execution`, `of_execution_adapters` | `0.1.0` | New execution/FIX crate family, intentionally versioned from its own first public release |
 
 Major additions:
 
@@ -42,6 +42,9 @@ Major additions:
 - OMS helpers: command correlation, event fanout, lifecycle snapshots, durable
   file journal, reconciliation, safety policies, advanced risk, position ledger,
   order normalization, telemetry, sharding, throttling, and replay simulation
+- FIX foundation: borrowed tag-value codec, `BodyLength(9)` and `CheckSum(10)`
+  validation, common tag extraction, caller-owned encode buffers, and debug
+  rendering outside the hot path
 - adapter scaffolding: FIX execution-report mapping and fail-closed adapter shell
   for provider adapter authors
 - bindings: additive C ABI, Python, and Java execution APIs that do not change
@@ -91,6 +94,7 @@ Start here:
 | Layer | Additive API |
 |------|--------------|
 | Rust core | `of_execution_core` order IDs, requests, events, state machine, risk |
+| FIX codec | `of_fix` borrowed tag-value parser, validator, and encoder |
 | Rust engine | `of_execution` adapter trait, bounded event buffer, simulator, journal hooks |
 | Adapter scaffold | `of_execution_adapters::fix` execution-report mapper and FIX capabilities |
 | C ABI | `of_execution_engine_t`, submit/cancel/amend/poll/state/health/metrics |

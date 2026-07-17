@@ -15,11 +15,11 @@ This release uses a split version model:
 | Existing Rust crates: `of_core`, `of_adapters`, `of_signals`, `of_persist`, `of_runtime`, `of_ffi_c` | `0.4.0` |
 | Python binding: `orderflow-gregorian09` | `0.4.0` |
 | Java binding: `orderflow-java-binding` | `0.4.0` |
-| New Rust execution crates: `of_execution_core`, `of_execution`, `of_execution_adapters` | `0.1.0` |
+| New Rust execution/FIX crates: `of_execution_core`, `of_fix`, `of_execution`, `of_execution_adapters` | `0.1.0` |
 
 The split is intentional. The analytics/runtime/binding stack is the existing
-public package family. The execution crates are new public Rust surfaces and
-should start at `0.1.0` so their traits and adapter contracts can mature
+public package family. The execution/FIX crates are new public Rust surfaces and
+should start at `0.1.0` so their traits, codec APIs, and adapter contracts can mature
 honestly.
 
 ## What Is New
@@ -52,7 +52,22 @@ honestly.
 - lifecycle, fanout, command correlation, throttling, sharding, telemetry,
   position ledger, safety policy, and replay helpers
 
-### 3. Execution adapter scaffolding
+### 3. FIX codec foundation
+
+`of_fix 0.1.0` adds a reusable low-allocation FIX tag-value codec foundation:
+
+- borrowed `FixFieldView` and `FixMessageView` parsing from raw bytes
+- caller-provided parse scratch buffers
+- strict `BodyLength(9)` and `CheckSum(10)` validation
+- common FIX tag constants and extraction helpers
+- caller-owned encoding buffers with computed body length and checksum
+- diagnostic rendering with `|` separators outside hot paths
+
+This is not a full FIX session engine. Transport, logon/logout, resend, sequence
+reset, persistence, venue profiles, and certification tooling remain separate
+future layers built on top of the codec.
+
+### 4. Execution adapter scaffolding
 
 `of_execution_adapters 0.1.0` adds a feature-gated FIX scaffold:
 
@@ -65,7 +80,7 @@ honestly.
 This is not a production FIX engine. It is a reusable mapping and adapter
 authoring scaffold.
 
-### 4. C, Python, and Java execution APIs
+### 5. C, Python, and Java execution APIs
 
 `of_ffi_c 0.4.0`, Python `0.4.0`, and Java `0.4.0` expose the execution layer
 through additive handles/classes:
@@ -80,7 +95,7 @@ through additive handles/classes:
 
 Existing analytics handles and classes remain separate and unchanged.
 
-### 5. Documentation expansion
+### 6. Documentation expansion
 
 The documentation now teaches the full workflow:
 

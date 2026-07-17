@@ -574,6 +574,30 @@ Public helper functions:
 For lifecycle, routing, concurrency, and OMS helper details, see
 [`of_execution` reference](./05h-of-execution-reference.md).
 
+### `of_fix`
+
+Public FIX codec types:
+
+- `FixTag`
+- `FixFieldView`
+- `FixMessageView`
+- `FixParseError`
+- `FixEncodeError`
+
+Public FIX codec constants:
+
+- `SOH`
+
+Public FIX codec functions:
+
+- `parse_message(raw, scratch) -> FixMessageView`
+- `encode_message(out, begin_string, msg_type, fields)`
+- `checksum(bytes) -> u8`
+- `debug_render(raw) -> String`
+
+For low-allocation FIX parsing, validation, and encoding details, see
+[`of_fix` reference](./05j-of-fix-reference.md).
+
 ### `of_execution_adapters`
 
 Feature-gated public FIX scaffold types under `of_execution_adapters::fix`:

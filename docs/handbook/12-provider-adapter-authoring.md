@@ -71,6 +71,29 @@ Map:
 If the provider does not supply a value, use the canonical empty/zero value and
 document that behavior.
 
+## FIX Wire Handling
+
+FIX adapters should use `of_fix` for tag-value wire parsing and encoding rather
+than implementing a local parser inside each adapter.
+
+Use `of_fix` for:
+
+- borrowed parsing from raw `&[u8]`;
+- `BodyLength(9)` and `CheckSum(10)` validation;
+- common tag extraction such as `MsgType(35)`, `MsgSeqNum(34)`,
+  `PossDupFlag(43)`, `ClOrdID(11)`, `ExecID(17)`, and `OrdStatus(39)`;
+- caller-owned encode buffers;
+- diagnostic transcript rendering outside hot paths.
+
+Adapter-specific code should own:
+
+- TCP/TLS transport;
+- session lifecycle;
+- resend/gap-fill policy;
+- venue profile validation;
+- canonical `ExecutionEvent` mapping;
+- certification reports.
+
 ## Capabilities
 
 `ExecutionCapabilities` should be honest. If a provider does not support FOK,
