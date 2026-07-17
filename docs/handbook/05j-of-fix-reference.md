@@ -28,6 +28,12 @@ maps parsed execution reports into canonical OMS events.
 | `FixSequenceError` | enum | Sequence validation/reset errors |
 | `FixResendRange` | struct | Missing sequence range for resend request generation |
 | `FixSessionHeader` | struct | Borrowed standard header fields for admin builders |
+| `FixOrderSide` | enum | Common `Side(54)` values |
+| `FixOrdType` | enum | Common `OrdType(40)` values |
+| `FixTimeInForce` | enum | Common `TimeInForce(59)` values |
+| `FixNewOrderSingle` | struct | Borrowed NewOrderSingle `<D>` request fields |
+| `FixOrderCancelRequest` | struct | Borrowed OrderCancelRequest `<F>` request fields |
+| `FixOrderCancelReplaceRequest` | struct | Borrowed OrderCancelReplaceRequest `<G>` request fields |
 | `parse_message` | function | Parses and validates raw FIX bytes into caller scratch |
 | `encode_message` | function | Encodes a message into a caller-owned `Vec<u8>` |
 | `encode_logon` | function | Encodes Logon `<A>` |
@@ -36,6 +42,9 @@ maps parsed execution reports into canonical OMS events.
 | `encode_resend_request` | function | Encodes ResendRequest `<2>` |
 | `encode_sequence_reset_gap_fill` | function | Encodes SequenceReset `<4>` gap fill |
 | `encode_logout` | function | Encodes Logout `<5>` |
+| `encode_new_order_single` | function | Encodes NewOrderSingle `<D>` |
+| `encode_order_cancel_request` | function | Encodes OrderCancelRequest `<F>` |
+| `encode_order_cancel_replace_request` | function | Encodes OrderCancelReplaceRequest `<G>` |
 | `checksum` | function | Computes FIX modulo-256 checksum |
 | `debug_render` | function | Renders diagnostics with `|` separators |
 
@@ -59,6 +68,7 @@ Included:
 - session-state and sequence-tracking primitives for future transports and
   adapters;
 - typed session/admin message builders for common session flow;
+- typed order-entry builders for common single-order flow;
 - encoding into caller-owned buffers with computed `BodyLength` and `CheckSum`;
 - diagnostic rendering outside the hot path.
 
@@ -87,6 +97,7 @@ The codec follows the production FIX plan in `new_features.md`:
 - keep dictionary rules as static borrowed slices;
 - track sequence state with plain integer counters;
 - encode admin/session messages with preallocated caller buffers;
+- pass order identifiers, quantities, prices, and timestamps as borrowed bytes;
 - keep debug formatting opt-in;
 - encode into reusable caller-owned buffers.
 
@@ -299,6 +310,53 @@ Builder boundary:
 
 The builders do not authenticate, open connections, run timers, persist sent
 messages, or decide whether an application message may be resent.
+
+## Order Builder Example
+
+Order builders cover the common single-order execution messages used by many
+FIX order-entry sessions:
+
+- NewOrderSingle `<D>`;
+- OrderCancelRequest `<F>`;
+- OrderCancelReplaceRequest `<G>`.
+
+```rust
+use of_fix::{
+    encode_new_order_single, FixNewOrderSingle, FixOrdType, FixOrderSide,
+    FixSessionHeader, FixTimeInForce, FixVersion,
+};
+
+let header = FixSessionHeader::new(
+    b"CLIENT",
+    b"BROKER",
+    7,
+    b"20260717-12:00:05.000",
+);
+
+let order = FixNewOrderSingle::new(
+    b"ORD-1",
+    b"BTCUSDT",
+    FixOrderSide::Buy,
+    b"20260717-12:00:05.000",
+    b"1.25",
+    FixOrdType::Limit,
+)
+.with_price(b"65000.5")
+.with_time_in_force(FixTimeInForce::Day);
+
+let mut out = Vec::with_capacity(512);
+encode_new_order_single(&mut out, FixVersion::Fix44, header, order)?;
+# Ok::<(), of_fix::FixEncodeError>(())
+```
+
+Order-builder boundary:
+
+- quantities and prices are borrowed wire-format bytes;
+- the codec does not round, scale, or validate tick size;
+- the codec does not enforce that limit/stop orders include price fields;
+- the codec does not decide which replace fields a venue allows to change;
+- custom tags, account fields, parties, clearing instructions, and venue
+  certification rules belong in profiles or higher adapter layers.
 
 ## Validation Semantics
 

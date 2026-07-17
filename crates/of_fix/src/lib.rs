@@ -243,6 +243,117 @@ impl fmt::Display for FixMsgType {
     }
 }
 
+/// Common FIX `Side(54)` values for order-entry builders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum FixOrderSide {
+    /// Buy (`1`).
+    Buy,
+    /// Sell (`2`).
+    Sell,
+    /// Sell short (`5`).
+    SellShort,
+}
+
+impl FixOrderSide {
+    /// Returns the wire value.
+    pub const fn as_bytes(self) -> &'static [u8] {
+        match self {
+            Self::Buy => b"1",
+            Self::Sell => b"2",
+            Self::SellShort => b"5",
+        }
+    }
+
+    /// Parses a common side value.
+    pub fn from_bytes(value: &[u8]) -> Option<Self> {
+        match value {
+            b"1" => Some(Self::Buy),
+            b"2" => Some(Self::Sell),
+            b"5" => Some(Self::SellShort),
+            _ => None,
+        }
+    }
+}
+
+/// Common FIX `OrdType(40)` values for order-entry builders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum FixOrdType {
+    /// Market (`1`).
+    Market,
+    /// Limit (`2`).
+    Limit,
+    /// Stop (`3`).
+    Stop,
+    /// Stop limit (`4`).
+    StopLimit,
+}
+
+impl FixOrdType {
+    /// Returns the wire value.
+    pub const fn as_bytes(self) -> &'static [u8] {
+        match self {
+            Self::Market => b"1",
+            Self::Limit => b"2",
+            Self::Stop => b"3",
+            Self::StopLimit => b"4",
+        }
+    }
+
+    /// Parses a common order type.
+    pub fn from_bytes(value: &[u8]) -> Option<Self> {
+        match value {
+            b"1" => Some(Self::Market),
+            b"2" => Some(Self::Limit),
+            b"3" => Some(Self::Stop),
+            b"4" => Some(Self::StopLimit),
+            _ => None,
+        }
+    }
+}
+
+/// Common FIX `TimeInForce(59)` values for order-entry builders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum FixTimeInForce {
+    /// Day (`0`).
+    Day,
+    /// Good till cancel (`1`).
+    GoodTillCancel,
+    /// Immediate or cancel (`3`).
+    ImmediateOrCancel,
+    /// Fill or kill (`4`).
+    FillOrKill,
+    /// Good till date (`6`).
+    GoodTillDate,
+}
+
+impl FixTimeInForce {
+    /// Returns the wire value.
+    pub const fn as_bytes(self) -> &'static [u8] {
+        match self {
+            Self::Day => b"0",
+            Self::GoodTillCancel => b"1",
+            Self::ImmediateOrCancel => b"3",
+            Self::FillOrKill => b"4",
+            Self::GoodTillDate => b"6",
+        }
+    }
+
+    /// Parses a common time-in-force value.
+    pub fn from_bytes(value: &[u8]) -> Option<Self> {
+        match value {
+            b"0" => Some(Self::Day),
+            b"1" => Some(Self::GoodTillCancel),
+            b"3" => Some(Self::ImmediateOrCancel),
+            b"4" => Some(Self::FillOrKill),
+            b"6" => Some(Self::GoodTillDate),
+            _ => None,
+        }
+    }
+}
+
 /// Borrowed FIX tag-value field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FixFieldView<'a> {
@@ -1002,6 +1113,134 @@ impl<'a> FixSessionHeader<'a> {
     }
 }
 
+/// Borrowed NewOrderSingle `<D>` request fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixNewOrderSingle<'a> {
+    cl_ord_id: &'a [u8],
+    symbol: &'a [u8],
+    side: FixOrderSide,
+    transact_time: &'a [u8],
+    order_qty: &'a [u8],
+    ord_type: FixOrdType,
+    price: Option<&'a [u8]>,
+    time_in_force: Option<FixTimeInForce>,
+}
+
+impl<'a> FixNewOrderSingle<'a> {
+    /// Creates a NewOrderSingle request.
+    pub const fn new(
+        cl_ord_id: &'a [u8],
+        symbol: &'a [u8],
+        side: FixOrderSide,
+        transact_time: &'a [u8],
+        order_qty: &'a [u8],
+        ord_type: FixOrdType,
+    ) -> Self {
+        Self {
+            cl_ord_id,
+            symbol,
+            side,
+            transact_time,
+            order_qty,
+            ord_type,
+            price: None,
+            time_in_force: None,
+        }
+    }
+
+    /// Adds `Price(44)`.
+    pub const fn with_price(mut self, price: &'a [u8]) -> Self {
+        self.price = Some(price);
+        self
+    }
+
+    /// Adds `TimeInForce(59)`.
+    pub const fn with_time_in_force(mut self, time_in_force: FixTimeInForce) -> Self {
+        self.time_in_force = Some(time_in_force);
+        self
+    }
+}
+
+/// Borrowed OrderCancelRequest `<F>` request fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixOrderCancelRequest<'a> {
+    orig_cl_ord_id: &'a [u8],
+    cl_ord_id: &'a [u8],
+    symbol: &'a [u8],
+    side: FixOrderSide,
+    transact_time: &'a [u8],
+}
+
+impl<'a> FixOrderCancelRequest<'a> {
+    /// Creates an OrderCancelRequest.
+    pub const fn new(
+        orig_cl_ord_id: &'a [u8],
+        cl_ord_id: &'a [u8],
+        symbol: &'a [u8],
+        side: FixOrderSide,
+        transact_time: &'a [u8],
+    ) -> Self {
+        Self {
+            orig_cl_ord_id,
+            cl_ord_id,
+            symbol,
+            side,
+            transact_time,
+        }
+    }
+}
+
+/// Borrowed OrderCancelReplaceRequest `<G>` request fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixOrderCancelReplaceRequest<'a> {
+    orig_cl_ord_id: &'a [u8],
+    cl_ord_id: &'a [u8],
+    symbol: &'a [u8],
+    side: FixOrderSide,
+    transact_time: &'a [u8],
+    order_qty: &'a [u8],
+    ord_type: FixOrdType,
+    price: Option<&'a [u8]>,
+    time_in_force: Option<FixTimeInForce>,
+}
+
+impl<'a> FixOrderCancelReplaceRequest<'a> {
+    /// Creates an OrderCancelReplaceRequest.
+    pub const fn new(
+        orig_cl_ord_id: &'a [u8],
+        cl_ord_id: &'a [u8],
+        symbol: &'a [u8],
+        side: FixOrderSide,
+        transact_time: &'a [u8],
+        order_qty: &'a [u8],
+        ord_type: FixOrdType,
+    ) -> Self {
+        Self {
+            orig_cl_ord_id,
+            cl_ord_id,
+            symbol,
+            side,
+            transact_time,
+            order_qty,
+            ord_type,
+            price: None,
+            time_in_force: None,
+        }
+    }
+
+    /// Adds `Price(44)`.
+    pub const fn with_price(mut self, price: &'a [u8]) -> Self {
+        self.price = Some(price);
+        self
+    }
+
+    /// Adds `TimeInForce(59)`.
+    pub const fn with_time_in_force(mut self, time_in_force: FixTimeInForce) -> Self {
+        self.time_in_force = Some(time_in_force);
+        self
+    }
+}
+
 /// Parses and validates a FIX tag-value message into `scratch`.
 ///
 /// The returned message borrows both `raw` and the initialized prefix of
@@ -1261,6 +1500,118 @@ pub fn encode_logout(
         FixMsgType::LOGOUT,
         header,
         &extra[..extra_len],
+    )
+}
+
+/// Encodes a NewOrderSingle `<D>` application message.
+///
+/// Quantities and prices are passed as borrowed wire-format bytes so venue
+/// profiles can own decimal precision and tick-size policy.
+///
+/// # Errors
+///
+/// Returns [`FixEncodeError`] when a field value contains SOH.
+pub fn encode_new_order_single(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    header: FixSessionHeader<'_>,
+    request: FixNewOrderSingle<'_>,
+) -> Result<(), FixEncodeError> {
+    let mut fields = [
+        (FixTag::CL_ORD_ID, request.cl_ord_id),
+        (FixTag::SYMBOL, request.symbol),
+        (FixTag::SIDE, request.side.as_bytes()),
+        (FixTag::TRANSACT_TIME, request.transact_time),
+        (FixTag::ORDER_QTY, request.order_qty),
+        (FixTag::ORD_TYPE, request.ord_type.as_bytes()),
+        (FixTag::PRICE, b"".as_slice()),
+        (FixTag::TIME_IN_FORCE, b"".as_slice()),
+    ];
+    let mut len = 6usize;
+    if let Some(price) = request.price {
+        fields[len] = (FixTag::PRICE, price);
+        len += 1;
+    }
+    if let Some(time_in_force) = request.time_in_force {
+        fields[len] = (FixTag::TIME_IN_FORCE, time_in_force.as_bytes());
+        len += 1;
+    }
+    encode_session_message(
+        out,
+        version,
+        FixMsgType::NEW_ORDER_SINGLE,
+        header,
+        &fields[..len],
+    )
+}
+
+/// Encodes an OrderCancelRequest `<F>` application message.
+///
+/// # Errors
+///
+/// Returns [`FixEncodeError`] when a field value contains SOH.
+pub fn encode_order_cancel_request(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    header: FixSessionHeader<'_>,
+    request: FixOrderCancelRequest<'_>,
+) -> Result<(), FixEncodeError> {
+    let fields = [
+        (FixTag::ORIG_CL_ORD_ID, request.orig_cl_ord_id),
+        (FixTag::CL_ORD_ID, request.cl_ord_id),
+        (FixTag::SYMBOL, request.symbol),
+        (FixTag::SIDE, request.side.as_bytes()),
+        (FixTag::TRANSACT_TIME, request.transact_time),
+    ];
+    encode_session_message(
+        out,
+        version,
+        FixMsgType::ORDER_CANCEL_REQUEST,
+        header,
+        &fields,
+    )
+}
+
+/// Encodes an OrderCancelReplaceRequest `<G>` application message.
+///
+/// Quantities and prices are passed as borrowed wire-format bytes so venue
+/// profiles can own decimal precision and tick-size policy.
+///
+/// # Errors
+///
+/// Returns [`FixEncodeError`] when a field value contains SOH.
+pub fn encode_order_cancel_replace_request(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    header: FixSessionHeader<'_>,
+    request: FixOrderCancelReplaceRequest<'_>,
+) -> Result<(), FixEncodeError> {
+    let mut fields = [
+        (FixTag::ORIG_CL_ORD_ID, request.orig_cl_ord_id),
+        (FixTag::CL_ORD_ID, request.cl_ord_id),
+        (FixTag::SYMBOL, request.symbol),
+        (FixTag::SIDE, request.side.as_bytes()),
+        (FixTag::TRANSACT_TIME, request.transact_time),
+        (FixTag::ORDER_QTY, request.order_qty),
+        (FixTag::ORD_TYPE, request.ord_type.as_bytes()),
+        (FixTag::PRICE, b"".as_slice()),
+        (FixTag::TIME_IN_FORCE, b"".as_slice()),
+    ];
+    let mut len = 7usize;
+    if let Some(price) = request.price {
+        fields[len] = (FixTag::PRICE, price);
+        len += 1;
+    }
+    if let Some(time_in_force) = request.time_in_force {
+        fields[len] = (FixTag::TIME_IN_FORCE, time_in_force.as_bytes());
+        len += 1;
+    }
+    encode_session_message(
+        out,
+        version,
+        FixMsgType::ORDER_CANCEL_REPLACE_REQUEST,
+        header,
+        &fields[..len],
     )
 }
 
@@ -1875,5 +2226,113 @@ mod tests {
         )
         .expect_err("soh should fail");
         assert_eq!(err, FixEncodeError::ValueContainsSoh(FixTag::TEXT));
+    }
+
+    #[test]
+    fn encodes_new_order_single() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 6, b"20260717-12:00:05.000");
+        let request = FixNewOrderSingle::new(
+            b"ORD-1",
+            b"BTCUSDT",
+            FixOrderSide::Buy,
+            b"20260717-12:00:05.000",
+            b"1.25",
+            FixOrdType::Limit,
+        )
+        .with_price(b"65000.5")
+        .with_time_in_force(FixTimeInForce::Day);
+
+        let mut raw = Vec::new();
+        encode_new_order_single(&mut raw, FixVersion::Fix44, header, request).expect("new order");
+
+        let mut scratch = [FixFieldView::empty(); 32];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(message.typed_msg_type(), Some(FixMsgType::NEW_ORDER_SINGLE));
+        assert_eq!(message.get(FixTag::CL_ORD_ID), Some(b"ORD-1".as_slice()));
+        assert_eq!(message.get(FixTag::SYMBOL), Some(b"BTCUSDT".as_slice()));
+        assert_eq!(message.get(FixTag::SIDE), Some(b"1".as_slice()));
+        assert_eq!(message.get(FixTag::ORDER_QTY), Some(b"1.25".as_slice()));
+        assert_eq!(message.get(FixTag::PRICE), Some(b"65000.5".as_slice()));
+    }
+
+    #[test]
+    fn encodes_order_cancel_request() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 7, b"20260717-12:00:06.000");
+        let request = FixOrderCancelRequest::new(
+            b"ORD-1",
+            b"ORD-1-CXL",
+            b"BTCUSDT",
+            FixOrderSide::Buy,
+            b"20260717-12:00:06.000",
+        );
+
+        let mut raw = Vec::new();
+        encode_order_cancel_request(&mut raw, FixVersion::Fix44, header, request).expect("cancel");
+
+        let mut scratch = [FixFieldView::empty(); 32];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(
+            message.typed_msg_type(),
+            Some(FixMsgType::ORDER_CANCEL_REQUEST)
+        );
+        assert_eq!(
+            message.get(FixTag::ORIG_CL_ORD_ID),
+            Some(b"ORD-1".as_slice())
+        );
+        assert_eq!(
+            message.get(FixTag::CL_ORD_ID),
+            Some(b"ORD-1-CXL".as_slice())
+        );
+    }
+
+    #[test]
+    fn encodes_order_cancel_replace_request() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 8, b"20260717-12:00:07.000");
+        let request = FixOrderCancelReplaceRequest::new(
+            b"ORD-1",
+            b"ORD-2",
+            b"BTCUSDT",
+            FixOrderSide::Buy,
+            b"20260717-12:00:07.000",
+            b"2.00",
+            FixOrdType::Limit,
+        )
+        .with_price(b"65100")
+        .with_time_in_force(FixTimeInForce::ImmediateOrCancel);
+
+        let mut raw = Vec::new();
+        encode_order_cancel_replace_request(&mut raw, FixVersion::Fix44, header, request)
+            .expect("replace");
+
+        let mut scratch = [FixFieldView::empty(); 32];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(
+            message.typed_msg_type(),
+            Some(FixMsgType::ORDER_CANCEL_REPLACE_REQUEST)
+        );
+        assert_eq!(
+            message.get(FixTag::ORIG_CL_ORD_ID),
+            Some(b"ORD-1".as_slice())
+        );
+        assert_eq!(message.get(FixTag::CL_ORD_ID), Some(b"ORD-2".as_slice()));
+        assert_eq!(message.get(FixTag::ORDER_QTY), Some(b"2.00".as_slice()));
+        assert_eq!(message.get(FixTag::TIME_IN_FORCE), Some(b"3".as_slice()));
+    }
+
+    #[test]
+    fn order_builder_rejects_soh_in_symbol() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 9, b"20260717-12:00:08.000");
+        let request = FixNewOrderSingle::new(
+            b"ORD-1",
+            b"BTC\x01USDT",
+            FixOrderSide::Buy,
+            b"20260717-12:00:08.000",
+            b"1",
+            FixOrdType::Market,
+        );
+        let mut raw = Vec::new();
+        let err = encode_new_order_single(&mut raw, FixVersion::Fix44, header, request)
+            .expect_err("soh should fail");
+        assert_eq!(err, FixEncodeError::ValueContainsSoh(FixTag::SYMBOL));
     }
 }

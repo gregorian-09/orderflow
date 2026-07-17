@@ -67,6 +67,8 @@ honestly.
   `FixResendRange` primitives for deterministic session sequence handling
 - typed session/admin builders for Logon, Heartbeat, TestRequest,
   ResendRequest, SequenceReset gap fill, and Logout
+- typed order-entry builders for NewOrderSingle, OrderCancelRequest, and
+  OrderCancelReplaceRequest
 - common FIX tag constants and extraction helpers
 - caller-owned encoding buffers with computed body length and checksum
 - diagnostic rendering with `|` separators outside hot paths

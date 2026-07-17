@@ -29,6 +29,8 @@ Included now:
 - sequence-reset guardrails that reject decreasing next expected sequence;
 - typed session/admin builders for Logon, Heartbeat, TestRequest,
   ResendRequest, SequenceReset gap fill, and Logout;
+- typed order-entry builders for NewOrderSingle, OrderCancelRequest, and
+  OrderCancelReplaceRequest;
 - common tag constants and extraction helpers;
 - caller-owned encode buffers that fill `BodyLength` and `CheckSum`;
 - debug rendering with `|` delimiters outside the live hot path.
@@ -55,6 +57,8 @@ The codec is designed for execution hot paths:
 - keep profile rules as static borrowed slices;
 - track inbound/outbound sequence numbers with plain integer state;
 - build session/admin messages into reusable buffers without `format!`;
+- build order-entry messages from borrowed identifiers, symbols, quantities,
+  prices, and timestamps;
 - encode into caller-owned `Vec<u8>` buffers;
 - keep debug rendering opt-in and outside hot paths.
 
@@ -169,6 +173,37 @@ assert!(out.starts_with(b"8=FIX.4.4\x019="));
 # Ok::<(), of_fix::FixEncodeError>(())
 ```
 
+## Order Builder Example
+
+```rust
+use of_fix::{
+    encode_new_order_single, FixNewOrderSingle, FixOrdType, FixOrderSide,
+    FixSessionHeader, FixTimeInForce, FixVersion,
+};
+
+let header = FixSessionHeader::new(
+    b"CLIENT",
+    b"BROKER",
+    7,
+    b"20260717-12:00:05.000",
+);
+
+let order = FixNewOrderSingle::new(
+    b"ORD-1",
+    b"BTCUSDT",
+    FixOrderSide::Buy,
+    b"20260717-12:00:05.000",
+    b"1.25",
+    FixOrdType::Limit,
+)
+.with_price(b"65000.5")
+.with_time_in_force(FixTimeInForce::Day);
+
+let mut out = Vec::with_capacity(512);
+encode_new_order_single(&mut out, FixVersion::Fix44, header, order)?;
+# Ok::<(), of_fix::FixEncodeError>(())
+```
+
 ## Validation Semantics
 
 `parse_message` rejects frames when:
@@ -202,6 +237,12 @@ The session/admin builders are intentionally small protocol helpers. They write
 the common standard header fields and the required admin body fields into the
 same strict encoder path used by `encode_message`; they do not manage sockets,
 timers, resend stores, or authentication extensions.
+
+The order-entry builders provide common message shapes for NewOrderSingle,
+OrderCancelRequest, and OrderCancelReplaceRequest. They do not decide whether a
+limit price is required, whether a field can be changed on replace, how
+quantities are rounded, or which custom tags a venue requires. Those checks
+belong in profile/certification layers above the codec.
 
 ## Roadmap
 

@@ -87,6 +87,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   outbound assignment, and guarded sequence-reset advancement.
 - Added `of_fix` session/admin builders for Logon, Heartbeat, TestRequest,
   ResendRequest, SequenceReset gap fill, and Logout using caller-owned buffers.
+- Added `of_fix` typed order-entry builders for NewOrderSingle,
+  OrderCancelRequest, and OrderCancelReplaceRequest with borrowed wire-format
+  quantity and price fields.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

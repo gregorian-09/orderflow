@@ -596,6 +596,12 @@ Public FIX codec types:
 - `FixSequenceError`
 - `FixResendRange`
 - `FixSessionHeader`
+- `FixOrderSide`
+- `FixOrdType`
+- `FixTimeInForce`
+- `FixNewOrderSingle`
+- `FixOrderCancelRequest`
+- `FixOrderCancelReplaceRequest`
 
 Public FIX codec constants:
 
@@ -613,6 +619,9 @@ Public FIX codec functions:
 - `encode_resend_request(out, version, header, range)`
 - `encode_sequence_reset_gap_fill(out, version, header, new_seq_no)`
 - `encode_logout(out, version, header, text)`
+- `encode_new_order_single(out, version, header, request)`
+- `encode_order_cancel_request(out, version, header, request)`
+- `encode_order_cancel_replace_request(out, version, header, request)`
 
 For low-allocation FIX parsing, validation, and encoding details, see
 [`of_fix` reference](./05j-of-fix-reference.md).
