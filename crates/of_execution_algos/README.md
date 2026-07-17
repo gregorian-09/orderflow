@@ -19,6 +19,7 @@ The first foundation focuses on deterministic parent/child order handling:
 - fixed-capacity `AlgoDecision` buffers for allocation-aware decision paths,
 - progress folding from canonical `ExecutionEvent` reports,
 - deterministic TWAP slice planning with explicit clip limits,
+- deterministic POV/participation planning from observed market volume,
 - deterministic TWAP replay over explicit timer/execution/status inputs.
 
 The crate does not submit orders, open sockets, own an OMS, bypass risk, or
@@ -114,6 +115,58 @@ assert_eq!(plan.request().quantity, OrderQty(10));
 
 The replay output vector is caller-owned and cleared before use. This keeps
 allocation policy visible to test, benchmark, and simulation hosts.
+
+## POV Example
+
+`PovSlicePlanner` plans child orders from cumulative observed market volume.
+Hosts should provide a volume source that excludes the algorithm's own fills
+when possible.
+
+```rust
+use of_execution_algos::{
+    AlgoProgress, ChildOrderId, ParentOrder, ParentOrderId, PovSlicePlanner,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-1")?,
+    AccountId::new("acct")?,
+    RouteId::new("sim")?,
+    StrategyId::new("pov")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    1_500,
+)?;
+
+let planner = PovSlicePlanner::new(1_000, 1_500);
+let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+let plan = planner
+    .plan_volume_slice(
+        &parent,
+        progress,
+        OrderQty::new(1_000)?,
+        2_000,
+        ChildOrderId::new("child-1")?,
+        ClientOrderId::new("cl-1")?,
+        2_000,
+    )?
+    .expect("volume participation slice is due");
+
+assert_eq!(plan.request().quantity, OrderQty(25));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
 
 ## Compatibility
 

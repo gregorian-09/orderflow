@@ -138,6 +138,9 @@ foundation:
 - deterministic TWAP replay primitives with explicit timer/execution/status
   inputs, caller-owned step output, generated replay ids, and summary hashes
   for regression checks
+- deterministic `PovSlicePlanner` for volume-responsive participation planning
+  from observed market volume, target/max participation bps, parent caps, and
+  explicit clip limits
 
 The crate does not bypass OMS risk, journaling, adapter capability checks, kill
 switches, or reconciliation. Hosts should submit child orders through

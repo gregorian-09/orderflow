@@ -139,6 +139,8 @@ pub enum AlgoError {
     },
     /// Deterministic replay generated an identifier that exceeded capacity.
     GeneratedIdentifierTooLong,
+    /// Participation rate must be positive and no greater than the cap.
+    InvalidParticipationRate,
 }
 
 impl fmt::Display for AlgoError {
@@ -156,6 +158,9 @@ impl fmt::Display for AlgoError {
                 write!(f, "algorithm decision capacity {capacity} is full")
             }
             Self::GeneratedIdentifierTooLong => write!(f, "generated identifier is too long"),
+            Self::InvalidParticipationRate => {
+                write!(f, "participation rate must be positive and <= cap")
+            }
         }
     }
 }
@@ -756,6 +761,149 @@ impl TwapSlicePlanner {
     }
 }
 
+/// Deterministic percentage-of-volume child slice planner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PovSlicePlanner {
+    target_participation_bps: u16,
+    max_participation_bps: u16,
+}
+
+impl PovSlicePlanner {
+    /// Creates a POV planner.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError::InvalidParticipationRate`] when target or cap is
+    /// zero, or when target exceeds cap.
+    pub const fn try_new(
+        target_participation_bps: u16,
+        max_participation_bps: u16,
+    ) -> Result<Self, AlgoError> {
+        if target_participation_bps == 0
+            || max_participation_bps == 0
+            || target_participation_bps > max_participation_bps
+        {
+            return Err(AlgoError::InvalidParticipationRate);
+        }
+        Ok(Self {
+            target_participation_bps,
+            max_participation_bps,
+        })
+    }
+
+    /// Creates a POV planner, panicking when rates are invalid.
+    pub const fn new(target_participation_bps: u16, max_participation_bps: u16) -> Self {
+        assert!(
+            target_participation_bps > 0
+                && max_participation_bps > 0
+                && target_participation_bps <= max_participation_bps,
+            "participation target must be positive and <= cap"
+        );
+        Self {
+            target_participation_bps,
+            max_participation_bps,
+        }
+    }
+
+    /// Returns target participation in basis points.
+    pub const fn target_participation_bps(&self) -> u16 {
+        self.target_participation_bps
+    }
+
+    /// Returns maximum participation in basis points.
+    pub const fn max_participation_bps(&self) -> u16 {
+        self.max_participation_bps
+    }
+
+    /// Plans one child slice from cumulative observed market volume.
+    ///
+    /// The planner assumes `observed_market_volume` excludes the algo's own
+    /// child fills when the host can provide that view. If self-volume cannot
+    /// be excluded, hosts should choose conservative rates and caps.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError`] when parent/progress state is invalid or the
+    /// generated child order would be invalid.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "caller owns identifiers and timestamps"
+    )]
+    pub fn plan_volume_slice(
+        &self,
+        parent: &ParentOrder,
+        progress: AlgoProgress,
+        observed_market_volume: OrderQty,
+        now_ns: u64,
+        child_id: ChildOrderId,
+        client_order_id: ClientOrderId,
+        ts_recv_ns: u64,
+    ) -> Result<Option<ChildOrderPlan>, AlgoError> {
+        parent.validate()?;
+        if parent.status().is_terminal() {
+            return Err(AlgoError::ParentTerminal);
+        }
+        if progress.parent_id() != parent.id() || progress.target_qty() != parent.total_qty() {
+            return Err(AlgoError::InvalidProgress);
+        }
+        if observed_market_volume.0 <= 0 || now_ns < parent.start_ns() || progress.is_complete() {
+            return Ok(None);
+        }
+
+        let effective_max_bps = if parent.participation_cap_bps() == 0 {
+            self.max_participation_bps
+        } else {
+            self.max_participation_bps
+                .min(parent.participation_cap_bps())
+        };
+        if self.target_participation_bps == 0
+            || effective_max_bps == 0
+            || self.target_participation_bps > effective_max_bps
+        {
+            return Err(AlgoError::InvalidParticipationRate);
+        }
+
+        let desired = participation_qty(observed_market_volume.0, self.target_participation_bps)
+            .min(parent.total_qty().0);
+        let max_allowed = participation_qty(observed_market_volume.0, effective_max_bps)
+            .min(parent.total_qty().0);
+        let due_qty = desired
+            .min(max_allowed)
+            .saturating_sub(progress.released_qty().0);
+        if due_qty <= 0 {
+            return Ok(None);
+        }
+
+        let leaves = parent
+            .total_qty()
+            .0
+            .saturating_sub(progress.released_qty().0);
+        let mut child_qty = due_qty.min(parent.max_clip().0).min(leaves);
+        let final_slice = progress.released_qty().0.saturating_add(child_qty)
+            >= parent.total_qty().0
+            || now_ns >= parent.end_ns();
+        if child_qty < parent.min_clip().0 && !final_slice {
+            return Ok(None);
+        }
+        if child_qty <= 0 {
+            return Ok(None);
+        }
+        child_qty = child_qty.min(
+            parent
+                .total_qty()
+                .0
+                .saturating_sub(progress.released_qty().0),
+        );
+        let request = parent.build_order_request(client_order_id, OrderQty(child_qty), ts_recv_ns);
+        Ok(Some(ChildOrderPlan::new(
+            child_id,
+            parent.id(),
+            request,
+            now_ns,
+        )?))
+    }
+}
+
 /// Replay event consumed by an algorithm harness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1009,6 +1157,11 @@ fn div_ceil_u64(lhs: u64, rhs: u64) -> u64 {
 
 fn div_ceil_i128(lhs: i128, rhs: i128) -> i128 {
     lhs / rhs + i128::from(lhs % rhs != 0)
+}
+
+fn participation_qty(volume: i64, bps: u16) -> i64 {
+    let value = i128::from(volume) * i128::from(bps);
+    i64::try_from(value / 10_000).unwrap_or(i64::MAX)
 }
 
 fn fixed_id_with_index<const N: usize>(
@@ -1396,5 +1549,87 @@ mod tests {
             Err(AlgoError::DecisionFull { capacity: 0 })
         );
         assert!(steps.is_empty());
+    }
+
+    #[test]
+    fn pov_plans_from_observed_volume() {
+        let parent = parent();
+        let planner = PovSlicePlanner::new(1_000, 1_500);
+        let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+
+        let child = planner
+            .plan_volume_slice(
+                &parent,
+                progress,
+                OrderQty(1_000),
+                2_000,
+                ChildOrderId::new("child-pov").expect("child"),
+                ClientOrderId::new("cl-pov").expect("client"),
+                2_000,
+            )
+            .expect("plan")
+            .expect("due");
+
+        assert_eq!(child.request().quantity, parent.max_clip());
+    }
+
+    #[test]
+    fn pov_waits_when_due_quantity_is_below_min_clip() {
+        let parent = parent();
+        let planner = PovSlicePlanner::new(1_000, 1_500);
+        let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+
+        let child = planner
+            .plan_volume_slice(
+                &parent,
+                progress,
+                OrderQty(50),
+                2_000,
+                ChildOrderId::new("child-small").expect("child"),
+                ClientOrderId::new("cl-small").expect("client"),
+                2_000,
+            )
+            .expect("plan");
+
+        assert!(child.is_none());
+    }
+
+    #[test]
+    fn pov_rejects_parent_cap_below_target() {
+        let capped_parent = parent().with_status(ParentOrderStatus::Active);
+        let capped_parent = ParentOrder::new(
+            capped_parent.id(),
+            capped_parent.account_id(),
+            capped_parent.route_id(),
+            capped_parent.strategy_id(),
+            capped_parent.symbol(),
+            capped_parent.side(),
+            capped_parent.order_type(),
+            capped_parent.time_in_force(),
+            capped_parent.total_qty(),
+            capped_parent.limit_price(),
+            capped_parent.stop_price(),
+            capped_parent.start_ns(),
+            capped_parent.end_ns(),
+            capped_parent.min_clip(),
+            capped_parent.max_clip(),
+            500,
+        )
+        .expect("capped parent");
+        let planner = PovSlicePlanner::new(1_000, 1_500);
+        let progress = AlgoProgress::new(capped_parent.id(), capped_parent.total_qty());
+
+        assert_eq!(
+            planner.plan_volume_slice(
+                &capped_parent,
+                progress,
+                OrderQty(1_000),
+                2_000,
+                ChildOrderId::new("child-cap").expect("child"),
+                ClientOrderId::new("cl-cap").expect("client"),
+                2_000,
+            ),
+            Err(AlgoError::InvalidParticipationRate)
+        );
     }
 }

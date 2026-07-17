@@ -600,6 +600,7 @@ Public parent/child and decision types:
 - `AlgoReplayStep`
 - `AlgoReplaySummary`
 - `replay_twap_into`
+- `PovSlicePlanner`
 
 Public constants:
 

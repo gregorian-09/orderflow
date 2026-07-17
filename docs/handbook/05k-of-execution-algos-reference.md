@@ -50,6 +50,7 @@ Lifecycle and planning types:
 - `AlgoReplayStep`
 - `AlgoReplaySummary`
 - `replay_twap_into`
+- `PovSlicePlanner`
 
 ## Parent Orders
 
@@ -251,6 +252,74 @@ assert_eq!(summary.submitted_children(), 2);
 
 Use `AlgoReplaySummary::deterministic_hash()` in regression tests when you want
 to compare replay outputs without diffing every step.
+
+## POV Planner
+
+`PovSlicePlanner` implements the first percentage-of-volume planner. It uses
+cumulative observed market volume and explicit participation limits:
+
+- target participation in basis points,
+- maximum participation in basis points,
+- optional parent participation cap,
+- parent min/max child clips,
+- caller-provided child id,
+- caller-provided client order id,
+- caller-provided timestamps.
+
+POV is volume-responsive rather than time-scheduled. When observed market
+volume increases, the desired released quantity increases. If the due quantity
+is below the parent minimum clip, the planner waits unless the parent is in a
+final-slice condition.
+
+Hosts should exclude the algorithm's own fills from observed market volume when
+possible. If that is not possible, use conservative participation rates because
+self-volume feedback can make participation algos too aggressive.
+
+```rust
+use of_execution_algos::{
+    AlgoProgress, ChildOrderId, ParentOrder, ParentOrderId, PovSlicePlanner,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-1")?,
+    AccountId::new("acct")?,
+    RouteId::new("sim")?,
+    StrategyId::new("pov")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    1_500,
+)?;
+
+let planner = PovSlicePlanner::new(1_000, 1_500);
+let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+let child = planner
+    .plan_volume_slice(
+        &parent,
+        progress,
+        OrderQty::new(1_000)?,
+        2_000,
+        ChildOrderId::new("child-1")?,
+        ClientOrderId::new("cl-1")?,
+        2_000,
+    )?
+    .expect("slice due");
+
+assert_eq!(child.request().quantity, OrderQty(25));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
 
 ## Compatibility
 

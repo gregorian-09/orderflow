@@ -132,6 +132,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added deterministic TWAP replay primitives in `of_execution_algos` with
   explicit timer/execution/status inputs, caller-owned replay-step output,
   generated replay ids, and summary hashes for regression checks.
+- Added deterministic POV participation planning in `of_execution_algos` with
+  target/max participation rates, parent participation caps, observed volume
+  inputs, and explicit clip handling.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,
