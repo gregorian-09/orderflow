@@ -53,6 +53,10 @@ impl FixTag {
     pub const SYMBOL: Self = Self(55);
     /// `Side(54)`.
     pub const SIDE: Self = Self(54);
+    /// `TradingSessionID(336)`.
+    pub const TRADING_SESSION_ID: Self = Self(336);
+    /// `EncodedTextLen(354)`.
+    pub const ENCODED_TEXT_LEN: Self = Self(354);
     /// `OrderQty(38)`.
     pub const ORDER_QTY: Self = Self(38);
     /// `OrdType(40)`.
@@ -97,6 +101,12 @@ impl FixTag {
     pub const BUSINESS_REJECT_REF_ID: Self = Self(379);
     /// `BusinessRejectReason(380)`.
     pub const BUSINESS_REJECT_REASON: Self = Self(380);
+    /// `SecondaryClOrdID(526)`.
+    pub const SECONDARY_CL_ORD_ID: Self = Self(526);
+    /// `MassCancelRequestType(530)`.
+    pub const MASS_CANCEL_REQUEST_TYPE: Self = Self(530);
+    /// `TradingSessionSubID(625)`.
+    pub const TRADING_SESSION_SUB_ID: Self = Self(625);
     /// `CheckSum(10)`.
     pub const CHECK_SUM: Self = Self(10);
 }
@@ -195,6 +205,8 @@ impl FixMsgType {
     pub const ORDER_STATUS_REQUEST: Self = Self(b"H");
     /// `BusinessMessageReject(j)`.
     pub const BUSINESS_MESSAGE_REJECT: Self = Self(b"j");
+    /// `OrderMassCancelRequest(q)`.
+    pub const ORDER_MASS_CANCEL_REQUEST: Self = Self(b"q");
 
     /// Creates a message type from a static byte slice.
     ///
@@ -221,6 +233,7 @@ impl FixMsgType {
             b"G" => Some(Self::ORDER_CANCEL_REPLACE_REQUEST),
             b"H" => Some(Self::ORDER_STATUS_REQUEST),
             b"j" => Some(Self::BUSINESS_MESSAGE_REJECT),
+            b"q" => Some(Self::ORDER_MASS_CANCEL_REQUEST),
             _ => None,
         }
     }
@@ -247,6 +260,7 @@ impl FixMsgType {
             b"G" => "OrderCancelReplaceRequest",
             b"H" => "OrderStatusRequest",
             b"j" => "BusinessMessageReject",
+            b"q" => "OrderMassCancelRequest",
             _ => "Custom",
         }
     }
@@ -365,6 +379,41 @@ impl FixTimeInForce {
             b"4" => Some(Self::FillOrKill),
             b"6" => Some(Self::GoodTillDate),
             _ => None,
+        }
+    }
+}
+
+/// Common FIX `MassCancelRequestType(530)` values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum FixMassCancelRequestType {
+    /// Cancel orders for a security (`1`).
+    Security,
+    /// Cancel orders for an underlying security (`2`).
+    UnderlyingSecurity,
+    /// Cancel orders for a product (`3`).
+    Product,
+    /// Cancel orders for a CFICode (`4`).
+    CfiCode,
+    /// Cancel orders for a security type (`5`).
+    SecurityType,
+    /// Cancel orders for a trading session (`6`).
+    TradingSession,
+    /// Cancel all orders (`7`).
+    AllOrders,
+}
+
+impl FixMassCancelRequestType {
+    /// Returns the wire value.
+    pub const fn as_bytes(self) -> &'static [u8] {
+        match self {
+            Self::Security => b"1",
+            Self::UnderlyingSecurity => b"2",
+            Self::Product => b"3",
+            Self::CfiCode => b"4",
+            Self::SecurityType => b"5",
+            Self::TradingSession => b"6",
+            Self::AllOrders => b"7",
         }
     }
 }
@@ -2002,6 +2051,77 @@ impl<'a> FixOrderStatusRequest<'a> {
     }
 }
 
+/// Borrowed OrderMassCancelRequest `<q>` request fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixOrderMassCancelRequest<'a> {
+    cl_ord_id: &'a [u8],
+    mass_cancel_request_type: FixMassCancelRequestType,
+    transact_time: &'a [u8],
+    secondary_cl_ord_id: Option<&'a [u8]>,
+    trading_session_id: Option<&'a [u8]>,
+    trading_session_sub_id: Option<&'a [u8]>,
+    symbol: Option<&'a [u8]>,
+    side: Option<FixOrderSide>,
+    text: Option<&'a [u8]>,
+}
+
+impl<'a> FixOrderMassCancelRequest<'a> {
+    /// Creates an OrderMassCancelRequest.
+    pub const fn new(
+        cl_ord_id: &'a [u8],
+        mass_cancel_request_type: FixMassCancelRequestType,
+        transact_time: &'a [u8],
+    ) -> Self {
+        Self {
+            cl_ord_id,
+            mass_cancel_request_type,
+            transact_time,
+            secondary_cl_ord_id: None,
+            trading_session_id: None,
+            trading_session_sub_id: None,
+            symbol: None,
+            side: None,
+            text: None,
+        }
+    }
+
+    /// Adds `SecondaryClOrdID(526)`.
+    pub const fn with_secondary_cl_ord_id(mut self, secondary_cl_ord_id: &'a [u8]) -> Self {
+        self.secondary_cl_ord_id = Some(secondary_cl_ord_id);
+        self
+    }
+
+    /// Adds `TradingSessionID(336)`.
+    pub const fn with_trading_session_id(mut self, trading_session_id: &'a [u8]) -> Self {
+        self.trading_session_id = Some(trading_session_id);
+        self
+    }
+
+    /// Adds `TradingSessionSubID(625)`.
+    pub const fn with_trading_session_sub_id(mut self, trading_session_sub_id: &'a [u8]) -> Self {
+        self.trading_session_sub_id = Some(trading_session_sub_id);
+        self
+    }
+
+    /// Adds `Symbol(55)`.
+    pub const fn with_symbol(mut self, symbol: &'a [u8]) -> Self {
+        self.symbol = Some(symbol);
+        self
+    }
+
+    /// Adds `Side(54)`.
+    pub const fn with_side(mut self, side: FixOrderSide) -> Self {
+        self.side = Some(side);
+        self
+    }
+
+    /// Adds `Text(58)`.
+    pub const fn with_text(mut self, text: &'a [u8]) -> Self {
+        self.text = Some(text);
+        self
+    }
+}
+
 /// Parses and validates a FIX tag-value message into `scratch`.
 ///
 /// The returned message borrows both `raw` and the initialized prefix of
@@ -2516,6 +2636,65 @@ pub fn encode_order_status_request(
         out,
         version,
         FixMsgType::ORDER_STATUS_REQUEST,
+        header,
+        &fields[..len],
+    )
+}
+
+/// Encodes an OrderMassCancelRequest `<q>` application message.
+///
+/// # Errors
+///
+/// Returns [`FixEncodeError`] when a field value contains SOH.
+pub fn encode_order_mass_cancel_request(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    header: FixSessionHeader<'_>,
+    request: FixOrderMassCancelRequest<'_>,
+) -> Result<(), FixEncodeError> {
+    let mut fields = [
+        (FixTag::CL_ORD_ID, request.cl_ord_id),
+        (
+            FixTag::MASS_CANCEL_REQUEST_TYPE,
+            request.mass_cancel_request_type.as_bytes(),
+        ),
+        (FixTag::TRANSACT_TIME, request.transact_time),
+        (FixTag::SECONDARY_CL_ORD_ID, b"".as_slice()),
+        (FixTag::TRADING_SESSION_ID, b"".as_slice()),
+        (FixTag::TRADING_SESSION_SUB_ID, b"".as_slice()),
+        (FixTag::SYMBOL, b"".as_slice()),
+        (FixTag::SIDE, b"".as_slice()),
+        (FixTag::TEXT, b"".as_slice()),
+    ];
+    let mut len = 3usize;
+    if let Some(secondary_cl_ord_id) = request.secondary_cl_ord_id {
+        fields[len] = (FixTag::SECONDARY_CL_ORD_ID, secondary_cl_ord_id);
+        len += 1;
+    }
+    if let Some(trading_session_id) = request.trading_session_id {
+        fields[len] = (FixTag::TRADING_SESSION_ID, trading_session_id);
+        len += 1;
+    }
+    if let Some(trading_session_sub_id) = request.trading_session_sub_id {
+        fields[len] = (FixTag::TRADING_SESSION_SUB_ID, trading_session_sub_id);
+        len += 1;
+    }
+    if let Some(symbol) = request.symbol {
+        fields[len] = (FixTag::SYMBOL, symbol);
+        len += 1;
+    }
+    if let Some(side) = request.side {
+        fields[len] = (FixTag::SIDE, side.as_bytes());
+        len += 1;
+    }
+    if let Some(text) = request.text {
+        fields[len] = (FixTag::TEXT, text);
+        len += 1;
+    }
+    encode_session_message(
+        out,
+        version,
+        FixMsgType::ORDER_MASS_CANCEL_REQUEST,
         header,
         &fields[..len],
     )
@@ -3737,6 +3916,78 @@ mod tests {
         let err = encode_order_status_request(&mut raw, FixVersion::Fix44, header, request)
             .expect_err("soh");
         assert_eq!(err, FixEncodeError::ValueContainsSoh(FixTag::CL_ORD_ID));
+    }
+
+    #[test]
+    fn encodes_order_mass_cancel_request() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 11, b"20260717-12:00:09.000");
+        let request = FixOrderMassCancelRequest::new(
+            b"MASS-1",
+            FixMassCancelRequestType::Security,
+            b"20260717-12:00:09.000",
+        )
+        .with_secondary_cl_ord_id(b"ALT-1")
+        .with_trading_session_id(b"REG")
+        .with_trading_session_sub_id(b"AM")
+        .with_symbol(b"BTCUSDT")
+        .with_side(FixOrderSide::Buy)
+        .with_text(b"cancel symbol");
+        let mut raw = Vec::new();
+        encode_order_mass_cancel_request(&mut raw, FixVersion::Fix44, header, request)
+            .expect("mass cancel");
+        let mut scratch = [FixFieldView::empty(); 24];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(
+            message.msg_type(),
+            Some(FixMsgType::ORDER_MASS_CANCEL_REQUEST.as_bytes())
+        );
+        assert_eq!(message.get(FixTag::CL_ORD_ID), Some(b"MASS-1".as_slice()));
+        assert_eq!(
+            message.get(FixTag::MASS_CANCEL_REQUEST_TYPE),
+            Some(b"1".as_slice())
+        );
+        assert_eq!(
+            message.get(FixTag::TRANSACT_TIME),
+            Some(b"20260717-12:00:09.000".as_slice())
+        );
+        assert_eq!(message.get(FixTag::SYMBOL), Some(b"BTCUSDT".as_slice()));
+        assert_eq!(message.get(FixTag::SIDE), Some(b"1".as_slice()));
+        assert_eq!(message.get(FixTag::TEXT), Some(b"cancel symbol".as_slice()));
+    }
+
+    #[test]
+    fn order_mass_cancel_request_allows_minimal_required_shape() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 11, b"20260717-12:00:09.000");
+        let request = FixOrderMassCancelRequest::new(
+            b"MASS-1",
+            FixMassCancelRequestType::AllOrders,
+            b"20260717-12:00:09.000",
+        );
+        let mut raw = Vec::new();
+        encode_order_mass_cancel_request(&mut raw, FixVersion::Fix44, header, request)
+            .expect("mass cancel");
+        let mut scratch = [FixFieldView::empty(); 16];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(
+            message.get(FixTag::MASS_CANCEL_REQUEST_TYPE),
+            Some(b"7".as_slice())
+        );
+        assert_eq!(message.get(FixTag::SYMBOL), None);
+    }
+
+    #[test]
+    fn order_mass_cancel_request_rejects_soh() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 11, b"20260717-12:00:09.000");
+        let request = FixOrderMassCancelRequest::new(
+            b"MASS-1",
+            FixMassCancelRequestType::Security,
+            b"20260717-12:00:09.000",
+        )
+        .with_text(b"bad\x01text");
+        let mut raw = Vec::new();
+        let err = encode_order_mass_cancel_request(&mut raw, FixVersion::Fix44, header, request)
+            .expect_err("soh");
+        assert_eq!(err, FixEncodeError::ValueContainsSoh(FixTag::TEXT));
     }
 
     #[test]

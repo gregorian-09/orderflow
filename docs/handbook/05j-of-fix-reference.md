@@ -45,10 +45,12 @@ maps parsed execution reports into canonical OMS events.
 | `FixOrderSide` | enum | Common `Side(54)` values |
 | `FixOrdType` | enum | Common `OrdType(40)` values |
 | `FixTimeInForce` | enum | Common `TimeInForce(59)` values |
+| `FixMassCancelRequestType` | enum | Common `MassCancelRequestType(530)` values |
 | `FixNewOrderSingle` | struct | Borrowed NewOrderSingle `<D>` request fields |
 | `FixOrderCancelRequest` | struct | Borrowed OrderCancelRequest `<F>` request fields |
 | `FixOrderCancelReplaceRequest` | struct | Borrowed OrderCancelReplaceRequest `<G>` request fields |
 | `FixOrderStatusRequest` | struct | Borrowed OrderStatusRequest `<H>` request fields |
+| `FixOrderMassCancelRequest` | struct | Borrowed OrderMassCancelRequest `<q>` request fields |
 | `parse_message` | function | Parses and validates raw FIX bytes into caller scratch |
 | `parse_session_reject` | function | Parses Reject `<3>` into a borrowed diagnostic view |
 | `parse_business_message_reject` | function | Parses BusinessMessageReject `<j>` into a borrowed diagnostic view |
@@ -63,6 +65,7 @@ maps parsed execution reports into canonical OMS events.
 | `encode_order_cancel_request` | function | Encodes OrderCancelRequest `<F>` |
 | `encode_order_cancel_replace_request` | function | Encodes OrderCancelReplaceRequest `<G>` |
 | `encode_order_status_request` | function | Encodes OrderStatusRequest `<H>` |
+| `encode_order_mass_cancel_request` | function | Encodes OrderMassCancelRequest `<q>` |
 | `encode_poss_dup_replay` | function | Re-encodes a retained frame with `PossDupFlag(43)=Y` |
 | `checksum` | function | Computes FIX modulo-256 checksum |
 | `debug_render` | function | Renders diagnostics with `|` separators |
@@ -535,11 +538,13 @@ FIX order-entry sessions:
 - NewOrderSingle `<D>`;
 - OrderCancelRequest `<F>`;
 - OrderCancelReplaceRequest `<G>`;
-- OrderStatusRequest `<H>`.
+- OrderStatusRequest `<H>`;
+- OrderMassCancelRequest `<q>`.
 
 ```rust
 use of_fix::{
-    encode_new_order_single, encode_order_status_request, FixNewOrderSingle, FixOrdType,
+    encode_new_order_single, encode_order_mass_cancel_request, encode_order_status_request,
+    FixMassCancelRequestType, FixNewOrderSingle, FixOrdType, FixOrderMassCancelRequest,
     FixOrderSide, FixOrderStatusRequest, FixSessionHeader, FixTimeInForce, FixVersion,
 };
 
@@ -566,6 +571,14 @@ encode_new_order_single(&mut out, FixVersion::Fix44, header, order)?;
 
 let status = FixOrderStatusRequest::new(b"ORD-1").with_order_id(b"VENUE-1");
 encode_order_status_request(&mut out, FixVersion::Fix44, header, status)?;
+
+let mass_cancel = FixOrderMassCancelRequest::new(
+    b"MASS-1",
+    FixMassCancelRequestType::Security,
+    b"20260717-12:00:06.000",
+)
+.with_symbol(b"BTCUSDT");
+encode_order_mass_cancel_request(&mut out, FixVersion::Fix44, header, mass_cancel)?;
 # Ok::<(), of_fix::FixEncodeError>(())
 ```
 
@@ -575,6 +588,8 @@ Order-builder boundary:
 - the codec does not round, scale, or validate tick size;
 - the codec does not enforce that limit/stop orders include price fields;
 - the codec does not decide which replace fields a venue allows to change;
+- the codec does not decide whether a mass-cancel scope is permitted by a
+  venue;
 - custom tags, account fields, parties, clearing instructions, and venue
   certification rules belong in profiles or higher adapter layers.
 

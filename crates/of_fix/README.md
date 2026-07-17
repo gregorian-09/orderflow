@@ -36,7 +36,7 @@ Included now:
 - typed session/admin builders for Logon, Heartbeat, TestRequest,
   ResendRequest, SequenceReset gap fill, and Logout;
 - typed order-entry builders for NewOrderSingle, OrderCancelRequest,
-  OrderCancelReplaceRequest, and OrderStatusRequest;
+  OrderCancelReplaceRequest, OrderStatusRequest, and OrderMassCancelRequest;
 - common tag constants and extraction helpers;
 - caller-owned encode buffers that fill `BodyLength` and `CheckSum`;
 - debug rendering with `|` delimiters outside the live hot path.
@@ -403,10 +403,11 @@ same strict encoder path used by `encode_message`; they do not manage sockets,
 timers, durable resend stores, or authentication extensions.
 
 The order-entry builders provide common message shapes for NewOrderSingle,
-OrderCancelRequest, OrderCancelReplaceRequest, and OrderStatusRequest. They do
-not decide whether a limit price is required, whether a field can be changed on
-replace, how quantities are rounded, or which custom tags a venue requires.
-Those checks belong in profile/certification layers above the codec.
+OrderCancelRequest, OrderCancelReplaceRequest, OrderStatusRequest, and
+OrderMassCancelRequest. They do not decide whether a limit price is required,
+whether a field can be changed on replace, how quantities are rounded, whether
+a mass-cancel scope is enabled at a venue, or which custom tags a venue
+requires. Those checks belong in profile/certification layers above the codec.
 
 ## Roadmap
 
@@ -415,6 +416,6 @@ The planned next layers are:
 - FIX 4.2/4.4 message builders for order entry;
 - durable session sequence persistence;
 - venue/profile-specific resend suppression policy;
-- order mass cancel/status request builders;
+- order mass status request builders;
 - certification transcript capture;
 - integration with `of_execution_adapters::fix`.
