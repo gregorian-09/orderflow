@@ -48,6 +48,7 @@ maps parsed execution reports into canonical OMS events.
 | `FixNewOrderSingle` | struct | Borrowed NewOrderSingle `<D>` request fields |
 | `FixOrderCancelRequest` | struct | Borrowed OrderCancelRequest `<F>` request fields |
 | `FixOrderCancelReplaceRequest` | struct | Borrowed OrderCancelReplaceRequest `<G>` request fields |
+| `FixOrderStatusRequest` | struct | Borrowed OrderStatusRequest `<H>` request fields |
 | `parse_message` | function | Parses and validates raw FIX bytes into caller scratch |
 | `parse_session_reject` | function | Parses Reject `<3>` into a borrowed diagnostic view |
 | `parse_business_message_reject` | function | Parses BusinessMessageReject `<j>` into a borrowed diagnostic view |
@@ -61,6 +62,7 @@ maps parsed execution reports into canonical OMS events.
 | `encode_new_order_single` | function | Encodes NewOrderSingle `<D>` |
 | `encode_order_cancel_request` | function | Encodes OrderCancelRequest `<F>` |
 | `encode_order_cancel_replace_request` | function | Encodes OrderCancelReplaceRequest `<G>` |
+| `encode_order_status_request` | function | Encodes OrderStatusRequest `<H>` |
 | `encode_poss_dup_replay` | function | Re-encodes a retained frame with `PossDupFlag(43)=Y` |
 | `checksum` | function | Computes FIX modulo-256 checksum |
 | `debug_render` | function | Renders diagnostics with `|` separators |
@@ -532,12 +534,13 @@ FIX order-entry sessions:
 
 - NewOrderSingle `<D>`;
 - OrderCancelRequest `<F>`;
-- OrderCancelReplaceRequest `<G>`.
+- OrderCancelReplaceRequest `<G>`;
+- OrderStatusRequest `<H>`.
 
 ```rust
 use of_fix::{
-    encode_new_order_single, FixNewOrderSingle, FixOrdType, FixOrderSide,
-    FixSessionHeader, FixTimeInForce, FixVersion,
+    encode_new_order_single, encode_order_status_request, FixNewOrderSingle, FixOrdType,
+    FixOrderSide, FixOrderStatusRequest, FixSessionHeader, FixTimeInForce, FixVersion,
 };
 
 let header = FixSessionHeader::new(
@@ -560,6 +563,9 @@ let order = FixNewOrderSingle::new(
 
 let mut out = Vec::with_capacity(512);
 encode_new_order_single(&mut out, FixVersion::Fix44, header, order)?;
+
+let status = FixOrderStatusRequest::new(b"ORD-1").with_order_id(b"VENUE-1");
+encode_order_status_request(&mut out, FixVersion::Fix44, header, status)?;
 # Ok::<(), of_fix::FixEncodeError>(())
 ```
 

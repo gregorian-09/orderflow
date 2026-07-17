@@ -86,8 +86,8 @@ registry dependency after `of_fix 0.1.0` is published.
   body length/checksum
 - typed session/admin builders for Logon, Heartbeat, TestRequest,
   ResendRequest, SequenceReset gap fill, and Logout
-- typed order-entry builders for NewOrderSingle, OrderCancelRequest, and
-  OrderCancelReplaceRequest
+- typed order-entry builders for NewOrderSingle, OrderCancelRequest,
+  OrderCancelReplaceRequest, and OrderStatusRequest
 - common FIX tag constants and extraction helpers
 - caller-owned encoding buffers with computed body length and checksum
 - diagnostic rendering with `|` separators outside hot paths

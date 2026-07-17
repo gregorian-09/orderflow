@@ -98,6 +98,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `of_fix` typed order-entry builders for NewOrderSingle,
   OrderCancelRequest, and OrderCancelReplaceRequest with borrowed wire-format
   quantity and price fields.
+- Added `of_fix` OrderStatusRequest `<H>` builder with required `ClOrdID(11)`
+  and optional `OrderID(37)`.
 - Added `of_execution_adapters::fix::parse_execution_report`, parse config, and
   parse errors to convert validated `of_fix::FixMessageView` execution reports
   into canonical FIX execution reports with explicit quantity/price scales.

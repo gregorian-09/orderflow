@@ -1979,6 +1979,29 @@ impl<'a> FixOrderCancelReplaceRequest<'a> {
     }
 }
 
+/// Borrowed OrderStatusRequest `<H>` request fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixOrderStatusRequest<'a> {
+    cl_ord_id: &'a [u8],
+    order_id: Option<&'a [u8]>,
+}
+
+impl<'a> FixOrderStatusRequest<'a> {
+    /// Creates an OrderStatusRequest.
+    pub const fn new(cl_ord_id: &'a [u8]) -> Self {
+        Self {
+            cl_ord_id,
+            order_id: None,
+        }
+    }
+
+    /// Adds `OrderID(37)` when known.
+    pub const fn with_order_id(mut self, order_id: &'a [u8]) -> Self {
+        self.order_id = Some(order_id);
+        self
+    }
+}
+
 /// Parses and validates a FIX tag-value message into `scratch`.
 ///
 /// The returned message borrows both `raw` and the initialized prefix of
@@ -2464,6 +2487,35 @@ pub fn encode_order_cancel_replace_request(
         out,
         version,
         FixMsgType::ORDER_CANCEL_REPLACE_REQUEST,
+        header,
+        &fields[..len],
+    )
+}
+
+/// Encodes an OrderStatusRequest `<H>` application message.
+///
+/// # Errors
+///
+/// Returns [`FixEncodeError`] when a field value contains SOH.
+pub fn encode_order_status_request(
+    out: &mut Vec<u8>,
+    version: FixVersion,
+    header: FixSessionHeader<'_>,
+    request: FixOrderStatusRequest<'_>,
+) -> Result<(), FixEncodeError> {
+    let mut fields = [
+        (FixTag::CL_ORD_ID, request.cl_ord_id),
+        (FixTag::ORDER_ID, b"".as_slice()),
+    ];
+    let mut len = 1usize;
+    if let Some(order_id) = request.order_id {
+        fields[len] = (FixTag::ORDER_ID, order_id);
+        len += 1;
+    }
+    encode_session_message(
+        out,
+        version,
+        FixMsgType::ORDER_STATUS_REQUEST,
         header,
         &fields[..len],
     )
@@ -3645,6 +3697,46 @@ mod tests {
         assert_eq!(message.get(FixTag::CL_ORD_ID), Some(b"ORD-2".as_slice()));
         assert_eq!(message.get(FixTag::ORDER_QTY), Some(b"2.00".as_slice()));
         assert_eq!(message.get(FixTag::TIME_IN_FORCE), Some(b"3".as_slice()));
+    }
+
+    #[test]
+    fn encodes_order_status_request() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 10, b"20260717-12:00:08.000");
+        let request = FixOrderStatusRequest::new(b"ORD-1").with_order_id(b"VENUE-1");
+        let mut raw = Vec::new();
+        encode_order_status_request(&mut raw, FixVersion::Fix44, header, request)
+            .expect("status request");
+        let mut scratch = [FixFieldView::empty(); 16];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(
+            message.msg_type(),
+            Some(FixMsgType::ORDER_STATUS_REQUEST.as_bytes())
+        );
+        assert_eq!(message.get(FixTag::CL_ORD_ID), Some(b"ORD-1".as_slice()));
+        assert_eq!(message.get(FixTag::ORDER_ID), Some(b"VENUE-1".as_slice()));
+    }
+
+    #[test]
+    fn order_status_request_allows_minimal_required_shape() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 10, b"20260717-12:00:08.000");
+        let request = FixOrderStatusRequest::new(b"ORD-1");
+        let mut raw = Vec::new();
+        encode_order_status_request(&mut raw, FixVersion::Fix44, header, request)
+            .expect("status request");
+        let mut scratch = [FixFieldView::empty(); 16];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+        assert_eq!(message.get(FixTag::CL_ORD_ID), Some(b"ORD-1".as_slice()));
+        assert_eq!(message.get(FixTag::ORDER_ID), None);
+    }
+
+    #[test]
+    fn order_status_request_rejects_soh() {
+        let header = FixSessionHeader::new(b"CLIENT", b"BROKER", 10, b"20260717-12:00:08.000");
+        let request = FixOrderStatusRequest::new(b"ORD\x01");
+        let mut raw = Vec::new();
+        let err = encode_order_status_request(&mut raw, FixVersion::Fix44, header, request)
+            .expect_err("soh");
+        assert_eq!(err, FixEncodeError::ValueContainsSoh(FixTag::CL_ORD_ID));
     }
 
     #[test]
