@@ -16,10 +16,16 @@ impl FixTag {
     pub const BEGIN_STRING: Self = Self(8);
     /// `BodyLength(9)`.
     pub const BODY_LENGTH: Self = Self(9);
+    /// `BeginSeqNo(7)`.
+    pub const BEGIN_SEQ_NO: Self = Self(7);
+    /// `EndSeqNo(16)`.
+    pub const END_SEQ_NO: Self = Self(16);
     /// `MsgType(35)`.
     pub const MSG_TYPE: Self = Self(35);
     /// `MsgSeqNum(34)`.
     pub const MSG_SEQ_NUM: Self = Self(34);
+    /// `NewSeqNo(36)`.
+    pub const NEW_SEQ_NO: Self = Self(36);
     /// `PossDupFlag(43)`.
     pub const POSS_DUP_FLAG: Self = Self(43);
     /// `SenderCompID(49)`.
@@ -66,6 +72,10 @@ impl FixTag {
     pub const TRANSACT_TIME: Self = Self(60);
     /// `Text(58)`.
     pub const TEXT: Self = Self(58);
+    /// `TestReqID(112)`.
+    pub const TEST_REQ_ID: Self = Self(112);
+    /// `GapFillFlag(123)`.
+    pub const GAP_FILL_FLAG: Self = Self(123);
     /// `CheckSum(10)`.
     pub const CHECK_SUM: Self = Self(10);
 }
@@ -302,6 +312,26 @@ impl<'a> FixMessageView<'a> {
         self.get(FixTag::POSS_DUP_FLAG) == Some(b"Y".as_slice())
     }
 
+    /// Returns true when `GapFillFlag(123)` is `Y`.
+    pub fn gap_fill(&self) -> bool {
+        self.get(FixTag::GAP_FILL_FLAG) == Some(b"Y".as_slice())
+    }
+
+    /// Returns `NewSeqNo(36)` parsed as `u64`.
+    pub fn new_seq_no(&self) -> Option<u64> {
+        parse_u64(self.get(FixTag::NEW_SEQ_NO)?).ok()
+    }
+
+    /// Returns `BeginSeqNo(7)` parsed as `u64`.
+    pub fn begin_seq_no(&self) -> Option<u64> {
+        parse_u64(self.get(FixTag::BEGIN_SEQ_NO)?).ok()
+    }
+
+    /// Returns `EndSeqNo(16)` parsed as `u64`.
+    pub fn end_seq_no(&self) -> Option<u64> {
+        parse_u64(self.get(FixTag::END_SEQ_NO)?).ok()
+    }
+
     /// Renders a debug string with `|` separators instead of SOH.
     ///
     /// This allocates and is intended for diagnostics, tests, and transcript
@@ -458,6 +488,243 @@ impl fmt::Display for FixProfileError {
 }
 
 impl Error for FixProfileError {}
+
+/// FIX session lifecycle state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum FixSessionState {
+    /// No active transport connection exists.
+    Disconnected,
+    /// Transport connection attempt is in progress.
+    Connecting,
+    /// Logon has been sent and the session is awaiting acceptance.
+    LogonSent,
+    /// Session is active and can process application flow.
+    Ready,
+    /// A resend request has been emitted and the session is waiting for gap
+    /// recovery.
+    ResendRequested,
+    /// Session is applying recovery messages or sequence resets.
+    Recovering,
+    /// Logout has been sent and the session is draining.
+    LogoutSent,
+    /// Session has been intentionally stopped.
+    Stopped,
+    /// Session is alive but operating under a degraded policy.
+    Degraded,
+}
+
+/// Resend range requested after an inbound sequence gap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FixResendRange {
+    /// First missing sequence number.
+    pub begin_seq_no: u64,
+    /// Last missing sequence number.
+    pub end_seq_no: u64,
+}
+
+/// Result of observing an inbound sequence number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FixSequenceAction {
+    /// The sequence number matched the expected inbound value and should be
+    /// processed normally.
+    Accept {
+        /// Accepted inbound sequence number.
+        seq_no: u64,
+    },
+    /// The sequence number is lower than expected and carries
+    /// `PossDupFlag(43)=Y`, so the caller should ignore it if already applied.
+    Duplicate {
+        /// Duplicate inbound sequence number.
+        seq_no: u64,
+        /// Current expected inbound sequence number.
+        expected: u64,
+    },
+    /// The sequence number is higher than expected and a resend request should
+    /// be emitted for the missing range.
+    Gap {
+        /// Current expected inbound sequence number.
+        expected: u64,
+        /// Received inbound sequence number.
+        received: u64,
+        /// Missing range to request.
+        resend: FixResendRange,
+    },
+    /// The sequence number is lower than expected without a duplicate marker.
+    TooLow {
+        /// Current expected inbound sequence number.
+        expected: u64,
+        /// Received inbound sequence number.
+        received: u64,
+    },
+}
+
+/// FIX sequence tracking errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FixSequenceError {
+    /// `MsgSeqNum(34)` is missing.
+    MissingMsgSeqNum,
+    /// A sequence number was zero. FIX sequence numbers are one-based.
+    ZeroSeqNo,
+    /// A sequence reset attempted to lower the expected inbound sequence.
+    SequenceResetWouldDecrease {
+        /// Current expected inbound sequence number.
+        current: u64,
+        /// Requested new expected inbound sequence number.
+        requested: u64,
+    },
+}
+
+impl fmt::Display for FixSequenceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingMsgSeqNum => write!(f, "FIX MsgSeqNum(34) is missing"),
+            Self::ZeroSeqNo => write!(f, "FIX sequence number must be greater than zero"),
+            Self::SequenceResetWouldDecrease { current, requested } => write!(
+                f,
+                "FIX sequence reset would decrease next inbound sequence: current {current}, requested {requested}"
+            ),
+        }
+    }
+}
+
+impl Error for FixSequenceError {}
+
+/// Deterministic inbound/outbound FIX sequence tracker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixSequenceTracker {
+    next_inbound: u64,
+    next_outbound: u64,
+}
+
+impl Default for FixSequenceTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FixSequenceTracker {
+    /// Creates a tracker with both inbound and outbound sequence numbers set to
+    /// `1`.
+    pub const fn new() -> Self {
+        Self {
+            next_inbound: 1,
+            next_outbound: 1,
+        }
+    }
+
+    /// Creates a tracker from persisted next inbound and outbound values.
+    ///
+    /// Values lower than `1` are clamped to `1` so restored state remains valid.
+    pub const fn from_next(next_inbound: u64, next_outbound: u64) -> Self {
+        Self {
+            next_inbound: clamp_seq_no(next_inbound),
+            next_outbound: clamp_seq_no(next_outbound),
+        }
+    }
+
+    /// Returns the next inbound sequence number expected from the counterparty.
+    pub const fn next_inbound(&self) -> u64 {
+        self.next_inbound
+    }
+
+    /// Returns the next outbound sequence number to assign.
+    pub const fn next_outbound(&self) -> u64 {
+        self.next_outbound
+    }
+
+    /// Assigns and advances the next outbound sequence number.
+    pub fn assign_outbound(&mut self) -> u64 {
+        let seq_no = self.next_outbound;
+        self.next_outbound = self.next_outbound.saturating_add(1);
+        seq_no
+    }
+
+    /// Observes an inbound message and returns the sequence action.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixSequenceError`] when `MsgSeqNum(34)` is missing or zero.
+    pub fn observe_message(
+        &mut self,
+        message: &FixMessageView<'_>,
+    ) -> Result<FixSequenceAction, FixSequenceError> {
+        let seq_no = message
+            .msg_seq_num()
+            .ok_or(FixSequenceError::MissingMsgSeqNum)?;
+        self.observe_inbound(seq_no, message.poss_dup())
+    }
+
+    /// Observes an inbound sequence number.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixSequenceError::ZeroSeqNo`] when `seq_no` is zero.
+    pub fn observe_inbound(
+        &mut self,
+        seq_no: u64,
+        poss_dup: bool,
+    ) -> Result<FixSequenceAction, FixSequenceError> {
+        if seq_no == 0 {
+            return Err(FixSequenceError::ZeroSeqNo);
+        }
+
+        let expected = self.next_inbound;
+        if seq_no == expected {
+            self.next_inbound = self.next_inbound.saturating_add(1);
+            Ok(FixSequenceAction::Accept { seq_no })
+        } else if seq_no > expected {
+            Ok(FixSequenceAction::Gap {
+                expected,
+                received: seq_no,
+                resend: FixResendRange {
+                    begin_seq_no: expected,
+                    end_seq_no: seq_no.saturating_sub(1),
+                },
+            })
+        } else if poss_dup {
+            Ok(FixSequenceAction::Duplicate { seq_no, expected })
+        } else {
+            Ok(FixSequenceAction::TooLow {
+                expected,
+                received: seq_no,
+            })
+        }
+    }
+
+    /// Applies `NewSeqNo(36)` as the next expected inbound sequence number.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixSequenceError::ZeroSeqNo`] for zero and
+    /// [`FixSequenceError::SequenceResetWouldDecrease`] when the reset would
+    /// lower the current expected sequence number.
+    pub fn apply_sequence_reset(&mut self, new_seq_no: u64) -> Result<(), FixSequenceError> {
+        if new_seq_no == 0 {
+            return Err(FixSequenceError::ZeroSeqNo);
+        }
+        if new_seq_no < self.next_inbound {
+            return Err(FixSequenceError::SequenceResetWouldDecrease {
+                current: self.next_inbound,
+                requested: new_seq_no,
+            });
+        }
+        self.next_inbound = new_seq_no;
+        Ok(())
+    }
+
+    /// Sets the next inbound sequence number from trusted persisted state.
+    pub fn set_next_inbound(&mut self, next_inbound: u64) {
+        self.next_inbound = clamp_seq_no(next_inbound);
+    }
+
+    /// Sets the next outbound sequence number from trusted persisted state.
+    pub fn set_next_outbound(&mut self, next_outbound: u64) {
+        self.next_outbound = clamp_seq_no(next_outbound);
+    }
+}
 
 /// Validation rule for one FIX message type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -897,6 +1164,14 @@ fn validate_value(tag: FixTag, value: &[u8]) -> Result<(), FixEncodeError> {
     }
 }
 
+const fn clamp_seq_no(value: u64) -> u64 {
+    if value == 0 {
+        1
+    } else {
+        value
+    }
+}
+
 fn parse_checksum(value: &[u8]) -> Result<u8, FixParseError> {
     if value.len() != 3 || !value.iter().all(u8::is_ascii_digit) {
         return Err(FixParseError::InvalidChecksum);
@@ -1175,6 +1450,100 @@ mod tests {
             Err(FixProfileError::VersionMismatch {
                 expected: FixVersion::Fix42,
                 actual: FixVersion::Fix44,
+            })
+        );
+    }
+
+    #[test]
+    fn sequence_tracker_accepts_expected_inbound() {
+        let mut tracker = FixSequenceTracker::new();
+        assert_eq!(
+            tracker.observe_inbound(1, false),
+            Ok(FixSequenceAction::Accept { seq_no: 1 })
+        );
+        assert_eq!(tracker.next_inbound(), 2);
+    }
+
+    #[test]
+    fn sequence_tracker_detects_gap_without_advancing() {
+        let mut tracker = FixSequenceTracker::new();
+        assert_eq!(
+            tracker.observe_inbound(3, false),
+            Ok(FixSequenceAction::Gap {
+                expected: 1,
+                received: 3,
+                resend: FixResendRange {
+                    begin_seq_no: 1,
+                    end_seq_no: 2,
+                },
+            })
+        );
+        assert_eq!(tracker.next_inbound(), 1);
+    }
+
+    #[test]
+    fn sequence_tracker_marks_poss_dup_low_sequence_duplicate() {
+        let mut tracker = FixSequenceTracker::from_next(5, 9);
+        assert_eq!(
+            tracker.observe_inbound(3, true),
+            Ok(FixSequenceAction::Duplicate {
+                seq_no: 3,
+                expected: 5,
+            })
+        );
+        assert_eq!(tracker.next_inbound(), 5);
+    }
+
+    #[test]
+    fn sequence_tracker_marks_unflagged_low_sequence_too_low() {
+        let mut tracker = FixSequenceTracker::from_next(5, 9);
+        assert_eq!(
+            tracker.observe_inbound(3, false),
+            Ok(FixSequenceAction::TooLow {
+                expected: 5,
+                received: 3,
+            })
+        );
+    }
+
+    #[test]
+    fn sequence_tracker_observes_parsed_message_sequence() {
+        let mut raw = Vec::new();
+        encode_message(
+            &mut raw,
+            b"FIX.4.4",
+            b"0",
+            &[(FixTag::MSG_SEQ_NUM, b"1".as_slice())],
+        )
+        .expect("encode");
+        let mut scratch = [FixFieldView::empty(); 16];
+        let message = parse_message(&raw, &mut scratch).expect("parse");
+
+        let mut tracker = FixSequenceTracker::new();
+        assert_eq!(
+            tracker.observe_message(&message),
+            Ok(FixSequenceAction::Accept { seq_no: 1 })
+        );
+    }
+
+    #[test]
+    fn sequence_tracker_assigns_outbound_monotonically() {
+        let mut tracker = FixSequenceTracker::from_next(1, 10);
+        assert_eq!(tracker.assign_outbound(), 10);
+        assert_eq!(tracker.assign_outbound(), 11);
+        assert_eq!(tracker.next_outbound(), 12);
+    }
+
+    #[test]
+    fn sequence_reset_advances_but_does_not_decrease() {
+        let mut tracker = FixSequenceTracker::from_next(10, 1);
+        tracker.apply_sequence_reset(15).expect("advance");
+        assert_eq!(tracker.next_inbound(), 15);
+        assert_eq!(
+            tracker.apply_sequence_reset(14),
+            Err(FixSequenceError::SequenceResetWouldDecrease {
+                current: 15,
+                requested: 14,
             })
         );
     }

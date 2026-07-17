@@ -22,6 +22,11 @@ maps parsed execution reports into canonical OMS events.
 | `FixDictionary` | struct | Static FIX version/profile rule set |
 | `FixDecoder` | struct | Stateless decoder facade over caller-owned scratch |
 | `FixEncoder` | struct | Reusable encoder with an owned output buffer |
+| `FixSessionState` | enum | Session lifecycle state vocabulary |
+| `FixSequenceTracker` | struct | Deterministic inbound/outbound sequence tracker |
+| `FixSequenceAction` | enum | Result of observing an inbound sequence number |
+| `FixSequenceError` | enum | Sequence validation/reset errors |
+| `FixResendRange` | struct | Missing sequence range for resend request generation |
 | `parse_message` | function | Parses and validates raw FIX bytes into caller scratch |
 | `encode_message` | function | Encodes a message into a caller-owned `Vec<u8>` |
 | `checksum` | function | Computes FIX modulo-256 checksum |
@@ -44,15 +49,16 @@ Included:
 - static dictionary/profile validation for required and disallowed tags;
 - reusable encoder/decoder facades for components that prefer explicit codec
   objects;
+- session-state and sequence-tracking primitives for future transports and
+  adapters;
 - encoding into caller-owned buffers with computed `BodyLength` and `CheckSum`;
 - diagnostic rendering outside the hot path.
 
 Not included:
 
 - TCP/TLS transport;
-- Logon/Logout/Heartbeat/TestRequest session lifecycle;
-- resend request handling;
-- sequence reset/gap fill;
+- TCP/TLS-driven Logon/Logout/Heartbeat/TestRequest lifecycle;
+- resend message replay and gap-fill generation;
 - persistent session store;
 - repeating group dictionaries;
 - certification harness;
@@ -71,6 +77,7 @@ The codec follows the production FIX plan in `new_features.md`:
 - avoid allocation during parse after the caller supplies scratch;
 - validate body length and checksum directly over the raw buffer;
 - keep dictionary rules as static borrowed slices;
+- track sequence state with plain integer counters;
 - keep debug formatting opt-in;
 - encode into reusable caller-owned buffers.
 
@@ -201,6 +208,41 @@ Profile validation checks:
 It does not replace session validation, resend handling, venue certification, or
 counterparty-specific business validation.
 
+## Sequence Tracking Example
+
+`FixSequenceTracker` is the first session primitive. It does not open sockets,
+send Logon, persist sequence numbers, or replay resend ranges. It gives future
+session engines one deterministic place for inbound/outbound sequence rules.
+
+```rust
+use of_fix::{FixSequenceAction, FixSequenceTracker};
+
+let mut tracker = FixSequenceTracker::new();
+
+assert_eq!(
+    tracker.observe_inbound(1, false)?,
+    FixSequenceAction::Accept { seq_no: 1 },
+);
+
+let action = tracker.observe_inbound(4, false)?;
+assert!(matches!(
+    action,
+    FixSequenceAction::Gap { expected: 2, received: 4, .. },
+));
+# Ok::<(), of_fix::FixSequenceError>(())
+```
+
+Sequence behavior:
+
+- accepted expected inbound messages advance `next_inbound`;
+- higher inbound messages return `FixSequenceAction::Gap` with a resend range
+  and do not advance state;
+- lower inbound messages with `PossDupFlag(43)=Y` return `Duplicate`;
+- lower inbound messages without `PossDupFlag(43)=Y` return `TooLow`;
+- outbound sequence numbers are assigned monotonically;
+- `apply_sequence_reset` can advance, but not decrease, the next expected
+  inbound sequence.
+
 ## Validation Semantics
 
 `parse_message` rejects:
@@ -242,7 +284,7 @@ The next layers should remain additive:
 
 - typed builders for NewOrderSingle, Cancel, Replace, and session admin
   messages;
-- session sequence state;
-- resend/gap-fill policy;
+- sequence persistence and resend message stores;
+- resend/gap-fill policy and message generation;
 - transcript capture;
 - integration into `of_execution_adapters::fix`.

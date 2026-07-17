@@ -82,6 +82,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `of_fix` typed `FixVersion`/`FixMsgType` helpers, reusable
   `FixEncoder`/`FixDecoder` facades, and static `FixDictionary` profile
   validation for required and disallowed message tags.
+- Added `of_fix` session-state and sequence-tracking primitives with
+  deterministic accept/gap/duplicate/too-low outcomes, resend ranges, monotonic
+  outbound assignment, and guarded sequence-reset advancement.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

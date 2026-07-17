@@ -24,6 +24,9 @@ Included now:
 - typed FIX versions and common `MsgType(35)` constants;
 - static dictionary/profile validation for required and disallowed tags;
 - reusable `FixDecoder` and `FixEncoder` facades;
+- session-state and sequence-tracking primitives;
+- resend-range detection for inbound sequence gaps;
+- sequence-reset guardrails that reject decreasing next expected sequence;
 - common tag constants and extraction helpers;
 - caller-owned encode buffers that fill `BodyLength` and `CheckSum`;
 - debug rendering with `|` delimiters outside the live hot path.
@@ -31,8 +34,8 @@ Included now:
 Not included yet:
 
 - TCP/TLS transport;
-- Logon/Logout/Heartbeat/TestRequest session lifecycle;
-- resend request and sequence-reset handling;
+- TCP/TLS-driven Logon/Logout/Heartbeat/TestRequest lifecycle;
+- resend message replay and gap-fill generation;
 - persistent session store;
 - repeating group dictionaries;
 - venue certification harness;
@@ -48,6 +51,7 @@ The codec is designed for execution hot paths:
 - avoid `HashMap<Tag, String>` as the primary representation;
 - validate `BodyLength` and `CheckSum` directly over the raw byte buffer;
 - keep profile rules as static borrowed slices;
+- track inbound/outbound sequence numbers with plain integer state;
 - encode into caller-owned `Vec<u8>` buffers;
 - keep debug rendering opt-in and outside hot paths.
 
@@ -124,6 +128,25 @@ dictionary.validate(&msg)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+## Sequence Tracking Example
+
+```rust
+use of_fix::{FixSequenceAction, FixSequenceTracker};
+
+let mut tracker = FixSequenceTracker::new();
+
+assert_eq!(
+    tracker.observe_inbound(1, false)?,
+    FixSequenceAction::Accept { seq_no: 1 },
+);
+
+assert!(matches!(
+    tracker.observe_inbound(4, false)?,
+    FixSequenceAction::Gap { expected: 2, received: 4, .. },
+));
+# Ok::<(), of_fix::FixSequenceError>(())
+```
+
 ## Validation Semantics
 
 `parse_message` rejects frames when:
@@ -147,12 +170,18 @@ required and disallowed tags using borrowed field views. It does not allocate,
 does not perform transport/session validation, and does not imply venue
 certification.
 
+`FixSequenceTracker` adds deterministic sequence bookkeeping for future session
+engines and adapters. It accepts expected inbound sequence numbers, reports
+missing ranges as `FixSequenceAction::Gap`, treats lower `PossDupFlag=Y`
+messages as duplicates, flags unmarked lower sequence numbers as too-low, and
+assigns outbound sequence numbers monotonically.
+
 ## Roadmap
 
 The planned next layers are:
 
 - FIX 4.2/4.4 message builders for order entry;
-- session state and sequence persistence;
+- sequence persistence and resend message stores;
 - resend/gap-fill policy;
 - certification transcript capture;
 - integration with `of_execution_adapters::fix`.

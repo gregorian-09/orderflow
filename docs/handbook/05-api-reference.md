@@ -590,6 +590,11 @@ Public FIX codec types:
 - `FixDictionary`
 - `FixDecoder`
 - `FixEncoder`
+- `FixSessionState`
+- `FixSequenceTracker`
+- `FixSequenceAction`
+- `FixSequenceError`
+- `FixResendRange`
 
 Public FIX codec constants:
 

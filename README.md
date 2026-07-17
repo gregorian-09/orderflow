@@ -44,8 +44,9 @@ Major additions:
   order normalization, telemetry, sharding, throttling, and replay simulation
 - FIX foundation: borrowed tag-value codec, `BodyLength(9)` and `CheckSum(10)`
   validation, common tag extraction, typed `FixVersion`/`FixMsgType` helpers,
-  static dictionary/profile validation, caller-owned encode buffers, and debug
-  rendering outside the hot path
+  static dictionary/profile validation, deterministic session sequence
+  primitives, caller-owned encode buffers, and debug rendering outside the hot
+  path
 - adapter scaffolding: FIX execution-report mapping and fail-closed adapter shell
   for provider adapter authors
 - bindings: additive C ABI, Python, and Java execution APIs that do not change
