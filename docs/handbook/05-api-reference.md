@@ -604,6 +604,10 @@ Public parent/child and decision types:
 - `VwapVolumeCurve`
 - `VwapSlicePlanner`
 - `IcebergSlicePlanner`
+- `ImplementationShortfallContext`
+- `ImplementationShortfallConfig`
+- `ImplementationShortfallEstimate`
+- `ImplementationShortfallPlanner`
 
 Public constants:
 

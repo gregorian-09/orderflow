@@ -146,6 +146,9 @@ foundation:
   lookup on the planning path
 - deterministic `IcebergSlicePlanner` for synthetic displayed-quantity
   replenishment based on remaining parent leaves and open displayed quantity
+- deterministic `ImplementationShortfallPlanner` with explicit market context,
+  urgency weights, adverse-move detection from arrival price, and auditable
+  target-release estimates
 
 The crate does not bypass OMS risk, journaling, adapter capability checks, kill
 switches, or reconciliation. Hosts should submit child orders through

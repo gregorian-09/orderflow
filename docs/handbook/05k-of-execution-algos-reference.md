@@ -54,6 +54,10 @@ Lifecycle and planning types:
 - `VwapVolumeCurve`
 - `VwapSlicePlanner`
 - `IcebergSlicePlanner`
+- `ImplementationShortfallContext`
+- `ImplementationShortfallConfig`
+- `ImplementationShortfallEstimate`
+- `ImplementationShortfallPlanner`
 
 ## Parent Orders
 
@@ -444,6 +448,86 @@ let child = planner
     .expect("slice due");
 
 assert_eq!(child.request().quantity, OrderQty(20));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Implementation Shortfall Planner
+
+`ImplementationShortfallPlanner` is a deterministic first slice of
+arrival-price execution. It does not solve a full stochastic control problem on
+the hot path. Instead, it computes an explainable urgency-adjusted release
+target from:
+
+- elapsed parent interval,
+- arrival price,
+- current reference price,
+- adverse move from arrival by side,
+- volatility estimate,
+- spread estimate,
+- temporary impact estimate,
+- configured urgency and weights.
+
+Higher volatility, spread, and adverse movement increase urgency. Higher
+temporary impact reduces urgency so the planner can wait when immediate impact
+is too expensive. The resulting cumulative target is capped, compared with
+already released quantity, and bounded by the parent min/max clip rules.
+
+```rust
+use of_execution_algos::{
+    AlgoProgress, ChildOrderId, ImplementationShortfallConfig,
+    ImplementationShortfallContext, ImplementationShortfallPlanner, ParentOrder,
+    ParentOrderId,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-1")?,
+    AccountId::new("acct")?,
+    RouteId::new("sim")?,
+    StrategyId::new("is")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+
+let planner = ImplementationShortfallPlanner::new(
+    ImplementationShortfallConfig::default(),
+);
+let context = ImplementationShortfallContext::new(
+    OrderPrice::new(500_000)?,
+    OrderPrice::new(510_000)?,
+    200,
+    20,
+    10,
+)?;
+let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+let estimate = planner.estimate(&parent, progress, 1_000, context)?;
+let child = planner
+    .plan_shortfall_slice(
+        &parent,
+        progress,
+        1_000,
+        context,
+        ChildOrderId::new("child-1")?,
+        ClientOrderId::new("cl-1")?,
+        1_000,
+    )?
+    .expect("slice due");
+
+assert!(estimate.urgency_bps() > 0);
+assert!(child.request().quantity.0 >= parent.min_clip().0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

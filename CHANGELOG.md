@@ -140,6 +140,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added deterministic synthetic iceberg replenishment planning in
   `of_execution_algos` with display quantity, replenish threshold, and
   remaining-parent leaves handling.
+- Added deterministic implementation-shortfall planning in
+  `of_execution_algos` with arrival-price context, adverse-move detection,
+  urgency weights, impact patience, and auditable target-release estimates.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,
