@@ -95,6 +95,13 @@ Impact/toxicity:
 - `ToxicityAnalyzer`
 - `VolatilitySnapshot`
 - `VolatilityTracker`
+- `OhlcVolatilityInput`
+- `OhlcVolatilitySnapshot`
+- `OhlcVolatilityEstimator`
+- `VolatilitySignatureSnapshot`
+- `VolatilitySignatureEstimator`
+- `VolatilitySeasonalitySnapshot`
+- `VolatilitySeasonalityTracker`
 - `RegimeKind`
 - `RegimeInput`
 - `RegimeSnapshot`
@@ -406,11 +413,24 @@ assert!(toxicity.toxic_flow_burst());
 ## Volatility And Noise
 
 `VolatilityTracker` stores a fixed-size ring of integer return samples. It
-reports realized volatility, mean absolute return, and a simple noise proxy
-based on return sign flips.
+reports realized volatility, mean absolute return, bipower variation
+volatility, jump variation, and a simple noise proxy based on return sign
+flips.
+
+`OhlcVolatilityEstimator` provides deterministic OHLC range estimators:
+close-to-close, Parkinson, Garman-Klass, Rogers-Satchell, and signed open-gap
+jump. The formulas use integer-scaled return proxies, not floating-point logs,
+so the live path stays deterministic.
+
+`VolatilitySignatureEstimator` computes one signature-plot point over borrowed
+returns. `VolatilitySeasonalityTracker` keeps fixed intraday buckets for
+realized volatility, mean absolute return, and jump counts.
 
 ```rust
-use of_analytics::VolatilityTracker;
+use of_analytics::{
+    OhlcVolatilityEstimator, OhlcVolatilityInput, VolatilitySeasonalityTracker,
+    VolatilitySignatureEstimator, VolatilityTracker,
+};
 
 let mut tracker = VolatilityTracker::<8>::new()?;
 tracker.on_price(100_000)?;
@@ -420,6 +440,24 @@ let snapshot = tracker.snapshot();
 
 assert_eq!(snapshot.samples(), 2);
 assert!(snapshot.realized_vol_bps() > 0);
+assert!(snapshot.bipower_vol_bps() > 0);
+
+let ohlc = OhlcVolatilityEstimator::estimate(OhlcVolatilityInput::new(
+    100_000,
+    102_000,
+    99_000,
+    101_000,
+    Some(99_500),
+)?);
+assert!(ohlc.garman_klass_vol_bps() > 0);
+
+let signature = VolatilitySignatureEstimator::estimate(1_000_000, &[10, -10, 20, -20])?;
+assert_eq!(signature.noise_ratio_bps(), 10_000);
+
+let mut seasonality = VolatilitySeasonalityTracker::<2>::new(25)?;
+seasonality.on_return(0, 10)?;
+seasonality.on_return(0, -30)?;
+assert_eq!(seasonality.snapshot(0)?.jump_count(), 1);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

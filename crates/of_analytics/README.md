@@ -27,7 +27,9 @@ The first foundation is dependency-light:
   impact decay, and child-order attribution,
 - VPIN-style fixed-bucket toxicity primitives plus post-trade markout,
   adverse-selection, quote-fade, toxic-burst, and informed-flow proxy signals,
-- fixed-window volatility/noise primitives,
+- fixed-window volatility/noise primitives with bipower variation, jump
+  variation, OHLC range estimators, signature-plot points, and intraday
+  seasonality buckets,
 - threshold-based market regime classification,
 - feed-quality primitives for sequence gaps, out-of-order events, duplicates,
   stale events, locked/crossed books, timestamp skew, resets, and health
@@ -211,13 +213,18 @@ assert!(toxicity.toxic_flow_burst());
 ## Volatility And Regime Example
 
 ```rust
-use of_analytics::{RegimeClassifier, RegimeInput, RegimeKind, VolatilityTracker};
+use of_analytics::{
+    OhlcVolatilityEstimator, OhlcVolatilityInput, RegimeClassifier, RegimeInput,
+    RegimeKind, VolatilitySeasonalityTracker, VolatilitySignatureEstimator,
+    VolatilityTracker,
+};
 
 let mut vol = VolatilityTracker::<8>::new()?;
 vol.on_price(100_000)?;
 vol.on_price(101_000)?;
 vol.on_price(100_500)?;
 let snapshot = vol.snapshot();
+assert!(snapshot.bipower_vol_bps() > 0);
 
 let regime = RegimeClassifier::default().classify(RegimeInput::new(
     5,
@@ -227,6 +234,23 @@ let regime = RegimeClassifier::default().classify(RegimeInput::new(
 ));
 
 assert!(matches!(regime.kind(), RegimeKind::Normal | RegimeKind::Volatile));
+
+let ohlc = OhlcVolatilityEstimator::estimate(OhlcVolatilityInput::new(
+    100_000,
+    102_000,
+    99_000,
+    101_000,
+    Some(99_500),
+)?);
+assert!(ohlc.parkinson_vol_bps() > 0);
+
+let signature = VolatilitySignatureEstimator::estimate(1_000_000, &[10, -10, 20, -20])?;
+assert_eq!(signature.noise_ratio_bps(), 10_000);
+
+let mut seasonality = VolatilitySeasonalityTracker::<2>::new(25)?;
+seasonality.on_return(0, 10)?;
+seasonality.on_return(0, -30)?;
+assert_eq!(seasonality.snapshot(0)?.jump_count(), 1);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

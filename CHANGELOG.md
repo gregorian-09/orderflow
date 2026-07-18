@@ -22,6 +22,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Hardened `of_analytics` toxicity analytics with post-trade markout,
   adverse-selection scoring, quote-fade measurement, informed-flow proxy, and
   toxic-flow burst detection.
+- Hardened `of_analytics` volatility analytics with bipower variation, jump
+  variation, OHLC range estimators, volatility signature points, and intraday
+  seasonality buckets.
 - Added `of_analytics` market-impact and VPIN-style toxicity primitives with
   Kyle-style lambda, Amihud-style illiquidity, fixed-capacity VPIN buckets, and
   deterministic integer-scaled snapshots.

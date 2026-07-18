@@ -720,6 +720,13 @@ Public market-quality and liquidity types:
 - `ToxicityAnalyzer`
 - `VolatilitySnapshot`
 - `VolatilityTracker`
+- `OhlcVolatilityInput`
+- `OhlcVolatilitySnapshot`
+- `OhlcVolatilityEstimator`
+- `VolatilitySignatureSnapshot`
+- `VolatilitySignatureEstimator`
+- `VolatilitySeasonalitySnapshot`
+- `VolatilitySeasonalityTracker`
 - `RegimeKind`
 - `RegimeInput`
 - `RegimeSnapshot`

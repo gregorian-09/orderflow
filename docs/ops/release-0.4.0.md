@@ -55,8 +55,10 @@ registry dependency after `of_fix 0.1.0` is published.
 - VPIN-style fixed-bucket toxicity primitives plus post-trade markout,
   adverse-selection scoring, quote-fade, toxic-burst, and informed-flow proxy
   signals
-- fixed-window volatility/noise primitives and threshold-based regime
-  classification
+- fixed-window volatility/noise primitives with bipower variation, jump
+  variation, OHLC range estimators, signature-plot points, and intraday
+  seasonality buckets
+- threshold-based regime classification
 - feed-quality primitives for sequence gaps, out-of-order events, duplicates,
   stale events, locked/crossed books, timestamp skew, resets, and health
   scoring
