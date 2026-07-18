@@ -711,6 +711,16 @@ Public market-quality and liquidity types:
 - `FeedQualityEvent`
 - `FeedQualitySnapshot`
 - `FeedQualityTracker`
+- `FeatureId`
+- `FeatureUnit`
+- `FeatureQuality`
+- `MissingValuePolicy`
+- `FeatureDefinition`
+- `FeatureSchema`
+- `FeatureRegistry`
+- `FeatureVector`
+- `FeatureVectorWriter`
+- `FeatureExtractor`
 
 For advanced analytics crate details, see
 [`of_analytics` reference](./05l-of-analytics-reference.md).

@@ -26,9 +26,13 @@ The first foundation is dependency-light:
 - feed-quality primitives for sequence gaps, out-of-order events, duplicates,
   stale events, locked/crossed books, timestamp skew, resets, and health
   scoring,
+- feature-vector primitives for stable feature ids, ordered schemas, schema
+  hashes, missing-value policy, quality labels, and reusable fixed-capacity
+  writers,
 - explicit feature profiles so users can opt into future impact, toxicity,
-  volatility, regime, data-quality, pattern, derivatives, institutional, and
-  ML feature modules without forcing all downstream users to compile them.
+  volatility, regime, data-quality, feature-vector, pattern, derivatives,
+  institutional, and ML feature modules without forcing all downstream users to
+  compile them.
 
 The crate does not submit orders, manage runtime state, own persistence, or
 replace existing `of_core` APIs. It consumes normalized market data and returns
@@ -49,6 +53,7 @@ Reserved additive profiles:
 - `volatility`
 - `regime`
 - `data-quality`
+- `feature-vector`
 - `patterns`
 - `derivatives`
 - `institutional`
@@ -162,6 +167,39 @@ let flags = tracker.on_event(FeedQualityEvent::new(
 assert!(flags.contains(FeedQualityFlags::SEQUENCE_GAP));
 assert!(flags.contains(FeedQualityFlags::LOCKED_BOOK));
 assert!(tracker.snapshot().health_score_bps() < 10_000);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Feature Vector Example
+
+```rust
+use of_analytics::{
+    FeatureDefinition, FeatureId, FeatureQuality, FeatureSchema, FeatureUnit,
+    FeatureVectorWriter, MissingValuePolicy,
+};
+
+let mut schema = FeatureSchema::<2>::new()?;
+let spread = schema.register(FeatureDefinition::new(
+    FeatureId::new(1)?,
+    "spread_bps",
+    FeatureUnit::BasisPoints,
+    1,
+    MissingValuePolicy::Sentinel(-1),
+)?)?;
+schema.register(FeatureDefinition::new(
+    FeatureId::new(2)?,
+    "quality_bps",
+    FeatureUnit::ScoreBasisPoints,
+    1,
+    MissingValuePolicy::Zero,
+)?)?;
+
+let mut writer = FeatureVectorWriter::new(&schema);
+writer.set(spread, 25, FeatureQuality::Good)?;
+let vector = writer.finish();
+
+assert_eq!(vector.values(), &[25, 0]);
+assert_eq!(vector.schema_hash(), schema.schema_hash());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

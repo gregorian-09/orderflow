@@ -15,7 +15,8 @@ The first public slice is dependency-light and live-path friendly:
 - threshold-based regime classification,
 - feed-quality analytics,
 - feature profiles for future impact, toxicity, volatility, regime,
-  data-quality, pattern, derivatives, institutional, and ML-feature modules.
+  data-quality, feature-vector, pattern, derivatives, institutional, and
+  ML-feature modules.
 
 The crate consumes normalized `of_core` data and returns typed snapshots. It
 does not own runtime state, persistence, sockets, bindings, OMS state, or order
@@ -35,6 +36,7 @@ Reserved additive profiles:
 - `volatility`
 - `regime`
 - `data-quality`
+- `feature-vector`
 - `patterns`
 - `derivatives`
 - `institutional`
@@ -77,6 +79,19 @@ Feed quality:
 - `FeedQualityEvent`
 - `FeedQualitySnapshot`
 - `FeedQualityTracker`
+
+Feature vectors:
+
+- `FeatureId`
+- `FeatureUnit`
+- `FeatureQuality`
+- `MissingValuePolicy`
+- `FeatureDefinition`
+- `FeatureSchema`
+- `FeatureRegistry`
+- `FeatureVector`
+- `FeatureVectorWriter`
+- `FeatureExtractor`
 
 ## Market Quality
 
@@ -283,6 +298,53 @@ This follows the production convention of preserving anomalous records with
 quality flags. Replay, investigation, and venue support workflows can then use
 the original sequence numbers and timestamps instead of relying on an opaque
 cleaned stream.
+
+## Feature Vectors
+
+`FeatureSchema` and `FeatureVectorWriter` provide a stable bridge between
+offline research and live extraction. A schema owns feature ordering, ids,
+names, units, scale, and missing-value policy. The writer reuses fixed arrays,
+fills missing defaults from the schema, and returns a `FeatureVector` carrying
+the schema hash used to produce it.
+
+The intended compatibility model is append-only:
+
+- keep existing feature ids and indices stable,
+- append new features at the end of a schema,
+- compare `schema_hash()` before replay/live model use,
+- treat missing values explicitly through `MissingValuePolicy`,
+- mark each value with `FeatureQuality`.
+
+```rust
+use of_analytics::{
+    FeatureDefinition, FeatureId, FeatureQuality, FeatureSchema, FeatureUnit,
+    FeatureVectorWriter, MissingValuePolicy,
+};
+
+let mut schema = FeatureSchema::<2>::new()?;
+let spread = schema.register(FeatureDefinition::new(
+    FeatureId::new(1)?,
+    "spread_bps",
+    FeatureUnit::BasisPoints,
+    1,
+    MissingValuePolicy::Sentinel(-1),
+)?)?;
+schema.register(FeatureDefinition::new(
+    FeatureId::new(2)?,
+    "quality_bps",
+    FeatureUnit::ScoreBasisPoints,
+    1,
+    MissingValuePolicy::Zero,
+)?)?;
+
+let mut writer = FeatureVectorWriter::new(&schema);
+writer.set(spread, 25, FeatureQuality::Good)?;
+let vector = writer.finish();
+
+assert_eq!(vector.values(), &[25, 0]);
+assert_eq!(vector.schema_hash(), schema.schema_hash());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
 
 ## Boundary
 

@@ -19,6 +19,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `of_analytics` feed-quality analytics for sequence gaps,
   out-of-order events, duplicates, stale events, locked/crossed books,
   timestamp skew, sequence resets, rates, flags, and health scoring.
+- Added `of_analytics` feature-vector APIs for stable feature ids, schemas,
+  schema hashes, missing-value policies, per-feature quality labels, reusable
+  fixed-capacity writers, and extractor contracts.
 - Added `tools/check_binding_parity.py` and CI coverage to validate that
   manifest-exposed C ABI symbols have matching Python ctypes registrations and
   Java JNA declarations before release.

@@ -25,6 +25,7 @@ toxicity = []
 volatility = []
 regime = []
 data-quality = []
+feature-vector = []
 patterns = []
 derivatives = []
 institutional = []
@@ -37,6 +38,7 @@ all = [
   "volatility",
   "regime",
   "data-quality",
+  "feature-vector",
   "patterns",
   "derivatives",
   "institutional",

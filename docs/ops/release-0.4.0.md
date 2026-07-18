@@ -52,8 +52,12 @@ registry dependency after `of_fix 0.1.0` is published.
 - feed-quality primitives for sequence gaps, out-of-order events, duplicates,
   stale events, locked/crossed books, timestamp skew, resets, and health
   scoring
+- feature-vector primitives for stable feature ids, ordered schemas, schema
+  hashes, missing-value policy, quality labels, reusable fixed-capacity
+  writers, and extractor contracts
 - feature profiles for future impact, toxicity, volatility, regime,
-  data-quality, patterns, derivatives, institutional, and ML feature modules
+  data-quality, feature-vector, patterns, derivatives, institutional, and ML
+  feature modules
 - borrowed `of_core::BookLevel` analysis paths that avoid copying book
   snapshots in hot analytics loops
 
