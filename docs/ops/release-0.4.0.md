@@ -152,6 +152,10 @@ foundation:
 - deterministic `PassiveQueuePlanner` with host-owned best bid/ask, queue
   depth, expected contra volume, adverse-selection estimates, passive
   improvement, and optional late crossing
+- deterministic `SorPlanner` with route status, order-type capability, price,
+  available quantity, fees/rebates, latency, reject rate, fill probability,
+  toxicity, data-quality scoring, fixed-capacity allocations, and OMS-safe
+  child plans
 
 The crate does not bypass OMS risk, journaling, adapter capability checks, kill
 switches, or reconciliation. Hosts should submit child orders through

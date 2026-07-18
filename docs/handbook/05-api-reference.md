@@ -611,6 +611,15 @@ Public parent/child and decision types:
 - `PassiveQueueEstimate`
 - `PassiveQueueDecision`
 - `PassiveQueuePlanner`
+- `SorRouteStatus`
+- `SorRouteCapability`
+- `SorRouteMetrics`
+- `SorRouteCandidate`
+- `SorScoreWeights`
+- `SorConfig`
+- `SorChildAllocation`
+- `SorDecision`
+- `SorPlanner`
 - `ImplementationShortfallContext`
 - `ImplementationShortfallConfig`
 - `ImplementationShortfallEstimate`

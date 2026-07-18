@@ -146,6 +146,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added deterministic passive queue planning in `of_execution_algos` with
   host-owned best bid/ask, queue-ahead quantity, expected contra volume,
   adverse-selection estimates, passive improvement, and optional late crossing.
+- Added deterministic smart-order-routing planning in `of_execution_algos`
+  with route status, order-type capability, route metrics, configurable score
+  weights, fixed-capacity allocations, and OMS-safe child plans.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

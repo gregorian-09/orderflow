@@ -26,6 +26,9 @@ The first foundation focuses on deterministic parent/child order handling:
   adverse move, volatility, spread, and impact estimates,
 - deterministic passive queue planning from host-owned best bid/ask, queue
   depth, expected contra volume, and adverse-selection estimates,
+- deterministic smart order routing from route price, available quantity,
+  capability, health/status, latency, reject rate, fill probability, fees, and
+  toxicity metrics,
 - deterministic TWAP replay over explicit timer/execution/status inputs.
 
 The crate does not submit orders, open sockets, own an OMS, bypass risk, or
@@ -38,7 +41,7 @@ reconciliation remain authoritative.
 ```mermaid
 flowchart LR
     Strategy[Strategy intent] --> Parent[ParentOrder]
-    Parent --> Algo[TWAP / POV / VWAP / Iceberg / IS / Passive queue]
+    Parent --> Algo[TWAP / POV / VWAP / Iceberg / IS / Passive queue / SOR]
     Market[Market data / timers / OMS events] --> Algo
     Algo --> Decision[AlgoDecision]
     Decision --> Child[ChildOrderPlan]
@@ -351,6 +354,70 @@ assert!(decision.child().is_some());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+## SOR Example
+
+`SorPlanner` scores host-provided route candidates and emits fixed-capacity
+child allocations. It does not own adapters or venue sessions; every allocation
+is still a canonical `ChildOrderPlan` for submission through the OMS.
+
+```rust
+use of_execution_algos::{
+    AlgoProgress, ChildOrderId, ParentOrder, ParentOrderId, SorConfig,
+    SorPlanner, SorRouteCandidate,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-1")?,
+    AccountId::new("acct")?,
+    RouteId::new("default")?,
+    StrategyId::new("sor")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+
+let candidates = [
+    SorRouteCandidate::new(
+        RouteId::new("r1")?,
+        OrderPrice::new(499_975)?,
+        OrderQty::new(25)?,
+    )?,
+    SorRouteCandidate::new(
+        RouteId::new("r2")?,
+        OrderPrice::new(500_000)?,
+        OrderQty::new(25)?,
+    )?,
+];
+let child_ids = [ChildOrderId::new("child-1")?, ChildOrderId::new("child-2")?];
+let client_ids = [ClientOrderId::new("cl-1")?, ClientOrderId::new("cl-2")?];
+let planner = SorPlanner::new(SorConfig::default());
+let decision = planner.plan_routes::<2>(
+    &parent,
+    AlgoProgress::new(parent.id(), parent.total_qty()),
+    2_000,
+    &candidates,
+    &child_ids,
+    &client_ids,
+    2_000,
+)?;
+
+assert!(!decision.is_empty());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 ## VWAP Example
 
 `VwapSlicePlanner` follows a historical or configured cumulative volume curve.
@@ -415,5 +482,5 @@ is:
 3. submit the resulting `OrderRequest` through the existing OMS,
 4. feed resulting `ExecutionEvent` values back into algo progress state.
 
-Future algorithms such as SOR, basket, and market-making helpers should build
-on this substrate instead of bypassing it.
+Future algorithms such as basket and market-making helpers should build on this
+substrate instead of bypassing it.
