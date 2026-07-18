@@ -169,6 +169,11 @@ foundation:
 - deterministic `SpreadPlanner` with hedge-ratio sizing, executable
   spread-edge gating, synchronized buy/sell child plans, ratio-aware quantity
   clipping, and explicit legging-risk boundaries
+- additive `AlgoRiskPolicy` controls with typed limits, host-owned risk
+  context, fixed-capacity explainable violation reports, kill switch and
+  operator pause outcomes, price collars, participation, notional, child
+  quantity, open quantity, child-count, stale-data, route-degradation, and
+  persistence-degradation checks
 - deterministic `MarketMakerPlanner` with fair-value quoting, inventory skew,
   volatility/adverse-selection spread widening, inventory-limit side
   suppression, and OMS-safe bid/ask child plans

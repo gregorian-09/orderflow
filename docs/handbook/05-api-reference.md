@@ -593,6 +593,13 @@ Public parent/child and decision types:
 - `AlgoProgress`
 - `AlgoAction`
 - `AlgoDecision`
+- `AlgoRiskOutcome`
+- `AlgoRiskViolationKind`
+- `AlgoRiskViolation`
+- `AlgoRiskLimits`
+- `AlgoRiskContext`
+- `AlgoRiskReport`
+- `AlgoRiskPolicy`
 - `TwapSlicePlanner`
 - `AlgoReplayEvent`
 - `AlgoReplayInput`
@@ -653,6 +660,7 @@ Public parent/child and decision types:
 Public constants:
 
 - `DEFAULT_ALGO_DECISION_CAPACITY`
+- `DEFAULT_ALGO_RISK_VIOLATION_CAPACITY`
 
 For parent/child and TWAP planning details, see
 [`of_execution_algos` reference](./05k-of-execution-algos-reference.md).

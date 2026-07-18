@@ -163,6 +163,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   hedge-ratio sizing, executable spread-edge gating, synchronized buy/sell
   child plans, ratio-aware quantity clipping, and explicit legging-risk
   boundaries.
+- Added additive algorithm risk controls in `of_execution_algos` with typed
+  limits, host-owned risk context, fixed-capacity explainable violation
+  reports, kill-switch/operator-pause outcomes, price collars, participation,
+  notional, child quantity, open quantity, child-count, stale-data,
+  route-degradation, and persistence-degradation checks.
 - Added deterministic market-making quote planning in `of_execution_algos`
   with fair-value quoting, inventory skew, volatility/adverse-selection spread
   widening, inventory-limit side suppression, and OMS-safe bid/ask child plans.

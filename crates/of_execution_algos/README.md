@@ -17,6 +17,7 @@ The first foundation focuses on deterministic parent/child order handling:
 - parent order metadata and lifecycle status,
 - child order plans that convert into canonical OMS `OrderRequest` values,
 - fixed-capacity `AlgoDecision` buffers for allocation-aware decision paths,
+- fixed-capacity algorithm risk reports for pre-submit child-plan checks,
 - progress folding from canonical `ExecutionEvent` reports,
 - deterministic TWAP slice planning with explicit clip limits,
 - deterministic POV/participation planning from observed market volume,
@@ -71,9 +72,109 @@ The crate is designed for predictable live execution paths:
 - identifiers reuse `of_execution_core::FixedAscii`,
 - parent and child plans are `Copy` where practical,
 - `AlgoDecision` uses a fixed-capacity array instead of a growing `Vec`,
+- `AlgoRiskReport` uses a fixed-capacity array instead of a growing `Vec`,
 - TWAP planning uses integer arithmetic and no wall-clock reads,
 - built-in planning does not allocate strings or maps per decision,
 - hosts provide client order ids and timestamps explicitly for auditability.
+
+## Risk Controls
+
+`AlgoRiskPolicy` validates planned child orders before the host submits them to
+`of_execution`. It is intentionally separate from every planner method, so
+existing TWAP/POV/VWAP/SOR/spread/market-making APIs remain unchanged and hosts
+can opt into the checks they need.
+
+Configurable limits include:
+
+- parent maximum quantity,
+- child maximum quantity,
+- child notional,
+- participation cap from observed market volume,
+- price collar around a host-supplied reference price,
+- open child quantity,
+- child submissions per decision,
+- child submissions in a caller-defined rate window,
+- stale market-data block,
+- route degradation block,
+- persistence degradation block,
+- kill switch and operator pause.
+
+Risk reports are explainable and allocation-aware: `AlgoRiskReport` retains a
+fixed number of `AlgoRiskViolation` values and exposes `truncated()` when more
+violations occurred than the caller chose to retain.
+
+```rust
+use of_execution_algos::{
+    AlgoProgress, AlgoRiskContext, AlgoRiskLimits, AlgoRiskPolicy,
+    ChildOrderId, ParentOrder, ParentOrderId, DEFAULT_ALGO_RISK_VIOLATION_CAPACITY,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-risk")?,
+    AccountId::new("acct")?,
+    RouteId::new("sim")?,
+    StrategyId::new("risk")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+let child = of_execution_algos::ChildOrderPlan::new(
+    ChildOrderId::new("risk-child")?,
+    parent.id(),
+    of_execution_core::OrderRequest {
+        client_order_id: ClientOrderId::new("risk-cl")?,
+        account_id: parent.account_id(),
+        route_id: parent.route_id(),
+        strategy_id: parent.strategy_id(),
+        symbol: parent.symbol(),
+        side: parent.side(),
+        order_type: parent.order_type(),
+        time_in_force: parent.time_in_force(),
+        quantity: OrderQty::new(10)?,
+        limit_price: OrderPrice::new(500_000)?,
+        stop_price: OrderPrice(0),
+        ts_exchange_ns: 0,
+        ts_recv_ns: 2_000,
+    },
+    2_000,
+)?;
+let limits = AlgoRiskLimits::new(
+    OrderQty::new(100)?,
+    OrderQty::new(25)?,
+    10_000_000,
+    1_500,
+    100,
+    OrderQty::new(50)?,
+    2,
+    10,
+)?;
+let context = AlgoRiskContext::new(OrderPrice::new(500_000)?)?
+    .with_observed_market_volume(OrderQty::new(1_000)?);
+let report = AlgoRiskPolicy::new(limits).evaluate_child::<
+    DEFAULT_ALGO_RISK_VIOLATION_CAPACITY,
+>(
+    &parent,
+    AlgoProgress::new(parent.id(), parent.total_qty()),
+    &child,
+    context,
+)?;
+
+assert!(report.is_allowed());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
 
 ## TWAP Example
 

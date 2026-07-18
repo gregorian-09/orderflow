@@ -13,6 +13,8 @@ use of_execution_core::{
 
 /// Default maximum number of actions retained in an [`AlgoDecision`].
 pub const DEFAULT_ALGO_DECISION_CAPACITY: usize = 16;
+/// Default maximum number of retained violations in an [`AlgoRiskReport`].
+pub const DEFAULT_ALGO_RISK_VIOLATION_CAPACITY: usize = 16;
 
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -132,6 +134,8 @@ pub enum AlgoError {
     ParentTerminal,
     /// Progress quantities are internally inconsistent.
     InvalidProgress,
+    /// Algorithm risk limits or context are invalid.
+    InvalidRiskParameters,
     /// Fixed-capacity decision buffer is full.
     DecisionFull {
         /// Configured decision capacity.
@@ -174,6 +178,7 @@ impl fmt::Display for AlgoError {
             }
             Self::ParentTerminal => write!(f, "terminal parent cannot release child orders"),
             Self::InvalidProgress => write!(f, "algorithm progress is inconsistent"),
+            Self::InvalidRiskParameters => write!(f, "invalid algorithm risk parameters"),
             Self::DecisionFull { capacity } => {
                 write!(f, "algorithm decision capacity {capacity} is full")
             }
@@ -730,6 +735,719 @@ impl<const N: usize> AlgoDecision<N> {
 impl<const N: usize> Default for AlgoDecision<N> {
     fn default() -> Self {
         Self::new(0)
+    }
+}
+
+/// Algorithm risk-policy outcome.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum AlgoRiskOutcome {
+    /// All configured checks passed.
+    Allow = 1,
+    /// One or more configured limits blocked submission.
+    Block = 2,
+    /// Kill switch or operator pause requires immediate halt semantics.
+    KillSwitch = 3,
+}
+
+/// Algorithm risk violation category.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum AlgoRiskViolationKind {
+    /// Kill switch is active.
+    KillSwitchActive = 1,
+    /// Operator pause is active.
+    OperatorPaused = 2,
+    /// Parent order is terminal.
+    ParentTerminal = 3,
+    /// Parent/progress/child relationship is inconsistent.
+    InvalidProgress = 4,
+    /// Market data is stale.
+    StaleMarketData = 5,
+    /// Route is degraded.
+    RouteDegraded = 6,
+    /// Persistence/journaling path is degraded.
+    PersistenceDegraded = 7,
+    /// Parent quantity exceeds configured maximum.
+    ParentQuantityExceeded = 8,
+    /// Child quantity exceeds configured maximum.
+    ChildQuantityExceeded = 9,
+    /// Child notional exceeds configured maximum.
+    ChildNotionalExceeded = 10,
+    /// Child price is outside configured collar.
+    PriceCollarExceeded = 11,
+    /// Child would exceed configured participation cap.
+    ParticipationExceeded = 12,
+    /// Open child quantity would exceed configured limit.
+    OpenQuantityExceeded = 13,
+    /// Decision contains too many child submissions.
+    ChildrenPerDecisionExceeded = 14,
+    /// Caller-reported child order rate exceeds configured limit.
+    ChildOrderRateExceeded = 15,
+    /// Generated child request failed canonical OMS validation.
+    InvalidChildPlan = 16,
+}
+
+/// One algorithm risk violation retained in a report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoRiskViolation {
+    kind: AlgoRiskViolationKind,
+    child_id: Option<ChildOrderId>,
+    measured: u128,
+    limit: u128,
+}
+
+impl AlgoRiskViolation {
+    /// Creates a violation.
+    pub const fn new(
+        kind: AlgoRiskViolationKind,
+        child_id: Option<ChildOrderId>,
+        measured: u128,
+        limit: u128,
+    ) -> Self {
+        Self {
+            kind,
+            child_id,
+            measured,
+            limit,
+        }
+    }
+
+    /// Returns violation category.
+    pub const fn kind(&self) -> AlgoRiskViolationKind {
+        self.kind
+    }
+
+    /// Returns associated child identifier when the violation is child-specific.
+    pub const fn child_id(&self) -> Option<ChildOrderId> {
+        self.child_id
+    }
+
+    /// Returns measured value.
+    pub const fn measured(&self) -> u128 {
+        self.measured
+    }
+
+    /// Returns configured limit.
+    pub const fn limit(&self) -> u128 {
+        self.limit
+    }
+}
+
+/// Algorithm risk limits.
+///
+/// Zero-valued limits are disabled, except basis-point limits where `10_000`
+/// means 100 percent. This keeps one struct usable for schedule-driven and
+/// latency-sensitive planners without forcing all hosts to configure every
+/// possible control.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoRiskLimits {
+    max_parent_qty: OrderQty,
+    max_child_qty: OrderQty,
+    max_child_notional: u128,
+    max_participation_bps: u16,
+    price_collar_bps: u16,
+    max_open_qty: OrderQty,
+    max_children_per_decision: u16,
+    max_child_orders_in_window: u32,
+}
+
+impl AlgoRiskLimits {
+    /// Creates algorithm risk limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError::InvalidRiskParameters`] when quantities are
+    /// negative or basis-point limits exceed `10_000`.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "flat risk limit constructor keeps every limit explicit"
+    )]
+    pub const fn new(
+        max_parent_qty: OrderQty,
+        max_child_qty: OrderQty,
+        max_child_notional: u128,
+        max_participation_bps: u16,
+        price_collar_bps: u16,
+        max_open_qty: OrderQty,
+        max_children_per_decision: u16,
+        max_child_orders_in_window: u32,
+    ) -> Result<Self, AlgoError> {
+        if max_parent_qty.0 < 0
+            || max_child_qty.0 < 0
+            || max_open_qty.0 < 0
+            || max_participation_bps > 10_000
+            || price_collar_bps > 10_000
+        {
+            return Err(AlgoError::InvalidRiskParameters);
+        }
+        Ok(Self {
+            max_parent_qty,
+            max_child_qty,
+            max_child_notional,
+            max_participation_bps,
+            price_collar_bps,
+            max_open_qty,
+            max_children_per_decision,
+            max_child_orders_in_window,
+        })
+    }
+
+    /// Returns a policy with all optional limits disabled.
+    pub const fn unbounded() -> Self {
+        Self {
+            max_parent_qty: OrderQty(0),
+            max_child_qty: OrderQty(0),
+            max_child_notional: 0,
+            max_participation_bps: 0,
+            price_collar_bps: 0,
+            max_open_qty: OrderQty(0),
+            max_children_per_decision: 0,
+            max_child_orders_in_window: 0,
+        }
+    }
+
+    /// Returns maximum parent quantity, or zero when disabled.
+    pub const fn max_parent_qty(&self) -> OrderQty {
+        self.max_parent_qty
+    }
+
+    /// Returns maximum child quantity, or zero when disabled.
+    pub const fn max_child_qty(&self) -> OrderQty {
+        self.max_child_qty
+    }
+
+    /// Returns maximum child notional, or zero when disabled.
+    pub const fn max_child_notional(&self) -> u128 {
+        self.max_child_notional
+    }
+
+    /// Returns maximum participation in basis points, or zero when disabled.
+    pub const fn max_participation_bps(&self) -> u16 {
+        self.max_participation_bps
+    }
+
+    /// Returns price collar in basis points, or zero when disabled.
+    pub const fn price_collar_bps(&self) -> u16 {
+        self.price_collar_bps
+    }
+
+    /// Returns maximum open child quantity, or zero when disabled.
+    pub const fn max_open_qty(&self) -> OrderQty {
+        self.max_open_qty
+    }
+
+    /// Returns maximum child submissions per decision, or zero when disabled.
+    pub const fn max_children_per_decision(&self) -> u16 {
+        self.max_children_per_decision
+    }
+
+    /// Returns maximum child submissions in the caller's rate window, or zero
+    /// when disabled.
+    pub const fn max_child_orders_in_window(&self) -> u32 {
+        self.max_child_orders_in_window
+    }
+}
+
+impl Default for AlgoRiskLimits {
+    fn default() -> Self {
+        Self::unbounded()
+    }
+}
+
+/// Host-supplied risk context for one algorithm decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoRiskContext {
+    reference_price: OrderPrice,
+    observed_market_volume: OrderQty,
+    open_child_orders: u32,
+    child_orders_in_window: u32,
+    stale_market_data: bool,
+    route_degraded: bool,
+    persistence_degraded: bool,
+    kill_switch_active: bool,
+    operator_paused: bool,
+}
+
+impl AlgoRiskContext {
+    /// Creates risk context around a positive reference price.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError::InvalidRiskParameters`] when the reference price is
+    /// not positive.
+    pub const fn new(reference_price: OrderPrice) -> Result<Self, AlgoError> {
+        if reference_price.0 <= 0 {
+            return Err(AlgoError::InvalidRiskParameters);
+        }
+        Ok(Self {
+            reference_price,
+            observed_market_volume: OrderQty(0),
+            open_child_orders: 0,
+            child_orders_in_window: 0,
+            stale_market_data: false,
+            route_degraded: false,
+            persistence_degraded: false,
+            kill_switch_active: false,
+            operator_paused: false,
+        })
+    }
+
+    /// Returns the reference price used for collar checks.
+    pub const fn reference_price(&self) -> OrderPrice {
+        self.reference_price
+    }
+
+    /// Returns observed market volume used for participation checks.
+    pub const fn observed_market_volume(&self) -> OrderQty {
+        self.observed_market_volume
+    }
+
+    /// Returns currently open child order count supplied by the host.
+    pub const fn open_child_orders(&self) -> u32 {
+        self.open_child_orders
+    }
+
+    /// Returns child order count in the caller's rate-limit window.
+    pub const fn child_orders_in_window(&self) -> u32 {
+        self.child_orders_in_window
+    }
+
+    /// Returns true when market data should block child release.
+    pub const fn stale_market_data(&self) -> bool {
+        self.stale_market_data
+    }
+
+    /// Returns true when route degradation should block child release.
+    pub const fn route_degraded(&self) -> bool {
+        self.route_degraded
+    }
+
+    /// Returns true when persistence degradation should block child release.
+    pub const fn persistence_degraded(&self) -> bool {
+        self.persistence_degraded
+    }
+
+    /// Returns true when kill switch is active.
+    pub const fn kill_switch_active(&self) -> bool {
+        self.kill_switch_active
+    }
+
+    /// Returns true when operator pause is active.
+    pub const fn operator_paused(&self) -> bool {
+        self.operator_paused
+    }
+
+    /// Returns a copy with observed market volume.
+    pub const fn with_observed_market_volume(mut self, volume: OrderQty) -> Self {
+        self.observed_market_volume = volume;
+        self
+    }
+
+    /// Returns a copy with currently open child order count.
+    pub const fn with_open_child_orders(mut self, count: u32) -> Self {
+        self.open_child_orders = count;
+        self
+    }
+
+    /// Returns a copy with child order count in the caller's rate window.
+    pub const fn with_child_orders_in_window(mut self, count: u32) -> Self {
+        self.child_orders_in_window = count;
+        self
+    }
+
+    /// Returns a copy with stale market-data flag.
+    pub const fn with_stale_market_data(mut self, value: bool) -> Self {
+        self.stale_market_data = value;
+        self
+    }
+
+    /// Returns a copy with route-degraded flag.
+    pub const fn with_route_degraded(mut self, value: bool) -> Self {
+        self.route_degraded = value;
+        self
+    }
+
+    /// Returns a copy with persistence-degraded flag.
+    pub const fn with_persistence_degraded(mut self, value: bool) -> Self {
+        self.persistence_degraded = value;
+        self
+    }
+
+    /// Returns a copy with kill-switch flag.
+    pub const fn with_kill_switch_active(mut self, value: bool) -> Self {
+        self.kill_switch_active = value;
+        self
+    }
+
+    /// Returns a copy with operator-pause flag.
+    pub const fn with_operator_paused(mut self, value: bool) -> Self {
+        self.operator_paused = value;
+        self
+    }
+}
+
+/// Fixed-capacity risk report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoRiskReport<const N: usize = DEFAULT_ALGO_RISK_VIOLATION_CAPACITY> {
+    outcome: AlgoRiskOutcome,
+    violations: [Option<AlgoRiskViolation>; N],
+    len: usize,
+    truncated: bool,
+}
+
+impl<const N: usize> AlgoRiskReport<N> {
+    /// Creates an empty allow report.
+    pub const fn new() -> Self {
+        Self {
+            outcome: AlgoRiskOutcome::Allow,
+            violations: [None; N],
+            len: 0,
+            truncated: false,
+        }
+    }
+
+    /// Returns risk outcome.
+    pub const fn outcome(&self) -> AlgoRiskOutcome {
+        self.outcome
+    }
+
+    /// Returns true when submission is allowed.
+    pub const fn is_allowed(&self) -> bool {
+        matches!(self.outcome, AlgoRiskOutcome::Allow)
+    }
+
+    /// Returns retained violation count.
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns true when no retained violations are present.
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Returns true when more violations occurred than the report retained.
+    pub const fn truncated(&self) -> bool {
+        self.truncated
+    }
+
+    /// Returns retained violations in insertion order.
+    pub fn violations(&self) -> impl Iterator<Item = &AlgoRiskViolation> {
+        self.violations[..self.len]
+            .iter()
+            .filter_map(Option::as_ref)
+    }
+
+    /// Returns first retained violation.
+    pub fn first_violation(&self) -> Option<&AlgoRiskViolation> {
+        self.violations().next()
+    }
+
+    fn push(&mut self, violation: AlgoRiskViolation) {
+        if self.len == N {
+            self.truncated = true;
+            self.outcome = stronger_risk_outcome(self.outcome, violation.kind());
+            return;
+        }
+        self.outcome = stronger_risk_outcome(self.outcome, violation.kind());
+        self.violations[self.len] = Some(violation);
+        self.len += 1;
+    }
+}
+
+impl<const N: usize> Default for AlgoRiskReport<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Additive algorithm risk policy for validating child plans before OMS submit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoRiskPolicy {
+    limits: AlgoRiskLimits,
+}
+
+impl AlgoRiskPolicy {
+    /// Creates a policy from limits.
+    pub const fn new(limits: AlgoRiskLimits) -> Self {
+        Self { limits }
+    }
+
+    /// Returns configured limits.
+    pub const fn limits(&self) -> AlgoRiskLimits {
+        self.limits
+    }
+
+    /// Evaluates one planned child order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError`] when parent, progress, or child state is invalid.
+    pub fn evaluate_child<const N: usize>(
+        &self,
+        parent: &ParentOrder,
+        progress: AlgoProgress,
+        child: &ChildOrderPlan,
+        context: AlgoRiskContext,
+    ) -> Result<AlgoRiskReport<N>, AlgoError> {
+        parent.validate()?;
+        let mut report = AlgoRiskReport::new();
+        self.check_static_context(&mut report, parent, progress)?;
+        self.check_dynamic_context(&mut report, context);
+        self.check_child(&mut report, parent, progress, child, context, 1)?;
+        Ok(report)
+    }
+
+    /// Evaluates all child submissions inside one [`AlgoDecision`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError`] when parent, progress, or child state is invalid.
+    pub fn evaluate_decision<const REPORT_N: usize, const DECISION_N: usize>(
+        &self,
+        parent: &ParentOrder,
+        progress: AlgoProgress,
+        decision: &AlgoDecision<DECISION_N>,
+        context: AlgoRiskContext,
+    ) -> Result<AlgoRiskReport<REPORT_N>, AlgoError> {
+        parent.validate()?;
+        let mut report = AlgoRiskReport::new();
+        self.check_static_context(&mut report, parent, progress)?;
+        self.check_dynamic_context(&mut report, context);
+
+        let mut child_count = 0_u16;
+        let mut planned_open_qty = progress.open_qty().0;
+        for action in decision.actions() {
+            if let AlgoAction::SubmitChild(child) = action {
+                child_count = child_count.saturating_add(1);
+                self.check_child(&mut report, parent, progress, child, context, child_count)?;
+                planned_open_qty = planned_open_qty.saturating_add(child.request().quantity.0);
+            }
+        }
+
+        self.check_open_qty(&mut report, planned_open_qty, None);
+        Ok(report)
+    }
+
+    fn check_static_context<const N: usize>(
+        &self,
+        report: &mut AlgoRiskReport<N>,
+        parent: &ParentOrder,
+        progress: AlgoProgress,
+    ) -> Result<(), AlgoError> {
+        if progress.parent_id() != parent.id() || progress.target_qty() != parent.total_qty() {
+            report.push(AlgoRiskViolation::new(
+                AlgoRiskViolationKind::InvalidProgress,
+                None,
+                1,
+                0,
+            ));
+            return Err(AlgoError::InvalidProgress);
+        }
+        if parent.status().is_terminal() {
+            report.push(AlgoRiskViolation::new(
+                AlgoRiskViolationKind::ParentTerminal,
+                None,
+                u128::from(parent.status() as u8),
+                0,
+            ));
+        }
+        if self.limits.max_parent_qty().0 > 0
+            && parent.total_qty().0 > self.limits.max_parent_qty().0
+        {
+            report.push(AlgoRiskViolation::new(
+                AlgoRiskViolationKind::ParentQuantityExceeded,
+                None,
+                i64_to_u128(parent.total_qty().0),
+                i64_to_u128(self.limits.max_parent_qty().0),
+            ));
+        }
+        Ok(())
+    }
+
+    fn check_dynamic_context<const N: usize>(
+        &self,
+        report: &mut AlgoRiskReport<N>,
+        context: AlgoRiskContext,
+    ) {
+        if context.kill_switch_active() {
+            report.push(AlgoRiskViolation::new(
+                AlgoRiskViolationKind::KillSwitchActive,
+                None,
+                1,
+                0,
+            ));
+        }
+        if context.operator_paused() {
+            report.push(AlgoRiskViolation::new(
+                AlgoRiskViolationKind::OperatorPaused,
+                None,
+                1,
+                0,
+            ));
+        }
+        if context.stale_market_data() {
+            report.push(AlgoRiskViolation::new(
+                AlgoRiskViolationKind::StaleMarketData,
+                None,
+                1,
+                0,
+            ));
+        }
+        if context.route_degraded() {
+            report.push(AlgoRiskViolation::new(
+                AlgoRiskViolationKind::RouteDegraded,
+                None,
+                1,
+                0,
+            ));
+        }
+        if context.persistence_degraded() {
+            report.push(AlgoRiskViolation::new(
+                AlgoRiskViolationKind::PersistenceDegraded,
+                None,
+                1,
+                0,
+            ));
+        }
+    }
+
+    fn check_child<const N: usize>(
+        &self,
+        report: &mut AlgoRiskReport<N>,
+        parent: &ParentOrder,
+        progress: AlgoProgress,
+        child: &ChildOrderPlan,
+        context: AlgoRiskContext,
+        child_count: u16,
+    ) -> Result<(), AlgoError> {
+        if child.parent_id() != parent.id() {
+            report.push(AlgoRiskViolation::new(
+                AlgoRiskViolationKind::InvalidProgress,
+                Some(child.child_id()),
+                1,
+                0,
+            ));
+            return Err(AlgoError::InvalidProgress);
+        }
+        if let Err(err) = child.request().validate() {
+            report.push(AlgoRiskViolation::new(
+                AlgoRiskViolationKind::InvalidChildPlan,
+                Some(child.child_id()),
+                1,
+                0,
+            ));
+            return Err(AlgoError::Core(err));
+        }
+
+        let quantity = child.request().quantity.0;
+        if self.limits.max_child_qty().0 > 0 && quantity > self.limits.max_child_qty().0 {
+            report.push(AlgoRiskViolation::new(
+                AlgoRiskViolationKind::ChildQuantityExceeded,
+                Some(child.child_id()),
+                i64_to_u128(quantity),
+                i64_to_u128(self.limits.max_child_qty().0),
+            ));
+        }
+
+        let notional = child_notional(child);
+        if self.limits.max_child_notional() > 0 && notional > self.limits.max_child_notional() {
+            report.push(AlgoRiskViolation::new(
+                AlgoRiskViolationKind::ChildNotionalExceeded,
+                Some(child.child_id()),
+                notional,
+                self.limits.max_child_notional(),
+            ));
+        }
+
+        let price_distance =
+            price_distance_bps(child.request().limit_price, context.reference_price());
+        if self.limits.price_collar_bps() > 0
+            && price_distance > u32::from(self.limits.price_collar_bps())
+        {
+            report.push(AlgoRiskViolation::new(
+                AlgoRiskViolationKind::PriceCollarExceeded,
+                Some(child.child_id()),
+                u128::from(price_distance),
+                u128::from(self.limits.price_collar_bps()),
+            ));
+        }
+
+        if self.limits.max_participation_bps() > 0 && context.observed_market_volume().0 > 0 {
+            let participation = participation_bps(quantity, context.observed_market_volume().0);
+            if participation > u32::from(self.limits.max_participation_bps()) {
+                report.push(AlgoRiskViolation::new(
+                    AlgoRiskViolationKind::ParticipationExceeded,
+                    Some(child.child_id()),
+                    u128::from(participation),
+                    u128::from(self.limits.max_participation_bps()),
+                ));
+            }
+        }
+
+        self.check_child_count(report, child_count, context);
+        self.check_open_qty(
+            report,
+            progress.open_qty().0.saturating_add(quantity),
+            Some(child.child_id()),
+        );
+        Ok(())
+    }
+
+    fn check_child_count<const N: usize>(
+        &self,
+        report: &mut AlgoRiskReport<N>,
+        child_count: u16,
+        context: AlgoRiskContext,
+    ) {
+        if self.limits.max_children_per_decision() > 0
+            && child_count > self.limits.max_children_per_decision()
+        {
+            report.push(AlgoRiskViolation::new(
+                AlgoRiskViolationKind::ChildrenPerDecisionExceeded,
+                None,
+                u128::from(child_count),
+                u128::from(self.limits.max_children_per_decision()),
+            ));
+        }
+        if self.limits.max_child_orders_in_window() > 0 {
+            let projected = context
+                .child_orders_in_window()
+                .saturating_add(u32::from(child_count));
+            if projected > self.limits.max_child_orders_in_window() {
+                report.push(AlgoRiskViolation::new(
+                    AlgoRiskViolationKind::ChildOrderRateExceeded,
+                    None,
+                    u128::from(projected),
+                    u128::from(self.limits.max_child_orders_in_window()),
+                ));
+            }
+        }
+    }
+
+    fn check_open_qty<const N: usize>(
+        &self,
+        report: &mut AlgoRiskReport<N>,
+        open_qty: i64,
+        child_id: Option<ChildOrderId>,
+    ) {
+        if self.limits.max_open_qty().0 > 0 && open_qty > self.limits.max_open_qty().0 {
+            report.push(AlgoRiskViolation::new(
+                AlgoRiskViolationKind::OpenQuantityExceeded,
+                child_id,
+                i64_to_u128(open_qty),
+                i64_to_u128(self.limits.max_open_qty().0),
+            ));
+        }
+    }
+}
+
+impl Default for AlgoRiskPolicy {
+    fn default() -> Self {
+        Self::new(AlgoRiskLimits::default())
     }
 }
 
@@ -4740,6 +5458,46 @@ fn scale_qty_bps(quantity: i64, bps: u32) -> i64 {
     i64::try_from(scaled).unwrap_or(i64::MAX)
 }
 
+fn participation_bps(child_qty: i64, market_volume: i64) -> u32 {
+    if child_qty <= 0 || market_volume <= 0 {
+        return 0;
+    }
+    let bps = (i128::from(child_qty) * 10_000) / i128::from(market_volume);
+    u32::try_from(bps.clamp(0, i128::from(u32::MAX))).unwrap_or(u32::MAX)
+}
+
+fn price_distance_bps(price: OrderPrice, reference: OrderPrice) -> u32 {
+    if price.0 <= 0 || reference.0 <= 0 {
+        return u32::MAX;
+    }
+    let distance = price.0.abs_diff(reference.0);
+    let bps = (u128::from(distance) * 10_000) / i64_to_u128(reference.0);
+    u32::try_from(bps.min(u128::from(u32::MAX))).unwrap_or(u32::MAX)
+}
+
+fn child_notional(child: &ChildOrderPlan) -> u128 {
+    i64_to_u128(child.request().quantity.0)
+        .saturating_mul(i64_to_u128(child.request().limit_price.0))
+}
+
+fn i64_to_u128(value: i64) -> u128 {
+    u128::try_from(value.max(0)).unwrap_or(0)
+}
+
+fn stronger_risk_outcome(current: AlgoRiskOutcome, kind: AlgoRiskViolationKind) -> AlgoRiskOutcome {
+    if matches!(
+        kind,
+        AlgoRiskViolationKind::KillSwitchActive | AlgoRiskViolationKind::OperatorPaused
+    ) {
+        return AlgoRiskOutcome::KillSwitch;
+    }
+    if matches!(current, AlgoRiskOutcome::KillSwitch) {
+        AlgoRiskOutcome::KillSwitch
+    } else {
+        AlgoRiskOutcome::Block
+    }
+}
+
 fn scale_qty_inverse_bps(quantity: i64, bps: u32) -> i64 {
     if bps == 0 {
         return 0;
@@ -5175,6 +5933,176 @@ mod tests {
             Err(AlgoError::DecisionFull { capacity: 1 })
         );
         assert_eq!(decision.actions().count(), 1);
+    }
+
+    #[test]
+    fn risk_policy_allows_child_inside_limits() {
+        let parent = parent();
+        let child = ChildOrderPlan::new(
+            ChildOrderId::new("risk-ok").expect("child"),
+            parent.id(),
+            parent.build_order_request(
+                ClientOrderId::new("risk-ok-cl").expect("client"),
+                OrderQty(10),
+                1,
+            ),
+            1,
+        )
+        .expect("child");
+        let limits = AlgoRiskLimits::new(
+            OrderQty(200),
+            OrderQty(25),
+            10_000_000,
+            1_500,
+            100,
+            OrderQty(50),
+            2,
+            10,
+        )
+        .expect("limits");
+        let context = AlgoRiskContext::new(OrderPrice(500_000))
+            .expect("context")
+            .with_observed_market_volume(OrderQty(1_000));
+
+        let report = AlgoRiskPolicy::new(limits)
+            .evaluate_child::<DEFAULT_ALGO_RISK_VIOLATION_CAPACITY>(
+                &parent,
+                AlgoProgress::new(parent.id(), parent.total_qty()),
+                &child,
+                context,
+            )
+            .expect("report");
+
+        assert!(report.is_allowed());
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn risk_policy_blocks_limit_breaches() {
+        let parent = parent();
+        let child = ChildOrderPlan::new(
+            ChildOrderId::new("risk-block").expect("child"),
+            parent.id(),
+            parent.build_order_request_at_price(
+                ClientOrderId::new("risk-block-cl").expect("client"),
+                OrderQty(25),
+                OrderPrice(510_000),
+                1,
+            ),
+            1,
+        )
+        .expect("child");
+        let limits = AlgoRiskLimits::new(
+            OrderQty(100),
+            OrderQty(10),
+            5_000_000,
+            1_000,
+            100,
+            OrderQty(50),
+            2,
+            10,
+        )
+        .expect("limits");
+        let context = AlgoRiskContext::new(OrderPrice(500_000))
+            .expect("context")
+            .with_observed_market_volume(OrderQty(100));
+
+        let report = AlgoRiskPolicy::new(limits)
+            .evaluate_child::<DEFAULT_ALGO_RISK_VIOLATION_CAPACITY>(
+                &parent,
+                AlgoProgress::new(parent.id(), parent.total_qty()),
+                &child,
+                context,
+            )
+            .expect("report");
+
+        assert_eq!(report.outcome(), AlgoRiskOutcome::Block);
+        assert!(report
+            .violations()
+            .any(|violation| violation.kind() == AlgoRiskViolationKind::ChildQuantityExceeded));
+        assert!(report
+            .violations()
+            .any(|violation| violation.kind() == AlgoRiskViolationKind::PriceCollarExceeded));
+        assert!(report
+            .violations()
+            .any(|violation| violation.kind() == AlgoRiskViolationKind::ParticipationExceeded));
+    }
+
+    #[test]
+    fn risk_policy_kill_switch_halts_submission() {
+        let parent = parent();
+        let child = ChildOrderPlan::new(
+            ChildOrderId::new("risk-kill").expect("child"),
+            parent.id(),
+            parent.build_order_request(
+                ClientOrderId::new("risk-kill-cl").expect("client"),
+                OrderQty(10),
+                1,
+            ),
+            1,
+        )
+        .expect("child");
+        let context = AlgoRiskContext::new(OrderPrice(500_000))
+            .expect("context")
+            .with_kill_switch_active(true);
+
+        let report = AlgoRiskPolicy::default()
+            .evaluate_child::<DEFAULT_ALGO_RISK_VIOLATION_CAPACITY>(
+                &parent,
+                AlgoProgress::new(parent.id(), parent.total_qty()),
+                &child,
+                context,
+            )
+            .expect("report");
+
+        assert_eq!(report.outcome(), AlgoRiskOutcome::KillSwitch);
+        assert_eq!(
+            report.first_violation().expect("violation").kind(),
+            AlgoRiskViolationKind::KillSwitchActive
+        );
+    }
+
+    #[test]
+    fn risk_policy_checks_decision_level_limits() {
+        let parent = parent();
+        let mut decision = AlgoDecision::<2>::new(1);
+        for index in 1..=2 {
+            let suffix = index.to_string();
+            let child = ChildOrderPlan::new(
+                ChildOrderId::new(&format!("risk-d-{suffix}")).expect("child"),
+                parent.id(),
+                parent.build_order_request(
+                    ClientOrderId::new(&format!("risk-d-cl-{suffix}")).expect("client"),
+                    OrderQty(10),
+                    index,
+                ),
+                index,
+            )
+            .expect("child");
+            decision.push(AlgoAction::SubmitChild(child)).expect("push");
+        }
+        let limits = AlgoRiskLimits::new(OrderQty(0), OrderQty(0), 0, 0, 0, OrderQty(15), 1, 1)
+            .expect("limits");
+        let context = AlgoRiskContext::new(OrderPrice(500_000))
+            .expect("context")
+            .with_child_orders_in_window(0);
+
+        let report = AlgoRiskPolicy::new(limits)
+            .evaluate_decision::<DEFAULT_ALGO_RISK_VIOLATION_CAPACITY, 2>(
+                &parent,
+                AlgoProgress::new(parent.id(), parent.total_qty()),
+                &decision,
+                context,
+            )
+            .expect("report");
+
+        assert_eq!(report.outcome(), AlgoRiskOutcome::Block);
+        assert!(report.violations().any(
+            |violation| violation.kind() == AlgoRiskViolationKind::ChildrenPerDecisionExceeded
+        ));
+        assert!(report
+            .violations()
+            .any(|violation| violation.kind() == AlgoRiskViolationKind::OpenQuantityExceeded));
     }
 
     #[test]
