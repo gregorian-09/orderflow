@@ -58,7 +58,9 @@ registry dependency after `of_fix 0.1.0` is published.
 - fixed-window volatility/noise primitives with bipower variation, jump
   variation, OHLC range estimators, signature-plot points, and intraday
   seasonality buckets
-- threshold-based regime classification
+- threshold-based regime classification plus composite trend/range/chop,
+  liquidity, spread, session, hidden-liquidity, and transition-confidence
+  labels
 - feed-quality primitives for sequence gaps, out-of-order events, duplicates,
   stale events, locked/crossed books, timestamp skew, resets, and health
   scoring

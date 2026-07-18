@@ -731,6 +731,14 @@ Public market-quality and liquidity types:
 - `RegimeInput`
 - `RegimeSnapshot`
 - `RegimeClassifier`
+- `TrendRegimeKind`
+- `LiquidityRegimeKind`
+- `SpreadRegimeKind`
+- `SessionRegimeKind`
+- `CompositeRegimeConfig`
+- `CompositeRegimeInput`
+- `CompositeRegimeSnapshot`
+- `CompositeRegimeClassifier`
 - `FeedQualityFlags`
 - `FeedQualityConfig`
 - `FeedQualityEvent`

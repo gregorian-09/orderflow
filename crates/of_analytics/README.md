@@ -30,7 +30,9 @@ The first foundation is dependency-light:
 - fixed-window volatility/noise primitives with bipower variation, jump
   variation, OHLC range estimators, signature-plot points, and intraday
   seasonality buckets,
-- threshold-based market regime classification,
+- threshold-based market regime classification plus composite trend/range/chop,
+  liquidity, spread, session, hidden-liquidity, and transition-confidence
+  labels,
 - feed-quality primitives for sequence gaps, out-of-order events, duplicates,
   stale events, locked/crossed books, timestamp skew, resets, and health
   scoring,
@@ -214,9 +216,10 @@ assert!(toxicity.toxic_flow_burst());
 
 ```rust
 use of_analytics::{
-    OhlcVolatilityEstimator, OhlcVolatilityInput, RegimeClassifier, RegimeInput,
-    RegimeKind, VolatilitySeasonalityTracker, VolatilitySignatureEstimator,
-    VolatilityTracker,
+    CompositeRegimeClassifier, CompositeRegimeInput, OhlcVolatilityEstimator,
+    OhlcVolatilityInput, RegimeClassifier, RegimeInput, RegimeKind,
+    SessionRegimeKind, TrendRegimeKind, VolatilitySeasonalityTracker,
+    VolatilitySignatureEstimator, VolatilityTracker,
 };
 
 let mut vol = VolatilityTracker::<8>::new()?;
@@ -234,6 +237,23 @@ let regime = RegimeClassifier::default().classify(RegimeInput::new(
 ));
 
 assert!(matches!(regime.kind(), RegimeKind::Normal | RegimeKind::Volatile));
+
+let composite = CompositeRegimeClassifier::default().classify(
+    CompositeRegimeInput::new(
+        8_000,
+        1_000,
+        1,
+        20,
+        2_000,
+        3_600_000_000_000,
+        3_600_000_000_000,
+        false,
+        0,
+        0,
+    )?,
+);
+assert_eq!(composite.trend(), TrendRegimeKind::Trend);
+assert_eq!(composite.session(), SessionRegimeKind::Continuous);
 
 let ohlc = OhlcVolatilityEstimator::estimate(OhlcVolatilityInput::new(
     100_000,

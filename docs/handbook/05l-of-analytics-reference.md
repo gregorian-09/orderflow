@@ -106,6 +106,14 @@ Impact/toxicity:
 - `RegimeInput`
 - `RegimeSnapshot`
 - `RegimeClassifier`
+- `TrendRegimeKind`
+- `LiquidityRegimeKind`
+- `SpreadRegimeKind`
+- `SessionRegimeKind`
+- `CompositeRegimeConfig`
+- `CompositeRegimeInput`
+- `CompositeRegimeSnapshot`
+- `CompositeRegimeClassifier`
 
 Feed quality:
 
@@ -467,12 +475,37 @@ assert_eq!(seasonality.snapshot(0)?.jump_count(), 1);
 a compact `RegimeSnapshot`. The default classifier prioritizes toxic flow, then
 illiquidity, then volatility.
 
+`CompositeRegimeClassifier` is the richer rule-based classifier. It emits
+separate trend/range/chop, liquidity, spread, and session labels, plus a
+volatility flag, hidden-liquidity proxy, and transition confidence. It is
+additive and does not change the existing `RegimeClassifier` behavior.
+
 ```rust
-use of_analytics::{RegimeClassifier, RegimeInput, RegimeKind};
+use of_analytics::{
+    CompositeRegimeClassifier, CompositeRegimeInput, RegimeClassifier, RegimeInput,
+    RegimeKind, SessionRegimeKind, TrendRegimeKind,
+};
 
 let regime = RegimeClassifier::default().classify(RegimeInput::new(1, 10, 8_000, 0));
 
 assert_eq!(regime.kind(), RegimeKind::Toxic);
+
+let composite = CompositeRegimeClassifier::default().classify(
+    CompositeRegimeInput::new(
+        8_000,
+        1_000,
+        1,
+        20,
+        2_000,
+        3_600_000_000_000,
+        3_600_000_000_000,
+        false,
+        0,
+        0,
+    )?,
+);
+assert_eq!(composite.trend(), TrendRegimeKind::Trend);
+assert_eq!(composite.session(), SessionRegimeKind::Continuous);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
