@@ -20,6 +20,8 @@ The first foundation focuses on deterministic parent/child order handling:
 - fixed-capacity algorithm risk reports for pre-submit child-plan checks,
 - progress folding from canonical `ExecutionEvent` reports,
 - host-serializable algorithm checkpoints and deterministic recovery plans,
+- deterministic child-order simulation reports that emit canonical
+  `ExecutionEvent` values for progress folding,
 - deterministic TWAP slice planning with explicit clip limits,
 - deterministic POV/participation planning from observed market volume,
 - deterministic VWAP planning from a borrowed cumulative volume curve,
@@ -238,6 +240,82 @@ assert_eq!(plan.request().quantity, OrderQty(10));
 
 The replay output vector is caller-owned and cleared before use. This keeps
 allocation policy visible to test, benchmark, and simulation hosts.
+
+## Child-Order Simulation
+
+`AlgoSimulator` turns generated `ChildOrderPlan` values into deterministic
+simulated `ExecutionEvent` values. This lets tests and replay harnesses drive
+`AlgoProgress::on_execution_event` without a live venue or adapter.
+
+The first simulator is intentionally simple and explicit:
+
+- host supplies available quantity,
+- host supplies fill price,
+- host controls reject behavior,
+- host controls whether unfilled leaves are cancelled,
+- host supplies simulated latency,
+- simulator generates deterministic venue/execution ids from a sequence.
+
+```rust
+use of_execution_algos::{
+    AlgoProgress, AlgoSimMarket, AlgoSimOutcome, AlgoSimulator, ChildOrderId,
+    ParentOrder, ParentOrderId,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-sim")?,
+    AccountId::new("acct")?,
+    RouteId::new("sim")?,
+    StrategyId::new("twap")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+let child = of_execution_algos::ChildOrderPlan::new(
+    ChildOrderId::new("sim-child")?,
+    parent.id(),
+    of_execution_core::OrderRequest {
+        client_order_id: ClientOrderId::new("sim-cl")?,
+        account_id: parent.account_id(),
+        route_id: parent.route_id(),
+        strategy_id: parent.strategy_id(),
+        symbol: parent.symbol(),
+        side: parent.side(),
+        order_type: parent.order_type(),
+        time_in_force: parent.time_in_force(),
+        quantity: OrderQty::new(10)?,
+        limit_price: OrderPrice::new(500_000)?,
+        stop_price: OrderPrice(0),
+        ts_exchange_ns: 0,
+        ts_recv_ns: 2_000,
+    },
+    2_000,
+)?;
+let simulator = AlgoSimulator::new(
+    AlgoSimMarket::new(OrderQty::new(10)?, OrderPrice::new(500_025)?, false, false, 25)?,
+);
+let step = simulator.simulate_child(&child, 1)?;
+let mut progress = AlgoProgress::new(parent.id(), parent.total_qty());
+progress.on_child_released(&child)?;
+progress.on_execution_event(&step.event());
+
+assert_eq!(step.outcome(), AlgoSimOutcome::Filled);
+assert_eq!(progress.completed_qty(), OrderQty::new(10)?);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
 
 ## Checkpoints And Recovery
 

@@ -604,6 +604,11 @@ Public parent/child and decision types:
 - `AlgoCheckpoint`
 - `AlgoRecoveryPolicy`
 - `AlgoRecoveryPlan`
+- `AlgoSimOutcome`
+- `AlgoSimMarket`
+- `AlgoSimStep`
+- `AlgoSimReport`
+- `AlgoSimulator`
 - `TwapSlicePlanner`
 - `AlgoReplayEvent`
 - `AlgoReplayInput`

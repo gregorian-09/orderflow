@@ -172,6 +172,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `of_execution_algos` with schema-versioned parent/progress snapshots, replay
   cursors, decision sequence restoration, pause/resume/complete/escalate
   recovery actions, and explicit separation from OMS WAL ownership.
+- Added deterministic child-order simulation in `of_execution_algos` with
+  explicit fill model inputs, canonical `ExecutionEvent` output, fixed-capacity
+  simulation reports, fill/reject/cancel/resting outcomes, simulated latency,
+  deterministic venue/execution id generation, and direct progress folding.
 - Added deterministic market-making quote planning in `of_execution_algos`
   with fair-value quoting, inventory skew, volatility/adverse-selection spread
   widening, inventory-limit side suppression, and OMS-safe bid/ask child plans.

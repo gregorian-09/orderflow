@@ -6,9 +6,9 @@ use std::error::Error;
 use std::fmt;
 
 use of_execution_core::{
-    AccountId, ClientOrderId, ExecutionCoreError, ExecutionEvent, ExecutionSymbol, FixedAscii,
-    OrderPrice, OrderQty, OrderRequest, OrderSide, OrderStatus, OrderType, RouteId, StrategyId,
-    TimeInForce,
+    AccountId, ClientOrderId, ExecutionCoreError, ExecutionEvent, ExecutionId, ExecutionSymbol,
+    ExecutionText, ExecutionType, FixedAscii, OrderPrice, OrderQty, OrderRequest, OrderSide,
+    OrderStatus, OrderType, RiskRejectReason, RouteId, StrategyId, TimeInForce, VenueOrderId,
 };
 
 /// Default maximum number of actions retained in an [`AlgoDecision`].
@@ -140,6 +140,8 @@ pub enum AlgoError {
     InvalidRiskParameters,
     /// Algorithm checkpoint or recovery state is invalid.
     InvalidRecoveryState,
+    /// Algorithm simulation inputs are invalid.
+    InvalidSimulationParameters,
     /// Fixed-capacity decision buffer is full.
     DecisionFull {
         /// Configured decision capacity.
@@ -184,6 +186,9 @@ impl fmt::Display for AlgoError {
             Self::InvalidProgress => write!(f, "algorithm progress is inconsistent"),
             Self::InvalidRiskParameters => write!(f, "invalid algorithm risk parameters"),
             Self::InvalidRecoveryState => write!(f, "invalid algorithm recovery state"),
+            Self::InvalidSimulationParameters => {
+                write!(f, "invalid algorithm simulation parameters")
+            }
             Self::DecisionFull { capacity } => {
                 write!(f, "algorithm decision capacity {capacity} is full")
             }
@@ -1672,6 +1677,370 @@ impl AlgoRecoveryPlan {
     /// Returns true when OMS/venue reconciliation should gate resume.
     pub const fn reconciliation_required(&self) -> bool {
         self.reconciliation_required
+    }
+}
+
+/// Deterministic child-order simulation outcome.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum AlgoSimOutcome {
+    /// Child was fully filled.
+    Filled = 1,
+    /// Child was partially filled and remaining quantity stays open.
+    PartiallyFilled = 2,
+    /// Child was rejected.
+    Rejected = 3,
+    /// Child was partially filled and remaining quantity was cancelled.
+    CancelledRemainder = 4,
+    /// Child did not fill and remains resting.
+    Resting = 5,
+}
+
+/// Deterministic market/fill model for one simulation pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoSimMarket {
+    available_qty: OrderQty,
+    fill_price: OrderPrice,
+    reject: bool,
+    cancel_unfilled: bool,
+    latency_ns: u64,
+}
+
+impl AlgoSimMarket {
+    /// Creates a simulation market model.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError::InvalidSimulationParameters`] when quantities are
+    /// negative or a non-rejecting model has a non-positive fill price.
+    pub const fn new(
+        available_qty: OrderQty,
+        fill_price: OrderPrice,
+        reject: bool,
+        cancel_unfilled: bool,
+        latency_ns: u64,
+    ) -> Result<Self, AlgoError> {
+        if available_qty.0 < 0 || (!reject && fill_price.0 <= 0) {
+            return Err(AlgoError::InvalidSimulationParameters);
+        }
+        Ok(Self {
+            available_qty,
+            fill_price,
+            reject,
+            cancel_unfilled,
+            latency_ns,
+        })
+    }
+
+    /// Returns simulated available quantity.
+    pub const fn available_qty(&self) -> OrderQty {
+        self.available_qty
+    }
+
+    /// Returns simulated fill price.
+    pub const fn fill_price(&self) -> OrderPrice {
+        self.fill_price
+    }
+
+    /// Returns true when children should be rejected.
+    pub const fn reject(&self) -> bool {
+        self.reject
+    }
+
+    /// Returns true when unfilled leaves should be cancelled.
+    pub const fn cancel_unfilled(&self) -> bool {
+        self.cancel_unfilled
+    }
+
+    /// Returns simulated exchange-to-receive latency in nanoseconds.
+    pub const fn latency_ns(&self) -> u64 {
+        self.latency_ns
+    }
+}
+
+/// One simulated child-order result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoSimStep {
+    sequence: u64,
+    child_id: ChildOrderId,
+    outcome: AlgoSimOutcome,
+    filled_qty: OrderQty,
+    leaves_qty: OrderQty,
+    fill_price: OrderPrice,
+    event: ExecutionEvent,
+}
+
+impl AlgoSimStep {
+    /// Returns simulation sequence.
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// Returns simulated child identifier.
+    pub const fn child_id(&self) -> ChildOrderId {
+        self.child_id
+    }
+
+    /// Returns simulation outcome.
+    pub const fn outcome(&self) -> AlgoSimOutcome {
+        self.outcome
+    }
+
+    /// Returns simulated filled quantity.
+    pub const fn filled_qty(&self) -> OrderQty {
+        self.filled_qty
+    }
+
+    /// Returns simulated leaves quantity.
+    pub const fn leaves_qty(&self) -> OrderQty {
+        self.leaves_qty
+    }
+
+    /// Returns simulated fill price.
+    pub const fn fill_price(&self) -> OrderPrice {
+        self.fill_price
+    }
+
+    /// Returns canonical simulated execution event.
+    pub const fn event(&self) -> ExecutionEvent {
+        self.event
+    }
+}
+
+/// Fixed-capacity algorithm simulation report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoSimReport<const N: usize = DEFAULT_ALGO_DECISION_CAPACITY> {
+    steps: [Option<AlgoSimStep>; N],
+    len: usize,
+    truncated: bool,
+    total_filled_qty: OrderQty,
+    rejected_children: u64,
+    cancelled_children: u64,
+}
+
+impl<const N: usize> AlgoSimReport<N> {
+    /// Creates an empty report.
+    pub const fn new() -> Self {
+        Self {
+            steps: [None; N],
+            len: 0,
+            truncated: false,
+            total_filled_qty: OrderQty(0),
+            rejected_children: 0,
+            cancelled_children: 0,
+        }
+    }
+
+    /// Returns retained simulation step count.
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns true when no steps are retained.
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Returns true when more child submissions existed than report capacity.
+    pub const fn truncated(&self) -> bool {
+        self.truncated
+    }
+
+    /// Returns total simulated filled quantity.
+    pub const fn total_filled_qty(&self) -> OrderQty {
+        self.total_filled_qty
+    }
+
+    /// Returns rejected child count.
+    pub const fn rejected_children(&self) -> u64 {
+        self.rejected_children
+    }
+
+    /// Returns cancelled child count.
+    pub const fn cancelled_children(&self) -> u64 {
+        self.cancelled_children
+    }
+
+    /// Returns simulation steps in insertion order.
+    pub fn steps(&self) -> impl Iterator<Item = &AlgoSimStep> {
+        self.steps[..self.len].iter().filter_map(Option::as_ref)
+    }
+
+    fn push(&mut self, step: AlgoSimStep) {
+        self.total_filled_qty =
+            OrderQty(self.total_filled_qty.0.saturating_add(step.filled_qty().0));
+        if matches!(step.outcome(), AlgoSimOutcome::Rejected) {
+            self.rejected_children = self.rejected_children.saturating_add(1);
+        }
+        if matches!(step.outcome(), AlgoSimOutcome::CancelledRemainder) {
+            self.cancelled_children = self.cancelled_children.saturating_add(1);
+        }
+        if self.len == N {
+            self.truncated = true;
+            return;
+        }
+        self.steps[self.len] = Some(step);
+        self.len += 1;
+    }
+}
+
+impl<const N: usize> Default for AlgoSimReport<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Deterministic simulator for generated child plans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoSimulator {
+    market: AlgoSimMarket,
+}
+
+impl AlgoSimulator {
+    /// Creates a simulator.
+    pub const fn new(market: AlgoSimMarket) -> Self {
+        Self { market }
+    }
+
+    /// Returns the market model.
+    pub const fn market(&self) -> AlgoSimMarket {
+        self.market
+    }
+
+    /// Simulates one child plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError`] when deterministic simulator identifiers exceed
+    /// fixed identifier capacity.
+    pub fn simulate_child(
+        &self,
+        child: &ChildOrderPlan,
+        sequence: u64,
+    ) -> Result<AlgoSimStep, AlgoError> {
+        let request = child.request();
+        let venue_order_id: VenueOrderId = fixed_id_with_index("sim-venue", sequence)?;
+        let execution_id: ExecutionId = fixed_id_with_index("sim-exec", sequence)?;
+        if self.market.reject() {
+            let event = ExecutionEvent {
+                exec_type: ExecutionType::Reject,
+                order_status: OrderStatus::Rejected,
+                client_order_id: request.client_order_id,
+                orig_client_order_id: ClientOrderId::empty(),
+                venue_order_id,
+                execution_id,
+                account_id: request.account_id,
+                route_id: request.route_id,
+                symbol: request.symbol,
+                last_qty: OrderQty(0),
+                last_price: OrderPrice(0),
+                cumulative_qty: OrderQty(0),
+                leaves_qty: request.quantity,
+                average_price: OrderPrice(0),
+                ts_exchange_ns: request.ts_recv_ns,
+                ts_recv_ns: request.ts_recv_ns.saturating_add(self.market.latency_ns()),
+                reason: RiskRejectReason::PriceBand,
+                text: ExecutionText::empty(),
+            };
+            return Ok(AlgoSimStep {
+                sequence,
+                child_id: child.child_id(),
+                outcome: AlgoSimOutcome::Rejected,
+                filled_qty: OrderQty(0),
+                leaves_qty: request.quantity,
+                fill_price: OrderPrice(0),
+                event,
+            });
+        }
+
+        let filled_qty = request.quantity.0.min(self.market.available_qty().0).max(0);
+        let leaves_qty = request.quantity.0.saturating_sub(filled_qty);
+        let (outcome, status, exec_type) =
+            match (filled_qty, leaves_qty, self.market.cancel_unfilled()) {
+                (0, _, false) => (
+                    AlgoSimOutcome::Resting,
+                    OrderStatus::New,
+                    ExecutionType::Ack,
+                ),
+                (0, _, true) => (
+                    AlgoSimOutcome::CancelledRemainder,
+                    OrderStatus::Cancelled,
+                    ExecutionType::CancelAck,
+                ),
+                (_, 0, _) => (
+                    AlgoSimOutcome::Filled,
+                    OrderStatus::Filled,
+                    ExecutionType::Trade,
+                ),
+                (_, _, true) => (
+                    AlgoSimOutcome::CancelledRemainder,
+                    OrderStatus::Cancelled,
+                    ExecutionType::Trade,
+                ),
+                _ => (
+                    AlgoSimOutcome::PartiallyFilled,
+                    OrderStatus::PartiallyFilled,
+                    ExecutionType::Trade,
+                ),
+            };
+        let fill_price = if filled_qty > 0 {
+            self.market.fill_price()
+        } else {
+            OrderPrice(0)
+        };
+        let event = ExecutionEvent {
+            exec_type,
+            order_status: status,
+            client_order_id: request.client_order_id,
+            orig_client_order_id: ClientOrderId::empty(),
+            venue_order_id,
+            execution_id,
+            account_id: request.account_id,
+            route_id: request.route_id,
+            symbol: request.symbol,
+            last_qty: OrderQty(filled_qty),
+            last_price: fill_price,
+            cumulative_qty: OrderQty(filled_qty),
+            leaves_qty: OrderQty(leaves_qty),
+            average_price: fill_price,
+            ts_exchange_ns: request.ts_recv_ns,
+            ts_recv_ns: request.ts_recv_ns.saturating_add(self.market.latency_ns()),
+            reason: RiskRejectReason::None,
+            text: ExecutionText::empty(),
+        };
+        Ok(AlgoSimStep {
+            sequence,
+            child_id: child.child_id(),
+            outcome,
+            filled_qty: OrderQty(filled_qty),
+            leaves_qty: OrderQty(leaves_qty),
+            fill_price,
+            event,
+        })
+    }
+
+    /// Simulates every child submission in an algorithm decision.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError`] when deterministic simulator identifiers exceed
+    /// fixed identifier capacity.
+    pub fn simulate_decision<const REPORT_N: usize, const DECISION_N: usize>(
+        &self,
+        decision: &AlgoDecision<DECISION_N>,
+        first_sequence: u64,
+    ) -> Result<AlgoSimReport<REPORT_N>, AlgoError> {
+        let mut report = AlgoSimReport::new();
+        let mut sequence = first_sequence;
+        for action in decision.actions() {
+            if let AlgoAction::SubmitChild(child) = action {
+                let step = self.simulate_child(child, sequence)?;
+                report.push(step);
+                sequence = sequence.saturating_add(1);
+            }
+        }
+        Ok(report)
     }
 }
 
@@ -6426,6 +6795,118 @@ mod tests {
         let plan = AlgoRecoveryPlan::new(checkpoint, policy).expect("plan");
 
         assert_eq!(plan.action(), AlgoRecoveryAction::EscalateRisk);
+    }
+
+    #[test]
+    fn simulator_fills_child_and_updates_progress() {
+        let parent = parent();
+        let child = ChildOrderPlan::new(
+            ChildOrderId::new("sim-fill").expect("child"),
+            parent.id(),
+            parent.build_order_request(
+                ClientOrderId::new("sim-fill-cl").expect("client"),
+                OrderQty(10),
+                1,
+            ),
+            1,
+        )
+        .expect("child");
+        let simulator = AlgoSimulator::new(
+            AlgoSimMarket::new(OrderQty(10), OrderPrice(500_025), false, false, 25)
+                .expect("market"),
+        );
+        let step = simulator.simulate_child(&child, 1).expect("step");
+        let mut progress = AlgoProgress::new(parent.id(), parent.total_qty());
+        progress.on_child_released(&child).expect("release");
+        progress.on_execution_event(&step.event());
+
+        assert_eq!(step.outcome(), AlgoSimOutcome::Filled);
+        assert_eq!(step.filled_qty(), OrderQty(10));
+        assert_eq!(step.event().order_status, OrderStatus::Filled);
+        assert_eq!(step.event().ts_recv_ns, 26);
+        assert_eq!(progress.completed_qty(), OrderQty(10));
+        assert_eq!(progress.open_qty(), OrderQty(0));
+    }
+
+    #[test]
+    fn simulator_partially_fills_child() {
+        let parent = parent();
+        let child = ChildOrderPlan::new(
+            ChildOrderId::new("sim-partial").expect("child"),
+            parent.id(),
+            parent.build_order_request(
+                ClientOrderId::new("sim-partial-cl").expect("client"),
+                OrderQty(25),
+                1,
+            ),
+            1,
+        )
+        .expect("child");
+        let simulator = AlgoSimulator::new(
+            AlgoSimMarket::new(OrderQty(5), OrderPrice(500_000), false, false, 0).expect("market"),
+        );
+        let step = simulator.simulate_child(&child, 7).expect("step");
+
+        assert_eq!(step.outcome(), AlgoSimOutcome::PartiallyFilled);
+        assert_eq!(step.filled_qty(), OrderQty(5));
+        assert_eq!(step.leaves_qty(), OrderQty(20));
+        assert_eq!(step.event().order_status, OrderStatus::PartiallyFilled);
+    }
+
+    #[test]
+    fn simulator_rejects_child() {
+        let parent = parent();
+        let child = ChildOrderPlan::new(
+            ChildOrderId::new("sim-reject").expect("child"),
+            parent.id(),
+            parent.build_order_request(
+                ClientOrderId::new("sim-reject-cl").expect("client"),
+                OrderQty(10),
+                1,
+            ),
+            1,
+        )
+        .expect("child");
+        let simulator = AlgoSimulator::new(
+            AlgoSimMarket::new(OrderQty(0), OrderPrice(0), true, false, 0).expect("market"),
+        );
+        let step = simulator.simulate_child(&child, 2).expect("step");
+
+        assert_eq!(step.outcome(), AlgoSimOutcome::Rejected);
+        assert_eq!(step.event().exec_type, ExecutionType::Reject);
+        assert_eq!(step.event().order_status, OrderStatus::Rejected);
+        assert_eq!(step.event().leaves_qty, OrderQty(10));
+    }
+
+    #[test]
+    fn simulator_reports_decision_totals() {
+        let parent = parent();
+        let mut decision = AlgoDecision::<2>::new(1);
+        for index in 1..=2 {
+            let child = ChildOrderPlan::new(
+                ChildOrderId::new(&format!("sim-d-{index}")).expect("child"),
+                parent.id(),
+                parent.build_order_request(
+                    ClientOrderId::new(&format!("sim-d-cl-{index}")).expect("client"),
+                    OrderQty(10),
+                    index,
+                ),
+                index,
+            )
+            .expect("child");
+            decision.push(AlgoAction::SubmitChild(child)).expect("push");
+        }
+        let simulator = AlgoSimulator::new(
+            AlgoSimMarket::new(OrderQty(10), OrderPrice(500_000), false, true, 0).expect("market"),
+        );
+        let report = simulator
+            .simulate_decision::<1, 2>(&decision, 10)
+            .expect("report");
+
+        assert!(report.truncated());
+        assert_eq!(report.len(), 1);
+        assert_eq!(report.total_filled_qty(), OrderQty(20));
+        assert_eq!(report.cancelled_children(), 0);
     }
 
     #[test]
