@@ -23,9 +23,12 @@ The first foundation is dependency-light:
 - VPIN-style fixed-bucket toxicity primitives,
 - fixed-window volatility/noise primitives,
 - threshold-based market regime classification,
+- feed-quality primitives for sequence gaps, out-of-order events, duplicates,
+  stale events, locked/crossed books, timestamp skew, resets, and health
+  scoring,
 - explicit feature profiles so users can opt into future impact, toxicity,
-  volatility, regime, pattern, derivatives, institutional, and ML feature
-  modules without forcing all downstream users to compile them.
+  volatility, regime, data-quality, pattern, derivatives, institutional, and
+  ML feature modules without forcing all downstream users to compile them.
 
 The crate does not submit orders, manage runtime state, own persistence, or
 replace existing `of_core` APIs. It consumes normalized market data and returns
@@ -45,6 +48,7 @@ Reserved additive profiles:
 - `toxicity`
 - `volatility`
 - `regime`
+- `data-quality`
 - `patterns`
 - `derivatives`
 - `institutional`
@@ -127,6 +131,37 @@ let regime = RegimeClassifier::default().classify(RegimeInput::new(
 ));
 
 assert!(matches!(regime.kind(), RegimeKind::Normal | RegimeKind::Volatile));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Data Quality Example
+
+```rust
+use of_analytics::{
+    FeedQualityConfig, FeedQualityEvent, FeedQualityFlags, FeedQualityTracker,
+};
+
+let config = FeedQualityConfig::new(10, 20, 1)?;
+let mut tracker = FeedQualityTracker::new(config);
+
+tracker.on_event(FeedQualityEvent::new(
+    Some(10),
+    100,
+    105,
+    Some(99),
+    Some(101),
+)?);
+let flags = tracker.on_event(FeedQualityEvent::new(
+    Some(12),
+    110,
+    140,
+    Some(100),
+    Some(100),
+)?);
+
+assert!(flags.contains(FeedQualityFlags::SEQUENCE_GAP));
+assert!(flags.contains(FeedQualityFlags::LOCKED_BOOK));
+assert!(tracker.snapshot().health_score_bps() < 10_000);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

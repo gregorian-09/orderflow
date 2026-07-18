@@ -706,6 +706,11 @@ Public market-quality and liquidity types:
 - `RegimeInput`
 - `RegimeSnapshot`
 - `RegimeClassifier`
+- `FeedQualityFlags`
+- `FeedQualityConfig`
+- `FeedQualityEvent`
+- `FeedQualitySnapshot`
+- `FeedQualityTracker`
 
 For advanced analytics crate details, see
 [`of_analytics` reference](./05l-of-analytics-reference.md).

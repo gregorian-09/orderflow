@@ -49,8 +49,11 @@ registry dependency after `of_fix 0.1.0` is published.
 - VPIN-style fixed-bucket toxicity primitives
 - fixed-window volatility/noise primitives and threshold-based regime
   classification
-- feature profiles for future impact, toxicity, volatility, regime, patterns,
-  derivatives, institutional, and ML feature modules
+- feed-quality primitives for sequence gaps, out-of-order events, duplicates,
+  stale events, locked/crossed books, timestamp skew, resets, and health
+  scoring
+- feature profiles for future impact, toxicity, volatility, regime,
+  data-quality, patterns, derivatives, institutional, and ML feature modules
 - borrowed `of_core::BookLevel` analysis paths that avoid copying book
   snapshots in hot analytics loops
 

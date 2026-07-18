@@ -13,8 +13,9 @@ The first public slice is dependency-light and live-path friendly:
 - VPIN-style toxicity analytics,
 - fixed-window volatility/noise analytics,
 - threshold-based regime classification,
-- feature profiles for future impact, toxicity, volatility, regime, pattern,
-  derivatives, institutional, and ML-feature modules.
+- feed-quality analytics,
+- feature profiles for future impact, toxicity, volatility, regime,
+  data-quality, pattern, derivatives, institutional, and ML-feature modules.
 
 The crate consumes normalized `of_core` data and returns typed snapshots. It
 does not own runtime state, persistence, sockets, bindings, OMS state, or order
@@ -33,6 +34,7 @@ Reserved additive profiles:
 - `toxicity`
 - `volatility`
 - `regime`
+- `data-quality`
 - `patterns`
 - `derivatives`
 - `institutional`
@@ -67,6 +69,14 @@ Impact/toxicity:
 - `RegimeInput`
 - `RegimeSnapshot`
 - `RegimeClassifier`
+
+Feed quality:
+
+- `FeedQualityFlags`
+- `FeedQualityConfig`
+- `FeedQualityEvent`
+- `FeedQualitySnapshot`
+- `FeedQualityTracker`
 
 ## Market Quality
 
@@ -217,6 +227,62 @@ let regime = RegimeClassifier::default().classify(RegimeInput::new(1, 10, 8_000,
 assert_eq!(regime.kind(), RegimeKind::Toxic);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+## Feed Quality
+
+`FeedQualityTracker` is an allocation-free counter and flag accumulator for
+market-data degradation. It does not correct, reorder, or discard market data.
+The host records normalized observations and the tracker reports whether the
+stream should be trusted, degraded, or investigated.
+
+The tracker reports:
+
+- sequence gap events and missing sequence units,
+- out-of-order sequence or event-time movement,
+- consecutive duplicate sequences,
+- stale events based on receive minus event timestamp,
+- locked and crossed top-of-book observations,
+- timestamp skew between event and receive time,
+- sequence-reset-like movement,
+- cumulative degradation flags,
+- event-rate metrics in basis points,
+- aggregate health score where 10,000 is best.
+
+```rust
+use of_analytics::{
+    FeedQualityConfig, FeedQualityEvent, FeedQualityFlags, FeedQualityTracker,
+};
+
+let config = FeedQualityConfig::new(10, 20, 1)?;
+let mut tracker = FeedQualityTracker::new(config);
+
+tracker.on_event(FeedQualityEvent::new(
+    Some(10),
+    100,
+    105,
+    Some(99),
+    Some(101),
+)?);
+let flags = tracker.on_event(FeedQualityEvent::new(
+    Some(12),
+    110,
+    140,
+    Some(100),
+    Some(100),
+)?);
+let snapshot = tracker.snapshot();
+
+assert!(flags.contains(FeedQualityFlags::SEQUENCE_GAP));
+assert!(flags.contains(FeedQualityFlags::LOCKED_BOOK));
+assert_eq!(snapshot.sequence_gap_events(), 1);
+assert!(snapshot.health_score_bps() < 10_000);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+This follows the production convention of preserving anomalous records with
+quality flags. Replay, investigation, and venue support workflows can then use
+the original sequence numbers and timestamps instead of relying on an opaque
+cleaned stream.
 
 ## Boundary
 

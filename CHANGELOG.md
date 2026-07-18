@@ -16,6 +16,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `of_analytics` fixed-window volatility/noise tracking and
   threshold-based regime classification with quiet, normal, volatile, toxic,
   and illiquid regimes.
+- Added `of_analytics` feed-quality analytics for sequence gaps,
+  out-of-order events, duplicates, stale events, locked/crossed books,
+  timestamp skew, sequence resets, rates, flags, and health scoring.
 - Added `tools/check_binding_parity.py` and CI coverage to validate that
   manifest-exposed C ABI symbols have matching Python ctypes registrations and
   Java JNA declarations before release.
