@@ -32,6 +32,8 @@ The first foundation focuses on deterministic parent/child order handling:
 - deterministic liquidity-seeking planning for probe/take decisions using SOR
   route candidates, hidden-liquidity estimates, price improvement, and toxicity
   controls,
+- deterministic sweep/aggressive-take planning that walks route candidates up
+  to a side-aware price collar,
 - deterministic basket/spread planning for synchronized multi-leg child
   release with leg roles and hedge-ratio metadata,
 - deterministic market-making quote planning from fair value, inventory,
@@ -48,7 +50,7 @@ reconciliation remain authoritative.
 ```mermaid
 flowchart LR
     Strategy[Strategy intent] --> Parent[ParentOrder]
-    Parent --> Algo[TWAP / POV / VWAP / Iceberg / IS / Passive queue / SOR / Liquidity / Basket / MM]
+    Parent --> Algo[TWAP / POV / VWAP / Iceberg / IS / Passive queue / SOR / Liquidity / Sweep / Basket / MM]
     Market[Market data / timers / OMS events] --> Algo
     Algo --> Decision[AlgoDecision]
     Decision --> Child[ChildOrderPlan]
@@ -486,6 +488,63 @@ let decision = planner.plan_liquidity::<1>(
 )?;
 
 assert!(!decision.is_empty());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Sweep Example
+
+`SweepPlanner` walks host-provided route candidates aggressively up to a
+side-aware price collar. It is meant for urgent liquidity removal; hosts still
+own IOC/FOK mapping, protected-market rules, market-data validation, and
+adapter-specific routing instructions.
+
+```rust
+use of_execution_algos::{
+    AlgoProgress, ChildOrderId, ParentOrder, ParentOrderId, SorRouteCandidate,
+    SweepConfig, SweepPlanner,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-1")?,
+    AccountId::new("acct")?,
+    RouteId::new("default")?,
+    StrategyId::new("sweep")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+
+let levels = [
+    SorRouteCandidate::new(RouteId::new("r1")?, OrderPrice::new(499_975)?, OrderQty::new(10)?)?,
+    SorRouteCandidate::new(RouteId::new("r2")?, OrderPrice::new(500_000)?, OrderQty::new(15)?)?,
+];
+let child_ids = [ChildOrderId::new("child-1")?, ChildOrderId::new("child-2")?];
+let client_ids = [ClientOrderId::new("cl-1")?, ClientOrderId::new("cl-2")?];
+let planner = SweepPlanner::new(SweepConfig::new(2, OrderPrice::new(500_000)?, OrderQty(0))?);
+let decision = planner.plan_sweep::<2>(
+    &parent,
+    AlgoProgress::new(parent.id(), parent.total_qty()),
+    2_000,
+    &levels,
+    &child_ids,
+    &client_ids,
+    2_000,
+)?;
+
+assert_eq!(decision.total_qty(), OrderQty(25));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

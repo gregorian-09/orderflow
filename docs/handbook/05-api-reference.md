@@ -626,6 +626,10 @@ Public parent/child and decision types:
 - `LiquiditySeekingAllocation`
 - `LiquiditySeekingDecision`
 - `LiquiditySeekingPlanner`
+- `SweepConfig`
+- `SweepAllocation`
+- `SweepDecision`
+- `SweepPlanner`
 - `BasketLegRole`
 - `BasketLeg`
 - `BasketChildAllocation`

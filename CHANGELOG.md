@@ -153,6 +153,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   SOR candidate reuse, hidden-liquidity and price-improvement scoring,
   probe/take decisions, toxicity filtering, minimum quantity checks, and
   OMS-safe route-specific child plans.
+- Added deterministic sweep/aggressive-take planning in `of_execution_algos`
+  with side-aware price collars, minimum fill quantity suppression,
+  route/level capacity, average planned price, and OMS-safe child plans.
 - Added deterministic basket/spread planning in `of_execution_algos` with leg
   roles, hedge-ratio metadata, synchronized per-leg release, fixed-capacity
   decisions, and explicit non-atomic multi-leg semantics.
