@@ -23,6 +23,8 @@ pub enum AnalyticsError {
     InvalidFeature,
     /// Resiliency configuration or sample fields are invalid.
     InvalidResiliency,
+    /// Queue/fill probability configuration or event fields are invalid.
+    InvalidQueue,
     /// Requested analytics require a quote but no quote is available.
     MissingQuote,
 }
@@ -36,6 +38,7 @@ impl fmt::Display for AnalyticsError {
             Self::InvalidQuality => write!(f, "invalid feed quality context"),
             Self::InvalidFeature => write!(f, "invalid feature vector context"),
             Self::InvalidResiliency => write!(f, "invalid resiliency context"),
+            Self::InvalidQueue => write!(f, "invalid queue/fill context"),
             Self::MissingQuote => write!(f, "missing quote context"),
         }
     }
@@ -2193,6 +2196,345 @@ impl ResiliencyTracker {
     }
 }
 
+/// Queue update kind.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum QueueUpdateKind {
+    /// Aggressive trade consumed displayed quantity at the order price.
+    Trade = 1,
+    /// Displayed quantity decreased without a known trade.
+    Cancel = 2,
+    /// Local order was amended and likely lost queue priority.
+    Amend = 3,
+}
+
+/// Passive order queue estimate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueuePositionEstimate {
+    qty_ahead: i64,
+    own_qty: i64,
+    total_queue_qty: i64,
+    ts_ns: u64,
+}
+
+impl QueuePositionEstimate {
+    /// Creates a queue position estimate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidQueue`] when quantities or timestamp
+    /// are invalid.
+    pub const fn new(
+        qty_ahead: i64,
+        own_qty: i64,
+        total_queue_qty: i64,
+        ts_ns: u64,
+    ) -> Result<Self, AnalyticsError> {
+        if qty_ahead < 0 || own_qty <= 0 || total_queue_qty < qty_ahead || ts_ns == 0 {
+            return Err(AnalyticsError::InvalidQueue);
+        }
+        Ok(Self {
+            qty_ahead,
+            own_qty,
+            total_queue_qty,
+            ts_ns,
+        })
+    }
+
+    /// Returns estimated quantity ahead.
+    pub const fn qty_ahead(&self) -> i64 {
+        self.qty_ahead
+    }
+
+    /// Returns local displayed quantity.
+    pub const fn own_qty(&self) -> i64 {
+        self.own_qty
+    }
+
+    /// Returns total displayed queue quantity at the price level.
+    pub const fn total_queue_qty(&self) -> i64 {
+        self.total_queue_qty
+    }
+
+    /// Returns estimate timestamp.
+    pub const fn ts_ns(&self) -> u64 {
+        self.ts_ns
+    }
+}
+
+/// Queue/fill probability configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueFillConfig {
+    cancel_ahead_bps: u16,
+    expected_depletion_per_sec: i64,
+    horizon_ns: u64,
+}
+
+impl QueueFillConfig {
+    /// Creates queue/fill configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidQueue`] when basis points exceed
+    /// 10,000, expected depletion is negative, or horizon is zero.
+    pub const fn new(
+        cancel_ahead_bps: u16,
+        expected_depletion_per_sec: i64,
+        horizon_ns: u64,
+    ) -> Result<Self, AnalyticsError> {
+        if cancel_ahead_bps > 10_000 || expected_depletion_per_sec < 0 || horizon_ns == 0 {
+            return Err(AnalyticsError::InvalidQueue);
+        }
+        Ok(Self {
+            cancel_ahead_bps,
+            expected_depletion_per_sec,
+            horizon_ns,
+        })
+    }
+
+    /// Returns assumed percentage of cancels ahead of the local order.
+    pub const fn cancel_ahead_bps(&self) -> u16 {
+        self.cancel_ahead_bps
+    }
+
+    /// Returns expected queue depletion per second.
+    pub const fn expected_depletion_per_sec(&self) -> i64 {
+        self.expected_depletion_per_sec
+    }
+
+    /// Returns fill-probability horizon.
+    pub const fn horizon_ns(&self) -> u64 {
+        self.horizon_ns
+    }
+}
+
+/// Queue update at the local order price.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueFillUpdate {
+    kind: QueueUpdateKind,
+    qty: i64,
+    total_queue_qty: i64,
+    ts_ns: u64,
+}
+
+impl QueueFillUpdate {
+    /// Creates a queue update.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidQueue`] when quantity, total queue, or
+    /// timestamp is invalid.
+    pub const fn new(
+        kind: QueueUpdateKind,
+        qty: i64,
+        total_queue_qty: i64,
+        ts_ns: u64,
+    ) -> Result<Self, AnalyticsError> {
+        if qty < 0 || total_queue_qty < 0 || ts_ns == 0 {
+            return Err(AnalyticsError::InvalidQueue);
+        }
+        Ok(Self {
+            kind,
+            qty,
+            total_queue_qty,
+            ts_ns,
+        })
+    }
+
+    /// Returns update kind.
+    pub const fn kind(&self) -> QueueUpdateKind {
+        self.kind
+    }
+
+    /// Returns update quantity.
+    pub const fn qty(&self) -> i64 {
+        self.qty
+    }
+
+    /// Returns current total queue quantity.
+    pub const fn total_queue_qty(&self) -> i64 {
+        self.total_queue_qty
+    }
+
+    /// Returns update timestamp.
+    pub const fn ts_ns(&self) -> u64 {
+        self.ts_ns
+    }
+}
+
+/// Passive fill probability snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueFillSnapshot {
+    qty_ahead: i64,
+    own_qty_remaining: i64,
+    total_queue_qty: i64,
+    fill_probability_bps: u16,
+    expected_time_to_fill_ns: u64,
+    queue_loss_after_amend: i64,
+    maker_taker_score_bps: u16,
+    top_level_survival_bps: u16,
+    last_update_ts_ns: u64,
+}
+
+impl QueueFillSnapshot {
+    /// Returns estimated quantity ahead.
+    pub const fn qty_ahead(&self) -> i64 {
+        self.qty_ahead
+    }
+
+    /// Returns remaining local quantity.
+    pub const fn own_qty_remaining(&self) -> i64 {
+        self.own_qty_remaining
+    }
+
+    /// Returns current total queue quantity.
+    pub const fn total_queue_qty(&self) -> i64 {
+        self.total_queue_qty
+    }
+
+    /// Returns fill probability over configured horizon in basis points.
+    pub const fn fill_probability_bps(&self) -> u16 {
+        self.fill_probability_bps
+    }
+
+    /// Returns expected time to fill in nanoseconds.
+    pub const fn expected_time_to_fill_ns(&self) -> u64 {
+        self.expected_time_to_fill_ns
+    }
+
+    /// Returns estimated queue quantity lost after amend.
+    pub const fn queue_loss_after_amend(&self) -> i64 {
+        self.queue_loss_after_amend
+    }
+
+    /// Returns maker/taker preference score in basis points.
+    pub const fn maker_taker_score_bps(&self) -> u16 {
+        self.maker_taker_score_bps
+    }
+
+    /// Returns top-level survival probability proxy in basis points.
+    pub const fn top_level_survival_bps(&self) -> u16 {
+        self.top_level_survival_bps
+    }
+
+    /// Returns latest update timestamp.
+    pub const fn last_update_ts_ns(&self) -> u64 {
+        self.last_update_ts_ns
+    }
+}
+
+/// Queue/fill probability tracker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueFillTracker {
+    config: QueueFillConfig,
+    qty_ahead: i64,
+    own_qty_remaining: i64,
+    total_queue_qty: i64,
+    queue_loss_after_amend: i64,
+    last_update_ts_ns: u64,
+}
+
+impl QueueFillTracker {
+    /// Creates a queue/fill tracker.
+    pub const fn new(config: QueueFillConfig, estimate: QueuePositionEstimate) -> Self {
+        Self {
+            config,
+            qty_ahead: estimate.qty_ahead(),
+            own_qty_remaining: estimate.own_qty(),
+            total_queue_qty: estimate.total_queue_qty(),
+            queue_loss_after_amend: 0,
+            last_update_ts_ns: estimate.ts_ns(),
+        }
+    }
+
+    /// Returns tracker configuration.
+    pub const fn config(&self) -> QueueFillConfig {
+        self.config
+    }
+
+    /// Records one queue update.
+    pub fn on_update(&mut self, update: QueueFillUpdate) -> QueueFillSnapshot {
+        match update.kind() {
+            QueueUpdateKind::Trade => self.apply_trade(update.qty()),
+            QueueUpdateKind::Cancel => self.apply_cancel(update.qty()),
+            QueueUpdateKind::Amend => self.apply_amend(update.total_queue_qty()),
+        }
+        self.total_queue_qty = update.total_queue_qty();
+        self.last_update_ts_ns = update.ts_ns();
+        self.snapshot()
+    }
+
+    /// Returns current snapshot.
+    pub fn snapshot(&self) -> QueueFillSnapshot {
+        let fill_probability_bps = self.fill_probability_bps();
+        QueueFillSnapshot {
+            qty_ahead: self.qty_ahead,
+            own_qty_remaining: self.own_qty_remaining,
+            total_queue_qty: self.total_queue_qty,
+            fill_probability_bps,
+            expected_time_to_fill_ns: self.expected_time_to_fill_ns(),
+            queue_loss_after_amend: self.queue_loss_after_amend,
+            maker_taker_score_bps: fill_probability_bps,
+            top_level_survival_bps: self.top_level_survival_bps(),
+            last_update_ts_ns: self.last_update_ts_ns,
+        }
+    }
+
+    fn apply_trade(&mut self, qty: i64) {
+        let ahead_take = self.qty_ahead.min(qty);
+        self.qty_ahead = self.qty_ahead.saturating_sub(ahead_take);
+        let remaining = qty.saturating_sub(ahead_take);
+        self.own_qty_remaining = self.own_qty_remaining.saturating_sub(remaining);
+    }
+
+    fn apply_cancel(&mut self, qty: i64) {
+        let ahead_cancel =
+            ((i128::from(qty) * i128::from(self.config.cancel_ahead_bps())) / 10_000) as i64;
+        self.qty_ahead = self.qty_ahead.saturating_sub(ahead_cancel);
+    }
+
+    fn apply_amend(&mut self, new_total_queue_qty: i64) {
+        self.queue_loss_after_amend = new_total_queue_qty;
+        self.qty_ahead = new_total_queue_qty;
+    }
+
+    fn fill_probability_bps(&self) -> u16 {
+        let needed = self.qty_ahead.saturating_add(self.own_qty_remaining);
+        if needed <= 0 {
+            return 10_000;
+        }
+        let expected = (i128::from(self.config.expected_depletion_per_sec())
+            * i128::from(self.config.horizon_ns()))
+            / 1_000_000_000;
+        if expected <= 0 {
+            return 0;
+        }
+        u16::try_from(((expected * 10_000) / i128::from(needed)).clamp(0, 10_000)).unwrap_or(10_000)
+    }
+
+    fn expected_time_to_fill_ns(&self) -> u64 {
+        let needed = self.qty_ahead.saturating_add(self.own_qty_remaining);
+        if needed <= 0 {
+            return 0;
+        }
+        let rate = self.config.expected_depletion_per_sec();
+        if rate <= 0 {
+            return u64::MAX;
+        }
+        u64::try_from((i128::from(needed) * 1_000_000_000) / i128::from(rate)).unwrap_or(u64::MAX)
+    }
+
+    fn top_level_survival_bps(&self) -> u16 {
+        if self.total_queue_qty <= 0 {
+            return 0;
+        }
+        let pressure =
+            ((i128::from(self.qty_ahead) * 10_000) / i128::from(self.total_queue_qty)).min(10_000);
+        u16::try_from(10_000_i128.saturating_sub(pressure)).unwrap_or(0)
+    }
+}
+
 /// Borrowed depth analyzer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiquidityDepthAnalyzer {
@@ -2688,5 +3030,39 @@ mod tests {
         assert!(!snapshot.active_shock());
         assert_eq!(snapshot.min_depth(), 0);
         assert_eq!(snapshot.score_bps(), 10_000);
+    }
+
+    #[test]
+    fn queue_fill_tracker_updates_on_trade_and_cancel() {
+        let config = QueueFillConfig::new(5_000, 100, 1_000_000_000).expect("config");
+        let estimate = QueuePositionEstimate::new(100, 50, 200, 1).expect("estimate");
+        let mut tracker = QueueFillTracker::new(config, estimate);
+
+        let after_trade = tracker
+            .on_update(QueueFillUpdate::new(QueueUpdateKind::Trade, 40, 160, 2).expect("update"));
+        assert_eq!(after_trade.qty_ahead(), 60);
+        assert_eq!(after_trade.own_qty_remaining(), 50);
+        assert!(after_trade.fill_probability_bps() > 0);
+        assert_eq!(after_trade.expected_time_to_fill_ns(), 1_100_000_000);
+
+        let after_cancel = tracker
+            .on_update(QueueFillUpdate::new(QueueUpdateKind::Cancel, 20, 140, 3).expect("update"));
+        assert_eq!(after_cancel.qty_ahead(), 50);
+        assert!(after_cancel.top_level_survival_bps() > 0);
+    }
+
+    #[test]
+    fn queue_fill_tracker_tracks_amend_queue_loss() {
+        let config = QueueFillConfig::new(0, 100, 1_000_000_000).expect("config");
+        let estimate = QueuePositionEstimate::new(10, 10, 20, 1).expect("estimate");
+        let mut tracker = QueueFillTracker::new(config, estimate);
+
+        let snapshot = tracker
+            .on_update(QueueFillUpdate::new(QueueUpdateKind::Amend, 0, 100, 2).expect("update"));
+
+        assert_eq!(snapshot.qty_ahead(), 100);
+        assert_eq!(snapshot.queue_loss_after_amend(), 100);
+        assert_eq!(snapshot.last_update_ts_ns(), 2);
+        assert!(snapshot.maker_taker_score_bps() < 10_000);
     }
 }

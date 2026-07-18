@@ -725,6 +725,12 @@ Public market-quality and liquidity types:
 - `ResiliencyConfig`
 - `ResiliencySnapshot`
 - `ResiliencyTracker`
+- `QueueUpdateKind`
+- `QueuePositionEstimate`
+- `QueueFillConfig`
+- `QueueFillUpdate`
+- `QueueFillSnapshot`
+- `QueueFillTracker`
 
 For advanced analytics crate details, see
 [`of_analytics` reference](./05l-of-analytics-reference.md).

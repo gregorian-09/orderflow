@@ -24,6 +24,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   fixed-capacity writers, and extractor contracts.
 - Added `of_analytics` resiliency analytics for threshold-based spread/depth
   shock detection, recovery timing, and liquidity resiliency scoring.
+- Added `of_analytics` queue/fill analytics for passive queue position,
+  fill probability, expected time-to-fill, amend queue loss, and maker/taker
+  scoring.
 - Added `tools/check_binding_parity.py` and CI coverage to validate that
   manifest-exposed C ABI symbols have matching Python ctypes registrations and
   Java JNA declarations before release.

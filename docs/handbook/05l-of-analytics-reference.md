@@ -15,8 +15,9 @@ The first public slice is dependency-light and live-path friendly:
 - threshold-based regime classification,
 - feed-quality analytics,
 - liquidity resiliency analytics,
+- queue/fill probability analytics,
 - feature profiles for future impact, toxicity, volatility, regime,
-  data-quality, feature-vector, resiliency, pattern, derivatives,
+  data-quality, feature-vector, resiliency, queue-fill, pattern, derivatives,
   institutional, and ML-feature modules.
 
 The crate consumes normalized `of_core` data and returns typed snapshots. It
@@ -39,6 +40,7 @@ Reserved additive profiles:
 - `data-quality`
 - `feature-vector`
 - `resiliency`
+- `queue-fill`
 - `patterns`
 - `derivatives`
 - `institutional`
@@ -101,6 +103,15 @@ Resiliency:
 - `ResiliencyConfig`
 - `ResiliencySnapshot`
 - `ResiliencyTracker`
+
+Queue and fill:
+
+- `QueueUpdateKind`
+- `QueuePositionEstimate`
+- `QueueFillConfig`
+- `QueueFillUpdate`
+- `QueueFillSnapshot`
+- `QueueFillTracker`
 
 ## Market Quality
 
@@ -386,6 +397,47 @@ let recovered = tracker.on_sample(ResiliencySample::new(1_000_200, 7, 500, 500)?
 assert!(shock.active_shock());
 assert_eq!(recovered.recovery_count(), 1);
 assert_eq!(recovered.last_recovery_time_ns(), 1_000_000);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Queue And Fill Probability
+
+`QueueFillTracker` estimates passive order progress using aggregate quantity
+ahead, own remaining quantity, queue updates, and explicit assumptions about
+where cancels occur. It is designed for venues where full order-by-order queue
+priority may not be available.
+
+The snapshot reports:
+
+- estimated quantity ahead,
+- own quantity remaining,
+- total queue quantity,
+- fill probability over the configured horizon,
+- expected time-to-fill,
+- estimated queue loss after amend,
+- maker/taker score,
+- top-level survival proxy,
+- latest update timestamp.
+
+```rust
+use of_analytics::{
+    QueueFillConfig, QueueFillTracker, QueueFillUpdate, QueuePositionEstimate,
+    QueueUpdateKind,
+};
+
+let config = QueueFillConfig::new(5_000, 100, 1_000_000_000)?;
+let estimate = QueuePositionEstimate::new(100, 50, 200, 1)?;
+let mut tracker = QueueFillTracker::new(config, estimate);
+
+let snapshot = tracker.on_update(QueueFillUpdate::new(
+    QueueUpdateKind::Trade,
+    40,
+    160,
+    2,
+)?);
+
+assert_eq!(snapshot.qty_ahead(), 60);
+assert!(snapshot.fill_probability_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

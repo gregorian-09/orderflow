@@ -57,8 +57,10 @@ registry dependency after `of_fix 0.1.0` is published.
   writers, and extractor contracts
 - resiliency primitives for threshold-based spread/depth shock detection,
   recovery timing, and liquidity resiliency scoring
+- queue/fill primitives for passive queue position estimates, fill
+  probability, expected time-to-fill, amend queue loss, and maker/taker scoring
 - feature profiles for future impact, toxicity, volatility, regime,
-  data-quality, feature-vector, resiliency, patterns, derivatives,
+  data-quality, feature-vector, resiliency, queue-fill, patterns, derivatives,
   institutional, and ML feature modules
 - borrowed `of_core::BookLevel` analysis paths that avoid copying book
   snapshots in hot analytics loops

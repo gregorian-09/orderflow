@@ -31,8 +31,10 @@ The first foundation is dependency-light:
   writers,
 - resiliency primitives for threshold-based spread/depth shock detection,
   recovery timing, and liquidity resiliency scoring,
+- queue/fill primitives for passive queue position estimates, fill
+  probability, expected time-to-fill, amend queue loss, and maker/taker scoring,
 - explicit feature profiles so users can opt into future impact, toxicity,
-  volatility, regime, data-quality, feature-vector, resiliency, pattern,
+  volatility, regime, data-quality, feature-vector, resiliency, queue-fill, pattern,
   derivatives, institutional, and ML feature modules without forcing all
   downstream users to compile them.
 
@@ -57,6 +59,7 @@ Reserved additive profiles:
 - `data-quality`
 - `feature-vector`
 - `resiliency`
+- `queue-fill`
 - `patterns`
 - `derivatives`
 - `institutional`
@@ -221,6 +224,30 @@ let recovered = tracker.on_sample(ResiliencySample::new(1_000_200, 7, 500, 500)?
 assert!(shock.active_shock());
 assert_eq!(recovered.recovery_count(), 1);
 assert_eq!(recovered.last_recovery_time_ns(), 1_000_000);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Queue And Fill Example
+
+```rust
+use of_analytics::{
+    QueueFillConfig, QueueFillTracker, QueueFillUpdate, QueuePositionEstimate,
+    QueueUpdateKind,
+};
+
+let config = QueueFillConfig::new(5_000, 100, 1_000_000_000)?;
+let estimate = QueuePositionEstimate::new(100, 50, 200, 1)?;
+let mut tracker = QueueFillTracker::new(config, estimate);
+
+let snapshot = tracker.on_update(QueueFillUpdate::new(
+    QueueUpdateKind::Trade,
+    40,
+    160,
+    2,
+)?);
+
+assert_eq!(snapshot.qty_ahead(), 60);
+assert!(snapshot.fill_probability_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
