@@ -21,6 +21,8 @@ The first foundation is dependency-light:
 - market-impact primitives for Kyle-style lambda and Amihud-style
   illiquidity,
 - VPIN-style fixed-bucket toxicity primitives,
+- fixed-window volatility/noise primitives,
+- threshold-based market regime classification,
 - explicit feature profiles so users can opt into future impact, toxicity,
   volatility, regime, pattern, derivatives, institutional, and ML feature
   modules without forcing all downstream users to compile them.
@@ -103,6 +105,28 @@ let mut vpin = VpinTracker::<4>::new(100)?;
 vpin.on_trade(TradeContext::new(500_000, 80, Side::Ask, 1)?);
 vpin.on_trade(TradeContext::new(500_000, 20, Side::Bid, 2)?);
 assert_eq!(vpin.snapshot().bucket_count(), 1);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Volatility And Regime Example
+
+```rust
+use of_analytics::{RegimeClassifier, RegimeInput, RegimeKind, VolatilityTracker};
+
+let mut vol = VolatilityTracker::<8>::new()?;
+vol.on_price(100_000)?;
+vol.on_price(101_000)?;
+vol.on_price(100_500)?;
+let snapshot = vol.snapshot();
+
+let regime = RegimeClassifier::default().classify(RegimeInput::new(
+    5,
+    snapshot.realized_vol_bps(),
+    0,
+    0,
+));
+
+assert!(matches!(regime.kind(), RegimeKind::Normal | RegimeKind::Volatile));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

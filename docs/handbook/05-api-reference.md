@@ -700,6 +700,12 @@ Public market-quality and liquidity types:
 - `ImpactTracker`
 - `VpinSnapshot`
 - `VpinTracker`
+- `VolatilitySnapshot`
+- `VolatilityTracker`
+- `RegimeKind`
+- `RegimeInput`
+- `RegimeSnapshot`
+- `RegimeClassifier`
 
 For advanced analytics crate details, see
 [`of_analytics` reference](./05l-of-analytics-reference.md).

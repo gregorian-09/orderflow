@@ -11,6 +11,8 @@ The first public slice is dependency-light and live-path friendly:
 - liquidity/depth analytics,
 - market-impact analytics,
 - VPIN-style toxicity analytics,
+- fixed-window volatility/noise analytics,
+- threshold-based regime classification,
 - feature profiles for future impact, toxicity, volatility, regime, pattern,
   derivatives, institutional, and ML-feature modules.
 
@@ -59,6 +61,12 @@ Impact/toxicity:
 - `ImpactTracker`
 - `VpinSnapshot`
 - `VpinTracker`
+- `VolatilitySnapshot`
+- `VolatilityTracker`
+- `RegimeKind`
+- `RegimeInput`
+- `RegimeSnapshot`
+- `RegimeClassifier`
 
 ## Market Quality
 
@@ -172,6 +180,41 @@ let snapshot = tracker.snapshot();
 
 assert_eq!(snapshot.bucket_count(), 1);
 assert_eq!(snapshot.vpin_bps(), 6_000);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Volatility And Noise
+
+`VolatilityTracker` stores a fixed-size ring of integer return samples. It
+reports realized volatility, mean absolute return, and a simple noise proxy
+based on return sign flips.
+
+```rust
+use of_analytics::VolatilityTracker;
+
+let mut tracker = VolatilityTracker::<8>::new()?;
+tracker.on_price(100_000)?;
+tracker.on_price(101_000)?;
+tracker.on_price(100_500)?;
+let snapshot = tracker.snapshot();
+
+assert_eq!(snapshot.samples(), 2);
+assert!(snapshot.realized_vol_bps() > 0);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Regime Classification
+
+`RegimeClassifier` maps spread, volatility, toxicity, and imbalance inputs into
+a compact `RegimeSnapshot`. The default classifier prioritizes toxic flow, then
+illiquidity, then volatility.
+
+```rust
+use of_analytics::{RegimeClassifier, RegimeInput, RegimeKind};
+
+let regime = RegimeClassifier::default().classify(RegimeInput::new(1, 10, 8_000, 0));
+
+assert_eq!(regime.kind(), RegimeKind::Toxic);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

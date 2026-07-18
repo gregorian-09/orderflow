@@ -47,6 +47,8 @@ registry dependency after `of_fix 0.1.0` is published.
   proportional imbalance, depth slope, and sweepability
 - market-impact primitives for Kyle-style lambda and Amihud-style illiquidity
 - VPIN-style fixed-bucket toxicity primitives
+- fixed-window volatility/noise primitives and threshold-based regime
+  classification
 - feature profiles for future impact, toxicity, volatility, regime, patterns,
   derivatives, institutional, and ML feature modules
 - borrowed `of_core::BookLevel` analysis paths that avoid copying book

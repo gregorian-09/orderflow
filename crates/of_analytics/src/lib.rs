@@ -659,6 +659,291 @@ impl<const N: usize> VpinTracker<N> {
     }
 }
 
+/// Rolling volatility/noise snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VolatilitySnapshot {
+    samples: usize,
+    last_price: i64,
+    realized_vol_bps: u32,
+    mean_abs_return_bps: u32,
+    noise_ratio_bps: u16,
+}
+
+impl VolatilitySnapshot {
+    /// Returns retained return sample count.
+    pub const fn samples(&self) -> usize {
+        self.samples
+    }
+
+    /// Returns last observed price.
+    pub const fn last_price(&self) -> i64 {
+        self.last_price
+    }
+
+    /// Returns realized volatility in basis points.
+    pub const fn realized_vol_bps(&self) -> u32 {
+        self.realized_vol_bps
+    }
+
+    /// Returns mean absolute return in basis points.
+    pub const fn mean_abs_return_bps(&self) -> u32 {
+        self.mean_abs_return_bps
+    }
+
+    /// Returns microstructure noise proxy in basis points.
+    pub const fn noise_ratio_bps(&self) -> u16 {
+        self.noise_ratio_bps
+    }
+}
+
+/// Fixed-window volatility tracker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VolatilityTracker<const N: usize = 64> {
+    returns_bps: [i32; N],
+    next: usize,
+    len: usize,
+    last_price: i64,
+}
+
+impl<const N: usize> VolatilityTracker<N> {
+    /// Creates an empty volatility tracker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidTrade`] when capacity is zero.
+    pub const fn new() -> Result<Self, AnalyticsError> {
+        if N == 0 {
+            return Err(AnalyticsError::InvalidTrade);
+        }
+        Ok(Self {
+            returns_bps: [0; N],
+            next: 0,
+            len: 0,
+            last_price: 0,
+        })
+    }
+
+    /// Records a price observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidTrade`] when price is not positive.
+    pub fn on_price(&mut self, price: i64) -> Result<(), AnalyticsError> {
+        if price <= 0 {
+            return Err(AnalyticsError::InvalidTrade);
+        }
+        if self.last_price > 0 {
+            let ret = i32::try_from(
+                ((i128::from(price) - i128::from(self.last_price)) * 10_000)
+                    / i128::from(self.last_price),
+            )
+            .unwrap_or(0);
+            self.returns_bps[self.next] = ret;
+            self.next = (self.next + 1) % N;
+            self.len = self.len.saturating_add(1).min(N);
+        }
+        self.last_price = price;
+        Ok(())
+    }
+
+    /// Returns current volatility snapshot.
+    pub fn snapshot(&self) -> VolatilitySnapshot {
+        if self.len == 0 {
+            return VolatilitySnapshot {
+                samples: 0,
+                last_price: self.last_price,
+                realized_vol_bps: 0,
+                mean_abs_return_bps: 0,
+                noise_ratio_bps: 0,
+            };
+        }
+        let mut sum_sq = 0_u128;
+        let mut sum_abs = 0_u128;
+        let mut sign_flips = 0_u32;
+        let mut prev_sign = 0_i32;
+        for offset in 0..self.len {
+            let idx = if self.len == N {
+                (self.next + offset) % N
+            } else {
+                offset
+            };
+            let ret = self.returns_bps[idx];
+            let abs = ret.unsigned_abs();
+            sum_abs = sum_abs.saturating_add(u128::from(abs));
+            sum_sq = sum_sq.saturating_add(u128::from(abs).saturating_mul(u128::from(abs)));
+            let sign = ret.signum();
+            if prev_sign != 0 && sign != 0 && sign != prev_sign {
+                sign_flips = sign_flips.saturating_add(1);
+            }
+            if sign != 0 {
+                prev_sign = sign;
+            }
+        }
+        let len = u128::try_from(self.len).unwrap_or(1);
+        let realized = isqrt_u128(sum_sq / len);
+        let mean_abs = sum_abs / len;
+        let noise_ratio_bps = if self.len <= 1 {
+            0
+        } else {
+            u16::try_from(
+                (u128::from(sign_flips) * 10_000) / u128::try_from(self.len - 1).unwrap_or(1),
+            )
+            .unwrap_or(10_000)
+        };
+        VolatilitySnapshot {
+            samples: self.len,
+            last_price: self.last_price,
+            realized_vol_bps: u32::try_from(realized).unwrap_or(u32::MAX),
+            mean_abs_return_bps: u32::try_from(mean_abs).unwrap_or(u32::MAX),
+            noise_ratio_bps,
+        }
+    }
+}
+
+/// Market regime classification.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum RegimeKind {
+    /// Quiet conditions.
+    Quiet = 1,
+    /// Normal conditions.
+    Normal = 2,
+    /// Volatility is elevated.
+    Volatile = 3,
+    /// Toxic flow or adverse-selection risk is elevated.
+    Toxic = 4,
+    /// Spread/imbalance suggests illiquidity.
+    Illiquid = 5,
+}
+
+/// Regime classifier input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegimeInput {
+    spread_bps: u32,
+    volatility_bps: u32,
+    toxicity_bps: u16,
+    imbalance_abs_bps: u16,
+}
+
+impl RegimeInput {
+    /// Creates regime input.
+    pub const fn new(
+        spread_bps: u32,
+        volatility_bps: u32,
+        toxicity_bps: u16,
+        imbalance_abs_bps: u16,
+    ) -> Self {
+        Self {
+            spread_bps,
+            volatility_bps,
+            toxicity_bps,
+            imbalance_abs_bps,
+        }
+    }
+
+    /// Returns spread in basis points.
+    pub const fn spread_bps(&self) -> u32 {
+        self.spread_bps
+    }
+
+    /// Returns volatility in basis points.
+    pub const fn volatility_bps(&self) -> u32 {
+        self.volatility_bps
+    }
+
+    /// Returns toxicity in basis points.
+    pub const fn toxicity_bps(&self) -> u16 {
+        self.toxicity_bps
+    }
+
+    /// Returns absolute imbalance in basis points.
+    pub const fn imbalance_abs_bps(&self) -> u16 {
+        self.imbalance_abs_bps
+    }
+}
+
+/// Regime snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegimeSnapshot {
+    kind: RegimeKind,
+    stress_bps: u16,
+}
+
+impl RegimeSnapshot {
+    /// Returns regime kind.
+    pub const fn kind(&self) -> RegimeKind {
+        self.kind
+    }
+
+    /// Returns aggregate stress score in basis points.
+    pub const fn stress_bps(&self) -> u16 {
+        self.stress_bps
+    }
+}
+
+/// Threshold-based market regime classifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegimeClassifier {
+    quiet_vol_bps: u32,
+    volatile_vol_bps: u32,
+    wide_spread_bps: u32,
+    toxic_bps: u16,
+    imbalance_bps: u16,
+}
+
+impl RegimeClassifier {
+    /// Creates regime classifier thresholds.
+    pub const fn new(
+        quiet_vol_bps: u32,
+        volatile_vol_bps: u32,
+        wide_spread_bps: u32,
+        toxic_bps: u16,
+        imbalance_bps: u16,
+    ) -> Self {
+        Self {
+            quiet_vol_bps,
+            volatile_vol_bps,
+            wide_spread_bps,
+            toxic_bps,
+            imbalance_bps,
+        }
+    }
+
+    /// Classifies a regime input.
+    pub fn classify(&self, input: RegimeInput) -> RegimeSnapshot {
+        let kind = if input.toxicity_bps() >= self.toxic_bps {
+            RegimeKind::Toxic
+        } else if input.spread_bps() >= self.wide_spread_bps
+            || input.imbalance_abs_bps() >= self.imbalance_bps
+        {
+            RegimeKind::Illiquid
+        } else if input.volatility_bps() >= self.volatile_vol_bps {
+            RegimeKind::Volatile
+        } else if input.volatility_bps() <= self.quiet_vol_bps && input.spread_bps() == 0 {
+            RegimeKind::Quiet
+        } else {
+            RegimeKind::Normal
+        };
+        let stress = input
+            .volatility_bps()
+            .min(10_000)
+            .max(u32::from(input.toxicity_bps()))
+            .max(u32::from(input.imbalance_abs_bps()))
+            .max(input.spread_bps().min(10_000));
+        RegimeSnapshot {
+            kind,
+            stress_bps: u16::try_from(stress).unwrap_or(10_000),
+        }
+    }
+}
+
+impl Default for RegimeClassifier {
+    fn default() -> Self {
+        Self::new(5, 50, 25, 7_500, 7_500)
+    }
+}
+
 /// Borrowed depth analyzer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiquidityDepthAnalyzer {
@@ -769,6 +1054,19 @@ fn price_to_bps(value: i64, reference: i64) -> i32 {
     }
     let bps = (i128::from(value) * 10_000) / i128::from(reference);
     i32::try_from(bps.clamp(i128::from(i32::MIN), i128::from(i32::MAX))).unwrap_or(0)
+}
+
+fn isqrt_u128(value: u128) -> u128 {
+    if value <= 1 {
+        return value;
+    }
+    let mut x0 = value / 2;
+    let mut x1 = (x0 + value / x0) / 2;
+    while x1 < x0 {
+        x0 = x1;
+        x1 = (x0 + value / x0) / 2;
+    }
+    x0
 }
 
 #[cfg(test)]
@@ -895,5 +1193,55 @@ mod tests {
         assert_eq!(snapshot.current_bucket_volume(), 0);
         assert_eq!(snapshot.vpin_bps(), 8_000);
         assert_eq!(snapshot.toxicity_bps(), snapshot.vpin_bps());
+    }
+
+    #[test]
+    fn volatility_tracker_computes_realized_noise() {
+        let mut tracker = VolatilityTracker::<4>::new().expect("tracker");
+        tracker.on_price(100_000).expect("price");
+        tracker.on_price(101_000).expect("price");
+        tracker.on_price(100_000).expect("price");
+        tracker.on_price(101_000).expect("price");
+
+        let snapshot = tracker.snapshot();
+
+        assert_eq!(snapshot.samples(), 3);
+        assert_eq!(snapshot.last_price(), 101_000);
+        assert!(snapshot.realized_vol_bps() > 0);
+        assert!(snapshot.mean_abs_return_bps() > 0);
+        assert!(snapshot.noise_ratio_bps() > 0);
+    }
+
+    #[test]
+    fn volatility_tracker_preserves_ring_order_for_noise() {
+        let mut tracker = VolatilityTracker::<3>::new().expect("tracker");
+        for price in [100_000, 101_000, 102_000, 101_000, 100_000] {
+            tracker.on_price(price).expect("price");
+        }
+
+        let snapshot = tracker.snapshot();
+
+        assert_eq!(snapshot.samples(), 3);
+        assert_eq!(snapshot.noise_ratio_bps(), 5_000);
+    }
+
+    #[test]
+    fn regime_classifier_prioritizes_toxicity_and_illiquidity() {
+        let classifier = RegimeClassifier::default();
+
+        assert_eq!(
+            classifier
+                .classify(RegimeInput::new(1, 10, 8_000, 0))
+                .kind(),
+            RegimeKind::Toxic
+        );
+        assert_eq!(
+            classifier.classify(RegimeInput::new(50, 10, 0, 0)).kind(),
+            RegimeKind::Illiquid
+        );
+        assert_eq!(
+            classifier.classify(RegimeInput::new(1, 100, 0, 0)).kind(),
+            RegimeKind::Volatile
+        );
     }
 }
