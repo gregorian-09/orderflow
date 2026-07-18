@@ -609,6 +609,9 @@ Public parent/child and decision types:
 - `AlgoSimStep`
 - `AlgoSimReport`
 - `AlgoSimulator`
+- `AlgoTcaBenchmark`
+- `AlgoMetricsSnapshot`
+- `AlgoMetricsAccumulator`
 - `TwapSlicePlanner`
 - `AlgoReplayEvent`
 - `AlgoReplayInput`

@@ -142,6 +142,8 @@ pub enum AlgoError {
     InvalidRecoveryState,
     /// Algorithm simulation inputs are invalid.
     InvalidSimulationParameters,
+    /// Algorithm metrics or benchmark inputs are invalid.
+    InvalidMetricsParameters,
     /// Fixed-capacity decision buffer is full.
     DecisionFull {
         /// Configured decision capacity.
@@ -189,6 +191,7 @@ impl fmt::Display for AlgoError {
             Self::InvalidSimulationParameters => {
                 write!(f, "invalid algorithm simulation parameters")
             }
+            Self::InvalidMetricsParameters => write!(f, "invalid algorithm metrics parameters"),
             Self::DecisionFull { capacity } => {
                 write!(f, "algorithm decision capacity {capacity} is full")
             }
@@ -2041,6 +2044,275 @@ impl AlgoSimulator {
             }
         }
         Ok(report)
+    }
+}
+
+/// Optional TCA benchmark prices for an algorithm parent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoTcaBenchmark {
+    arrival_price: OrderPrice,
+    vwap_price: OrderPrice,
+    twap_price: OrderPrice,
+}
+
+impl AlgoTcaBenchmark {
+    /// Creates benchmark prices.
+    ///
+    /// `vwap_price` and `twap_price` may be zero when unavailable.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError::InvalidMetricsParameters`] when arrival price is
+    /// not positive or optional benchmark prices are negative.
+    pub const fn new(
+        arrival_price: OrderPrice,
+        vwap_price: OrderPrice,
+        twap_price: OrderPrice,
+    ) -> Result<Self, AlgoError> {
+        if arrival_price.0 <= 0 || vwap_price.0 < 0 || twap_price.0 < 0 {
+            return Err(AlgoError::InvalidMetricsParameters);
+        }
+        Ok(Self {
+            arrival_price,
+            vwap_price,
+            twap_price,
+        })
+    }
+
+    /// Returns arrival/decision price.
+    pub const fn arrival_price(&self) -> OrderPrice {
+        self.arrival_price
+    }
+
+    /// Returns VWAP benchmark price, or zero when unavailable.
+    pub const fn vwap_price(&self) -> OrderPrice {
+        self.vwap_price
+    }
+
+    /// Returns TWAP benchmark price, or zero when unavailable.
+    pub const fn twap_price(&self) -> OrderPrice {
+        self.twap_price
+    }
+}
+
+/// Snapshot of algorithm execution metrics and TCA fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoMetricsSnapshot {
+    parent_id: ParentOrderId,
+    target_qty: OrderQty,
+    submitted_children: u64,
+    filled_children: u64,
+    rejected_children: u64,
+    cancelled_children: u64,
+    completed_qty: OrderQty,
+    completion_bps: u16,
+    average_price: OrderPrice,
+    arrival_slippage_bps: i32,
+    vwap_slippage_bps: i32,
+    twap_slippage_bps: i32,
+    first_submit_ns: u64,
+    last_event_ns: u64,
+    average_latency_ns: u64,
+}
+
+impl AlgoMetricsSnapshot {
+    /// Returns parent identifier.
+    pub const fn parent_id(&self) -> ParentOrderId {
+        self.parent_id
+    }
+
+    /// Returns target parent quantity.
+    pub const fn target_qty(&self) -> OrderQty {
+        self.target_qty
+    }
+
+    /// Returns submitted child count.
+    pub const fn submitted_children(&self) -> u64 {
+        self.submitted_children
+    }
+
+    /// Returns child count with at least one fill.
+    pub const fn filled_children(&self) -> u64 {
+        self.filled_children
+    }
+
+    /// Returns rejected child count.
+    pub const fn rejected_children(&self) -> u64 {
+        self.rejected_children
+    }
+
+    /// Returns cancelled child count.
+    pub const fn cancelled_children(&self) -> u64 {
+        self.cancelled_children
+    }
+
+    /// Returns completed quantity.
+    pub const fn completed_qty(&self) -> OrderQty {
+        self.completed_qty
+    }
+
+    /// Returns completion in basis points of target quantity.
+    pub const fn completion_bps(&self) -> u16 {
+        self.completion_bps
+    }
+
+    /// Returns average execution price, or zero when no fills exist.
+    pub const fn average_price(&self) -> OrderPrice {
+        self.average_price
+    }
+
+    /// Returns side-aware arrival slippage in basis points.
+    pub const fn arrival_slippage_bps(&self) -> i32 {
+        self.arrival_slippage_bps
+    }
+
+    /// Returns side-aware VWAP benchmark slippage in basis points, or zero when
+    /// no VWAP benchmark is configured.
+    pub const fn vwap_slippage_bps(&self) -> i32 {
+        self.vwap_slippage_bps
+    }
+
+    /// Returns side-aware TWAP benchmark slippage in basis points, or zero when
+    /// no TWAP benchmark is configured.
+    pub const fn twap_slippage_bps(&self) -> i32 {
+        self.twap_slippage_bps
+    }
+
+    /// Returns first child submit timestamp.
+    pub const fn first_submit_ns(&self) -> u64 {
+        self.first_submit_ns
+    }
+
+    /// Returns last execution-event receive timestamp.
+    pub const fn last_event_ns(&self) -> u64 {
+        self.last_event_ns
+    }
+
+    /// Returns average event latency in nanoseconds.
+    pub const fn average_latency_ns(&self) -> u64 {
+        self.average_latency_ns
+    }
+}
+
+/// Allocation-free accumulator for algo execution metrics and TCA.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoMetricsAccumulator {
+    parent_id: ParentOrderId,
+    side: OrderSide,
+    target_qty: OrderQty,
+    benchmarks: AlgoTcaBenchmark,
+    submitted_children: u64,
+    filled_children: u64,
+    rejected_children: u64,
+    cancelled_children: u64,
+    completed_qty: OrderQty,
+    cumulative_notional: u128,
+    first_submit_ns: u64,
+    last_event_ns: u64,
+    total_latency_ns: u128,
+    latency_samples: u64,
+}
+
+impl AlgoMetricsAccumulator {
+    /// Creates a metrics accumulator for a parent order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError`] when parent or benchmark inputs are invalid.
+    pub fn new(parent: &ParentOrder, benchmarks: AlgoTcaBenchmark) -> Result<Self, AlgoError> {
+        parent.validate()?;
+        Ok(Self {
+            parent_id: parent.id(),
+            side: parent.side(),
+            target_qty: parent.total_qty(),
+            benchmarks,
+            submitted_children: 0,
+            filled_children: 0,
+            rejected_children: 0,
+            cancelled_children: 0,
+            completed_qty: OrderQty(0),
+            cumulative_notional: 0,
+            first_submit_ns: 0,
+            last_event_ns: 0,
+            total_latency_ns: 0,
+            latency_samples: 0,
+        })
+    }
+
+    /// Records one child submission.
+    pub fn on_child_submitted(&mut self, child: &ChildOrderPlan) {
+        self.submitted_children = self.submitted_children.saturating_add(1);
+        let ts = child.request().ts_recv_ns;
+        if self.first_submit_ns == 0 || ts < self.first_submit_ns {
+            self.first_submit_ns = ts;
+        }
+    }
+
+    /// Folds one canonical execution event into metrics.
+    pub fn on_execution_event(&mut self, event: &ExecutionEvent) {
+        self.last_event_ns = self.last_event_ns.max(event.ts_recv_ns);
+        if event.ts_recv_ns >= event.ts_exchange_ns {
+            self.total_latency_ns = self
+                .total_latency_ns
+                .saturating_add(u128::from(event.ts_recv_ns - event.ts_exchange_ns));
+            self.latency_samples = self.latency_samples.saturating_add(1);
+        }
+        match event.order_status {
+            OrderStatus::Rejected => {
+                self.rejected_children = self.rejected_children.saturating_add(1);
+            }
+            OrderStatus::Cancelled | OrderStatus::Expired => {
+                self.cancelled_children = self.cancelled_children.saturating_add(1);
+            }
+            _ => {}
+        }
+        if event.last_qty.0 > 0 {
+            self.filled_children = self.filled_children.saturating_add(1);
+            self.completed_qty = OrderQty(
+                self.completed_qty
+                    .0
+                    .saturating_add(event.last_qty.0)
+                    .min(self.target_qty.0),
+            );
+            self.cumulative_notional = self.cumulative_notional.saturating_add(
+                i64_to_u128(event.last_qty.0).saturating_mul(i64_to_u128(event.last_price.0)),
+            );
+        }
+    }
+
+    /// Returns current metrics snapshot.
+    pub fn snapshot(&self) -> AlgoMetricsSnapshot {
+        let average_price =
+            average_price_from_notional(self.cumulative_notional, self.completed_qty);
+        AlgoMetricsSnapshot {
+            parent_id: self.parent_id,
+            target_qty: self.target_qty,
+            submitted_children: self.submitted_children,
+            filled_children: self.filled_children,
+            rejected_children: self.rejected_children,
+            cancelled_children: self.cancelled_children,
+            completed_qty: self.completed_qty,
+            completion_bps: completion_bps(self.completed_qty.0, self.target_qty.0),
+            average_price,
+            arrival_slippage_bps: side_slippage_bps(
+                self.side,
+                average_price,
+                self.benchmarks.arrival_price(),
+            ),
+            vwap_slippage_bps: optional_slippage_bps(
+                self.side,
+                average_price,
+                self.benchmarks.vwap_price(),
+            ),
+            twap_slippage_bps: optional_slippage_bps(
+                self.side,
+                average_price,
+                self.benchmarks.twap_price(),
+            ),
+            first_submit_ns: self.first_submit_ns,
+            last_event_ns: self.last_event_ns,
+            average_latency_ns: average_latency_ns(self.total_latency_ns, self.latency_samples),
+        }
     }
 }
 
@@ -6073,6 +6345,49 @@ fn child_notional(child: &ChildOrderPlan) -> u128 {
         .saturating_mul(i64_to_u128(child.request().limit_price.0))
 }
 
+fn completion_bps(completed_qty: i64, target_qty: i64) -> u16 {
+    if completed_qty <= 0 || target_qty <= 0 {
+        return 0;
+    }
+    let bps = (i128::from(completed_qty) * 10_000) / i128::from(target_qty);
+    u16::try_from(bps.clamp(0, 10_000)).unwrap_or(10_000)
+}
+
+fn average_price_from_notional(notional: u128, quantity: OrderQty) -> OrderPrice {
+    if notional == 0 || quantity.0 <= 0 {
+        return OrderPrice(0);
+    }
+    let avg = notional / i64_to_u128(quantity.0);
+    OrderPrice(i64::try_from(avg).unwrap_or(i64::MAX))
+}
+
+fn side_slippage_bps(side: OrderSide, average_price: OrderPrice, benchmark: OrderPrice) -> i32 {
+    if average_price.0 <= 0 || benchmark.0 <= 0 {
+        return 0;
+    }
+    let raw = match side {
+        OrderSide::Buy => i128::from(average_price.0) - i128::from(benchmark.0),
+        OrderSide::Sell => i128::from(benchmark.0) - i128::from(average_price.0),
+    };
+    let bps = (raw * 10_000) / i128::from(benchmark.0);
+    i32::try_from(bps.clamp(i128::from(i32::MIN), i128::from(i32::MAX))).unwrap_or(0)
+}
+
+fn optional_slippage_bps(side: OrderSide, average_price: OrderPrice, benchmark: OrderPrice) -> i32 {
+    if benchmark.0 <= 0 {
+        0
+    } else {
+        side_slippage_bps(side, average_price, benchmark)
+    }
+}
+
+fn average_latency_ns(total_latency_ns: u128, samples: u64) -> u64 {
+    if samples == 0 {
+        return 0;
+    }
+    u64::try_from(total_latency_ns / u128::from(samples)).unwrap_or(u64::MAX)
+}
+
 fn i64_to_u128(value: i64) -> u128 {
     u128::try_from(value.max(0)).unwrap_or(0)
 }
@@ -6907,6 +7222,133 @@ mod tests {
         assert_eq!(report.len(), 1);
         assert_eq!(report.total_filled_qty(), OrderQty(20));
         assert_eq!(report.cancelled_children(), 0);
+    }
+
+    #[test]
+    fn metrics_accumulate_fill_quality() {
+        let parent = parent();
+        let child = ChildOrderPlan::new(
+            ChildOrderId::new("met-fill").expect("child"),
+            parent.id(),
+            parent.build_order_request(
+                ClientOrderId::new("met-fill-cl").expect("client"),
+                OrderQty(10),
+                1_000,
+            ),
+            1_000,
+        )
+        .expect("child");
+        let mut metrics = AlgoMetricsAccumulator::new(
+            &parent,
+            AlgoTcaBenchmark::new(
+                OrderPrice(500_000),
+                OrderPrice(502_500),
+                OrderPrice(501_000),
+            )
+            .expect("benchmark"),
+        )
+        .expect("metrics");
+        metrics.on_child_submitted(&child);
+        let step = AlgoSimulator::new(
+            AlgoSimMarket::new(OrderQty(10), OrderPrice(505_000), false, false, 25)
+                .expect("market"),
+        )
+        .simulate_child(&child, 1)
+        .expect("step");
+        metrics.on_execution_event(&step.event());
+        let snapshot = metrics.snapshot();
+
+        assert_eq!(snapshot.submitted_children(), 1);
+        assert_eq!(snapshot.filled_children(), 1);
+        assert_eq!(snapshot.completed_qty(), OrderQty(10));
+        assert_eq!(snapshot.completion_bps(), 1_000);
+        assert_eq!(snapshot.average_price(), OrderPrice(505_000));
+        assert_eq!(snapshot.arrival_slippage_bps(), 100);
+        assert_eq!(snapshot.average_latency_ns(), 25);
+    }
+
+    #[test]
+    fn metrics_record_rejects_and_cancels() {
+        let parent = parent();
+        let rejected_child = ChildOrderPlan::new(
+            ChildOrderId::new("met-reject").expect("child"),
+            parent.id(),
+            parent.build_order_request(
+                ClientOrderId::new("met-reject-cl").expect("client"),
+                OrderQty(10),
+                1,
+            ),
+            1,
+        )
+        .expect("child");
+        let cancelled_child = ChildOrderPlan::new(
+            ChildOrderId::new("met-cancel").expect("child"),
+            parent.id(),
+            parent.build_order_request(
+                ClientOrderId::new("met-cancel-cl").expect("client"),
+                OrderQty(10),
+                2,
+            ),
+            2,
+        )
+        .expect("child");
+        let mut metrics = AlgoMetricsAccumulator::new(
+            &parent,
+            AlgoTcaBenchmark::new(OrderPrice(500_000), OrderPrice(0), OrderPrice(0))
+                .expect("benchmark"),
+        )
+        .expect("metrics");
+        metrics.on_child_submitted(&rejected_child);
+        metrics.on_child_submitted(&cancelled_child);
+        let reject = AlgoSimulator::new(
+            AlgoSimMarket::new(OrderQty(0), OrderPrice(0), true, false, 0).expect("market"),
+        )
+        .simulate_child(&rejected_child, 1)
+        .expect("reject");
+        let cancel = AlgoSimulator::new(
+            AlgoSimMarket::new(OrderQty(0), OrderPrice(500_000), false, true, 0).expect("market"),
+        )
+        .simulate_child(&cancelled_child, 2)
+        .expect("cancel");
+        metrics.on_execution_event(&reject.event());
+        metrics.on_execution_event(&cancel.event());
+        let snapshot = metrics.snapshot();
+
+        assert_eq!(snapshot.submitted_children(), 2);
+        assert_eq!(snapshot.rejected_children(), 1);
+        assert_eq!(snapshot.cancelled_children(), 1);
+        assert_eq!(snapshot.completed_qty(), OrderQty(0));
+    }
+
+    #[test]
+    fn metrics_preserve_favorable_sell_slippage() {
+        let parent = sell_parent("met-sell", OrderQty(100), OrderQty(10), OrderQty(25));
+        let child = ChildOrderPlan::new(
+            ChildOrderId::new("met-sell-child").expect("child"),
+            parent.id(),
+            parent.build_order_request(
+                ClientOrderId::new("met-sell-cl").expect("client"),
+                OrderQty(10),
+                1,
+            ),
+            1,
+        )
+        .expect("child");
+        let mut metrics = AlgoMetricsAccumulator::new(
+            &parent,
+            AlgoTcaBenchmark::new(OrderPrice(500_000), OrderPrice(0), OrderPrice(0))
+                .expect("benchmark"),
+        )
+        .expect("metrics");
+        metrics.on_child_submitted(&child);
+        let step = AlgoSimulator::new(
+            AlgoSimMarket::new(OrderQty(10), OrderPrice(505_000), false, false, 0).expect("market"),
+        )
+        .simulate_child(&child, 1)
+        .expect("step");
+        metrics.on_execution_event(&step.event());
+
+        assert_eq!(metrics.snapshot().arrival_slippage_bps(), -100);
     }
 
     #[test]

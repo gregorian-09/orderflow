@@ -22,6 +22,8 @@ The first foundation focuses on deterministic parent/child order handling:
 - host-serializable algorithm checkpoints and deterministic recovery plans,
 - deterministic child-order simulation reports that emit canonical
   `ExecutionEvent` values for progress folding,
+- allocation-free execution metrics and TCA snapshots from child submissions
+  and canonical execution events,
 - deterministic TWAP slice planning with explicit clip limits,
 - deterministic POV/participation planning from observed market volume,
 - deterministic VWAP planning from a borrowed cumulative volume curve,
@@ -314,6 +316,94 @@ progress.on_execution_event(&step.event());
 
 assert_eq!(step.outcome(), AlgoSimOutcome::Filled);
 assert_eq!(progress.completed_qty(), OrderQty::new(10)?);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Metrics And TCA
+
+`AlgoMetricsAccumulator` folds child submissions and canonical execution
+events into a compact TCA snapshot. It tracks completion, child counts,
+average execution price, side-aware slippage versus arrival/VWAP/TWAP
+benchmarks, and average event latency.
+
+```rust
+use of_execution_algos::{
+    AlgoMetricsAccumulator, AlgoTcaBenchmark, ChildOrderId, ParentOrder,
+    ParentOrderId,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionEvent, ExecutionId, ExecutionSymbol,
+    ExecutionText, ExecutionType, OrderPrice, OrderQty, OrderSide, OrderStatus,
+    OrderType, RiskRejectReason, RouteId, StrategyId, TimeInForce, VenueOrderId,
+};
+
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-tca")?,
+    AccountId::new("acct")?,
+    RouteId::new("sim")?,
+    StrategyId::new("tca")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+let child = of_execution_algos::ChildOrderPlan::new(
+    ChildOrderId::new("tca-child")?,
+    parent.id(),
+    of_execution_core::OrderRequest {
+        client_order_id: ClientOrderId::new("tca-cl")?,
+        account_id: parent.account_id(),
+        route_id: parent.route_id(),
+        strategy_id: parent.strategy_id(),
+        symbol: parent.symbol(),
+        side: parent.side(),
+        order_type: parent.order_type(),
+        time_in_force: parent.time_in_force(),
+        quantity: OrderQty::new(10)?,
+        limit_price: OrderPrice::new(500_000)?,
+        stop_price: OrderPrice(0),
+        ts_exchange_ns: 0,
+        ts_recv_ns: 2_000,
+    },
+    2_000,
+)?;
+let mut metrics = AlgoMetricsAccumulator::new(
+    &parent,
+    AlgoTcaBenchmark::new(OrderPrice::new(500_000)?, OrderPrice(0), OrderPrice(0))?,
+)?;
+metrics.on_child_submitted(&child);
+metrics.on_execution_event(&ExecutionEvent {
+    exec_type: ExecutionType::Trade,
+    order_status: OrderStatus::Filled,
+    client_order_id: child.request().client_order_id,
+    orig_client_order_id: ClientOrderId::empty(),
+    venue_order_id: VenueOrderId::new("venue-tca")?,
+    execution_id: ExecutionId::new("exec-tca")?,
+    account_id: parent.account_id(),
+    route_id: parent.route_id(),
+    symbol: parent.symbol(),
+    last_qty: OrderQty::new(10)?,
+    last_price: OrderPrice::new(505_000)?,
+    cumulative_qty: OrderQty::new(10)?,
+    leaves_qty: OrderQty(0),
+    average_price: OrderPrice::new(505_000)?,
+    ts_exchange_ns: 2_000,
+    ts_recv_ns: 2_025,
+    reason: RiskRejectReason::None,
+    text: ExecutionText::empty(),
+});
+let snapshot = metrics.snapshot();
+
+assert_eq!(snapshot.completion_bps(), 1_000);
+assert_eq!(snapshot.arrival_slippage_bps(), 100);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

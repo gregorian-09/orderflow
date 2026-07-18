@@ -182,6 +182,10 @@ foundation:
   model inputs, canonical `ExecutionEvent` output, fixed-capacity simulation
   reports, fill/reject/cancel/resting outcomes, simulated latency,
   deterministic venue/execution id generation, and direct progress folding
+- allocation-free `AlgoMetricsAccumulator` and TCA snapshots with child
+  submission counts, fill/reject/cancel counts, completion, average execution
+  price, side-aware arrival/VWAP/TWAP slippage, first/last timestamps, and
+  average event latency
 - deterministic `MarketMakerPlanner` with fair-value quoting, inventory skew,
   volatility/adverse-selection spread widening, inventory-limit side
   suppression, and OMS-safe bid/ask child plans
