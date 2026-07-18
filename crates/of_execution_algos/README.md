@@ -29,6 +29,8 @@ The first foundation focuses on deterministic parent/child order handling:
 - deterministic smart order routing from route price, available quantity,
   capability, health/status, latency, reject rate, fill probability, fees, and
   toxicity metrics,
+- deterministic basket/spread planning for synchronized multi-leg child
+  release with leg roles and hedge-ratio metadata,
 - deterministic TWAP replay over explicit timer/execution/status inputs.
 
 The crate does not submit orders, open sockets, own an OMS, bypass risk, or
@@ -41,7 +43,7 @@ reconciliation remain authoritative.
 ```mermaid
 flowchart LR
     Strategy[Strategy intent] --> Parent[ParentOrder]
-    Parent --> Algo[TWAP / POV / VWAP / Iceberg / IS / Passive queue / SOR]
+    Parent --> Algo[TWAP / POV / VWAP / Iceberg / IS / Passive queue / SOR / Basket]
     Market[Market data / timers / OMS events] --> Algo
     Algo --> Decision[AlgoDecision]
     Decision --> Child[ChildOrderPlan]
@@ -418,6 +420,58 @@ assert!(!decision.is_empty());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+## Basket Example
+
+`BasketPlanner` synchronizes child release across multiple leg parents. It does
+not claim venue-atomic package execution; hosts still own linked-order support,
+hedge drift controls, and venue-specific recovery.
+
+```rust
+use of_execution_algos::{
+    AlgoProgress, BasketLeg, BasketLegRole, BasketPlanner, ChildOrderId,
+    ParentOrder, ParentOrderId,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-1")?,
+    AccountId::new("acct")?,
+    RouteId::new("default")?,
+    StrategyId::new("basket")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+
+let leg = BasketLeg::new(parent, BasketLegRole::Primary, 10_000)?;
+let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+let child_ids = [ChildOrderId::new("child-1")?];
+let client_ids = [ClientOrderId::new("cl-1")?];
+let decision = BasketPlanner::new().plan_synchronized_slice::<1>(
+    &[leg],
+    &[progress],
+    6_000,
+    &child_ids,
+    &client_ids,
+    6_000,
+)?;
+
+assert_eq!(decision.len(), 1);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 ## VWAP Example
 
 `VwapSlicePlanner` follows a historical or configured cumulative volume curve.
@@ -482,5 +536,5 @@ is:
 3. submit the resulting `OrderRequest` through the existing OMS,
 4. feed resulting `ExecutionEvent` values back into algo progress state.
 
-Future algorithms such as basket and market-making helpers should build on this
-substrate instead of bypassing it.
+Future algorithms such as market-making helpers should build on this substrate
+instead of bypassing it.

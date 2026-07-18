@@ -149,6 +149,8 @@ pub enum AlgoError {
     InvalidPassiveQueueParameters,
     /// Smart-order-router configuration or route candidate is invalid.
     InvalidSorParameters,
+    /// Basket or spread leg configuration is invalid.
+    InvalidBasketParameters,
     /// Implementation shortfall configuration or market context is invalid.
     InvalidShortfallParameters,
 }
@@ -177,6 +179,7 @@ impl fmt::Display for AlgoError {
                 write!(f, "invalid passive queue parameters")
             }
             Self::InvalidSorParameters => write!(f, "invalid SOR parameters"),
+            Self::InvalidBasketParameters => write!(f, "invalid basket parameters"),
             Self::InvalidShortfallParameters => {
                 write!(f, "invalid implementation shortfall parameters")
             }
@@ -2411,6 +2414,257 @@ impl SorPlanner {
     }
 }
 
+/// Basket or spread leg side in the portfolio objective.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum BasketLegRole {
+    /// Primary alpha or exposure leg.
+    Primary = 1,
+    /// Hedge leg intended to reduce exposure drift.
+    Hedge = 2,
+    /// Offset leg in a spread or relative-value structure.
+    Offset = 3,
+}
+
+/// One parent order participating in a basket or spread execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BasketLeg {
+    parent: ParentOrder,
+    role: BasketLegRole,
+    hedge_ratio_bps: i32,
+}
+
+impl BasketLeg {
+    /// Creates a basket leg.
+    ///
+    /// `hedge_ratio_bps` is metadata for audit and host-side risk checks. The
+    /// first planner slice uses each leg's own parent quantity as the executable
+    /// target so existing single-leg OMS semantics remain unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError`] when the parent is invalid or hedge ratio is zero.
+    pub fn new(
+        parent: ParentOrder,
+        role: BasketLegRole,
+        hedge_ratio_bps: i32,
+    ) -> Result<Self, AlgoError> {
+        parent.validate()?;
+        if hedge_ratio_bps == 0 {
+            return Err(AlgoError::InvalidBasketParameters);
+        }
+        Ok(Self {
+            parent,
+            role,
+            hedge_ratio_bps,
+        })
+    }
+
+    /// Returns the leg parent order.
+    pub const fn parent(&self) -> ParentOrder {
+        self.parent
+    }
+
+    /// Returns leg role.
+    pub const fn role(&self) -> BasketLegRole {
+        self.role
+    }
+
+    /// Returns hedge ratio metadata in basis points.
+    pub const fn hedge_ratio_bps(&self) -> i32 {
+        self.hedge_ratio_bps
+    }
+}
+
+/// Planned child allocation for one basket leg.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BasketChildAllocation {
+    leg_index: usize,
+    role: BasketLegRole,
+    target_release_qty: OrderQty,
+    plan: ChildOrderPlan,
+}
+
+impl BasketChildAllocation {
+    /// Returns leg index from the caller-provided leg slice.
+    pub const fn leg_index(&self) -> usize {
+        self.leg_index
+    }
+
+    /// Returns leg role.
+    pub const fn role(&self) -> BasketLegRole {
+        self.role
+    }
+
+    /// Returns cumulative target release quantity for the leg.
+    pub const fn target_release_qty(&self) -> OrderQty {
+        self.target_release_qty
+    }
+
+    /// Returns planned child order.
+    pub const fn plan(&self) -> ChildOrderPlan {
+        self.plan
+    }
+}
+
+/// Fixed-capacity basket decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BasketDecision<const N: usize = DEFAULT_ALGO_DECISION_CAPACITY> {
+    allocations: [Option<BasketChildAllocation>; N],
+    len: usize,
+    considered_legs: usize,
+    blocked_legs: usize,
+}
+
+impl<const N: usize> BasketDecision<N> {
+    /// Creates an empty basket decision.
+    pub const fn new(considered_legs: usize) -> Self {
+        Self {
+            allocations: [None; N],
+            len: 0,
+            considered_legs,
+            blocked_legs: 0,
+        }
+    }
+
+    /// Returns allocation count.
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns true when no allocations were produced.
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Returns considered leg count.
+    pub const fn considered_legs(&self) -> usize {
+        self.considered_legs
+    }
+
+    /// Returns blocked leg count.
+    pub const fn blocked_legs(&self) -> usize {
+        self.blocked_legs
+    }
+
+    /// Returns allocations in leg order.
+    pub fn allocations(&self) -> impl Iterator<Item = &BasketChildAllocation> {
+        self.allocations[..self.len]
+            .iter()
+            .filter_map(Option::as_ref)
+    }
+
+    fn push(&mut self, allocation: BasketChildAllocation) -> Result<(), AlgoError> {
+        if self.len == N {
+            return Err(AlgoError::DecisionFull { capacity: N });
+        }
+        self.allocations[self.len] = Some(allocation);
+        self.len += 1;
+        Ok(())
+    }
+
+    fn mark_blocked(&mut self) {
+        self.blocked_legs = self.blocked_legs.saturating_add(1);
+    }
+}
+
+/// Deterministic synchronized basket/spread planner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BasketPlanner;
+
+impl BasketPlanner {
+    /// Creates a basket planner.
+    pub const fn new() -> Self {
+        Self
+    }
+
+    /// Plans synchronized child slices for a basket.
+    ///
+    /// Each leg uses its own parent schedule and clip bounds. The function
+    /// emits at most one child per due leg and writes allocations into a
+    /// fixed-capacity decision. Hosts remain responsible for atomic package
+    /// semantics, linked-order support, hedge drift monitoring, and venue
+    /// cancel/replace orchestration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError`] when leg/progress/id slices are inconsistent, a
+    /// parent/progress pair is invalid, or the fixed output capacity is full.
+    pub fn plan_synchronized_slice<const N: usize>(
+        &self,
+        legs: &[BasketLeg],
+        progresses: &[AlgoProgress],
+        now_ns: u64,
+        child_ids: &[ChildOrderId],
+        client_order_ids: &[ClientOrderId],
+        ts_recv_ns: u64,
+    ) -> Result<BasketDecision<N>, AlgoError> {
+        if legs.len() != progresses.len()
+            || child_ids.len() < legs.len().min(N)
+            || client_order_ids.len() < legs.len().min(N)
+        {
+            return Err(AlgoError::InvalidBasketParameters);
+        }
+
+        let mut decision = BasketDecision::<N>::new(legs.len());
+        for (index, (leg, progress)) in legs.iter().zip(progresses.iter()).enumerate() {
+            let parent = leg.parent();
+            parent.validate()?;
+            if parent.status().is_terminal() {
+                decision.mark_blocked();
+                continue;
+            }
+            if progress.parent_id() != parent.id() || progress.target_qty() != parent.total_qty() {
+                return Err(AlgoError::InvalidProgress);
+            }
+            if now_ns < parent.start_ns() || progress.is_complete() {
+                continue;
+            }
+            let target_release_qty = scale_qty_bps(
+                parent.total_qty().0,
+                u32::from(elapsed_bps(parent.start_ns(), parent.end_ns(), now_ns)),
+            );
+            let due_qty = target_release_qty.saturating_sub(progress.released_qty().0);
+            if due_qty <= 0 {
+                continue;
+            }
+            let leaves = parent
+                .total_qty()
+                .0
+                .saturating_sub(progress.released_qty().0);
+            let mut child_qty = due_qty.min(parent.max_clip().0).min(leaves);
+            let final_slice = progress.released_qty().0.saturating_add(child_qty)
+                >= parent.total_qty().0
+                || now_ns >= parent.end_ns();
+            if child_qty < parent.min_clip().0 && !final_slice {
+                continue;
+            }
+            if child_qty <= 0 {
+                continue;
+            }
+            child_qty = child_qty.min(leaves);
+            if decision.len() == N {
+                return Err(AlgoError::DecisionFull { capacity: N });
+            }
+            let request = parent.build_order_request(
+                client_order_ids[decision.len()],
+                OrderQty(child_qty),
+                ts_recv_ns,
+            );
+            let plan =
+                ChildOrderPlan::new(child_ids[decision.len()], parent.id(), request, now_ns)?;
+            decision.push(BasketChildAllocation {
+                leg_index: index,
+                role: leg.role(),
+                target_release_qty: OrderQty(target_release_qty),
+                plan,
+            })?;
+        }
+        Ok(decision)
+    }
+}
+
 /// Market context for implementation-shortfall planning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImplementationShortfallContext {
@@ -4039,6 +4293,91 @@ mod tests {
                 2_000,
             ),
             Err(AlgoError::InvalidSorParameters)
+        );
+    }
+
+    #[test]
+    fn basket_plans_synchronized_due_legs() {
+        let first = BasketLeg::new(parent(), BasketLegRole::Primary, 10_000).expect("leg");
+        let second_parent = ParentOrder::new(
+            ParentOrderId::new("parent-2").expect("id"),
+            AccountId::new("acct").expect("account"),
+            RouteId::new("hedge").expect("route"),
+            StrategyId::new("basket").expect("strategy"),
+            ExecutionSymbol::new("SIM", "NQZ6").expect("symbol"),
+            OrderSide::Sell,
+            OrderType::Limit,
+            TimeInForce::Day,
+            OrderQty(50),
+            OrderPrice(1_800_000),
+            OrderPrice(0),
+            1_000,
+            11_000,
+            OrderQty(5),
+            OrderQty(20),
+            0,
+        )
+        .expect("parent");
+        let second = BasketLeg::new(second_parent, BasketLegRole::Hedge, -5_000).expect("leg");
+        let legs = [first, second];
+        let progresses = [
+            AlgoProgress::new(first.parent().id(), first.parent().total_qty()),
+            AlgoProgress::new(second.parent().id(), second.parent().total_qty()),
+        ];
+        let child_ids = [
+            ChildOrderId::new("child-b1").expect("child"),
+            ChildOrderId::new("child-b2").expect("child"),
+        ];
+        let client_ids = [
+            ClientOrderId::new("cl-b1").expect("client"),
+            ClientOrderId::new("cl-b2").expect("client"),
+        ];
+
+        let decision = BasketPlanner::new()
+            .plan_synchronized_slice::<2>(&legs, &progresses, 6_000, &child_ids, &client_ids, 6_000)
+            .expect("decision");
+
+        assert_eq!(decision.len(), 2);
+        let quantities: Vec<i64> = decision
+            .allocations()
+            .map(|allocation| allocation.plan().request().quantity.0)
+            .collect();
+        assert_eq!(quantities, vec![25, 20]);
+    }
+
+    #[test]
+    fn basket_blocks_terminal_legs_without_releasing() {
+        let terminal_parent = parent().with_status(ParentOrderStatus::Cancelled);
+        let leg = BasketLeg::new(terminal_parent, BasketLegRole::Primary, 10_000).expect("leg");
+        let progress = AlgoProgress::new(terminal_parent.id(), terminal_parent.total_qty());
+        let child_ids = [ChildOrderId::new("child-b").expect("child")];
+        let client_ids = [ClientOrderId::new("cl-b").expect("client")];
+
+        let decision = BasketPlanner::new()
+            .plan_synchronized_slice::<1>(
+                &[leg],
+                &[progress],
+                6_000,
+                &child_ids,
+                &client_ids,
+                6_000,
+            )
+            .expect("decision");
+
+        assert!(decision.is_empty());
+        assert_eq!(decision.blocked_legs(), 1);
+    }
+
+    #[test]
+    fn basket_rejects_mismatched_inputs() {
+        let leg = BasketLeg::new(parent(), BasketLegRole::Primary, 10_000).expect("leg");
+        assert_eq!(
+            BasketPlanner::new().plan_synchronized_slice::<1>(&[leg], &[], 6_000, &[], &[], 6_000),
+            Err(AlgoError::InvalidBasketParameters)
+        );
+        assert_eq!(
+            BasketLeg::new(parent(), BasketLegRole::Primary, 0),
+            Err(AlgoError::InvalidBasketParameters)
         );
     }
 

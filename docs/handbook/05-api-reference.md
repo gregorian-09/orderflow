@@ -620,6 +620,11 @@ Public parent/child and decision types:
 - `SorChildAllocation`
 - `SorDecision`
 - `SorPlanner`
+- `BasketLegRole`
+- `BasketLeg`
+- `BasketChildAllocation`
+- `BasketDecision`
+- `BasketPlanner`
 - `ImplementationShortfallContext`
 - `ImplementationShortfallConfig`
 - `ImplementationShortfallEstimate`

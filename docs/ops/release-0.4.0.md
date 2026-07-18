@@ -156,6 +156,9 @@ foundation:
   available quantity, fees/rebates, latency, reject rate, fill probability,
   toxicity, data-quality scoring, fixed-capacity allocations, and OMS-safe
   child plans
+- deterministic `BasketPlanner` with leg roles, hedge-ratio metadata,
+  synchronized per-leg release, fixed-capacity decisions, and explicit
+  non-atomic multi-leg semantics
 
 The crate does not bypass OMS risk, journaling, adapter capability checks, kill
 switches, or reconciliation. Hosts should submit child orders through
