@@ -52,7 +52,9 @@ registry dependency after `of_fix 0.1.0` is published.
 - market-impact primitives for Kyle-style lambda, Amihud-style illiquidity,
   calibrated expected impact, square-root impact, temporary/permanent impact,
   impact decay, and child-order attribution
-- VPIN-style fixed-bucket toxicity primitives
+- VPIN-style fixed-bucket toxicity primitives plus post-trade markout,
+  adverse-selection scoring, quote-fade, toxic-burst, and informed-flow proxy
+  signals
 - fixed-window volatility/noise primitives and threshold-based regime
   classification
 - feed-quality primitives for sequence gaps, out-of-order events, duplicates,

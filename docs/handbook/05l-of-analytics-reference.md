@@ -89,6 +89,10 @@ Impact/toxicity:
 - `ChildOrderImpactAnalyzer`
 - `VpinSnapshot`
 - `VpinTracker`
+- `ToxicityConfig`
+- `ToxicityInput`
+- `ToxicitySnapshot`
+- `ToxicityAnalyzer`
 - `VolatilitySnapshot`
 - `VolatilityTracker`
 - `RegimeKind`
@@ -365,8 +369,14 @@ assert_eq!(
 buyer-initiated flow and `Side::Bid` as seller-initiated flow. Completed bucket
 imbalances are retained in a const-generic ring buffer.
 
+`ToxicityAnalyzer` complements VPIN with explicit post-trade diagnostics:
+side-aware markout, adverse-selection score, same-side quote fade, informed-flow
+proxy, toxic-flow burst flag, and aggregate toxicity score. The output is a
+risk indicator for routing, quoting, and operator controls; it is not a
+regulatory conclusion.
+
 ```rust
-use of_analytics::{TradeContext, VpinTracker};
+use of_analytics::{ToxicityAnalyzer, ToxicityConfig, ToxicityInput, TradeContext, VpinTracker};
 use of_core::Side;
 
 let mut tracker = VpinTracker::<4>::new(100)?;
@@ -376,6 +386,20 @@ let snapshot = tracker.snapshot();
 
 assert_eq!(snapshot.bucket_count(), 1);
 assert_eq!(snapshot.vpin_bps(), 6_000);
+
+let toxicity = ToxicityAnalyzer::new(ToxicityConfig::default()).evaluate(
+    ToxicityInput::new(
+        TradeContext::new(100_000, 10, Side::Ask, 1)?,
+        100_500,
+        1_000,
+        1_000,
+        1_000,
+        500,
+        8_000,
+        7_000,
+    )?,
+);
+assert!(toxicity.toxic_flow_burst());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

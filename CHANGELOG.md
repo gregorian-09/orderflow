@@ -19,6 +19,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Hardened `of_analytics` market-impact analytics with calibrated expected
   impact, square-root impact, temporary/permanent impact, impact decay, and
   child-order attribution primitives.
+- Hardened `of_analytics` toxicity analytics with post-trade markout,
+  adverse-selection scoring, quote-fade measurement, informed-flow proxy, and
+  toxic-flow burst detection.
 - Added `of_analytics` market-impact and VPIN-style toxicity primitives with
   Kyle-style lambda, Amihud-style illiquidity, fixed-capacity VPIN buckets, and
   deterministic integer-scaled snapshots.

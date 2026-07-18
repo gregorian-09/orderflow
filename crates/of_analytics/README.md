@@ -25,7 +25,8 @@ The first foundation is dependency-light:
 - market-impact primitives for Kyle-style lambda, Amihud-style illiquidity,
   calibrated expected impact, square-root impact, temporary/permanent impact,
   impact decay, and child-order attribution,
-- VPIN-style fixed-bucket toxicity primitives,
+- VPIN-style fixed-bucket toxicity primitives plus post-trade markout,
+  adverse-selection, quote-fade, toxic-burst, and informed-flow proxy signals,
 - fixed-window volatility/noise primitives,
 - threshold-based market regime classification,
 - feed-quality primitives for sequence gaps, out-of-order events, duplicates,
@@ -159,7 +160,8 @@ assert!(flow.snapshot().order_flow_imbalance_bps() > 0);
 ```rust
 use of_analytics::{
     ExpectedImpactEstimator, ExpectedImpactInput, ImpactCalibration,
-    ImpactSample, ImpactTracker, TradeContext, VpinTracker,
+    ImpactSample, ImpactTracker, ToxicityAnalyzer, ToxicityConfig,
+    ToxicityInput, TradeContext, VpinTracker,
 };
 use of_core::Side;
 
@@ -189,6 +191,20 @@ let mut vpin = VpinTracker::<4>::new(100)?;
 vpin.on_trade(TradeContext::new(500_000, 80, Side::Ask, 1)?);
 vpin.on_trade(TradeContext::new(500_000, 20, Side::Bid, 2)?);
 assert_eq!(vpin.snapshot().bucket_count(), 1);
+
+let toxicity = ToxicityAnalyzer::new(ToxicityConfig::default()).evaluate(
+    ToxicityInput::new(
+        TradeContext::new(100_000, 10, Side::Ask, 1)?,
+        100_500,
+        1_000,
+        1_000,
+        1_000,
+        500,
+        8_000,
+        7_000,
+    )?,
+);
+assert!(toxicity.toxic_flow_burst());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

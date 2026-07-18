@@ -714,6 +714,10 @@ Public market-quality and liquidity types:
 - `ChildOrderImpactAnalyzer`
 - `VpinSnapshot`
 - `VpinTracker`
+- `ToxicityConfig`
+- `ToxicityInput`
+- `ToxicitySnapshot`
+- `ToxicityAnalyzer`
 - `VolatilitySnapshot`
 - `VolatilityTracker`
 - `RegimeKind`
