@@ -180,6 +180,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `of_execution_algos` with child submission counts, fill/reject/cancel counts,
   completion, average execution price, side-aware arrival/VWAP/TWAP slippage,
   first/last timestamps, and average event latency.
+- Added typed algorithm configuration in `of_execution_algos` with
+  `AlgoKind`, `AlgoParentConfig`, and `AlgoConfig`, allowing hosts to build
+  existing `ParentOrder`, risk policy, and recovery policy values without
+  free-form maps or a forced serialization dependency.
 - Added deterministic market-making quote planning in `of_execution_algos`
   with fair-value quoting, inventory skew, volatility/adverse-selection spread
   widening, inventory-limit side suppression, and OMS-safe bid/ask child plans.

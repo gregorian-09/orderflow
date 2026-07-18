@@ -24,6 +24,8 @@ The first foundation focuses on deterministic parent/child order handling:
   `ExecutionEvent` values for progress folding,
 - allocation-free execution metrics and TCA snapshots from child submissions
   and canonical execution events,
+- typed algorithm configuration structs that build existing `ParentOrder`,
+  risk, and recovery policies without free-form maps,
 - deterministic TWAP slice planning with explicit clip limits,
 - deterministic POV/participation planning from observed market volume,
 - deterministic VWAP planning from a borrowed cumulative volume curve,
@@ -178,6 +180,44 @@ let report = AlgoRiskPolicy::new(limits).evaluate_child::<
 )?;
 
 assert!(report.is_allowed());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Typed Configuration
+
+`AlgoParentConfig` and `AlgoConfig` give hosts a typed configuration surface for
+audit and replay without changing `ParentOrder::new`. Config validation still
+uses `ParentOrder`, so the order-ticket rules have one implementation.
+
+```rust
+use of_execution_algos::{AlgoConfig, AlgoKind, AlgoParentConfig, ParentOrderId};
+use of_execution_core::{
+    AccountId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide, OrderType,
+    RouteId, StrategyId, TimeInForce,
+};
+
+let parent_config = AlgoParentConfig::new(
+    ParentOrderId::new("parent-config")?,
+    AccountId::new("acct")?,
+    RouteId::new("sim")?,
+    StrategyId::new("twap")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+let config = AlgoConfig::new(AlgoKind::Twap, parent_config);
+let parent = config.to_parent_order()?;
+
+assert_eq!(parent.total_qty(), OrderQty::new(100)?);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

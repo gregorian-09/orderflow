@@ -612,6 +612,9 @@ Public parent/child and decision types:
 - `AlgoTcaBenchmark`
 - `AlgoMetricsSnapshot`
 - `AlgoMetricsAccumulator`
+- `AlgoKind`
+- `AlgoParentConfig`
+- `AlgoConfig`
 - `TwapSlicePlanner`
 - `AlgoReplayEvent`
 - `AlgoReplayInput`

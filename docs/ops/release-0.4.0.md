@@ -186,6 +186,9 @@ foundation:
   submission counts, fill/reject/cancel counts, completion, average execution
   price, side-aware arrival/VWAP/TWAP slippage, first/last timestamps, and
   average event latency
+- typed `AlgoKind`, `AlgoParentConfig`, and `AlgoConfig` configuration
+  primitives that build existing parent-order, risk-policy, and recovery-policy
+  values without free-form maps or a forced serialization dependency
 - deterministic `MarketMakerPlanner` with fair-value quoting, inventory skew,
   volatility/adverse-selection spread widening, inventory-limit side
   suppression, and OMS-safe bid/ask child plans

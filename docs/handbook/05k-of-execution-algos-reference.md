@@ -64,6 +64,9 @@ Lifecycle and planning types:
 - `AlgoTcaBenchmark`
 - `AlgoMetricsSnapshot`
 - `AlgoMetricsAccumulator`
+- `AlgoKind`
+- `AlgoParentConfig`
+- `AlgoConfig`
 - `TwapSlicePlanner`
 - `AlgoReplayEvent`
 - `AlgoReplayInput`
@@ -300,6 +303,62 @@ let report = AlgoRiskPolicy::new(limits).evaluate_child::<
 )?;
 
 assert!(report.is_allowed());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Typed Configuration
+
+`AlgoParentConfig` mirrors the parent order ticket fields in a host-friendly
+configuration type. It validates by building a `ParentOrder`, so parent
+schedule, clip, quantity, and price rules remain centralized.
+
+`AlgoConfig` combines:
+
+- `AlgoKind`,
+- parent config,
+- `AlgoRiskLimits`,
+- `AlgoRecoveryPolicy`.
+
+It can build:
+
+- `ParentOrder` for the planner,
+- `AlgoRiskPolicy` for pre-submit checks,
+- recovery policy for checkpoint restore.
+
+The crate does not prescribe a file format. Hosts can serialize these typed
+values as JSON, TOML, database rows, binary snapshots, or generated language
+binding models without forcing a serialization dependency into
+`of_execution_algos`.
+
+```rust
+use of_execution_algos::{AlgoConfig, AlgoKind, AlgoParentConfig, ParentOrderId};
+use of_execution_core::{
+    AccountId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide, OrderType,
+    RouteId, StrategyId, TimeInForce,
+};
+
+let parent_config = AlgoParentConfig::new(
+    ParentOrderId::new("parent-config")?,
+    AccountId::new("acct")?,
+    RouteId::new("sim")?,
+    StrategyId::new("twap")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+let config = AlgoConfig::new(AlgoKind::Twap, parent_config);
+let parent = config.to_parent_order()?;
+
+assert_eq!(parent.total_qty(), OrderQty::new(100)?);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

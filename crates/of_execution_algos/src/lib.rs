@@ -144,6 +144,8 @@ pub enum AlgoError {
     InvalidSimulationParameters,
     /// Algorithm metrics or benchmark inputs are invalid.
     InvalidMetricsParameters,
+    /// Algorithm configuration is invalid.
+    InvalidConfigParameters,
     /// Fixed-capacity decision buffer is full.
     DecisionFull {
         /// Configured decision capacity.
@@ -192,6 +194,7 @@ impl fmt::Display for AlgoError {
                 write!(f, "invalid algorithm simulation parameters")
             }
             Self::InvalidMetricsParameters => write!(f, "invalid algorithm metrics parameters"),
+            Self::InvalidConfigParameters => write!(f, "invalid algorithm config parameters"),
             Self::DecisionFull { capacity } => {
                 write!(f, "algorithm decision capacity {capacity} is full")
             }
@@ -2313,6 +2316,306 @@ impl AlgoMetricsAccumulator {
             last_event_ns: self.last_event_ns,
             average_latency_ns: average_latency_ns(self.total_latency_ns, self.latency_samples),
         }
+    }
+}
+
+/// Execution algorithm category for typed configuration.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum AlgoKind {
+    /// Time-weighted average price execution.
+    Twap = 1,
+    /// Percentage-of-volume execution.
+    Pov = 2,
+    /// Volume-weighted average price execution.
+    Vwap = 3,
+    /// Synthetic reserve/iceberg execution.
+    Iceberg = 4,
+    /// Implementation shortfall execution.
+    ImplementationShortfall = 5,
+    /// Passive queue/peg optimization.
+    PassiveQueue = 6,
+    /// Smart order routing.
+    SmartOrderRouter = 7,
+    /// Liquidity-seeking execution.
+    LiquiditySeeking = 8,
+    /// Aggressive sweep execution.
+    Sweep = 9,
+    /// Basket execution.
+    Basket = 10,
+    /// Two-leg spread execution.
+    Spread = 11,
+    /// Market-making quote planning.
+    MarketMaking = 12,
+    /// Host-defined algorithm.
+    Custom = 255,
+}
+
+/// Typed parent-order configuration for algorithm construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoParentConfig {
+    id: ParentOrderId,
+    account_id: AccountId,
+    route_id: RouteId,
+    strategy_id: StrategyId,
+    symbol: ExecutionSymbol,
+    side: OrderSide,
+    order_type: OrderType,
+    time_in_force: TimeInForce,
+    total_qty: OrderQty,
+    limit_price: OrderPrice,
+    stop_price: OrderPrice,
+    start_ns: u64,
+    end_ns: u64,
+    min_clip: OrderQty,
+    max_clip: OrderQty,
+    participation_cap_bps: u16,
+}
+
+impl AlgoParentConfig {
+    /// Creates typed parent-order configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError`] when the resulting parent order would be invalid.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "flat config mirrors externally supplied order ticket fields"
+    )]
+    pub fn new(
+        id: ParentOrderId,
+        account_id: AccountId,
+        route_id: RouteId,
+        strategy_id: StrategyId,
+        symbol: ExecutionSymbol,
+        side: OrderSide,
+        order_type: OrderType,
+        time_in_force: TimeInForce,
+        total_qty: OrderQty,
+        limit_price: OrderPrice,
+        stop_price: OrderPrice,
+        start_ns: u64,
+        end_ns: u64,
+        min_clip: OrderQty,
+        max_clip: OrderQty,
+        participation_cap_bps: u16,
+    ) -> Result<Self, AlgoError> {
+        let config = Self {
+            id,
+            account_id,
+            route_id,
+            strategy_id,
+            symbol,
+            side,
+            order_type,
+            time_in_force,
+            total_qty,
+            limit_price,
+            stop_price,
+            start_ns,
+            end_ns,
+            min_clip,
+            max_clip,
+            participation_cap_bps,
+        };
+        config.to_parent_order()?;
+        Ok(config)
+    }
+
+    /// Creates config from an existing parent order.
+    pub const fn from_parent(parent: ParentOrder) -> Self {
+        Self {
+            id: parent.id(),
+            account_id: parent.account_id(),
+            route_id: parent.route_id(),
+            strategy_id: parent.strategy_id(),
+            symbol: parent.symbol(),
+            side: parent.side(),
+            order_type: parent.order_type(),
+            time_in_force: parent.time_in_force(),
+            total_qty: parent.total_qty(),
+            limit_price: parent.limit_price(),
+            stop_price: parent.stop_price(),
+            start_ns: parent.start_ns(),
+            end_ns: parent.end_ns(),
+            min_clip: parent.min_clip(),
+            max_clip: parent.max_clip(),
+            participation_cap_bps: parent.participation_cap_bps(),
+        }
+    }
+
+    /// Builds a validated active parent order from the config.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError`] when the configured parent is invalid.
+    pub fn to_parent_order(&self) -> Result<ParentOrder, AlgoError> {
+        ParentOrder::new(
+            self.id,
+            self.account_id,
+            self.route_id,
+            self.strategy_id,
+            self.symbol,
+            self.side,
+            self.order_type,
+            self.time_in_force,
+            self.total_qty,
+            self.limit_price,
+            self.stop_price,
+            self.start_ns,
+            self.end_ns,
+            self.min_clip,
+            self.max_clip,
+            self.participation_cap_bps,
+        )
+    }
+
+    /// Returns parent identifier.
+    pub const fn id(&self) -> ParentOrderId {
+        self.id
+    }
+
+    /// Returns account identifier.
+    pub const fn account_id(&self) -> AccountId {
+        self.account_id
+    }
+
+    /// Returns default route identifier.
+    pub const fn route_id(&self) -> RouteId {
+        self.route_id
+    }
+
+    /// Returns strategy identifier.
+    pub const fn strategy_id(&self) -> StrategyId {
+        self.strategy_id
+    }
+
+    /// Returns execution symbol.
+    pub const fn symbol(&self) -> ExecutionSymbol {
+        self.symbol
+    }
+
+    /// Returns order side.
+    pub const fn side(&self) -> OrderSide {
+        self.side
+    }
+
+    /// Returns order type.
+    pub const fn order_type(&self) -> OrderType {
+        self.order_type
+    }
+
+    /// Returns time in force.
+    pub const fn time_in_force(&self) -> TimeInForce {
+        self.time_in_force
+    }
+
+    /// Returns total quantity.
+    pub const fn total_qty(&self) -> OrderQty {
+        self.total_qty
+    }
+
+    /// Returns limit price.
+    pub const fn limit_price(&self) -> OrderPrice {
+        self.limit_price
+    }
+
+    /// Returns stop price.
+    pub const fn stop_price(&self) -> OrderPrice {
+        self.stop_price
+    }
+
+    /// Returns algorithm start timestamp.
+    pub const fn start_ns(&self) -> u64 {
+        self.start_ns
+    }
+
+    /// Returns algorithm end timestamp.
+    pub const fn end_ns(&self) -> u64 {
+        self.end_ns
+    }
+
+    /// Returns minimum clip.
+    pub const fn min_clip(&self) -> OrderQty {
+        self.min_clip
+    }
+
+    /// Returns maximum clip.
+    pub const fn max_clip(&self) -> OrderQty {
+        self.max_clip
+    }
+
+    /// Returns participation cap in basis points, or zero when unset.
+    pub const fn participation_cap_bps(&self) -> u16 {
+        self.participation_cap_bps
+    }
+}
+
+/// Typed top-level algorithm configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoConfig {
+    kind: AlgoKind,
+    parent: AlgoParentConfig,
+    risk_limits: AlgoRiskLimits,
+    recovery_policy: AlgoRecoveryPolicy,
+}
+
+impl AlgoConfig {
+    /// Creates algorithm configuration.
+    pub const fn new(kind: AlgoKind, parent: AlgoParentConfig) -> Self {
+        Self {
+            kind,
+            parent,
+            risk_limits: AlgoRiskLimits::unbounded(),
+            recovery_policy: AlgoRecoveryPolicy::new(true, true, true),
+        }
+    }
+
+    /// Returns algorithm kind.
+    pub const fn kind(&self) -> AlgoKind {
+        self.kind
+    }
+
+    /// Returns parent config.
+    pub const fn parent(&self) -> AlgoParentConfig {
+        self.parent
+    }
+
+    /// Returns risk limits.
+    pub const fn risk_limits(&self) -> AlgoRiskLimits {
+        self.risk_limits
+    }
+
+    /// Returns recovery policy.
+    pub const fn recovery_policy(&self) -> AlgoRecoveryPolicy {
+        self.recovery_policy
+    }
+
+    /// Returns a copy with risk limits.
+    pub const fn with_risk_limits(mut self, limits: AlgoRiskLimits) -> Self {
+        self.risk_limits = limits;
+        self
+    }
+
+    /// Returns a copy with recovery policy.
+    pub const fn with_recovery_policy(mut self, policy: AlgoRecoveryPolicy) -> Self {
+        self.recovery_policy = policy;
+        self
+    }
+
+    /// Builds a validated active parent order from the config.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError`] when the configured parent is invalid.
+    pub fn to_parent_order(&self) -> Result<ParentOrder, AlgoError> {
+        self.parent.to_parent_order()
+    }
+
+    /// Builds a risk policy from configured risk limits.
+    pub const fn to_risk_policy(&self) -> AlgoRiskPolicy {
+        AlgoRiskPolicy::new(self.risk_limits)
     }
 }
 
@@ -7349,6 +7652,71 @@ mod tests {
         metrics.on_execution_event(&step.event());
 
         assert_eq!(metrics.snapshot().arrival_slippage_bps(), -100);
+    }
+
+    #[test]
+    fn algo_config_builds_parent_and_policies() {
+        let parent = parent();
+        let config_parent = AlgoParentConfig::from_parent(parent);
+        let risk_limits = AlgoRiskLimits::new(
+            OrderQty(100),
+            OrderQty(25),
+            10_000_000,
+            1_500,
+            100,
+            OrderQty(50),
+            2,
+            10,
+        )
+        .expect("risk");
+        let recovery = AlgoRecoveryPolicy::default()
+            .with_pause_on_recovery(false)
+            .with_require_reconciliation(false);
+        let config = AlgoConfig::new(AlgoKind::Twap, config_parent)
+            .with_risk_limits(risk_limits)
+            .with_recovery_policy(recovery);
+
+        assert_eq!(config.kind(), AlgoKind::Twap);
+        assert_eq!(config.to_parent_order().expect("parent"), parent);
+        assert_eq!(config.to_risk_policy().limits(), risk_limits);
+        assert_eq!(config.recovery_policy(), recovery);
+    }
+
+    #[test]
+    fn algo_parent_config_rejects_invalid_schedule() {
+        assert_eq!(
+            AlgoParentConfig::new(
+                ParentOrderId::new("cfg-bad").expect("id"),
+                AccountId::new("acct").expect("account"),
+                RouteId::new("sim").expect("route"),
+                StrategyId::new("cfg").expect("strategy"),
+                ExecutionSymbol::new("SIM", "ESZ6").expect("symbol"),
+                OrderSide::Buy,
+                OrderType::Limit,
+                TimeInForce::Day,
+                OrderQty(100),
+                OrderPrice(500_000),
+                OrderPrice(0),
+                1_000,
+                1_000,
+                OrderQty(10),
+                OrderQty(25),
+                0,
+            ),
+            Err(AlgoError::InvalidTimeWindow)
+        );
+    }
+
+    #[test]
+    fn algo_config_supports_custom_kind() {
+        let config = AlgoConfig::new(AlgoKind::Custom, AlgoParentConfig::from_parent(parent()));
+
+        assert_eq!(config.kind(), AlgoKind::Custom);
+        assert_eq!(
+            config.recovery_policy(),
+            AlgoRecoveryPolicy::new(true, true, true)
+        );
+        assert_eq!(config.risk_limits(), AlgoRiskLimits::unbounded());
     }
 
     #[test]
