@@ -72,7 +72,8 @@ registry dependency after `of_fix 0.1.0` is published.
 - queue/fill primitives for passive queue position estimates, fill
   probability, expected time-to-fill, amend queue loss, and maker/taker scoring
 - pattern-risk primitives for spoofing/layering, quote-stuffing, stop-run,
-  absorption, and momentum-ignition risk indicators
+  absorption, momentum-ignition, iceberg, hidden accumulation/distribution,
+  stacked-imbalance, and failed-breakout risk indicators
 - venue/route primitives for fill, reject, cancel, latency, and route-health
   diagnostics
 - cross-asset primitives for rolling correlation, beta, pair divergence,

@@ -4868,6 +4868,322 @@ impl Default for PatternRiskClassifier {
     }
 }
 
+/// Detailed pattern-risk configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PatternDetailConfig {
+    iceberg_fill_multiple_bps: u32,
+    stacked_imbalance_threshold_bps: u16,
+    absorption_move_threshold_bps: u32,
+    failed_breakout_threshold_bps: u32,
+}
+
+impl PatternDetailConfig {
+    /// Creates detailed pattern-risk configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidPattern`] when basis-point thresholds
+    /// exceed 10,000 where applicable.
+    pub const fn new(
+        iceberg_fill_multiple_bps: u32,
+        stacked_imbalance_threshold_bps: u16,
+        absorption_move_threshold_bps: u32,
+        failed_breakout_threshold_bps: u32,
+    ) -> Result<Self, AnalyticsError> {
+        if stacked_imbalance_threshold_bps > 10_000 {
+            return Err(AnalyticsError::InvalidPattern);
+        }
+        Ok(Self {
+            iceberg_fill_multiple_bps,
+            stacked_imbalance_threshold_bps,
+            absorption_move_threshold_bps,
+            failed_breakout_threshold_bps,
+        })
+    }
+
+    /// Returns iceberg fill/displayed-depth threshold in basis points.
+    pub const fn iceberg_fill_multiple_bps(&self) -> u32 {
+        self.iceberg_fill_multiple_bps
+    }
+
+    /// Returns stacked-imbalance threshold in basis points.
+    pub const fn stacked_imbalance_threshold_bps(&self) -> u16 {
+        self.stacked_imbalance_threshold_bps
+    }
+
+    /// Returns absorption price-move threshold in basis points.
+    pub const fn absorption_move_threshold_bps(&self) -> u32 {
+        self.absorption_move_threshold_bps
+    }
+
+    /// Returns failed-breakout reversal threshold in basis points.
+    pub const fn failed_breakout_threshold_bps(&self) -> u32 {
+        self.failed_breakout_threshold_bps
+    }
+}
+
+impl Default for PatternDetailConfig {
+    fn default() -> Self {
+        Self {
+            iceberg_fill_multiple_bps: 20_000,
+            stacked_imbalance_threshold_bps: 7_000,
+            absorption_move_threshold_bps: 10,
+            failed_breakout_threshold_bps: 20,
+        }
+    }
+}
+
+/// Detailed pattern-risk input over a bounded observation window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PatternDetailInput {
+    repeated_fills_at_level: u64,
+    replenishments_at_level: u64,
+    executed_at_level_qty: i64,
+    displayed_at_level_qty: i64,
+    stacked_imbalance_levels: u8,
+    stacked_imbalance_bps: u16,
+    absorbed_qty: i64,
+    absorption_price_move_bps: u32,
+    breakout_move_bps: u32,
+    reversal_move_bps: u32,
+    signed_accumulation_qty: i64,
+}
+
+impl PatternDetailInput {
+    /// Creates detailed pattern-risk input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidPattern`] when quantities are negative
+    /// where unsigned semantics are required or basis-point values exceed
+    /// 10,000 where applicable.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn new(
+        repeated_fills_at_level: u64,
+        replenishments_at_level: u64,
+        executed_at_level_qty: i64,
+        displayed_at_level_qty: i64,
+        stacked_imbalance_levels: u8,
+        stacked_imbalance_bps: u16,
+        absorbed_qty: i64,
+        absorption_price_move_bps: u32,
+        breakout_move_bps: u32,
+        reversal_move_bps: u32,
+        signed_accumulation_qty: i64,
+    ) -> Result<Self, AnalyticsError> {
+        if executed_at_level_qty < 0
+            || displayed_at_level_qty < 0
+            || absorbed_qty < 0
+            || stacked_imbalance_bps > 10_000
+        {
+            return Err(AnalyticsError::InvalidPattern);
+        }
+        Ok(Self {
+            repeated_fills_at_level,
+            replenishments_at_level,
+            executed_at_level_qty,
+            displayed_at_level_qty,
+            stacked_imbalance_levels,
+            stacked_imbalance_bps,
+            absorbed_qty,
+            absorption_price_move_bps,
+            breakout_move_bps,
+            reversal_move_bps,
+            signed_accumulation_qty,
+        })
+    }
+
+    /// Returns repeated fills at the same price level.
+    pub const fn repeated_fills_at_level(&self) -> u64 {
+        self.repeated_fills_at_level
+    }
+
+    /// Returns replenishments at the same price level.
+    pub const fn replenishments_at_level(&self) -> u64 {
+        self.replenishments_at_level
+    }
+
+    /// Returns executed quantity at the price level.
+    pub const fn executed_at_level_qty(&self) -> i64 {
+        self.executed_at_level_qty
+    }
+
+    /// Returns displayed quantity at the price level.
+    pub const fn displayed_at_level_qty(&self) -> i64 {
+        self.displayed_at_level_qty
+    }
+
+    /// Returns stacked imbalance level count.
+    pub const fn stacked_imbalance_levels(&self) -> u8 {
+        self.stacked_imbalance_levels
+    }
+
+    /// Returns stacked imbalance strength in basis points.
+    pub const fn stacked_imbalance_bps(&self) -> u16 {
+        self.stacked_imbalance_bps
+    }
+
+    /// Returns absorbed quantity.
+    pub const fn absorbed_qty(&self) -> i64 {
+        self.absorbed_qty
+    }
+
+    /// Returns price move during absorption in basis points.
+    pub const fn absorption_price_move_bps(&self) -> u32 {
+        self.absorption_price_move_bps
+    }
+
+    /// Returns breakout move in basis points.
+    pub const fn breakout_move_bps(&self) -> u32 {
+        self.breakout_move_bps
+    }
+
+    /// Returns reversal move after breakout in basis points.
+    pub const fn reversal_move_bps(&self) -> u32 {
+        self.reversal_move_bps
+    }
+
+    /// Returns signed accumulation quantity.
+    pub const fn signed_accumulation_qty(&self) -> i64 {
+        self.signed_accumulation_qty
+    }
+}
+
+/// Detailed pattern-risk snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PatternDetailSnapshot {
+    iceberg_risk_bps: u16,
+    hidden_accumulation_bps: u16,
+    hidden_distribution_bps: u16,
+    stacked_imbalance_risk_bps: u16,
+    absorption_strength_bps: u16,
+    failed_breakout_risk_bps: u16,
+    overall_risk_bps: u16,
+}
+
+impl PatternDetailSnapshot {
+    /// Returns iceberg/hidden-refresh risk in basis points.
+    pub const fn iceberg_risk_bps(&self) -> u16 {
+        self.iceberg_risk_bps
+    }
+
+    /// Returns hidden accumulation risk in basis points.
+    pub const fn hidden_accumulation_bps(&self) -> u16 {
+        self.hidden_accumulation_bps
+    }
+
+    /// Returns hidden distribution risk in basis points.
+    pub const fn hidden_distribution_bps(&self) -> u16 {
+        self.hidden_distribution_bps
+    }
+
+    /// Returns stacked imbalance risk in basis points.
+    pub const fn stacked_imbalance_risk_bps(&self) -> u16 {
+        self.stacked_imbalance_risk_bps
+    }
+
+    /// Returns absorption strength in basis points.
+    pub const fn absorption_strength_bps(&self) -> u16 {
+        self.absorption_strength_bps
+    }
+
+    /// Returns failed breakout risk in basis points.
+    pub const fn failed_breakout_risk_bps(&self) -> u16 {
+        self.failed_breakout_risk_bps
+    }
+
+    /// Returns maximum detailed pattern risk in basis points.
+    pub const fn overall_risk_bps(&self) -> u16 {
+        self.overall_risk_bps
+    }
+}
+
+/// Deterministic detailed pattern-risk analyzer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PatternDetailAnalyzer {
+    config: PatternDetailConfig,
+}
+
+impl PatternDetailAnalyzer {
+    /// Creates a detailed pattern-risk analyzer.
+    pub const fn new(config: PatternDetailConfig) -> Self {
+        Self { config }
+    }
+
+    /// Returns analyzer configuration.
+    pub const fn config(&self) -> PatternDetailConfig {
+        self.config
+    }
+
+    /// Evaluates detailed pattern risk.
+    pub fn evaluate(&self, input: PatternDetailInput) -> PatternDetailSnapshot {
+        let fill_multiple_bps = ratio_i64_to_u32(
+            input.executed_at_level_qty(),
+            input.displayed_at_level_qty().max(1),
+        );
+        let iceberg_risk = average_score(&[
+            score_ratio(fill_multiple_bps, self.config.iceberg_fill_multiple_bps()),
+            score_ratio_u64(input.repeated_fills_at_level(), 5),
+            score_ratio_u64(input.replenishments_at_level(), 3),
+        ]);
+        let hidden_accumulation = if input.signed_accumulation_qty() > 0 {
+            iceberg_risk
+        } else {
+            0
+        };
+        let hidden_distribution = if input.signed_accumulation_qty() < 0 {
+            iceberg_risk
+        } else {
+            0
+        };
+        let stacked_imbalance = average_score(&[
+            score_ratio_u64(u64::from(input.stacked_imbalance_levels()), 3),
+            score_ratio(
+                u32::from(input.stacked_imbalance_bps()),
+                u32::from(self.config.stacked_imbalance_threshold_bps()),
+            ),
+        ]);
+        let absorption = average_score(&[
+            score_ratio_i64(input.absorbed_qty(), input.displayed_at_level_qty().max(1)),
+            10_000_u16.saturating_sub(score_ratio(
+                input.absorption_price_move_bps(),
+                self.config.absorption_move_threshold_bps(),
+            )),
+        ]);
+        let failed_breakout = average_score(&[
+            score_ratio(
+                input.breakout_move_bps(),
+                self.config.failed_breakout_threshold_bps(),
+            ),
+            score_ratio(
+                input.reversal_move_bps(),
+                self.config.failed_breakout_threshold_bps(),
+            ),
+        ]);
+        let overall = iceberg_risk
+            .max(hidden_accumulation)
+            .max(hidden_distribution)
+            .max(stacked_imbalance)
+            .max(absorption)
+            .max(failed_breakout);
+        PatternDetailSnapshot {
+            iceberg_risk_bps: iceberg_risk,
+            hidden_accumulation_bps: hidden_accumulation,
+            hidden_distribution_bps: hidden_distribution,
+            stacked_imbalance_risk_bps: stacked_imbalance,
+            absorption_strength_bps: absorption,
+            failed_breakout_risk_bps: failed_breakout,
+            overall_risk_bps: overall,
+        }
+    }
+}
+
+impl Default for PatternDetailAnalyzer {
+    fn default() -> Self {
+        Self::new(PatternDetailConfig::default())
+    }
+}
+
 /// Venue route event kind.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -7255,6 +7571,44 @@ mod tests {
 
         assert!(stop_run.stop_run_risk_bps() > absorption.stop_run_risk_bps());
         assert!(absorption.absorption_risk_bps() > stop_run.absorption_risk_bps());
+    }
+
+    #[test]
+    fn pattern_detail_analyzer_detects_iceberg_and_failed_breakout() {
+        let analyzer = PatternDetailAnalyzer::default();
+        let snapshot = analyzer.evaluate(
+            PatternDetailInput::new(8, 4, 1_000, 100, 4, 8_000, 500, 2, 30, 35, 1_000)
+                .expect("input"),
+        );
+
+        assert!(snapshot.iceberg_risk_bps() > 0);
+        assert_eq!(snapshot.hidden_distribution_bps(), 0);
+        assert!(snapshot.hidden_accumulation_bps() > 0);
+        assert_eq!(snapshot.stacked_imbalance_risk_bps(), 10_000);
+        assert!(snapshot.absorption_strength_bps() > 0);
+        assert_eq!(snapshot.failed_breakout_risk_bps(), 10_000);
+        assert_eq!(snapshot.overall_risk_bps(), 10_000);
+    }
+
+    #[test]
+    fn pattern_detail_analyzer_detects_hidden_distribution() {
+        let snapshot = PatternDetailAnalyzer::default()
+            .evaluate(PatternDetailInput::new(3, 3, 500, 100, 0, 0, 0, 0, 0, 0, -500).unwrap());
+
+        assert_eq!(snapshot.hidden_accumulation_bps(), 0);
+        assert!(snapshot.hidden_distribution_bps() > 0);
+    }
+
+    #[test]
+    fn pattern_detail_primitives_reject_invalid_inputs() {
+        assert_eq!(
+            PatternDetailConfig::new(0, 10_001, 0, 0),
+            Err(AnalyticsError::InvalidPattern)
+        );
+        assert_eq!(
+            PatternDetailInput::new(0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0),
+            Err(AnalyticsError::InvalidPattern)
+        );
     }
 
     #[test]

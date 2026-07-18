@@ -159,6 +159,10 @@ Pattern risk:
 - `PatternRiskConfig`
 - `PatternRiskSnapshot`
 - `PatternRiskClassifier`
+- `PatternDetailConfig`
+- `PatternDetailInput`
+- `PatternDetailSnapshot`
+- `PatternDetailAnalyzer`
 
 Venue and route:
 
@@ -702,8 +706,15 @@ The snapshot reports:
 - momentum-ignition risk,
 - overall maximum component risk.
 
+`PatternDetailAnalyzer` adds focused diagnostics for iceberg/hidden-refresh
+risk, hidden accumulation/distribution, stacked imbalance, absorption strength,
+and failed breakouts. These are still risk indicators, not claims about intent.
+
 ```rust
-use of_analytics::{PatternRiskClassifier, PatternRiskInput, PatternRiskLiquidity};
+use of_analytics::{
+    PatternDetailAnalyzer, PatternDetailInput, PatternRiskClassifier,
+    PatternRiskInput, PatternRiskLiquidity,
+};
 
 let classifier = PatternRiskClassifier::default();
 let snapshot = classifier.classify(PatternRiskInput::new(
@@ -718,6 +729,12 @@ let snapshot = classifier.classify(PatternRiskInput::new(
 
 assert!(snapshot.spoofing_layering_risk_bps() > 0);
 assert!(snapshot.quote_stuffing_risk_bps() > 0);
+
+let detail = PatternDetailAnalyzer::default().evaluate(
+    PatternDetailInput::new(8, 4, 1_000, 100, 4, 8_000, 500, 2, 30, 35, 1_000)?,
+);
+assert!(detail.iceberg_risk_bps() > 0);
+assert!(detail.failed_breakout_risk_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

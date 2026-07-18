@@ -769,6 +769,10 @@ Public market-quality and liquidity types:
 - `PatternRiskConfig`
 - `PatternRiskSnapshot`
 - `PatternRiskClassifier`
+- `PatternDetailConfig`
+- `PatternDetailInput`
+- `PatternDetailSnapshot`
+- `PatternDetailAnalyzer`
 - `VenueRouteEventKind`
 - `VenueRouteEvent`
 - `VenueRouteSnapshot`
