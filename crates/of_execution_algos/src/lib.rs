@@ -155,6 +155,8 @@ pub enum AlgoError {
     InvalidSweepParameters,
     /// Basket or spread leg configuration is invalid.
     InvalidBasketParameters,
+    /// Pairs/spread configuration or quote context is invalid.
+    InvalidSpreadParameters,
     /// Market-making configuration or quote context is invalid.
     InvalidMarketMakingParameters,
     /// Implementation shortfall configuration or market context is invalid.
@@ -190,6 +192,7 @@ impl fmt::Display for AlgoError {
             }
             Self::InvalidSweepParameters => write!(f, "invalid sweep parameters"),
             Self::InvalidBasketParameters => write!(f, "invalid basket parameters"),
+            Self::InvalidSpreadParameters => write!(f, "invalid spread parameters"),
             Self::InvalidMarketMakingParameters => {
                 write!(f, "invalid market-making parameters")
             }
@@ -3404,6 +3407,300 @@ impl BasketPlanner {
     }
 }
 
+/// Two-leg spread execution configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpreadConfig {
+    ratio_bps: u32,
+    min_edge_bps: i32,
+}
+
+impl SpreadConfig {
+    /// Creates spread configuration.
+    ///
+    /// `ratio_bps` scales the sell leg price and quantity relative to the buy
+    /// leg. A value of 10,000 means one-to-one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError::InvalidSpreadParameters`] when ratio is zero.
+    pub const fn new(ratio_bps: u32, min_edge_bps: i32) -> Result<Self, AlgoError> {
+        if ratio_bps == 0 {
+            return Err(AlgoError::InvalidSpreadParameters);
+        }
+        Ok(Self {
+            ratio_bps,
+            min_edge_bps,
+        })
+    }
+
+    /// Returns sell-leg ratio in basis points.
+    pub const fn ratio_bps(&self) -> u32 {
+        self.ratio_bps
+    }
+
+    /// Returns minimum required spread edge in basis points.
+    pub const fn min_edge_bps(&self) -> i32 {
+        self.min_edge_bps
+    }
+}
+
+/// Current executable two-leg spread prices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpreadQuote {
+    buy_price: OrderPrice,
+    sell_price: OrderPrice,
+}
+
+impl SpreadQuote {
+    /// Creates spread quote prices.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError::InvalidSpreadParameters`] when either price is not
+    /// positive.
+    pub const fn new(buy_price: OrderPrice, sell_price: OrderPrice) -> Result<Self, AlgoError> {
+        if buy_price.0 <= 0 || sell_price.0 <= 0 {
+            return Err(AlgoError::InvalidSpreadParameters);
+        }
+        Ok(Self {
+            buy_price,
+            sell_price,
+        })
+    }
+
+    /// Returns executable buy-leg price.
+    pub const fn buy_price(&self) -> OrderPrice {
+        self.buy_price
+    }
+
+    /// Returns executable sell-leg price.
+    pub const fn sell_price(&self) -> OrderPrice {
+        self.sell_price
+    }
+}
+
+/// Spread estimate used by [`SpreadPlanner`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpreadEstimate {
+    edge_bps: i32,
+    executable: bool,
+    buy_qty: OrderQty,
+    sell_qty: OrderQty,
+}
+
+impl SpreadEstimate {
+    /// Returns current spread edge in basis points.
+    pub const fn edge_bps(&self) -> i32 {
+        self.edge_bps
+    }
+
+    /// Returns true when edge meets the configured threshold.
+    pub const fn executable(&self) -> bool {
+        self.executable
+    }
+
+    /// Returns planned buy-leg quantity.
+    pub const fn buy_qty(&self) -> OrderQty {
+        self.buy_qty
+    }
+
+    /// Returns planned sell-leg quantity.
+    pub const fn sell_qty(&self) -> OrderQty {
+        self.sell_qty
+    }
+}
+
+/// Two-leg spread decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpreadDecision {
+    estimate: SpreadEstimate,
+    buy: Option<ChildOrderPlan>,
+    sell: Option<ChildOrderPlan>,
+}
+
+impl SpreadDecision {
+    /// Returns estimate used by the decision.
+    pub const fn estimate(&self) -> SpreadEstimate {
+        self.estimate
+    }
+
+    /// Returns optional buy-leg child order.
+    pub const fn buy(&self) -> Option<ChildOrderPlan> {
+        self.buy
+    }
+
+    /// Returns optional sell-leg child order.
+    pub const fn sell(&self) -> Option<ChildOrderPlan> {
+        self.sell
+    }
+}
+
+/// Deterministic two-leg pairs/spread planner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpreadPlanner {
+    config: SpreadConfig,
+}
+
+impl SpreadPlanner {
+    /// Creates a spread planner.
+    pub const fn new(config: SpreadConfig) -> Self {
+        Self { config }
+    }
+
+    /// Returns planner configuration.
+    pub const fn config(&self) -> SpreadConfig {
+        self.config
+    }
+
+    /// Estimates edge and executable leg quantities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError`] when leg, progress, or quote inputs are invalid.
+    pub fn estimate(
+        &self,
+        buy_parent: &ParentOrder,
+        buy_progress: AlgoProgress,
+        sell_parent: &ParentOrder,
+        sell_progress: AlgoProgress,
+        quote: SpreadQuote,
+    ) -> Result<SpreadEstimate, AlgoError> {
+        self.validate_legs(buy_parent, buy_progress, sell_parent, sell_progress)?;
+        let edge_bps = spread_edge_bps(
+            quote.buy_price(),
+            quote.sell_price(),
+            self.config.ratio_bps(),
+        );
+        let executable = edge_bps >= self.config.min_edge_bps();
+        let buy_leaves = buy_parent
+            .total_qty()
+            .0
+            .saturating_sub(buy_progress.released_qty().0)
+            .min(buy_parent.max_clip().0);
+        let sell_leaves = sell_parent
+            .total_qty()
+            .0
+            .saturating_sub(sell_progress.released_qty().0)
+            .min(sell_parent.max_clip().0);
+        let buy_from_sell = scale_qty_inverse_bps(sell_leaves, self.config.ratio_bps());
+        let buy_qty = buy_leaves.min(buy_from_sell);
+        let sell_qty = scale_qty_bps(buy_qty, self.config.ratio_bps());
+        Ok(SpreadEstimate {
+            edge_bps,
+            executable,
+            buy_qty: OrderQty(buy_qty),
+            sell_qty: OrderQty(sell_qty.min(sell_leaves)),
+        })
+    }
+
+    /// Plans synchronized buy/sell spread child orders.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError`] when inputs are invalid or generated child orders
+    /// fail OMS request validation.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "caller owns both legs, ids, quotes, and timestamps"
+    )]
+    pub fn plan_spread(
+        &self,
+        buy_parent: &ParentOrder,
+        buy_progress: AlgoProgress,
+        sell_parent: &ParentOrder,
+        sell_progress: AlgoProgress,
+        now_ns: u64,
+        quote: SpreadQuote,
+        buy_child_id: ChildOrderId,
+        buy_client_order_id: ClientOrderId,
+        sell_child_id: ChildOrderId,
+        sell_client_order_id: ClientOrderId,
+        ts_recv_ns: u64,
+    ) -> Result<SpreadDecision, AlgoError> {
+        if now_ns < buy_parent.start_ns().max(sell_parent.start_ns())
+            || buy_progress.is_complete()
+            || sell_progress.is_complete()
+        {
+            let estimate =
+                self.estimate(buy_parent, buy_progress, sell_parent, sell_progress, quote)?;
+            return Ok(SpreadDecision {
+                estimate: SpreadEstimate {
+                    executable: false,
+                    ..estimate
+                },
+                buy: None,
+                sell: None,
+            });
+        }
+        let estimate =
+            self.estimate(buy_parent, buy_progress, sell_parent, sell_progress, quote)?;
+        if !estimate.executable()
+            || estimate.buy_qty().0 < buy_parent.min_clip().0
+            || estimate.sell_qty().0 < sell_parent.min_clip().0
+        {
+            return Ok(SpreadDecision {
+                estimate,
+                buy: None,
+                sell: None,
+            });
+        }
+        let buy_request = buy_parent.build_order_request_for_side_at_price(
+            OrderSide::Buy,
+            buy_client_order_id,
+            estimate.buy_qty(),
+            quote.buy_price(),
+            ts_recv_ns,
+        );
+        let sell_request = sell_parent.build_order_request_for_side_at_price(
+            OrderSide::Sell,
+            sell_client_order_id,
+            estimate.sell_qty(),
+            quote.sell_price(),
+            ts_recv_ns,
+        );
+        Ok(SpreadDecision {
+            estimate,
+            buy: Some(ChildOrderPlan::new(
+                buy_child_id,
+                buy_parent.id(),
+                buy_request,
+                now_ns,
+            )?),
+            sell: Some(ChildOrderPlan::new(
+                sell_child_id,
+                sell_parent.id(),
+                sell_request,
+                now_ns,
+            )?),
+        })
+    }
+
+    fn validate_legs(
+        &self,
+        buy_parent: &ParentOrder,
+        buy_progress: AlgoProgress,
+        sell_parent: &ParentOrder,
+        sell_progress: AlgoProgress,
+    ) -> Result<(), AlgoError> {
+        buy_parent.validate()?;
+        sell_parent.validate()?;
+        if buy_parent.status().is_terminal() || sell_parent.status().is_terminal() {
+            return Err(AlgoError::ParentTerminal);
+        }
+        if buy_parent.side() != OrderSide::Buy || sell_parent.side() != OrderSide::Sell {
+            return Err(AlgoError::InvalidSpreadParameters);
+        }
+        if buy_progress.parent_id() != buy_parent.id()
+            || buy_progress.target_qty() != buy_parent.total_qty()
+            || sell_progress.parent_id() != sell_parent.id()
+            || sell_progress.target_qty() != sell_parent.total_qty()
+        {
+            return Err(AlgoError::InvalidProgress);
+        }
+        Ok(())
+    }
+}
+
 /// Market-making context supplied by the host quote model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MarketMakerContext {
@@ -4443,6 +4740,23 @@ fn scale_qty_bps(quantity: i64, bps: u32) -> i64 {
     i64::try_from(scaled).unwrap_or(i64::MAX)
 }
 
+fn scale_qty_inverse_bps(quantity: i64, bps: u32) -> i64 {
+    if bps == 0 {
+        return 0;
+    }
+    let scaled = (i128::from(quantity) * 10_000) / i128::from(bps);
+    i64::try_from(scaled).unwrap_or(i64::MAX)
+}
+
+fn spread_edge_bps(buy_price: OrderPrice, sell_price: OrderPrice, ratio_bps: u32) -> i32 {
+    if buy_price.0 <= 0 || sell_price.0 <= 0 || ratio_bps == 0 {
+        return i32::MIN;
+    }
+    let scaled_sell = (i128::from(sell_price.0) * i128::from(ratio_bps)) / 10_000;
+    let edge = ((scaled_sell - i128::from(buy_price.0)) * 10_000) / i128::from(buy_price.0);
+    i32::try_from(edge.clamp(i128::from(i32::MIN), i128::from(i32::MAX))).unwrap_or(0)
+}
+
 fn passive_candidate_qty(parent: &ParentOrder, progress: AlgoProgress, now_ns: u64) -> OrderQty {
     let leaves = parent
         .total_qty()
@@ -4740,6 +5054,33 @@ mod tests {
             0,
         )
         .expect("parent")
+    }
+
+    fn sell_parent(
+        id: &str,
+        total_qty: OrderQty,
+        min_clip: OrderQty,
+        max_clip: OrderQty,
+    ) -> ParentOrder {
+        ParentOrder::new(
+            ParentOrderId::new(id).expect("id"),
+            AccountId::new("acct").expect("account"),
+            RouteId::new("sim").expect("route"),
+            StrategyId::new("spread").expect("strategy"),
+            ExecutionSymbol::new("SIM", "NQZ6").expect("symbol"),
+            OrderSide::Sell,
+            OrderType::Limit,
+            TimeInForce::Day,
+            total_qty,
+            OrderPrice(1_000_000),
+            OrderPrice(0),
+            1_000,
+            11_000,
+            min_clip,
+            max_clip,
+            0,
+        )
+        .expect("sell parent")
     }
 
     #[test]
@@ -5930,6 +6271,141 @@ mod tests {
         assert_eq!(
             BasketLeg::new(parent(), BasketLegRole::Primary, 0),
             Err(AlgoError::InvalidBasketParameters)
+        );
+    }
+
+    #[test]
+    fn spread_plans_when_edge_meets_limit() {
+        let buy_parent = parent();
+        let sell_parent = sell_parent("spread-sell-1", OrderQty(100), OrderQty(10), OrderQty(25));
+        let planner = SpreadPlanner::new(SpreadConfig::new(10_000, 50).expect("config"));
+        let decision = planner
+            .plan_spread(
+                &buy_parent,
+                AlgoProgress::new(buy_parent.id(), buy_parent.total_qty()),
+                &sell_parent,
+                AlgoProgress::new(sell_parent.id(), sell_parent.total_qty()),
+                2_000,
+                SpreadQuote::new(OrderPrice(500_000), OrderPrice(505_000)).expect("quote"),
+                ChildOrderId::new("sp-buy").expect("child"),
+                ClientOrderId::new("sp-buy-cl").expect("client"),
+                ChildOrderId::new("sp-sell").expect("child"),
+                ClientOrderId::new("sp-sell-cl").expect("client"),
+                2_000,
+            )
+            .expect("decision");
+
+        assert!(decision.estimate().executable());
+        assert_eq!(decision.estimate().edge_bps(), 100);
+        let buy = decision.buy().expect("buy");
+        let sell = decision.sell().expect("sell");
+        assert_eq!(buy.request().side, OrderSide::Buy);
+        assert_eq!(sell.request().side, OrderSide::Sell);
+        assert_eq!(buy.request().quantity, OrderQty(25));
+        assert_eq!(sell.request().quantity, OrderQty(25));
+        assert_eq!(buy.request().limit_price, OrderPrice(500_000));
+        assert_eq!(sell.request().limit_price, OrderPrice(505_000));
+    }
+
+    #[test]
+    fn spread_waits_when_edge_is_below_limit() {
+        let buy_parent = parent();
+        let sell_parent = sell_parent("spread-sell-2", OrderQty(100), OrderQty(10), OrderQty(25));
+        let planner = SpreadPlanner::new(SpreadConfig::new(10_000, 50).expect("config"));
+        let decision = planner
+            .plan_spread(
+                &buy_parent,
+                AlgoProgress::new(buy_parent.id(), buy_parent.total_qty()),
+                &sell_parent,
+                AlgoProgress::new(sell_parent.id(), sell_parent.total_qty()),
+                2_000,
+                SpreadQuote::new(OrderPrice(500_000), OrderPrice(500_500)).expect("quote"),
+                ChildOrderId::new("sp-wait-buy").expect("child"),
+                ClientOrderId::new("sp-wait-buy-cl").expect("client"),
+                ChildOrderId::new("sp-wait-sell").expect("child"),
+                ClientOrderId::new("sp-wait-sell-cl").expect("client"),
+                2_000,
+            )
+            .expect("decision");
+
+        assert!(!decision.estimate().executable());
+        assert!(decision.buy().is_none());
+        assert!(decision.sell().is_none());
+    }
+
+    #[test]
+    fn spread_sizes_by_ratio_and_available_leaves() {
+        let buy_parent = parent();
+        let sell_parent = sell_parent("spread-sell-3", OrderQty(8), OrderQty(1), OrderQty(8));
+        let planner = SpreadPlanner::new(SpreadConfig::new(5_000, 100).expect("config"));
+        let decision = planner
+            .plan_spread(
+                &buy_parent,
+                AlgoProgress::new(buy_parent.id(), buy_parent.total_qty()),
+                &sell_parent,
+                AlgoProgress::new(sell_parent.id(), sell_parent.total_qty()),
+                2_000,
+                SpreadQuote::new(OrderPrice(500_000), OrderPrice(1_100_000)).expect("quote"),
+                ChildOrderId::new("sp-ratio-buy").expect("child"),
+                ClientOrderId::new("sp-ratio-buy-cl").expect("client"),
+                ChildOrderId::new("sp-ratio-sell").expect("child"),
+                ClientOrderId::new("sp-ratio-sell-cl").expect("client"),
+                2_000,
+            )
+            .expect("decision");
+
+        assert_eq!(decision.estimate().buy_qty(), OrderQty(16));
+        assert_eq!(decision.estimate().sell_qty(), OrderQty(8));
+        assert_eq!(
+            decision.buy().expect("buy").request().quantity,
+            OrderQty(16)
+        );
+        assert_eq!(
+            decision.sell().expect("sell").request().quantity,
+            OrderQty(8)
+        );
+    }
+
+    #[test]
+    fn spread_rejects_invalid_inputs() {
+        assert_eq!(
+            SpreadConfig::new(0, 0),
+            Err(AlgoError::InvalidSpreadParameters)
+        );
+        assert_eq!(
+            SpreadQuote::new(OrderPrice(0), OrderPrice(1)),
+            Err(AlgoError::InvalidSpreadParameters)
+        );
+        let buy_parent = parent();
+        let wrong_side_parent = ParentOrder::new(
+            ParentOrderId::new("spread-wrong").expect("id"),
+            AccountId::new("acct").expect("account"),
+            RouteId::new("sim").expect("route"),
+            StrategyId::new("spread").expect("strategy"),
+            ExecutionSymbol::new("SIM", "NQZ6").expect("symbol"),
+            OrderSide::Buy,
+            OrderType::Limit,
+            TimeInForce::Day,
+            OrderQty(100),
+            OrderPrice(1_000_000),
+            OrderPrice(0),
+            1_000,
+            11_000,
+            OrderQty(10),
+            OrderQty(25),
+            0,
+        )
+        .expect("wrong side");
+
+        assert_eq!(
+            SpreadPlanner::new(SpreadConfig::new(10_000, 0).expect("config")).estimate(
+                &buy_parent,
+                AlgoProgress::new(buy_parent.id(), buy_parent.total_qty()),
+                &wrong_side_parent,
+                AlgoProgress::new(wrong_side_parent.id(), wrong_side_parent.total_qty()),
+                SpreadQuote::new(OrderPrice(500_000), OrderPrice(505_000)).expect("quote"),
+            ),
+            Err(AlgoError::InvalidSpreadParameters)
         );
     }
 

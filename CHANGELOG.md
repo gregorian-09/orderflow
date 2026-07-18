@@ -156,9 +156,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added deterministic sweep/aggressive-take planning in `of_execution_algos`
   with side-aware price collars, minimum fill quantity suppression,
   route/level capacity, average planned price, and OMS-safe child plans.
-- Added deterministic basket/spread planning in `of_execution_algos` with leg
+- Added deterministic basket planning in `of_execution_algos` with leg
   roles, hedge-ratio metadata, synchronized per-leg release, fixed-capacity
   decisions, and explicit non-atomic multi-leg semantics.
+- Added deterministic pairs/spread planning in `of_execution_algos` with
+  hedge-ratio sizing, executable spread-edge gating, synchronized buy/sell
+  child plans, ratio-aware quantity clipping, and explicit legging-risk
+  boundaries.
 - Added deterministic market-making quote planning in `of_execution_algos`
   with fair-value quoting, inventory skew, volatility/adverse-selection spread
   widening, inventory-limit side suppression, and OMS-safe bid/ask child plans.

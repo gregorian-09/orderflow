@@ -34,8 +34,11 @@ The first foundation focuses on deterministic parent/child order handling:
   controls,
 - deterministic sweep/aggressive-take planning that walks route candidates up
   to a side-aware price collar,
-- deterministic basket/spread planning for synchronized multi-leg child
+- deterministic basket planning for synchronized multi-leg child
   release with leg roles and hedge-ratio metadata,
+- deterministic pairs/spread planning with hedge-ratio sizing, spread-edge
+  gating, synchronized buy/sell child plans, and explicit legging-risk
+  boundaries,
 - deterministic market-making quote planning from fair value, inventory,
   volatility, adverse-selection estimates, tick size, and quote quantity,
 - deterministic TWAP replay over explicit timer/execution/status inputs.
@@ -50,7 +53,7 @@ reconciliation remain authoritative.
 ```mermaid
 flowchart LR
     Strategy[Strategy intent] --> Parent[ParentOrder]
-    Parent --> Algo[TWAP / POV / VWAP / Iceberg / IS / Passive queue / SOR / Liquidity / Sweep / Basket / MM]
+    Parent --> Algo[TWAP / POV / VWAP / Iceberg / IS / Passive queue / SOR / Liquidity / Sweep / Basket / Spread / MM]
     Market[Market data / timers / OMS events] --> Algo
     Algo --> Decision[AlgoDecision]
     Decision --> Child[ChildOrderPlan]
@@ -597,6 +600,85 @@ let decision = BasketPlanner::new().plan_synchronized_slice::<1>(
 )?;
 
 assert_eq!(decision.len(), 1);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Pairs / Spread Example
+
+`SpreadPlanner` is a deterministic two-leg planner for long/short spread
+execution. It uses a sell-leg hedge ratio in basis points, computes the
+current executable edge from host-provided leg prices, and only releases both
+child orders when the edge and clip constraints pass.
+
+It does not claim venue-atomic package execution. Hosts still own linked-order
+support, legging-risk policy, hedge drift controls, kill switches, and recovery
+if one leg fills before the other.
+
+```rust
+use of_execution_algos::{
+    AlgoProgress, ChildOrderId, ParentOrder, ParentOrderId, SpreadConfig,
+    SpreadPlanner, SpreadQuote,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let buy_parent = ParentOrder::new(
+    ParentOrderId::new("spread-buy")?,
+    AccountId::new("acct")?,
+    RouteId::new("buy-route")?,
+    StrategyId::new("pairs")?,
+    ExecutionSymbol::new("SIM", "LEG_A")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+let sell_parent = ParentOrder::new(
+    ParentOrderId::new("spread-sell")?,
+    AccountId::new("acct")?,
+    RouteId::new("sell-route")?,
+    StrategyId::new("pairs")?,
+    ExecutionSymbol::new("SIM", "LEG_B")?,
+    OrderSide::Sell,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(505_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+
+let planner = SpreadPlanner::new(SpreadConfig::new(10_000, 50)?);
+let decision = planner.plan_spread(
+    &buy_parent,
+    AlgoProgress::new(buy_parent.id(), buy_parent.total_qty()),
+    &sell_parent,
+    AlgoProgress::new(sell_parent.id(), sell_parent.total_qty()),
+    2_000,
+    SpreadQuote::new(OrderPrice::new(500_000)?, OrderPrice::new(505_000)?)?,
+    ChildOrderId::new("spread-buy-child")?,
+    ClientOrderId::new("spread-buy-cl")?,
+    ChildOrderId::new("spread-sell-child")?,
+    ClientOrderId::new("spread-sell-cl")?,
+    2_000,
+)?;
+
+assert!(decision.estimate().executable());
+assert!(decision.buy().is_some());
+assert!(decision.sell().is_some());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

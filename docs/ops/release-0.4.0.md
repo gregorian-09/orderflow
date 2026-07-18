@@ -166,6 +166,9 @@ foundation:
 - deterministic `BasketPlanner` with leg roles, hedge-ratio metadata,
   synchronized per-leg release, fixed-capacity decisions, and explicit
   non-atomic multi-leg semantics
+- deterministic `SpreadPlanner` with hedge-ratio sizing, executable
+  spread-edge gating, synchronized buy/sell child plans, ratio-aware quantity
+  clipping, and explicit legging-risk boundaries
 - deterministic `MarketMakerPlanner` with fair-value quoting, inventory skew,
   volatility/adverse-selection spread widening, inventory-limit side
   suppression, and OMS-safe bid/ask child plans
