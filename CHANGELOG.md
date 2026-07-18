@@ -31,6 +31,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   quote-stuffing, stop-run, absorption, and momentum-ignition indicators.
 - Added `of_analytics` venue/route analytics for fill, reject, cancel,
   latency, and route-health diagnostics.
+- Added `of_analytics` cross-asset analytics for rolling correlation, beta,
+  pair divergence, thresholded basis pressure, and correlation-breakdown
+  diagnostics.
 - Added `tools/check_binding_parity.py` and CI coverage to validate that
   manifest-exposed C ABI symbols have matching Python ctypes registrations and
   Java JNA declarations before release.

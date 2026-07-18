@@ -37,9 +37,11 @@ The first foundation is dependency-light:
   absorption, and momentum-ignition risk indicators,
 - venue/route primitives for fill, reject, cancel, latency, and route-health
   diagnostics,
+- cross-asset primitives for rolling correlation, beta, pair divergence,
+  thresholded basis pressure, and correlation-breakdown diagnostics,
 - explicit feature profiles so users can opt into future impact, toxicity,
-  volatility, regime, data-quality, feature-vector, resiliency, queue-fill, pattern,
-  derivatives, institutional, and ML feature modules without forcing all
+  volatility, regime, data-quality, feature-vector, resiliency, queue-fill,
+  cross-asset, pattern, derivatives, institutional, and ML feature modules without forcing all
   downstream users to compile them.
 
 The crate does not submit orders, manage runtime state, own persistence, or
@@ -64,6 +66,7 @@ Reserved additive profiles:
 - `feature-vector`
 - `resiliency`
 - `queue-fill`
+- `cross-asset`
 - `patterns`
 - `derivatives`
 - `institutional`
@@ -289,6 +292,22 @@ let snapshot = tracker.snapshot();
 assert_eq!(snapshot.sent(), 1);
 assert_eq!(snapshot.fills(), 1);
 assert_eq!(snapshot.avg_quote_to_fill_latency_ns(), 100);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Cross-Asset Example
+
+```rust
+use of_analytics::{CrossAssetConfig, CrossAssetSample, CrossAssetTracker};
+
+let mut tracker = CrossAssetTracker::<8>::new(CrossAssetConfig::default())?;
+tracker.on_sample(CrossAssetSample::new(100_000, 200_000, 1)?);
+tracker.on_sample(CrossAssetSample::new(101_000, 202_000, 2)?);
+tracker.on_sample(CrossAssetSample::new(102_000, 204_000, 3)?);
+let snapshot = tracker.snapshot();
+
+assert!(snapshot.correlation_bps() > 0);
+assert!(snapshot.lead_lag_score_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

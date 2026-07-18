@@ -18,9 +18,10 @@ The first public slice is dependency-light and live-path friendly:
 - queue/fill probability analytics,
 - pattern-risk analytics,
 - venue/route analytics,
+- cross-asset analytics,
 - feature profiles for future impact, toxicity, volatility, regime,
-  data-quality, feature-vector, resiliency, queue-fill, pattern, derivatives,
-  institutional, and ML-feature modules.
+  data-quality, feature-vector, resiliency, queue-fill, cross-asset, pattern,
+  derivatives, institutional, and ML-feature modules.
 
 The crate consumes normalized `of_core` data and returns typed snapshots. It
 does not own runtime state, persistence, sockets, bindings, OMS state, or order
@@ -43,6 +44,7 @@ Reserved additive profiles:
 - `feature-vector`
 - `resiliency`
 - `queue-fill`
+- `cross-asset`
 - `patterns`
 - `derivatives`
 - `institutional`
@@ -129,6 +131,13 @@ Venue and route:
 - `VenueRouteEvent`
 - `VenueRouteSnapshot`
 - `VenueRouteTracker`
+
+Cross asset:
+
+- `CrossAssetSample`
+- `CrossAssetConfig`
+- `CrossAssetSnapshot`
+- `CrossAssetTracker`
 
 ## Market Quality
 
@@ -519,6 +528,33 @@ let snapshot = tracker.snapshot();
 assert_eq!(snapshot.sent(), 1);
 assert_eq!(snapshot.fills(), 1);
 assert_eq!(snapshot.avg_quote_to_fill_latency_ns(), 100);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Cross-Asset And Lead-Lag
+
+`CrossAssetTracker` records paired leader/follower samples and keeps a
+fixed-size ring of integer returns. It reports rolling correlation, beta,
+latest pair divergence, latest basis pressure, thresholded divergence and
+basis-pressure flags, a correlation-breakdown flag, and a lead/lag strength
+score.
+
+These values are diagnostics, not proof that a relationship is stable. Rolling
+cross-asset relationships can change quickly, so production users should
+calibrate windows and thresholds out of sample before using them in live risk
+or routing decisions.
+
+```rust
+use of_analytics::{CrossAssetConfig, CrossAssetSample, CrossAssetTracker};
+
+let mut tracker = CrossAssetTracker::<8>::new(CrossAssetConfig::default())?;
+tracker.on_sample(CrossAssetSample::new(100_000, 200_000, 1)?);
+tracker.on_sample(CrossAssetSample::new(101_000, 202_000, 2)?);
+tracker.on_sample(CrossAssetSample::new(102_000, 204_000, 3)?);
+let snapshot = tracker.snapshot();
+
+assert!(snapshot.correlation_bps() > 0);
+assert!(snapshot.lead_lag_score_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

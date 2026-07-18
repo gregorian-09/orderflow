@@ -28,6 +28,7 @@ data-quality = []
 feature-vector = []
 resiliency = []
 queue-fill = []
+cross-asset = []
 patterns = []
 derivatives = []
 institutional = []
@@ -43,6 +44,7 @@ all = [
   "feature-vector",
   "resiliency",
   "queue-fill",
+  "cross-asset",
   "patterns",
   "derivatives",
   "institutional",

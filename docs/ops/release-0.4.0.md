@@ -63,9 +63,11 @@ registry dependency after `of_fix 0.1.0` is published.
   absorption, and momentum-ignition risk indicators
 - venue/route primitives for fill, reject, cancel, latency, and route-health
   diagnostics
+- cross-asset primitives for rolling correlation, beta, pair divergence,
+  thresholded basis pressure, and correlation-breakdown diagnostics
 - feature profiles for future impact, toxicity, volatility, regime,
-  data-quality, feature-vector, resiliency, queue-fill, patterns, derivatives,
-  institutional, and ML feature modules
+  data-quality, feature-vector, resiliency, queue-fill, cross-asset, patterns,
+  derivatives, institutional, and ML feature modules
 - borrowed `of_core::BookLevel` analysis paths that avoid copying book
   snapshots in hot analytics loops
 

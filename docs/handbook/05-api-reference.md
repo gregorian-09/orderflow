@@ -740,6 +740,10 @@ Public market-quality and liquidity types:
 - `VenueRouteEvent`
 - `VenueRouteSnapshot`
 - `VenueRouteTracker`
+- `CrossAssetSample`
+- `CrossAssetConfig`
+- `CrossAssetSnapshot`
+- `CrossAssetTracker`
 
 For advanced analytics crate details, see
 [`of_analytics` reference](./05l-of-analytics-reference.md).
