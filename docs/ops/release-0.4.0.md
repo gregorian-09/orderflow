@@ -59,6 +59,8 @@ registry dependency after `of_fix 0.1.0` is published.
   recovery timing, and liquidity resiliency scoring
 - queue/fill primitives for passive queue position estimates, fill
   probability, expected time-to-fill, amend queue loss, and maker/taker scoring
+- pattern-risk primitives for spoofing/layering, quote-stuffing, stop-run,
+  absorption, and momentum-ignition risk indicators
 - feature profiles for future impact, toxicity, volatility, regime,
   data-quality, feature-vector, resiliency, queue-fill, patterns, derivatives,
   institutional, and ML feature modules

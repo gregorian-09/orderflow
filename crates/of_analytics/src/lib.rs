@@ -25,6 +25,8 @@ pub enum AnalyticsError {
     InvalidResiliency,
     /// Queue/fill probability configuration or event fields are invalid.
     InvalidQueue,
+    /// Pattern-risk configuration or input fields are invalid.
+    InvalidPattern,
     /// Requested analytics require a quote but no quote is available.
     MissingQuote,
 }
@@ -39,6 +41,7 @@ impl fmt::Display for AnalyticsError {
             Self::InvalidFeature => write!(f, "invalid feature vector context"),
             Self::InvalidResiliency => write!(f, "invalid resiliency context"),
             Self::InvalidQueue => write!(f, "invalid queue/fill context"),
+            Self::InvalidPattern => write!(f, "invalid pattern risk context"),
             Self::MissingQuote => write!(f, "missing quote context"),
         }
     }
@@ -2535,6 +2538,282 @@ impl QueueFillTracker {
     }
 }
 
+/// Pattern-risk liquidity summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PatternRiskLiquidity {
+    executed_qty: i64,
+    displayed_depth: i64,
+}
+
+impl PatternRiskLiquidity {
+    /// Creates a liquidity summary for pattern-risk classification.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidPattern`] when quantities are negative.
+    pub const fn new(executed_qty: i64, displayed_depth: i64) -> Result<Self, AnalyticsError> {
+        if executed_qty < 0 || displayed_depth < 0 {
+            return Err(AnalyticsError::InvalidPattern);
+        }
+        Ok(Self {
+            executed_qty,
+            displayed_depth,
+        })
+    }
+
+    /// Returns executed quantity.
+    pub const fn executed_qty(&self) -> i64 {
+        self.executed_qty
+    }
+
+    /// Returns displayed depth.
+    pub const fn displayed_depth(&self) -> i64 {
+        self.displayed_depth
+    }
+}
+
+/// Pattern-risk input over a bounded observation window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PatternRiskInput {
+    quote_adds: u64,
+    quote_cancels: u64,
+    trades: u64,
+    depth_imbalance_bps: i32,
+    price_move_bps: i32,
+    liquidity: PatternRiskLiquidity,
+    window_ns: u64,
+}
+
+impl PatternRiskInput {
+    /// Creates pattern-risk input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidPattern`] when quantities or window are
+    /// invalid.
+    pub const fn new(
+        quote_adds: u64,
+        quote_cancels: u64,
+        trades: u64,
+        depth_imbalance_bps: i32,
+        price_move_bps: i32,
+        liquidity: PatternRiskLiquidity,
+        window_ns: u64,
+    ) -> Result<Self, AnalyticsError> {
+        if window_ns == 0 {
+            return Err(AnalyticsError::InvalidPattern);
+        }
+        Ok(Self {
+            quote_adds,
+            quote_cancels,
+            trades,
+            depth_imbalance_bps,
+            price_move_bps,
+            liquidity,
+            window_ns,
+        })
+    }
+
+    /// Returns quote add count.
+    pub const fn quote_adds(&self) -> u64 {
+        self.quote_adds
+    }
+
+    /// Returns quote cancel count.
+    pub const fn quote_cancels(&self) -> u64 {
+        self.quote_cancels
+    }
+
+    /// Returns trade count.
+    pub const fn trades(&self) -> u64 {
+        self.trades
+    }
+
+    /// Returns depth imbalance in basis points.
+    pub const fn depth_imbalance_bps(&self) -> i32 {
+        self.depth_imbalance_bps
+    }
+
+    /// Returns price movement in basis points.
+    pub const fn price_move_bps(&self) -> i32 {
+        self.price_move_bps
+    }
+
+    /// Returns executed quantity.
+    pub const fn executed_qty(&self) -> i64 {
+        self.liquidity.executed_qty()
+    }
+
+    /// Returns displayed depth.
+    pub const fn displayed_depth(&self) -> i64 {
+        self.liquidity.displayed_depth()
+    }
+
+    /// Returns liquidity summary.
+    pub const fn liquidity(&self) -> PatternRiskLiquidity {
+        self.liquidity
+    }
+
+    /// Returns observation window in nanoseconds.
+    pub const fn window_ns(&self) -> u64 {
+        self.window_ns
+    }
+}
+
+/// Pattern-risk classifier thresholds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PatternRiskConfig {
+    high_order_to_trade_bps: u32,
+    high_cancel_ratio_bps: u16,
+    high_imbalance_bps: u16,
+    high_price_move_bps: u32,
+    high_quote_events: u64,
+}
+
+impl PatternRiskConfig {
+    /// Creates pattern-risk thresholds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidPattern`] when basis-point thresholds
+    /// exceed 10,000 where applicable.
+    pub const fn new(
+        high_order_to_trade_bps: u32,
+        high_cancel_ratio_bps: u16,
+        high_imbalance_bps: u16,
+        high_price_move_bps: u32,
+        high_quote_events: u64,
+    ) -> Result<Self, AnalyticsError> {
+        if high_cancel_ratio_bps > 10_000 || high_imbalance_bps > 10_000 {
+            return Err(AnalyticsError::InvalidPattern);
+        }
+        Ok(Self {
+            high_order_to_trade_bps,
+            high_cancel_ratio_bps,
+            high_imbalance_bps,
+            high_price_move_bps,
+            high_quote_events,
+        })
+    }
+}
+
+impl Default for PatternRiskConfig {
+    fn default() -> Self {
+        Self {
+            high_order_to_trade_bps: 50_000,
+            high_cancel_ratio_bps: 8_000,
+            high_imbalance_bps: 7_000,
+            high_price_move_bps: 25,
+            high_quote_events: 1_000,
+        }
+    }
+}
+
+/// Pattern-risk snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PatternRiskSnapshot {
+    spoofing_layering_risk_bps: u16,
+    quote_stuffing_risk_bps: u16,
+    stop_run_risk_bps: u16,
+    absorption_risk_bps: u16,
+    momentum_ignition_risk_bps: u16,
+    overall_risk_bps: u16,
+}
+
+impl PatternRiskSnapshot {
+    /// Returns spoofing/layering risk indicator in basis points.
+    pub const fn spoofing_layering_risk_bps(&self) -> u16 {
+        self.spoofing_layering_risk_bps
+    }
+
+    /// Returns quote-stuffing risk indicator in basis points.
+    pub const fn quote_stuffing_risk_bps(&self) -> u16 {
+        self.quote_stuffing_risk_bps
+    }
+
+    /// Returns stop-run/liquidity-sweep risk indicator in basis points.
+    pub const fn stop_run_risk_bps(&self) -> u16 {
+        self.stop_run_risk_bps
+    }
+
+    /// Returns absorption risk indicator in basis points.
+    pub const fn absorption_risk_bps(&self) -> u16 {
+        self.absorption_risk_bps
+    }
+
+    /// Returns momentum-ignition risk indicator in basis points.
+    pub const fn momentum_ignition_risk_bps(&self) -> u16 {
+        self.momentum_ignition_risk_bps
+    }
+
+    /// Returns maximum component risk in basis points.
+    pub const fn overall_risk_bps(&self) -> u16 {
+        self.overall_risk_bps
+    }
+}
+
+/// Deterministic pattern-risk classifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PatternRiskClassifier {
+    config: PatternRiskConfig,
+}
+
+impl PatternRiskClassifier {
+    /// Creates a pattern-risk classifier.
+    pub const fn new(config: PatternRiskConfig) -> Self {
+        Self { config }
+    }
+
+    /// Classifies pattern risk.
+    pub fn classify(&self, input: PatternRiskInput) -> PatternRiskSnapshot {
+        let quote_events = input.quote_adds().saturating_add(input.quote_cancels());
+        let order_to_trade_bps = rate_scaled(quote_events, input.trades().max(1));
+        let cancel_ratio_bps = rate_bps(input.quote_cancels(), quote_events.max(1));
+        let imbalance = input.depth_imbalance_bps().unsigned_abs();
+        let move_abs = input.price_move_bps().unsigned_abs();
+        let spoofing_layering = average_score(&[
+            score_ratio(order_to_trade_bps, self.config.high_order_to_trade_bps),
+            score_ratio(
+                u32::from(cancel_ratio_bps),
+                u32::from(self.config.high_cancel_ratio_bps),
+            ),
+            score_ratio(imbalance, u32::from(self.config.high_imbalance_bps)),
+        ]);
+        let quote_stuffing = score_ratio_u64(quote_events, self.config.high_quote_events);
+        let stop_run = average_score(&[
+            score_ratio(move_abs, self.config.high_price_move_bps),
+            score_ratio_i64(input.executed_qty(), input.displayed_depth().max(1)),
+        ]);
+        let absorption = average_score(&[
+            score_ratio_i64(input.executed_qty(), input.displayed_depth().max(1)),
+            10_000_u16.saturating_sub(score_ratio(move_abs, self.config.high_price_move_bps)),
+        ]);
+        let momentum_ignition = average_score(&[
+            score_ratio(move_abs, self.config.high_price_move_bps),
+            score_ratio(order_to_trade_bps, self.config.high_order_to_trade_bps),
+        ]);
+        let overall = spoofing_layering
+            .max(quote_stuffing)
+            .max(stop_run)
+            .max(absorption)
+            .max(momentum_ignition);
+        PatternRiskSnapshot {
+            spoofing_layering_risk_bps: spoofing_layering,
+            quote_stuffing_risk_bps: quote_stuffing,
+            stop_run_risk_bps: stop_run,
+            absorption_risk_bps: absorption,
+            momentum_ignition_risk_bps: momentum_ignition,
+            overall_risk_bps: overall,
+        }
+    }
+}
+
+impl Default for PatternRiskClassifier {
+    fn default() -> Self {
+        Self::new(PatternRiskConfig::default())
+    }
+}
+
 /// Borrowed depth analyzer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiquidityDepthAnalyzer {
@@ -2652,6 +2931,48 @@ fn rate_bps(count: u64, total: u64) -> u16 {
         return 0;
     }
     u16::try_from(((u128::from(count) * 10_000) / u128::from(total)).min(10_000)).unwrap_or(10_000)
+}
+
+fn rate_scaled(count: u64, total: u64) -> u32 {
+    if total == 0 {
+        return 0;
+    }
+    u32::try_from(((u128::from(count) * 10_000) / u128::from(total)).min(u128::from(u32::MAX)))
+        .unwrap_or(u32::MAX)
+}
+
+fn score_ratio(value: u32, threshold: u32) -> u16 {
+    if threshold == 0 {
+        return 0;
+    }
+    u16::try_from(((u128::from(value) * 10_000) / u128::from(threshold)).min(10_000))
+        .unwrap_or(10_000)
+}
+
+fn score_ratio_u64(value: u64, threshold: u64) -> u16 {
+    if threshold == 0 {
+        return 0;
+    }
+    u16::try_from(((u128::from(value) * 10_000) / u128::from(threshold)).min(10_000))
+        .unwrap_or(10_000)
+}
+
+fn score_ratio_i64(value: i64, threshold: i64) -> u16 {
+    if threshold <= 0 {
+        return 0;
+    }
+    u16::try_from(((value.max(0) as u128 * 10_000) / threshold as u128).min(10_000))
+        .unwrap_or(10_000)
+}
+
+fn average_score(scores: &[u16]) -> u16 {
+    if scores.is_empty() {
+        return 0;
+    }
+    let sum = scores
+        .iter()
+        .fold(0_u32, |acc, score| acc.saturating_add(u32::from(*score)));
+    u16::try_from(sum / u32::try_from(scores.len()).unwrap_or(1)).unwrap_or(10_000)
 }
 
 fn fnv1a64(mut hash: u64, bytes: &[u8]) -> u64 {
@@ -3064,5 +3385,61 @@ mod tests {
         assert_eq!(snapshot.queue_loss_after_amend(), 100);
         assert_eq!(snapshot.last_update_ts_ns(), 2);
         assert!(snapshot.maker_taker_score_bps() < 10_000);
+    }
+
+    #[test]
+    fn pattern_risk_flags_layering_and_quote_stuffing() {
+        let classifier = PatternRiskClassifier::default();
+        let snapshot = classifier.classify(
+            PatternRiskInput::new(
+                800,
+                900,
+                10,
+                8_000,
+                5,
+                PatternRiskLiquidity::new(10, 1_000).unwrap(),
+                1_000_000,
+            )
+            .unwrap(),
+        );
+
+        assert!(snapshot.spoofing_layering_risk_bps() > 5_000);
+        assert_eq!(snapshot.quote_stuffing_risk_bps(), 10_000);
+        assert_eq!(
+            snapshot.overall_risk_bps(),
+            snapshot.quote_stuffing_risk_bps()
+        );
+    }
+
+    #[test]
+    fn pattern_risk_scores_stop_run_and_absorption() {
+        let classifier = PatternRiskClassifier::default();
+        let stop_run = classifier.classify(
+            PatternRiskInput::new(
+                10,
+                10,
+                100,
+                1_000,
+                50,
+                PatternRiskLiquidity::new(2_000, 1_000).unwrap(),
+                1_000_000,
+            )
+            .unwrap(),
+        );
+        let absorption = classifier.classify(
+            PatternRiskInput::new(
+                10,
+                10,
+                100,
+                1_000,
+                1,
+                PatternRiskLiquidity::new(2_000, 1_000).unwrap(),
+                1_000_000,
+            )
+            .unwrap(),
+        );
+
+        assert!(stop_run.stop_run_risk_bps() > absorption.stop_run_risk_bps());
+        assert!(absorption.absorption_risk_bps() > stop_run.absorption_risk_bps());
     }
 }

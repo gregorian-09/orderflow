@@ -33,6 +33,8 @@ The first foundation is dependency-light:
   recovery timing, and liquidity resiliency scoring,
 - queue/fill primitives for passive queue position estimates, fill
   probability, expected time-to-fill, amend queue loss, and maker/taker scoring,
+- pattern-risk primitives for spoofing/layering, quote-stuffing, stop-run,
+  absorption, and momentum-ignition risk indicators,
 - explicit feature profiles so users can opt into future impact, toxicity,
   volatility, regime, data-quality, feature-vector, resiliency, queue-fill, pattern,
   derivatives, institutional, and ML feature modules without forcing all
@@ -248,6 +250,27 @@ let snapshot = tracker.on_update(QueueFillUpdate::new(
 
 assert_eq!(snapshot.qty_ahead(), 60);
 assert!(snapshot.fill_probability_bps() > 0);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Pattern Risk Example
+
+```rust
+use of_analytics::{PatternRiskClassifier, PatternRiskInput, PatternRiskLiquidity};
+
+let classifier = PatternRiskClassifier::default();
+let snapshot = classifier.classify(PatternRiskInput::new(
+    800,
+    900,
+    10,
+    8_000,
+    5,
+    PatternRiskLiquidity::new(10, 1_000)?,
+    1_000_000,
+)?);
+
+assert!(snapshot.spoofing_layering_risk_bps() > 0);
+assert!(snapshot.quote_stuffing_risk_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

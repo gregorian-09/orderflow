@@ -16,6 +16,7 @@ The first public slice is dependency-light and live-path friendly:
 - feed-quality analytics,
 - liquidity resiliency analytics,
 - queue/fill probability analytics,
+- pattern-risk analytics,
 - feature profiles for future impact, toxicity, volatility, regime,
   data-quality, feature-vector, resiliency, queue-fill, pattern, derivatives,
   institutional, and ML-feature modules.
@@ -112,6 +113,14 @@ Queue and fill:
 - `QueueFillUpdate`
 - `QueueFillSnapshot`
 - `QueueFillTracker`
+
+Pattern risk:
+
+- `PatternRiskInput`
+- `PatternRiskLiquidity`
+- `PatternRiskConfig`
+- `PatternRiskSnapshot`
+- `PatternRiskClassifier`
 
 ## Market Quality
 
@@ -438,6 +447,40 @@ let snapshot = tracker.on_update(QueueFillUpdate::new(
 
 assert_eq!(snapshot.qty_ahead(), 60);
 assert!(snapshot.fill_probability_bps() > 0);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Pattern Risk
+
+`PatternRiskClassifier` maps bounded order-book activity summaries into risk
+indicator scores. These scores are diagnostics for operators and strategies;
+they are not accusations or regulatory conclusions.
+
+The snapshot reports:
+
+- spoofing/layering risk,
+- quote-stuffing risk,
+- stop-run/liquidity-sweep risk,
+- absorption risk,
+- momentum-ignition risk,
+- overall maximum component risk.
+
+```rust
+use of_analytics::{PatternRiskClassifier, PatternRiskInput, PatternRiskLiquidity};
+
+let classifier = PatternRiskClassifier::default();
+let snapshot = classifier.classify(PatternRiskInput::new(
+    800,
+    900,
+    10,
+    8_000,
+    5,
+    PatternRiskLiquidity::new(10, 1_000)?,
+    1_000_000,
+)?);
+
+assert!(snapshot.spoofing_layering_risk_bps() > 0);
+assert!(snapshot.quote_stuffing_risk_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

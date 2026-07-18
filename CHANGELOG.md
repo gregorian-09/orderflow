@@ -27,6 +27,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `of_analytics` queue/fill analytics for passive queue position,
   fill probability, expected time-to-fill, amend queue loss, and maker/taker
   scoring.
+- Added `of_analytics` pattern-risk analytics for spoofing/layering,
+  quote-stuffing, stop-run, absorption, and momentum-ignition indicators.
 - Added `tools/check_binding_parity.py` and CI coverage to validate that
   manifest-exposed C ABI symbols have matching Python ctypes registrations and
   Java JNA declarations before release.
