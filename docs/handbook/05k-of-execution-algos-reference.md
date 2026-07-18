@@ -52,6 +52,10 @@ Lifecycle and planning types:
 - `AlgoRiskContext`
 - `AlgoRiskReport`
 - `AlgoRiskPolicy`
+- `AlgoRecoveryAction`
+- `AlgoCheckpoint`
+- `AlgoRecoveryPolicy`
+- `AlgoRecoveryPlan`
 - `TwapSlicePlanner`
 - `AlgoReplayEvent`
 - `AlgoReplayInput`
@@ -288,6 +292,79 @@ let report = AlgoRiskPolicy::new(limits).evaluate_child::<
 )?;
 
 assert!(report.is_allowed());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Checkpoints And Recovery
+
+`AlgoCheckpoint` is the algorithm-layer recovery record for one parent order.
+It is intentionally small and copyable. The host can serialize it into a WAL,
+checkpoint store, database row, or custom binary format without this crate
+owning any storage dependency.
+
+Checkpoint contents:
+
+- `ALGO_CHECKPOINT_SCHEMA_VERSION`,
+- parent order,
+- progress snapshot,
+- next decision sequence,
+- last consumed input sequence.
+
+The checkpoint does not include OMS journal entries, venue order ids, adapter
+connection state, sequence numbers from execution venues, or market-data WAL
+offsets. Those belong to `of_execution`, `of_persist`, adapters, and the host
+runtime. This separation prevents the algorithm crate from becoming a second
+OMS journal and keeps recovery deterministic.
+
+`AlgoRecoveryPolicy` controls the first action after checkpoint load:
+
+- pause by default after recovery,
+- require OMS/venue reconciliation before resume,
+- complete a parent when recovered progress already reached target quantity.
+
+`AlgoRecoveryPlan` returns:
+
+- the source checkpoint,
+- recommended `AlgoRecoveryAction`,
+- first input sequence to replay after the checkpoint,
+- next decision sequence,
+- whether reconciliation must gate resume.
+
+```rust
+use of_execution_algos::{
+    AlgoCheckpoint, AlgoProgress, AlgoRecoveryAction, AlgoRecoveryPlan,
+    AlgoRecoveryPolicy, ParentOrder, ParentOrderId,
+};
+use of_execution_core::{
+    AccountId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide, OrderType,
+    RouteId, StrategyId, TimeInForce,
+};
+
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-recovery")?,
+    AccountId::new("acct")?,
+    RouteId::new("sim")?,
+    StrategyId::new("twap")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+let checkpoint = AlgoCheckpoint::new(parent, progress, 7, 42)?;
+let plan = AlgoRecoveryPlan::new(checkpoint, AlgoRecoveryPolicy::default())?;
+
+assert_eq!(plan.action(), AlgoRecoveryAction::Pause);
+assert_eq!(plan.replay_from_sequence(), 43);
+assert!(plan.reconciliation_required());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

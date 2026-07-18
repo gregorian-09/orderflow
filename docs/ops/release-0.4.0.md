@@ -174,6 +174,10 @@ foundation:
   operator pause outcomes, price collars, participation, notional, child
   quantity, open quantity, child-count, stale-data, route-degradation, and
   persistence-degradation checks
+- additive `AlgoCheckpoint` and `AlgoRecoveryPlan` primitives with
+  schema-versioned parent/progress snapshots, replay cursors, decision sequence
+  restoration, pause/resume/complete/escalate recovery actions, and explicit
+  separation from OMS WAL ownership
 - deterministic `MarketMakerPlanner` with fair-value quoting, inventory skew,
   volatility/adverse-selection spread widening, inventory-limit side
   suppression, and OMS-safe bid/ask child plans

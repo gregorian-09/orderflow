@@ -15,6 +15,8 @@ use of_execution_core::{
 pub const DEFAULT_ALGO_DECISION_CAPACITY: usize = 16;
 /// Default maximum number of retained violations in an [`AlgoRiskReport`].
 pub const DEFAULT_ALGO_RISK_VIOLATION_CAPACITY: usize = 16;
+/// Current algorithm checkpoint schema version.
+pub const ALGO_CHECKPOINT_SCHEMA_VERSION: u16 = 1;
 
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -136,6 +138,8 @@ pub enum AlgoError {
     InvalidProgress,
     /// Algorithm risk limits or context are invalid.
     InvalidRiskParameters,
+    /// Algorithm checkpoint or recovery state is invalid.
+    InvalidRecoveryState,
     /// Fixed-capacity decision buffer is full.
     DecisionFull {
         /// Configured decision capacity.
@@ -179,6 +183,7 @@ impl fmt::Display for AlgoError {
             Self::ParentTerminal => write!(f, "terminal parent cannot release child orders"),
             Self::InvalidProgress => write!(f, "algorithm progress is inconsistent"),
             Self::InvalidRiskParameters => write!(f, "invalid algorithm risk parameters"),
+            Self::InvalidRecoveryState => write!(f, "invalid algorithm recovery state"),
             Self::DecisionFull { capacity } => {
                 write!(f, "algorithm decision capacity {capacity} is full")
             }
@@ -1448,6 +1453,225 @@ impl AlgoRiskPolicy {
 impl Default for AlgoRiskPolicy {
     fn default() -> Self {
         Self::new(AlgoRiskLimits::default())
+    }
+}
+
+/// Recovery action recommended for an algorithm instance.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum AlgoRecoveryAction {
+    /// Resume planning after host reconciliation.
+    Resume = 1,
+    /// Keep the parent paused until an operator or host policy resumes it.
+    Pause = 2,
+    /// Mark parent complete because recovered progress reached target.
+    CompleteParent = 3,
+    /// Escalate for risk/operator handling.
+    EscalateRisk = 4,
+}
+
+/// Deterministic checkpoint for one algorithm parent instance.
+///
+/// This type intentionally stores only algorithm-owned state. OMS order
+/// journals, adapter sequence state, venue order ids, and fill reconciliation
+/// remain owned by `of_execution` and adapter-specific recovery flows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoCheckpoint {
+    schema_version: u16,
+    parent: ParentOrder,
+    progress: AlgoProgress,
+    next_decision_seq: u64,
+    last_input_sequence: u64,
+}
+
+impl AlgoCheckpoint {
+    /// Creates an algorithm checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError::InvalidRecoveryState`] when parent/progress state
+    /// is inconsistent or sequence counters are invalid.
+    pub fn new(
+        parent: ParentOrder,
+        progress: AlgoProgress,
+        next_decision_seq: u64,
+        last_input_sequence: u64,
+    ) -> Result<Self, AlgoError> {
+        parent.validate()?;
+        if progress.parent_id() != parent.id()
+            || progress.target_qty() != parent.total_qty()
+            || progress.released_qty().0 > parent.total_qty().0
+            || progress.completed_qty().0 > parent.total_qty().0
+            || progress.open_qty().0 > progress.released_qty().0
+            || next_decision_seq == 0
+        {
+            return Err(AlgoError::InvalidRecoveryState);
+        }
+        Ok(Self {
+            schema_version: ALGO_CHECKPOINT_SCHEMA_VERSION,
+            parent,
+            progress,
+            next_decision_seq,
+            last_input_sequence,
+        })
+    }
+
+    /// Returns checkpoint schema version.
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
+    /// Returns checkpointed parent order.
+    pub const fn parent(&self) -> ParentOrder {
+        self.parent
+    }
+
+    /// Returns checkpointed progress.
+    pub const fn progress(&self) -> AlgoProgress {
+        self.progress
+    }
+
+    /// Returns next decision sequence to assign after recovery.
+    pub const fn next_decision_seq(&self) -> u64 {
+        self.next_decision_seq
+    }
+
+    /// Returns last consumed input sequence.
+    pub const fn last_input_sequence(&self) -> u64 {
+        self.last_input_sequence
+    }
+}
+
+/// Algorithm recovery policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoRecoveryPolicy {
+    pause_on_recovery: bool,
+    require_reconciliation: bool,
+    complete_when_progress_complete: bool,
+}
+
+impl AlgoRecoveryPolicy {
+    /// Creates recovery policy.
+    pub const fn new(
+        pause_on_recovery: bool,
+        require_reconciliation: bool,
+        complete_when_progress_complete: bool,
+    ) -> Self {
+        Self {
+            pause_on_recovery,
+            require_reconciliation,
+            complete_when_progress_complete,
+        }
+    }
+
+    /// Returns true when recovered parents should pause by default.
+    pub const fn pause_on_recovery(&self) -> bool {
+        self.pause_on_recovery
+    }
+
+    /// Returns true when OMS/venue reconciliation is required before resume.
+    pub const fn require_reconciliation(&self) -> bool {
+        self.require_reconciliation
+    }
+
+    /// Returns true when complete recovered progress should complete parent.
+    pub const fn complete_when_progress_complete(&self) -> bool {
+        self.complete_when_progress_complete
+    }
+
+    /// Returns a copy with pause-on-recovery behavior changed.
+    pub const fn with_pause_on_recovery(mut self, value: bool) -> Self {
+        self.pause_on_recovery = value;
+        self
+    }
+
+    /// Returns a copy with reconciliation requirement changed.
+    pub const fn with_require_reconciliation(mut self, value: bool) -> Self {
+        self.require_reconciliation = value;
+        self
+    }
+
+    /// Returns a copy with complete-on-recovered-progress behavior changed.
+    pub const fn with_complete_when_progress_complete(mut self, value: bool) -> Self {
+        self.complete_when_progress_complete = value;
+        self
+    }
+}
+
+impl Default for AlgoRecoveryPolicy {
+    fn default() -> Self {
+        Self::new(true, true, true)
+    }
+}
+
+/// Deterministic recovery plan derived from a checkpoint and policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoRecoveryPlan {
+    checkpoint: AlgoCheckpoint,
+    action: AlgoRecoveryAction,
+    replay_from_sequence: u64,
+    next_decision_seq: u64,
+    reconciliation_required: bool,
+}
+
+impl AlgoRecoveryPlan {
+    /// Builds a recovery plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlgoError::InvalidRecoveryState`] when checkpoint state is not
+    /// usable for deterministic recovery.
+    pub fn new(checkpoint: AlgoCheckpoint, policy: AlgoRecoveryPolicy) -> Result<Self, AlgoError> {
+        if checkpoint.schema_version() != ALGO_CHECKPOINT_SCHEMA_VERSION
+            || checkpoint.next_decision_seq() == 0
+        {
+            return Err(AlgoError::InvalidRecoveryState);
+        }
+        let parent = checkpoint.parent();
+        let progress = checkpoint.progress();
+        let reconciliation_required = policy.require_reconciliation();
+        let action = if policy.complete_when_progress_complete() && progress.is_complete() {
+            AlgoRecoveryAction::CompleteParent
+        } else if parent.status().is_terminal() {
+            AlgoRecoveryAction::EscalateRisk
+        } else if policy.pause_on_recovery() || reconciliation_required {
+            AlgoRecoveryAction::Pause
+        } else {
+            AlgoRecoveryAction::Resume
+        };
+        Ok(Self {
+            checkpoint,
+            action,
+            replay_from_sequence: checkpoint.last_input_sequence().saturating_add(1),
+            next_decision_seq: checkpoint.next_decision_seq(),
+            reconciliation_required,
+        })
+    }
+
+    /// Returns the source checkpoint.
+    pub const fn checkpoint(&self) -> AlgoCheckpoint {
+        self.checkpoint
+    }
+
+    /// Returns recommended recovery action.
+    pub const fn action(&self) -> AlgoRecoveryAction {
+        self.action
+    }
+
+    /// Returns first input sequence to replay after the checkpoint.
+    pub const fn replay_from_sequence(&self) -> u64 {
+        self.replay_from_sequence
+    }
+
+    /// Returns next decision sequence to assign.
+    pub const fn next_decision_seq(&self) -> u64 {
+        self.next_decision_seq
+    }
+
+    /// Returns true when OMS/venue reconciliation should gate resume.
+    pub const fn reconciliation_required(&self) -> bool {
+        self.reconciliation_required
     }
 }
 
@@ -6103,6 +6327,105 @@ mod tests {
         assert!(report
             .violations()
             .any(|violation| violation.kind() == AlgoRiskViolationKind::OpenQuantityExceeded));
+    }
+
+    #[test]
+    fn algo_checkpoint_records_replay_cursors() {
+        let parent = parent();
+        let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+        let checkpoint = AlgoCheckpoint::new(parent, progress, 7, 42).expect("checkpoint");
+
+        assert_eq!(checkpoint.schema_version(), ALGO_CHECKPOINT_SCHEMA_VERSION);
+        assert_eq!(checkpoint.parent(), parent);
+        assert_eq!(checkpoint.progress(), progress);
+        assert_eq!(checkpoint.next_decision_seq(), 7);
+        assert_eq!(checkpoint.last_input_sequence(), 42);
+        assert_eq!(
+            AlgoCheckpoint::new(parent, progress, 0, 42),
+            Err(AlgoError::InvalidRecoveryState)
+        );
+    }
+
+    #[test]
+    fn recovery_plan_pauses_by_default() {
+        let parent = parent();
+        let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+        let checkpoint = AlgoCheckpoint::new(parent, progress, 7, 42).expect("checkpoint");
+        let plan = AlgoRecoveryPlan::new(checkpoint, AlgoRecoveryPolicy::default()).expect("plan");
+
+        assert_eq!(plan.action(), AlgoRecoveryAction::Pause);
+        assert_eq!(plan.replay_from_sequence(), 43);
+        assert_eq!(plan.next_decision_seq(), 7);
+        assert!(plan.reconciliation_required());
+    }
+
+    #[test]
+    fn recovery_plan_can_resume_when_policy_allows() {
+        let parent = parent();
+        let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+        let checkpoint = AlgoCheckpoint::new(parent, progress, 3, 9).expect("checkpoint");
+        let policy = AlgoRecoveryPolicy::default()
+            .with_pause_on_recovery(false)
+            .with_require_reconciliation(false);
+        let plan = AlgoRecoveryPlan::new(checkpoint, policy).expect("plan");
+
+        assert_eq!(plan.action(), AlgoRecoveryAction::Resume);
+        assert!(!plan.reconciliation_required());
+    }
+
+    #[test]
+    fn recovery_plan_completes_finished_progress() {
+        let parent = parent();
+        let child = ChildOrderPlan::new(
+            ChildOrderId::new("rec-child").expect("child"),
+            parent.id(),
+            parent.build_order_request(
+                ClientOrderId::new("rec-cl").expect("client"),
+                parent.total_qty(),
+                1,
+            ),
+            1,
+        )
+        .expect("child");
+        let mut progress = AlgoProgress::new(parent.id(), parent.total_qty());
+        progress.on_child_released(&child).expect("release");
+        progress.on_execution_event(&ExecutionEvent {
+            exec_type: of_execution_core::ExecutionType::Trade,
+            order_status: OrderStatus::Filled,
+            client_order_id: child.request().client_order_id,
+            orig_client_order_id: ClientOrderId::empty(),
+            venue_order_id: VenueOrderId::new("rec-venue").expect("venue"),
+            execution_id: ExecutionId::new("rec-exec").expect("exec"),
+            account_id: parent.account_id(),
+            route_id: parent.route_id(),
+            symbol: parent.symbol(),
+            last_qty: parent.total_qty(),
+            last_price: parent.limit_price(),
+            cumulative_qty: parent.total_qty(),
+            leaves_qty: OrderQty(0),
+            average_price: parent.limit_price(),
+            ts_exchange_ns: 2,
+            ts_recv_ns: 3,
+            reason: RiskRejectReason::None,
+            text: of_execution_core::ExecutionText::empty(),
+        });
+        let checkpoint = AlgoCheckpoint::new(parent, progress, 10, 99).expect("checkpoint");
+        let plan = AlgoRecoveryPlan::new(checkpoint, AlgoRecoveryPolicy::default()).expect("plan");
+
+        assert_eq!(plan.action(), AlgoRecoveryAction::CompleteParent);
+    }
+
+    #[test]
+    fn recovery_plan_escalates_terminal_parent() {
+        let parent = parent().with_status(ParentOrderStatus::Failed);
+        let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+        let checkpoint = AlgoCheckpoint::new(parent, progress, 10, 99).expect("checkpoint");
+        let policy = AlgoRecoveryPolicy::default()
+            .with_pause_on_recovery(false)
+            .with_require_reconciliation(false);
+        let plan = AlgoRecoveryPlan::new(checkpoint, policy).expect("plan");
+
+        assert_eq!(plan.action(), AlgoRecoveryAction::EscalateRisk);
     }
 
     #[test]

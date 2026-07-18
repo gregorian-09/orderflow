@@ -168,6 +168,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   reports, kill-switch/operator-pause outcomes, price collars, participation,
   notional, child quantity, open quantity, child-count, stale-data,
   route-degradation, and persistence-degradation checks.
+- Added additive algorithm checkpoint and recovery planning in
+  `of_execution_algos` with schema-versioned parent/progress snapshots, replay
+  cursors, decision sequence restoration, pause/resume/complete/escalate
+  recovery actions, and explicit separation from OMS WAL ownership.
 - Added deterministic market-making quote planning in `of_execution_algos`
   with fair-value quoting, inventory skew, volatility/adverse-selection spread
   widening, inventory-limit side suppression, and OMS-safe bid/ask child plans.

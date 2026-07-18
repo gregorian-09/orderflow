@@ -19,6 +19,7 @@ The first foundation focuses on deterministic parent/child order handling:
 - fixed-capacity `AlgoDecision` buffers for allocation-aware decision paths,
 - fixed-capacity algorithm risk reports for pre-submit child-plan checks,
 - progress folding from canonical `ExecutionEvent` reports,
+- host-serializable algorithm checkpoints and deterministic recovery plans,
 - deterministic TWAP slice planning with explicit clip limits,
 - deterministic POV/participation planning from observed market volume,
 - deterministic VWAP planning from a borrowed cumulative volume curve,
@@ -237,6 +238,62 @@ assert_eq!(plan.request().quantity, OrderQty(10));
 
 The replay output vector is caller-owned and cleared before use. This keeps
 allocation policy visible to test, benchmark, and simulation hosts.
+
+## Checkpoints And Recovery
+
+`AlgoCheckpoint` captures deterministic algorithm state for one parent:
+
+- schema version,
+- parent ticket,
+- progress snapshot,
+- next decision sequence,
+- last consumed input sequence.
+
+It deliberately does not persist venue order ids, adapter sessions, socket
+state, or OMS journal records. Those remain owned by `of_execution` and the
+host persistence layer. This crate only provides copyable state that the host
+can serialize into its own WAL/checkpoint store.
+
+`AlgoRecoveryPlan` combines a checkpoint with `AlgoRecoveryPolicy` to decide
+whether the recovered parent should resume, pause, complete, or escalate for
+risk/operator handling.
+
+```rust
+use of_execution_algos::{
+    AlgoCheckpoint, AlgoProgress, AlgoRecoveryAction, AlgoRecoveryPlan,
+    AlgoRecoveryPolicy, ParentOrder, ParentOrderId,
+};
+use of_execution_core::{
+    AccountId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide, OrderType,
+    RouteId, StrategyId, TimeInForce,
+};
+
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-recovery")?,
+    AccountId::new("acct")?,
+    RouteId::new("sim")?,
+    StrategyId::new("twap")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+let checkpoint = AlgoCheckpoint::new(parent, progress, 7, 42)?;
+let plan = AlgoRecoveryPlan::new(checkpoint, AlgoRecoveryPolicy::default())?;
+
+assert_eq!(plan.action(), AlgoRecoveryAction::Pause);
+assert_eq!(plan.replay_from_sequence(), 43);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
 
 ## POV Example
 
