@@ -33,6 +33,8 @@ pub enum AnalyticsError {
     InvalidCrossAsset,
     /// Derivatives analytics configuration or sample fields are invalid.
     InvalidDerivative,
+    /// Execution-quality benchmark fields are invalid.
+    InvalidExecution,
     /// Requested analytics require a quote but no quote is available.
     MissingQuote,
 }
@@ -51,6 +53,7 @@ impl fmt::Display for AnalyticsError {
             Self::InvalidRoute => write!(f, "invalid venue/route context"),
             Self::InvalidCrossAsset => write!(f, "invalid cross-asset context"),
             Self::InvalidDerivative => write!(f, "invalid derivatives context"),
+            Self::InvalidExecution => write!(f, "invalid execution quality context"),
             Self::MissingQuote => write!(f, "missing quote context"),
         }
     }
@@ -309,6 +312,157 @@ impl MarketQualityTracker {
             price_improvement_bps: price_to_bps(price_improvement, midpoint),
             stale_quote,
         })
+    }
+}
+
+/// Execution-quality benchmark context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecutionBenchmark {
+    arrival_midpoint: i64,
+    decision_price: i64,
+    best_bid: i64,
+    best_ask: i64,
+    future_midpoint: Option<i64>,
+}
+
+impl ExecutionBenchmark {
+    /// Creates execution-quality benchmark context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidExecution`] when prices are
+    /// non-positive or the book is crossed/locked.
+    pub const fn new(
+        arrival_midpoint: i64,
+        decision_price: i64,
+        best_bid: i64,
+        best_ask: i64,
+        future_midpoint: Option<i64>,
+    ) -> Result<Self, AnalyticsError> {
+        if arrival_midpoint <= 0
+            || decision_price <= 0
+            || best_bid <= 0
+            || best_ask <= 0
+            || best_bid >= best_ask
+        {
+            return Err(AnalyticsError::InvalidExecution);
+        }
+        if let Some(future_midpoint) = future_midpoint {
+            if future_midpoint <= 0 {
+                return Err(AnalyticsError::InvalidExecution);
+            }
+        }
+        Ok(Self {
+            arrival_midpoint,
+            decision_price,
+            best_bid,
+            best_ask,
+            future_midpoint,
+        })
+    }
+
+    /// Returns arrival midpoint.
+    pub const fn arrival_midpoint(&self) -> i64 {
+        self.arrival_midpoint
+    }
+
+    /// Returns decision price.
+    pub const fn decision_price(&self) -> i64 {
+        self.decision_price
+    }
+
+    /// Returns best bid.
+    pub const fn best_bid(&self) -> i64 {
+        self.best_bid
+    }
+
+    /// Returns best ask.
+    pub const fn best_ask(&self) -> i64 {
+        self.best_ask
+    }
+
+    /// Returns optional future midpoint.
+    pub const fn future_midpoint(&self) -> Option<i64> {
+        self.future_midpoint
+    }
+}
+
+/// Execution-quality/TCA snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecutionQualitySnapshot {
+    implementation_shortfall_bps: i32,
+    arrival_slippage_bps: i32,
+    decision_slippage_bps: i32,
+    adverse_selection_bps: i32,
+    trade_through: bool,
+    fill_quality_score_bps: u16,
+}
+
+impl ExecutionQualitySnapshot {
+    /// Returns implementation shortfall versus decision price.
+    pub const fn implementation_shortfall_bps(&self) -> i32 {
+        self.implementation_shortfall_bps
+    }
+
+    /// Returns slippage versus arrival midpoint.
+    pub const fn arrival_slippage_bps(&self) -> i32 {
+        self.arrival_slippage_bps
+    }
+
+    /// Returns slippage versus decision price.
+    pub const fn decision_slippage_bps(&self) -> i32 {
+        self.decision_slippage_bps
+    }
+
+    /// Returns future-midpoint adverse selection, or zero when unavailable.
+    pub const fn adverse_selection_bps(&self) -> i32 {
+        self.adverse_selection_bps
+    }
+
+    /// Returns true when the fill traded through same-side touch.
+    pub const fn trade_through(&self) -> bool {
+        self.trade_through
+    }
+
+    /// Returns fill-quality score in basis points, where 10,000 is best.
+    pub const fn fill_quality_score_bps(&self) -> u16 {
+        self.fill_quality_score_bps
+    }
+}
+
+/// Execution-quality/TCA analyzer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecutionQualityAnalyzer;
+
+impl ExecutionQualityAnalyzer {
+    /// Evaluates one fill against execution benchmarks.
+    pub fn evaluate(
+        trade: TradeContext,
+        benchmark: ExecutionBenchmark,
+    ) -> ExecutionQualitySnapshot {
+        let arrival_slippage_bps = side_aware_slippage_bps(trade, benchmark.arrival_midpoint());
+        let decision_slippage_bps = side_aware_slippage_bps(trade, benchmark.decision_price());
+        let adverse_selection_bps = benchmark
+            .future_midpoint()
+            .map(|future_mid| side_aware_slippage_bps(trade, future_mid))
+            .unwrap_or(0);
+        let trade_through = match trade.aggressor_side() {
+            Side::Ask => trade.price() > benchmark.best_ask(),
+            Side::Bid => trade.price() < benchmark.best_bid(),
+        };
+        let penalty = arrival_slippage_bps
+            .max(0)
+            .saturating_add(decision_slippage_bps.max(0))
+            .saturating_add(adverse_selection_bps.max(0));
+        let score = 10_000_i32.saturating_sub(penalty.min(10_000));
+        ExecutionQualitySnapshot {
+            implementation_shortfall_bps: decision_slippage_bps,
+            arrival_slippage_bps,
+            decision_slippage_bps,
+            adverse_selection_bps,
+            trade_through,
+            fill_quality_score_bps: u16::try_from(score).unwrap_or(0),
+        }
     }
 }
 
@@ -3958,6 +4112,14 @@ fn price_to_bps(value: i64, reference: i64) -> i32 {
     i32::try_from(bps.clamp(i128::from(i32::MIN), i128::from(i32::MAX))).unwrap_or(0)
 }
 
+fn side_aware_slippage_bps(trade: TradeContext, benchmark_price: i64) -> i32 {
+    let distance = match trade.aggressor_side() {
+        Side::Ask => trade.price().saturating_sub(benchmark_price),
+        Side::Bid => benchmark_price.saturating_sub(trade.price()),
+    };
+    price_to_bps(distance, benchmark_price)
+}
+
 fn rate_bps(count: u64, total: u64) -> u16 {
     if total == 0 {
         return 0;
@@ -4114,6 +4276,37 @@ mod tests {
             .expect("snapshot");
 
         assert!(snapshot.stale_quote());
+    }
+
+    #[test]
+    fn execution_quality_scores_buy_fill_against_benchmarks() {
+        let trade = TradeContext::new(101_000, 10, Side::Ask, 1).expect("trade");
+        let benchmark = ExecutionBenchmark::new(100_000, 100_500, 99_950, 100_050, Some(100_750))
+            .expect("benchmark");
+
+        let snapshot = ExecutionQualityAnalyzer::evaluate(trade, benchmark);
+
+        assert_eq!(snapshot.arrival_slippage_bps(), 100);
+        assert_eq!(snapshot.decision_slippage_bps(), 49);
+        assert_eq!(snapshot.implementation_shortfall_bps(), 49);
+        assert_eq!(snapshot.adverse_selection_bps(), 24);
+        assert!(snapshot.trade_through());
+        assert!(snapshot.fill_quality_score_bps() < 10_000);
+    }
+
+    #[test]
+    fn execution_quality_scores_sell_price_improvement() {
+        let trade = TradeContext::new(100_500, 10, Side::Bid, 1).expect("trade");
+        let benchmark = ExecutionBenchmark::new(100_000, 100_000, 99_950, 100_050, Some(100_250))
+            .expect("benchmark");
+
+        let snapshot = ExecutionQualityAnalyzer::evaluate(trade, benchmark);
+
+        assert!(snapshot.arrival_slippage_bps() < 0);
+        assert!(snapshot.decision_slippage_bps() < 0);
+        assert!(snapshot.adverse_selection_bps() < 0);
+        assert!(!snapshot.trade_through());
+        assert_eq!(snapshot.fill_quality_score_bps(), 10_000);
     }
 
     #[test]

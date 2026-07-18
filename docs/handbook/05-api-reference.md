@@ -693,6 +693,9 @@ Public market-quality and liquidity types:
 - `TradeContext`
 - `MarketQualitySnapshot`
 - `MarketQualityTracker`
+- `ExecutionBenchmark`
+- `ExecutionQualitySnapshot`
+- `ExecutionQualityAnalyzer`
 - `LiquidityDepthSnapshot`
 - `LiquidityDepthAnalyzer`
 - `ImpactSample`

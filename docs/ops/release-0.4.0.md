@@ -43,6 +43,8 @@ registry dependency after `of_fix 0.1.0` is published.
 
 - market-quality/TCA primitives for quoted spread, effective spread, realized
   spread, price improvement, quote freshness, and side-aware slippage
+- execution-quality/TCA primitives for implementation shortfall, arrival and
+  decision slippage, adverse selection, trade-through, and fill-quality score
 - liquidity/depth primitives for top-of-book depth, multi-level depth,
   proportional imbalance, depth slope, and sweepability
 - market-impact primitives for Kyle-style lambda and Amihud-style illiquidity

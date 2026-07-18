@@ -10,6 +10,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   market-quality/TCA primitives, liquidity/depth primitives, feature profiles
   for future advanced analytics modules, and borrowed `of_core::BookLevel`
   analysis paths that avoid copying book snapshots.
+- Added `of_analytics` execution-quality/TCA primitives for implementation
+  shortfall, arrival and decision slippage, adverse selection, trade-through,
+  and fill-quality scoring.
 - Added `of_analytics` market-impact and VPIN-style toxicity primitives with
   Kyle-style lambda, Amihud-style illiquidity, fixed-capacity VPIN buckets, and
   deterministic integer-scaled snapshots.

@@ -8,6 +8,7 @@ or dependency cost for every advanced model.
 The first public slice is dependency-light and live-path friendly:
 
 - market-quality/TCA analytics,
+- execution-quality/TCA analytics,
 - liquidity/depth analytics,
 - market-impact analytics,
 - VPIN-style toxicity analytics,
@@ -61,6 +62,9 @@ Market quality:
 - `TradeContext`
 - `MarketQualitySnapshot`
 - `MarketQualityTracker`
+- `ExecutionBenchmark`
+- `ExecutionQualitySnapshot`
+- `ExecutionQualityAnalyzer`
 
 Liquidity/depth:
 
@@ -179,6 +183,32 @@ let snapshot = tracker.evaluate_trade(
 
 assert_eq!(snapshot.quoted_spread(), 2_000);
 assert!(snapshot.price_improvement_bps() > 0);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Execution Quality
+
+`ExecutionQualityAnalyzer` evaluates one fill against arrival, decision,
+same-side touch, and optional future-midpoint benchmarks. It reports
+implementation shortfall, arrival/decision slippage, adverse selection,
+trade-through, and a bounded fill-quality score.
+
+```rust
+use of_analytics::{ExecutionBenchmark, ExecutionQualityAnalyzer, TradeContext};
+use of_core::Side;
+
+let trade = TradeContext::new(101_000, 10, Side::Ask, 1)?;
+let benchmark = ExecutionBenchmark::new(
+    100_000,
+    100_500,
+    99_950,
+    100_050,
+    Some(100_750),
+)?;
+let snapshot = ExecutionQualityAnalyzer::evaluate(trade, benchmark);
+
+assert!(snapshot.implementation_shortfall_bps() > 0);
+assert!(snapshot.trade_through());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

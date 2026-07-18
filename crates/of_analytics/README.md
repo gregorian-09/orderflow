@@ -16,6 +16,8 @@ The first foundation is dependency-light:
 
 - market-quality/TCA primitives for quoted spread, effective spread, realized
   spread, price improvement, quote freshness, and side-aware slippage,
+- execution-quality/TCA primitives for implementation shortfall, arrival and
+  decision slippage, adverse selection, trade-through, and fill-quality score,
 - liquidity/depth primitives for top-of-book depth, multi-level depth,
   proportional imbalance, depth slope, and sweepability,
 - market-impact primitives for Kyle-style lambda and Amihud-style
@@ -91,6 +93,27 @@ let snapshot = tracker.evaluate_trade(
 
 assert_eq!(snapshot.quoted_spread(), 50);
 assert!(snapshot.effective_spread_bps() > 0);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Execution Quality Example
+
+```rust
+use of_analytics::{ExecutionBenchmark, ExecutionQualityAnalyzer, TradeContext};
+use of_core::Side;
+
+let trade = TradeContext::new(101_000, 10, Side::Ask, 1)?;
+let benchmark = ExecutionBenchmark::new(
+    100_000,
+    100_500,
+    99_950,
+    100_050,
+    Some(100_750),
+)?;
+let snapshot = ExecutionQualityAnalyzer::evaluate(trade, benchmark);
+
+assert!(snapshot.implementation_shortfall_bps() > 0);
+assert!(snapshot.trade_through());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
