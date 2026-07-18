@@ -31,6 +31,8 @@ pub enum AnalyticsError {
     InvalidRoute,
     /// Cross-asset analytics configuration or sample fields are invalid.
     InvalidCrossAsset,
+    /// Derivatives analytics configuration or sample fields are invalid.
+    InvalidDerivative,
     /// Requested analytics require a quote but no quote is available.
     MissingQuote,
 }
@@ -48,6 +50,7 @@ impl fmt::Display for AnalyticsError {
             Self::InvalidPattern => write!(f, "invalid pattern risk context"),
             Self::InvalidRoute => write!(f, "invalid venue/route context"),
             Self::InvalidCrossAsset => write!(f, "invalid cross-asset context"),
+            Self::InvalidDerivative => write!(f, "invalid derivatives context"),
             Self::MissingQuote => write!(f, "missing quote context"),
         }
     }
@@ -3433,6 +3436,416 @@ impl<const N: usize> CrossAssetTracker<N> {
     }
 }
 
+/// Option contract kind.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum OptionKind {
+    /// Call option.
+    Call = 1,
+    /// Put option.
+    Put = 2,
+}
+
+/// Option flow sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OptionFlowSample {
+    kind: OptionKind,
+    volume: i64,
+    open_interest: i64,
+    premium: i128,
+    implied_vol_bps: u32,
+    gamma_exposure: i128,
+}
+
+impl OptionFlowSample {
+    /// Creates an option flow sample.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidDerivative`] when quantity, premium,
+    /// or open interest is invalid.
+    pub const fn new(
+        kind: OptionKind,
+        volume: i64,
+        open_interest: i64,
+        premium: i128,
+        implied_vol_bps: u32,
+        gamma_exposure: i128,
+    ) -> Result<Self, AnalyticsError> {
+        if volume < 0 || open_interest < 0 || premium < 0 {
+            return Err(AnalyticsError::InvalidDerivative);
+        }
+        Ok(Self {
+            kind,
+            volume,
+            open_interest,
+            premium,
+            implied_vol_bps,
+            gamma_exposure,
+        })
+    }
+
+    /// Returns option kind.
+    pub const fn kind(&self) -> OptionKind {
+        self.kind
+    }
+
+    /// Returns contract volume.
+    pub const fn volume(&self) -> i64 {
+        self.volume
+    }
+
+    /// Returns open interest.
+    pub const fn open_interest(&self) -> i64 {
+        self.open_interest
+    }
+
+    /// Returns premium/notional contribution.
+    pub const fn premium(&self) -> i128 {
+        self.premium
+    }
+
+    /// Returns implied volatility in basis points.
+    pub const fn implied_vol_bps(&self) -> u32 {
+        self.implied_vol_bps
+    }
+
+    /// Returns caller-supplied gamma exposure contribution.
+    pub const fn gamma_exposure(&self) -> i128 {
+        self.gamma_exposure
+    }
+}
+
+/// Option flow snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OptionFlowSnapshot {
+    call_volume: i64,
+    put_volume: i64,
+    call_open_interest: i64,
+    put_open_interest: i64,
+    call_premium: i128,
+    put_premium: i128,
+    put_call_volume_ratio_bps: u32,
+    put_call_open_interest_ratio_bps: u32,
+    put_call_premium_ratio_bps: u32,
+    volume_open_interest_anomaly_bps: u32,
+    implied_vol_flow_bps: u32,
+    net_gamma_exposure: i128,
+    put_call_pressure_bps: i32,
+}
+
+impl OptionFlowSnapshot {
+    /// Returns call volume.
+    pub const fn call_volume(&self) -> i64 {
+        self.call_volume
+    }
+
+    /// Returns put volume.
+    pub const fn put_volume(&self) -> i64 {
+        self.put_volume
+    }
+
+    /// Returns call open interest.
+    pub const fn call_open_interest(&self) -> i64 {
+        self.call_open_interest
+    }
+
+    /// Returns put open interest.
+    pub const fn put_open_interest(&self) -> i64 {
+        self.put_open_interest
+    }
+
+    /// Returns call premium.
+    pub const fn call_premium(&self) -> i128 {
+        self.call_premium
+    }
+
+    /// Returns put premium.
+    pub const fn put_premium(&self) -> i128 {
+        self.put_premium
+    }
+
+    /// Returns put/call volume ratio scaled by 10,000.
+    pub const fn put_call_volume_ratio_bps(&self) -> u32 {
+        self.put_call_volume_ratio_bps
+    }
+
+    /// Returns put/call open-interest ratio scaled by 10,000.
+    pub const fn put_call_open_interest_ratio_bps(&self) -> u32 {
+        self.put_call_open_interest_ratio_bps
+    }
+
+    /// Returns put/call premium ratio scaled by 10,000.
+    pub const fn put_call_premium_ratio_bps(&self) -> u32 {
+        self.put_call_premium_ratio_bps
+    }
+
+    /// Returns aggregate volume/open-interest anomaly ratio.
+    pub const fn volume_open_interest_anomaly_bps(&self) -> u32 {
+        self.volume_open_interest_anomaly_bps
+    }
+
+    /// Returns premium-weighted implied-volatility flow in basis points.
+    pub const fn implied_vol_flow_bps(&self) -> u32 {
+        self.implied_vol_flow_bps
+    }
+
+    /// Returns net gamma exposure.
+    pub const fn net_gamma_exposure(&self) -> i128 {
+        self.net_gamma_exposure
+    }
+
+    /// Returns put-minus-call directional pressure in basis points.
+    pub const fn put_call_pressure_bps(&self) -> i32 {
+        self.put_call_pressure_bps
+    }
+}
+
+/// Cumulative option flow tracker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OptionFlowTracker {
+    call_volume: i64,
+    put_volume: i64,
+    call_open_interest: i64,
+    put_open_interest: i64,
+    call_premium: i128,
+    put_premium: i128,
+    implied_vol_premium_sum: u128,
+    premium_sum: u128,
+    net_gamma_exposure: i128,
+}
+
+impl OptionFlowTracker {
+    /// Creates an empty option flow tracker.
+    pub const fn new() -> Self {
+        Self {
+            call_volume: 0,
+            put_volume: 0,
+            call_open_interest: 0,
+            put_open_interest: 0,
+            call_premium: 0,
+            put_premium: 0,
+            implied_vol_premium_sum: 0,
+            premium_sum: 0,
+            net_gamma_exposure: 0,
+        }
+    }
+
+    /// Records one option flow sample.
+    pub fn on_sample(&mut self, sample: OptionFlowSample) {
+        match sample.kind() {
+            OptionKind::Call => {
+                self.call_volume = self.call_volume.saturating_add(sample.volume());
+                self.call_open_interest = self
+                    .call_open_interest
+                    .saturating_add(sample.open_interest());
+                self.call_premium = self.call_premium.saturating_add(sample.premium());
+            }
+            OptionKind::Put => {
+                self.put_volume = self.put_volume.saturating_add(sample.volume());
+                self.put_open_interest = self
+                    .put_open_interest
+                    .saturating_add(sample.open_interest());
+                self.put_premium = self.put_premium.saturating_add(sample.premium());
+            }
+        }
+        self.implied_vol_premium_sum = self.implied_vol_premium_sum.saturating_add(
+            u128::from(sample.implied_vol_bps()).saturating_mul(sample.premium() as u128),
+        );
+        self.premium_sum = self.premium_sum.saturating_add(sample.premium() as u128);
+        self.net_gamma_exposure = self
+            .net_gamma_exposure
+            .saturating_add(sample.gamma_exposure());
+    }
+
+    /// Returns current snapshot.
+    pub fn snapshot(&self) -> OptionFlowSnapshot {
+        let total_volume = self.call_volume.saturating_add(self.put_volume);
+        let total_oi = self
+            .call_open_interest
+            .saturating_add(self.put_open_interest);
+        OptionFlowSnapshot {
+            call_volume: self.call_volume,
+            put_volume: self.put_volume,
+            call_open_interest: self.call_open_interest,
+            put_open_interest: self.put_open_interest,
+            call_premium: self.call_premium,
+            put_premium: self.put_premium,
+            put_call_volume_ratio_bps: ratio_i64_to_u32(self.put_volume, self.call_volume),
+            put_call_open_interest_ratio_bps: ratio_i64_to_u32(
+                self.put_open_interest,
+                self.call_open_interest,
+            ),
+            put_call_premium_ratio_bps: ratio_i128_to_u32(self.put_premium, self.call_premium),
+            volume_open_interest_anomaly_bps: ratio_i64_to_u32(total_volume, total_oi),
+            implied_vol_flow_bps: self
+                .implied_vol_premium_sum
+                .checked_div(self.premium_sum)
+                .and_then(|value| u32::try_from(value).ok())
+                .unwrap_or(0),
+            net_gamma_exposure: self.net_gamma_exposure,
+            put_call_pressure_bps: signed_pressure_bps(self.put_volume, self.call_volume),
+        }
+    }
+
+    /// Clears accumulated option flow state.
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+}
+
+impl Default for OptionFlowTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Futures basis input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FuturesBasisInput {
+    spot_price: i64,
+    futures_price: i64,
+    fair_value_price: i64,
+    near_contract_price: i64,
+    far_contract_price: i64,
+    funding_rate_bps: i32,
+}
+
+impl FuturesBasisInput {
+    /// Creates futures basis input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidDerivative`] when prices are
+    /// non-positive.
+    pub const fn new(
+        spot_price: i64,
+        futures_price: i64,
+        fair_value_price: i64,
+        near_contract_price: i64,
+        far_contract_price: i64,
+        funding_rate_bps: i32,
+    ) -> Result<Self, AnalyticsError> {
+        if spot_price <= 0
+            || futures_price <= 0
+            || fair_value_price <= 0
+            || near_contract_price <= 0
+            || far_contract_price <= 0
+        {
+            return Err(AnalyticsError::InvalidDerivative);
+        }
+        Ok(Self {
+            spot_price,
+            futures_price,
+            fair_value_price,
+            near_contract_price,
+            far_contract_price,
+            funding_rate_bps,
+        })
+    }
+
+    /// Returns spot price.
+    pub const fn spot_price(&self) -> i64 {
+        self.spot_price
+    }
+
+    /// Returns futures price.
+    pub const fn futures_price(&self) -> i64 {
+        self.futures_price
+    }
+
+    /// Returns fair-value futures price.
+    pub const fn fair_value_price(&self) -> i64 {
+        self.fair_value_price
+    }
+
+    /// Returns near contract price.
+    pub const fn near_contract_price(&self) -> i64 {
+        self.near_contract_price
+    }
+
+    /// Returns far contract price.
+    pub const fn far_contract_price(&self) -> i64 {
+        self.far_contract_price
+    }
+
+    /// Returns funding rate in basis points.
+    pub const fn funding_rate_bps(&self) -> i32 {
+        self.funding_rate_bps
+    }
+}
+
+/// Futures basis snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FuturesBasisSnapshot {
+    basis_bps: i32,
+    fair_value_gap_bps: i32,
+    calendar_spread_bps: i32,
+    roll_pressure_bps: i32,
+    funding_basis_divergence_bps: i32,
+}
+
+impl FuturesBasisSnapshot {
+    /// Returns futures-minus-spot basis in basis points.
+    pub const fn basis_bps(&self) -> i32 {
+        self.basis_bps
+    }
+
+    /// Returns futures-minus-fair-value gap in basis points.
+    pub const fn fair_value_gap_bps(&self) -> i32 {
+        self.fair_value_gap_bps
+    }
+
+    /// Returns far-minus-near calendar spread in basis points.
+    pub const fn calendar_spread_bps(&self) -> i32 {
+        self.calendar_spread_bps
+    }
+
+    /// Returns calendar spread minus basis as roll-pressure proxy.
+    pub const fn roll_pressure_bps(&self) -> i32 {
+        self.roll_pressure_bps
+    }
+
+    /// Returns basis minus funding-rate divergence in basis points.
+    pub const fn funding_basis_divergence_bps(&self) -> i32 {
+        self.funding_basis_divergence_bps
+    }
+}
+
+/// Futures basis analyzer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FuturesBasisAnalyzer;
+
+impl FuturesBasisAnalyzer {
+    /// Analyzes futures basis input.
+    pub fn analyze(input: FuturesBasisInput) -> FuturesBasisSnapshot {
+        let basis_bps = price_to_bps(
+            input.futures_price().saturating_sub(input.spot_price()),
+            input.spot_price(),
+        );
+        let fair_value_gap_bps = price_to_bps(
+            input
+                .futures_price()
+                .saturating_sub(input.fair_value_price()),
+            input.fair_value_price(),
+        );
+        let calendar_spread_bps = price_to_bps(
+            input
+                .far_contract_price()
+                .saturating_sub(input.near_contract_price()),
+            input.near_contract_price(),
+        );
+        FuturesBasisSnapshot {
+            basis_bps,
+            fair_value_gap_bps,
+            calendar_spread_bps,
+            roll_pressure_bps: calendar_spread_bps.saturating_sub(basis_bps),
+            funding_basis_divergence_bps: basis_bps.saturating_sub(input.funding_rate_bps()),
+        }
+    }
+}
+
 /// Borrowed depth analyzer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiquidityDepthAnalyzer {
@@ -3582,6 +3995,37 @@ fn score_ratio_i64(value: i64, threshold: i64) -> u16 {
     }
     u16::try_from(((value.max(0) as u128 * 10_000) / threshold as u128).min(10_000))
         .unwrap_or(10_000)
+}
+
+fn ratio_i64_to_u32(numerator: i64, denominator: i64) -> u32 {
+    if denominator <= 0 {
+        return 0;
+    }
+    u32::try_from(
+        ((numerator.max(0) as u128 * 10_000) / denominator.max(1) as u128)
+            .min(u128::from(u32::MAX)),
+    )
+    .unwrap_or(u32::MAX)
+}
+
+fn ratio_i128_to_u32(numerator: i128, denominator: i128) -> u32 {
+    if denominator <= 0 {
+        return 0;
+    }
+    u32::try_from(
+        ((numerator.max(0) as u128 * 10_000) / denominator.max(1) as u128)
+            .min(u128::from(u32::MAX)),
+    )
+    .unwrap_or(u32::MAX)
+}
+
+fn signed_pressure_bps(left: i64, right: i64) -> i32 {
+    let total = left.saturating_add(right);
+    if total <= 0 {
+        return 0;
+    }
+    i32::try_from((i128::from(left.saturating_sub(right)) * 10_000) / i128::from(total))
+        .unwrap_or(0)
 }
 
 fn average_score(scores: &[u16]) -> u16 {
@@ -4144,5 +4588,45 @@ mod tests {
         assert_eq!(reset.samples(), 0);
         assert_eq!(reset.last_ts_ns(), 0);
         assert_eq!(reset.correlation_bps(), 0);
+    }
+
+    #[test]
+    fn option_flow_tracker_computes_pressure_iv_and_gamma() {
+        let mut tracker = OptionFlowTracker::new();
+        tracker.on_sample(
+            OptionFlowSample::new(OptionKind::Call, 100, 1_000, 50_000, 2_000, 1_000)
+                .expect("call"),
+        );
+        tracker.on_sample(
+            OptionFlowSample::new(OptionKind::Put, 200, 1_500, 150_000, 3_000, -2_000)
+                .expect("put"),
+        );
+
+        let snapshot = tracker.snapshot();
+
+        assert_eq!(snapshot.call_volume(), 100);
+        assert_eq!(snapshot.put_volume(), 200);
+        assert_eq!(snapshot.put_call_volume_ratio_bps(), 20_000);
+        assert_eq!(snapshot.put_call_open_interest_ratio_bps(), 15_000);
+        assert_eq!(snapshot.put_call_premium_ratio_bps(), 30_000);
+        assert_eq!(snapshot.implied_vol_flow_bps(), 2_750);
+        assert_eq!(snapshot.net_gamma_exposure(), -1_000);
+        assert!(snapshot.put_call_pressure_bps() > 0);
+
+        tracker.reset();
+        assert_eq!(tracker.snapshot().call_volume(), 0);
+    }
+
+    #[test]
+    fn futures_basis_analyzer_computes_roll_and_funding_divergence() {
+        let snapshot = FuturesBasisAnalyzer::analyze(
+            FuturesBasisInput::new(100_000, 101_000, 100_500, 101_000, 102_000, 25).expect("basis"),
+        );
+
+        assert_eq!(snapshot.basis_bps(), 100);
+        assert_eq!(snapshot.fair_value_gap_bps(), 49);
+        assert_eq!(snapshot.calendar_spread_bps(), 99);
+        assert_eq!(snapshot.roll_pressure_bps(), -1);
+        assert_eq!(snapshot.funding_basis_divergence_bps(), 75);
     }
 }

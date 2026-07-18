@@ -34,6 +34,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `of_analytics` cross-asset analytics for rolling correlation, beta,
   pair divergence, thresholded basis pressure, and correlation-breakdown
   diagnostics.
+- Added `of_analytics` derivatives analytics for put/call pressure,
+  volume/open-interest anomaly, implied-volatility flow, gamma exposure,
+  futures basis, roll pressure, and funding divergence.
 - Added `tools/check_binding_parity.py` and CI coverage to validate that
   manifest-exposed C ABI symbols have matching Python ctypes registrations and
   Java JNA declarations before release.

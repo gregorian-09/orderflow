@@ -19,6 +19,7 @@ The first public slice is dependency-light and live-path friendly:
 - pattern-risk analytics,
 - venue/route analytics,
 - cross-asset analytics,
+- derivatives analytics,
 - feature profiles for future impact, toxicity, volatility, regime,
   data-quality, feature-vector, resiliency, queue-fill, cross-asset, pattern,
   derivatives, institutional, and ML-feature modules.
@@ -138,6 +139,16 @@ Cross asset:
 - `CrossAssetConfig`
 - `CrossAssetSnapshot`
 - `CrossAssetTracker`
+
+Derivatives:
+
+- `OptionKind`
+- `OptionFlowSample`
+- `OptionFlowSnapshot`
+- `OptionFlowTracker`
+- `FuturesBasisInput`
+- `FuturesBasisSnapshot`
+- `FuturesBasisAnalyzer`
 
 ## Market Quality
 
@@ -555,6 +566,55 @@ let snapshot = tracker.snapshot();
 
 assert!(snapshot.correlation_bps() > 0);
 assert!(snapshot.lead_lag_score_bps() > 0);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Derivatives
+
+`OptionFlowTracker` accumulates caller-normalized option flow and reports
+put/call pressure, volume/open-interest anomaly, premium-weighted implied
+volatility flow, and net gamma exposure. The crate does not price options or
+derive Greeks; hosts pass provider- or model-supplied implied volatility and
+gamma exposure into the tracker.
+
+`FuturesBasisAnalyzer` computes futures-minus-spot basis, fair-value gap,
+calendar spread, roll-pressure proxy, and funding/basis divergence from one
+caller-supplied input snapshot.
+
+```rust
+use of_analytics::{
+    FuturesBasisAnalyzer, FuturesBasisInput, OptionFlowSample, OptionFlowTracker,
+    OptionKind,
+};
+
+let mut options = OptionFlowTracker::new();
+options.on_sample(OptionFlowSample::new(
+    OptionKind::Call,
+    100,
+    1_000,
+    50_000,
+    2_000,
+    1_000,
+)?);
+options.on_sample(OptionFlowSample::new(
+    OptionKind::Put,
+    200,
+    1_500,
+    150_000,
+    3_000,
+    -2_000,
+)?);
+assert!(options.snapshot().put_call_pressure_bps() > 0);
+
+let basis = FuturesBasisAnalyzer::analyze(FuturesBasisInput::new(
+    100_000,
+    101_000,
+    100_500,
+    101_000,
+    102_000,
+    25,
+)?);
+assert!(basis.basis_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

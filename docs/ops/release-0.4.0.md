@@ -65,6 +65,9 @@ registry dependency after `of_fix 0.1.0` is published.
   diagnostics
 - cross-asset primitives for rolling correlation, beta, pair divergence,
   thresholded basis pressure, and correlation-breakdown diagnostics
+- derivatives primitives for put/call pressure, volume/open-interest anomaly,
+  implied-volatility flow, gamma exposure, futures basis, roll pressure, and
+  funding divergence
 - feature profiles for future impact, toxicity, volatility, regime,
   data-quality, feature-vector, resiliency, queue-fill, cross-asset, patterns,
   derivatives, institutional, and ML feature modules

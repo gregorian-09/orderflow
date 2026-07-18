@@ -39,6 +39,9 @@ The first foundation is dependency-light:
   diagnostics,
 - cross-asset primitives for rolling correlation, beta, pair divergence,
   thresholded basis pressure, and correlation-breakdown diagnostics,
+- derivatives primitives for put/call pressure, volume/open-interest anomaly,
+  implied-volatility flow, gamma exposure, futures basis, roll pressure, and
+  funding divergence,
 - explicit feature profiles so users can opt into future impact, toxicity,
   volatility, regime, data-quality, feature-vector, resiliency, queue-fill,
   cross-asset, pattern, derivatives, institutional, and ML feature modules without forcing all
@@ -308,6 +311,45 @@ let snapshot = tracker.snapshot();
 
 assert!(snapshot.correlation_bps() > 0);
 assert!(snapshot.lead_lag_score_bps() > 0);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Derivatives Example
+
+```rust
+use of_analytics::{
+    FuturesBasisAnalyzer, FuturesBasisInput, OptionFlowSample, OptionFlowTracker,
+    OptionKind,
+};
+
+let mut options = OptionFlowTracker::new();
+options.on_sample(OptionFlowSample::new(
+    OptionKind::Call,
+    100,
+    1_000,
+    50_000,
+    2_000,
+    1_000,
+)?);
+options.on_sample(OptionFlowSample::new(
+    OptionKind::Put,
+    200,
+    1_500,
+    150_000,
+    3_000,
+    -2_000,
+)?);
+assert!(options.snapshot().put_call_pressure_bps() > 0);
+
+let basis = FuturesBasisAnalyzer::analyze(FuturesBasisInput::new(
+    100_000,
+    101_000,
+    100_500,
+    101_000,
+    102_000,
+    25,
+)?);
+assert!(basis.basis_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

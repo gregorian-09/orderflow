@@ -744,6 +744,13 @@ Public market-quality and liquidity types:
 - `CrossAssetConfig`
 - `CrossAssetSnapshot`
 - `CrossAssetTracker`
+- `OptionKind`
+- `OptionFlowSample`
+- `OptionFlowSnapshot`
+- `OptionFlowTracker`
+- `FuturesBasisInput`
+- `FuturesBasisSnapshot`
+- `FuturesBasisAnalyzer`
 
 For advanced analytics crate details, see
 [`of_analytics` reference](./05l-of-analytics-reference.md).
