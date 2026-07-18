@@ -9,6 +9,8 @@ The first public slice is dependency-light and live-path friendly:
 
 - market-quality/TCA analytics,
 - liquidity/depth analytics,
+- market-impact analytics,
+- VPIN-style toxicity analytics,
 - feature profiles for future impact, toxicity, volatility, regime, pattern,
   derivatives, institutional, and ML-feature modules.
 
@@ -49,6 +51,14 @@ Liquidity/depth:
 
 - `LiquidityDepthSnapshot`
 - `LiquidityDepthAnalyzer`
+
+Impact/toxicity:
+
+- `ImpactSample`
+- `ImpactSnapshot`
+- `ImpactTracker`
+- `VpinSnapshot`
+- `VpinTracker`
 
 ## Market Quality
 
@@ -115,6 +125,53 @@ let snapshot = LiquidityDepthAnalyzer::new(2).analyze(&bids, &asks, 150)?;
 assert_eq!(snapshot.bid_depth(), 180);
 assert_eq!(snapshot.ask_depth(), 210);
 assert_eq!(snapshot.sweepable_buy_qty(), 150);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Market Impact
+
+`ImpactTracker` accumulates explicit interval samples. It reports:
+
+- sample count,
+- signed volume,
+- absolute volume,
+- signed price change,
+- Kyle-style lambda scaled by 1,000,000,
+- Amihud-style illiquidity scaled by 1,000,000.
+
+The tracker does not run regressions or allocate rolling matrices. More
+advanced batch estimators can be added behind feature profiles without changing
+this live-path accumulator.
+
+```rust
+use of_analytics::{ImpactSample, ImpactTracker};
+
+let mut tracker = ImpactTracker::new();
+tracker.on_sample(ImpactSample::new(500_000, 501_000, 100, 50_000_000)?);
+let snapshot = tracker.snapshot();
+
+assert_eq!(snapshot.samples(), 1);
+assert!(snapshot.kyle_lambda_ppm() > 0);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## VPIN-Style Toxicity
+
+`VpinTracker` is a fixed-capacity bucket tracker. `Side::Ask` is interpreted as
+buyer-initiated flow and `Side::Bid` as seller-initiated flow. Completed bucket
+imbalances are retained in a const-generic ring buffer.
+
+```rust
+use of_analytics::{TradeContext, VpinTracker};
+use of_core::Side;
+
+let mut tracker = VpinTracker::<4>::new(100)?;
+tracker.on_trade(TradeContext::new(500_000, 80, Side::Ask, 1)?);
+tracker.on_trade(TradeContext::new(500_000, 20, Side::Bid, 2)?);
+let snapshot = tracker.snapshot();
+
+assert_eq!(snapshot.bucket_count(), 1);
+assert_eq!(snapshot.vpin_bps(), 6_000);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

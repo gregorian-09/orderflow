@@ -695,6 +695,11 @@ Public market-quality and liquidity types:
 - `MarketQualityTracker`
 - `LiquidityDepthSnapshot`
 - `LiquidityDepthAnalyzer`
+- `ImpactSample`
+- `ImpactSnapshot`
+- `ImpactTracker`
+- `VpinSnapshot`
+- `VpinTracker`
 
 For advanced analytics crate details, see
 [`of_analytics` reference](./05l-of-analytics-reference.md).

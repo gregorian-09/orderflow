@@ -351,6 +351,314 @@ impl LiquidityDepthSnapshot {
     }
 }
 
+/// Market-impact sample over a measurement interval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImpactSample {
+    start_midpoint: i64,
+    end_midpoint: i64,
+    signed_qty: i64,
+    notional: i128,
+}
+
+impl ImpactSample {
+    /// Creates an impact sample.
+    ///
+    /// Positive signed quantity represents buyer-initiated flow; negative
+    /// signed quantity represents seller-initiated flow.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidTrade`] when prices, quantity, or
+    /// notional are invalid.
+    pub const fn new(
+        start_midpoint: i64,
+        end_midpoint: i64,
+        signed_qty: i64,
+        notional: i128,
+    ) -> Result<Self, AnalyticsError> {
+        if start_midpoint <= 0 || end_midpoint <= 0 || signed_qty == 0 || notional <= 0 {
+            return Err(AnalyticsError::InvalidTrade);
+        }
+        Ok(Self {
+            start_midpoint,
+            end_midpoint,
+            signed_qty,
+            notional,
+        })
+    }
+
+    /// Returns starting midpoint.
+    pub const fn start_midpoint(&self) -> i64 {
+        self.start_midpoint
+    }
+
+    /// Returns ending midpoint.
+    pub const fn end_midpoint(&self) -> i64 {
+        self.end_midpoint
+    }
+
+    /// Returns signed quantity.
+    pub const fn signed_qty(&self) -> i64 {
+        self.signed_qty
+    }
+
+    /// Returns traded notional over the interval.
+    pub const fn notional(&self) -> i128 {
+        self.notional
+    }
+
+    /// Returns signed price change aligned to flow direction.
+    pub const fn signed_price_change(&self) -> i64 {
+        if self.signed_qty > 0 {
+            self.end_midpoint - self.start_midpoint
+        } else {
+            self.start_midpoint - self.end_midpoint
+        }
+    }
+}
+
+/// Cumulative market-impact snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImpactSnapshot {
+    samples: u64,
+    signed_volume: i64,
+    absolute_volume: i64,
+    signed_price_change: i64,
+    kyle_lambda_ppm: i64,
+    amihud_illiquidity_ppm: i64,
+}
+
+impl ImpactSnapshot {
+    /// Returns sample count.
+    pub const fn samples(&self) -> u64 {
+        self.samples
+    }
+
+    /// Returns cumulative signed volume.
+    pub const fn signed_volume(&self) -> i64 {
+        self.signed_volume
+    }
+
+    /// Returns cumulative absolute volume.
+    pub const fn absolute_volume(&self) -> i64 {
+        self.absolute_volume
+    }
+
+    /// Returns cumulative signed price change.
+    pub const fn signed_price_change(&self) -> i64 {
+        self.signed_price_change
+    }
+
+    /// Returns Kyle-style price impact per unit signed volume, scaled by
+    /// 1,000,000.
+    pub const fn kyle_lambda_ppm(&self) -> i64 {
+        self.kyle_lambda_ppm
+    }
+
+    /// Returns Amihud-style absolute return per notional, scaled by 1,000,000.
+    pub const fn amihud_illiquidity_ppm(&self) -> i64 {
+        self.amihud_illiquidity_ppm
+    }
+}
+
+/// Allocation-free cumulative impact tracker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImpactTracker {
+    samples: u64,
+    signed_volume: i64,
+    absolute_volume: i64,
+    signed_price_change: i64,
+    absolute_return_ppm_sum: i128,
+    notional_sum: i128,
+}
+
+impl ImpactTracker {
+    /// Creates an empty impact tracker.
+    pub const fn new() -> Self {
+        Self {
+            samples: 0,
+            signed_volume: 0,
+            absolute_volume: 0,
+            signed_price_change: 0,
+            absolute_return_ppm_sum: 0,
+            notional_sum: 0,
+        }
+    }
+
+    /// Records one impact sample.
+    pub fn on_sample(&mut self, sample: ImpactSample) {
+        self.samples = self.samples.saturating_add(1);
+        self.signed_volume = self.signed_volume.saturating_add(sample.signed_qty());
+        self.absolute_volume = self
+            .absolute_volume
+            .saturating_add(sample.signed_qty().abs());
+        self.signed_price_change = self
+            .signed_price_change
+            .saturating_add(sample.signed_price_change());
+        self.absolute_return_ppm_sum = self.absolute_return_ppm_sum.saturating_add(
+            i128::from(sample.end_midpoint().abs_diff(sample.start_midpoint()) as i64)
+                .saturating_mul(1_000_000)
+                / i128::from(sample.start_midpoint()),
+        );
+        self.notional_sum = self.notional_sum.saturating_add(sample.notional());
+    }
+
+    /// Returns current impact snapshot.
+    pub fn snapshot(&self) -> ImpactSnapshot {
+        ImpactSnapshot {
+            samples: self.samples,
+            signed_volume: self.signed_volume,
+            absolute_volume: self.absolute_volume,
+            signed_price_change: self.signed_price_change,
+            kyle_lambda_ppm: if self.signed_volume == 0 {
+                0
+            } else {
+                i64::try_from(
+                    (i128::from(self.signed_price_change) * 1_000_000)
+                        / i128::from(self.signed_volume),
+                )
+                .unwrap_or(0)
+            },
+            amihud_illiquidity_ppm: if self.notional_sum <= 0 {
+                0
+            } else {
+                i64::try_from((self.absolute_return_ppm_sum * 1_000_000) / self.notional_sum)
+                    .unwrap_or(0)
+            },
+        }
+    }
+}
+
+impl Default for ImpactTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// VPIN-style toxicity snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VpinSnapshot {
+    bucket_count: usize,
+    current_bucket_volume: i64,
+    vpin_bps: u16,
+    toxicity_bps: u16,
+}
+
+impl VpinSnapshot {
+    /// Returns completed bucket count.
+    pub const fn bucket_count(&self) -> usize {
+        self.bucket_count
+    }
+
+    /// Returns current open bucket volume.
+    pub const fn current_bucket_volume(&self) -> i64 {
+        self.current_bucket_volume
+    }
+
+    /// Returns VPIN in basis points.
+    pub const fn vpin_bps(&self) -> u16 {
+        self.vpin_bps
+    }
+
+    /// Returns current toxicity basis points including only completed buckets.
+    pub const fn toxicity_bps(&self) -> u16 {
+        self.toxicity_bps
+    }
+}
+
+/// Fixed-capacity VPIN-style bucket tracker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VpinTracker<const N: usize = 32> {
+    bucket_volume: i64,
+    bucket_imbalances: [i64; N],
+    next_bucket: usize,
+    bucket_count: usize,
+    current_buy_volume: i64,
+    current_sell_volume: i64,
+}
+
+impl<const N: usize> VpinTracker<N> {
+    /// Creates a VPIN tracker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidTrade`] when bucket volume is not
+    /// positive or capacity is zero.
+    pub const fn new(bucket_volume: i64) -> Result<Self, AnalyticsError> {
+        if bucket_volume <= 0 || N == 0 {
+            return Err(AnalyticsError::InvalidTrade);
+        }
+        Ok(Self {
+            bucket_volume,
+            bucket_imbalances: [0; N],
+            next_bucket: 0,
+            bucket_count: 0,
+            current_buy_volume: 0,
+            current_sell_volume: 0,
+        })
+    }
+
+    /// Records one trade.
+    pub fn on_trade(&mut self, trade: TradeContext) {
+        match trade.aggressor_side() {
+            Side::Ask => {
+                self.current_buy_volume = self.current_buy_volume.saturating_add(trade.qty())
+            }
+            Side::Bid => {
+                self.current_sell_volume = self.current_sell_volume.saturating_add(trade.qty())
+            }
+        }
+        if self.current_bucket_volume() >= self.bucket_volume {
+            self.close_bucket();
+        }
+    }
+
+    /// Returns current snapshot.
+    pub fn snapshot(&self) -> VpinSnapshot {
+        let count = self.bucket_count.min(N);
+        let mut imbalance_sum = 0_i64;
+        for imbalance in self.bucket_imbalances.iter().take(count) {
+            imbalance_sum = imbalance_sum.saturating_add(*imbalance);
+        }
+        let denominator = self
+            .bucket_volume
+            .saturating_mul(i64::try_from(count).unwrap_or(0));
+        let vpin_bps = if denominator <= 0 {
+            0
+        } else {
+            u16::try_from(
+                ((i128::from(imbalance_sum) * 10_000) / i128::from(denominator)).clamp(0, 10_000),
+            )
+            .unwrap_or(10_000)
+        };
+        VpinSnapshot {
+            bucket_count: count,
+            current_bucket_volume: self.current_bucket_volume(),
+            vpin_bps,
+            toxicity_bps: vpin_bps,
+        }
+    }
+
+    /// Returns configured bucket volume.
+    pub const fn bucket_volume(&self) -> i64 {
+        self.bucket_volume
+    }
+
+    /// Returns current open bucket volume.
+    pub const fn current_bucket_volume(&self) -> i64 {
+        self.current_buy_volume + self.current_sell_volume
+    }
+
+    fn close_bucket(&mut self) {
+        self.bucket_imbalances[self.next_bucket] =
+            self.current_buy_volume.abs_diff(self.current_sell_volume) as i64;
+        self.next_bucket = (self.next_bucket + 1) % N;
+        self.bucket_count = self.bucket_count.saturating_add(1).min(N);
+        self.current_buy_volume = 0;
+        self.current_sell_volume = 0;
+    }
+}
+
 /// Borrowed depth analyzer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiquidityDepthAnalyzer {
@@ -557,5 +865,35 @@ mod tests {
             LiquidityDepthAnalyzer::new(1).analyze(&bids, &asks, 10),
             Err(AnalyticsError::InvalidDepth)
         );
+    }
+
+    #[test]
+    fn impact_tracker_computes_kyle_lambda() {
+        let mut tracker = ImpactTracker::new();
+        tracker.on_sample(ImpactSample::new(500_000, 501_000, 100, 50_000_000).expect("sample"));
+        tracker.on_sample(ImpactSample::new(501_000, 500_500, -50, 25_000_000).expect("sample"));
+
+        let snapshot = tracker.snapshot();
+
+        assert_eq!(snapshot.samples(), 2);
+        assert_eq!(snapshot.signed_volume(), 50);
+        assert_eq!(snapshot.absolute_volume(), 150);
+        assert_eq!(snapshot.signed_price_change(), 1_500);
+        assert!(snapshot.kyle_lambda_ppm() > 0);
+    }
+
+    #[test]
+    fn vpin_tracker_closes_fixed_buckets() {
+        let mut tracker = VpinTracker::<2>::new(100).expect("tracker");
+        tracker.on_trade(TradeContext::new(500_000, 80, Side::Ask, 1).expect("trade"));
+        tracker.on_trade(TradeContext::new(500_000, 20, Side::Bid, 2).expect("trade"));
+        tracker.on_trade(TradeContext::new(500_000, 100, Side::Bid, 3).expect("trade"));
+
+        let snapshot = tracker.snapshot();
+
+        assert_eq!(snapshot.bucket_count(), 2);
+        assert_eq!(snapshot.current_bucket_volume(), 0);
+        assert_eq!(snapshot.vpin_bps(), 8_000);
+        assert_eq!(snapshot.toxicity_bps(), snapshot.vpin_bps());
     }
 }

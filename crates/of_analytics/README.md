@@ -18,6 +18,9 @@ The first foundation is dependency-light:
   spread, price improvement, quote freshness, and side-aware slippage,
 - liquidity/depth primitives for top-of-book depth, multi-level depth,
   proportional imbalance, depth slope, and sweepability,
+- market-impact primitives for Kyle-style lambda and Amihud-style
+  illiquidity,
+- VPIN-style fixed-bucket toxicity primitives,
 - explicit feature profiles so users can opt into future impact, toxicity,
   volatility, regime, pattern, derivatives, institutional, and ML feature
   modules without forcing all downstream users to compile them.
@@ -83,6 +86,23 @@ let snapshot = LiquidityDepthAnalyzer::new(2).analyze(&bids, &asks, 150)?;
 assert_eq!(snapshot.bid_depth(), 180);
 assert_eq!(snapshot.ask_depth(), 210);
 assert!(snapshot.sweepable_buy_qty() >= 120);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Impact And Toxicity Example
+
+```rust
+use of_analytics::{ImpactSample, ImpactTracker, TradeContext, VpinTracker};
+use of_core::Side;
+
+let mut impact = ImpactTracker::new();
+impact.on_sample(ImpactSample::new(500_000, 501_000, 100, 50_000_000)?);
+assert!(impact.snapshot().kyle_lambda_ppm() > 0);
+
+let mut vpin = VpinTracker::<4>::new(100)?;
+vpin.on_trade(TradeContext::new(500_000, 80, Side::Ask, 1)?);
+vpin.on_trade(TradeContext::new(500_000, 20, Side::Bid, 2)?);
+assert_eq!(vpin.snapshot().bucket_count(), 1);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

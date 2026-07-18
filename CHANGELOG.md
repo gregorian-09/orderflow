@@ -10,6 +10,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   market-quality/TCA primitives, liquidity/depth primitives, feature profiles
   for future advanced analytics modules, and borrowed `of_core::BookLevel`
   analysis paths that avoid copying book snapshots.
+- Added `of_analytics` market-impact and VPIN-style toxicity primitives with
+  Kyle-style lambda, Amihud-style illiquidity, fixed-capacity VPIN buckets, and
+  deterministic integer-scaled snapshots.
 - Added `tools/check_binding_parity.py` and CI coverage to validate that
   manifest-exposed C ABI symbols have matching Python ctypes registrations and
   Java JNA declarations before release.
