@@ -31,6 +31,8 @@ The first foundation focuses on deterministic parent/child order handling:
   toxicity metrics,
 - deterministic basket/spread planning for synchronized multi-leg child
   release with leg roles and hedge-ratio metadata,
+- deterministic market-making quote planning from fair value, inventory,
+  volatility, adverse-selection estimates, tick size, and quote quantity,
 - deterministic TWAP replay over explicit timer/execution/status inputs.
 
 The crate does not submit orders, open sockets, own an OMS, bypass risk, or
@@ -43,7 +45,7 @@ reconciliation remain authoritative.
 ```mermaid
 flowchart LR
     Strategy[Strategy intent] --> Parent[ParentOrder]
-    Parent --> Algo[TWAP / POV / VWAP / Iceberg / IS / Passive queue / SOR / Basket]
+    Parent --> Algo[TWAP / POV / VWAP / Iceberg / IS / Passive queue / SOR / Basket / MM]
     Market[Market data / timers / OMS events] --> Algo
     Algo --> Decision[AlgoDecision]
     Decision --> Child[ChildOrderPlan]
@@ -472,6 +474,67 @@ assert_eq!(decision.len(), 1);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+## Market Making Example
+
+`MarketMakerPlanner` generates two-sided quote child plans from fair value,
+inventory, volatility, and adverse-selection estimates. It does not own
+position state, cancel/replace loops, or adapter sessions.
+
+```rust
+use of_execution_algos::{
+    ChildOrderId, MarketMakerConfig, MarketMakerContext, MarketMakerPlanner,
+    ParentOrder, ParentOrderId,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let template = ParentOrder::new(
+    ParentOrderId::new("mm-parent")?,
+    AccountId::new("acct")?,
+    RouteId::new("maker")?,
+    StrategyId::new("mm")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(1)?,
+    OrderQty::new(10)?,
+    0,
+)?;
+
+let planner = MarketMakerPlanner::new(MarketMakerConfig::default());
+let context = MarketMakerContext::new(
+    OrderPrice::new(500_000)?,
+    OrderPrice::new(499_975)?,
+    OrderPrice::new(500_025)?,
+    OrderQty(0),
+    OrderQty::new(100)?,
+    10,
+    10,
+)?;
+let decision = planner.plan_quotes(
+    &template,
+    2_000,
+    context,
+    ChildOrderId::new("bid-1")?,
+    ClientOrderId::new("bid-cl-1")?,
+    ChildOrderId::new("ask-1")?,
+    ClientOrderId::new("ask-cl-1")?,
+    2_000,
+)?;
+
+assert!(decision.bid().is_some());
+assert!(decision.ask().is_some());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 ## VWAP Example
 
 `VwapSlicePlanner` follows a historical or configured cumulative volume curve.
@@ -536,5 +599,5 @@ is:
 3. submit the resulting `OrderRequest` through the existing OMS,
 4. feed resulting `ExecutionEvent` values back into algo progress state.
 
-Future algorithms such as market-making helpers should build on this substrate
-instead of bypassing it.
+Future execution helpers should build on this substrate instead of bypassing
+it.

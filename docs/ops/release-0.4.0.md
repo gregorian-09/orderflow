@@ -159,6 +159,9 @@ foundation:
 - deterministic `BasketPlanner` with leg roles, hedge-ratio metadata,
   synchronized per-leg release, fixed-capacity decisions, and explicit
   non-atomic multi-leg semantics
+- deterministic `MarketMakerPlanner` with fair-value quoting, inventory skew,
+  volatility/adverse-selection spread widening, inventory-limit side
+  suppression, and OMS-safe bid/ask child plans
 
 The crate does not bypass OMS risk, journaling, adapter capability checks, kill
 switches, or reconciliation. Hosts should submit child orders through

@@ -625,6 +625,11 @@ Public parent/child and decision types:
 - `BasketChildAllocation`
 - `BasketDecision`
 - `BasketPlanner`
+- `MarketMakerContext`
+- `MarketMakerConfig`
+- `MarketMakerQuoteEstimate`
+- `MarketMakerQuoteDecision`
+- `MarketMakerPlanner`
 - `ImplementationShortfallContext`
 - `ImplementationShortfallConfig`
 - `ImplementationShortfallEstimate`

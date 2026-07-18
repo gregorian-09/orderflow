@@ -152,6 +152,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added deterministic basket/spread planning in `of_execution_algos` with leg
   roles, hedge-ratio metadata, synchronized per-leg release, fixed-capacity
   decisions, and explicit non-atomic multi-leg semantics.
+- Added deterministic market-making quote planning in `of_execution_algos`
+  with fair-value quoting, inventory skew, volatility/adverse-selection spread
+  widening, inventory-limit side suppression, and OMS-safe bid/ask child plans.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,
