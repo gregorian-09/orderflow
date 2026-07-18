@@ -80,6 +80,13 @@ Impact/toxicity:
 - `ImpactSample`
 - `ImpactSnapshot`
 - `ImpactTracker`
+- `ImpactCalibration`
+- `ExpectedImpactInput`
+- `ExpectedImpactSnapshot`
+- `ExpectedImpactEstimator`
+- `ChildOrderImpactContext`
+- `ChildOrderImpactSnapshot`
+- `ChildOrderImpactAnalyzer`
 - `VpinSnapshot`
 - `VpinTracker`
 - `VolatilitySnapshot`
@@ -290,12 +297,26 @@ assert!(flow.snapshot().order_flow_imbalance_bps() > 0);
 - Kyle-style lambda scaled by 1,000,000,
 - Amihud-style illiquidity scaled by 1,000,000.
 
-The tracker does not run regressions or allocate rolling matrices. More
-advanced batch estimators can be added behind feature profiles without changing
-this live-path accumulator.
+`ExpectedImpactEstimator` evaluates a proposed order from explicit
+`ImpactCalibration`. It reports interval participation, daily participation,
+square-root impact, temporary impact, permanent impact, instantaneous impact,
+impact decay, expected total impact, and expected signed midpoint movement.
+
+`ChildOrderImpactAnalyzer` evaluates one child order against arrival, immediate
+post-child midpoint, and final midpoint. It reports child participation,
+realized slippage, instantaneous impact, permanent impact, temporary component,
+impact decay, and parent-weighted attribution.
+
+These types do not run regressions or allocate rolling matrices. Calibration is
+host-owned so users can source parameters from replay research, venue models,
+or risk configuration without changing the live API.
 
 ```rust
-use of_analytics::{ImpactSample, ImpactTracker};
+use of_analytics::{
+    ChildOrderImpactAnalyzer, ChildOrderImpactContext, ExpectedImpactEstimator,
+    ExpectedImpactInput, ImpactCalibration, ImpactSample, ImpactTracker,
+};
+use of_core::Side;
 
 let mut tracker = ImpactTracker::new();
 tracker.on_sample(ImpactSample::new(500_000, 501_000, 100, 50_000_000)?);
@@ -303,6 +324,38 @@ let snapshot = tracker.snapshot();
 
 assert_eq!(snapshot.samples(), 1);
 assert!(snapshot.kyle_lambda_ppm() > 0);
+
+let calibration = ImpactCalibration::new(
+    1_000_000,
+    200,
+    10_000,
+    500,
+    250,
+    1_000_000_000,
+)?;
+let estimate = ExpectedImpactEstimator::estimate(ExpectedImpactInput::new(
+    Side::Ask,
+    1_000,
+    10_000,
+    100_000,
+    1_000_000_000,
+    calibration,
+)?);
+assert!(estimate.expected_total_impact_bps() > 0);
+
+let child = ChildOrderImpactContext::new(
+    Side::Ask,
+    1_000,
+    100,
+    100_000,
+    100_500,
+    100_800,
+    100_200,
+)?;
+assert_eq!(
+    ChildOrderImpactAnalyzer::evaluate(child).child_participation_bps(),
+    1_000
+);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

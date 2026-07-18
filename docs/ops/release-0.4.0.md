@@ -49,7 +49,9 @@ registry dependency after `of_fix 0.1.0` is published.
   proportional imbalance, order-flow imbalance, depth slope, depth convexity,
   book pressure, replenishment/depletion rates, drought detection, and
   sweepability
-- market-impact primitives for Kyle-style lambda and Amihud-style illiquidity
+- market-impact primitives for Kyle-style lambda, Amihud-style illiquidity,
+  calibrated expected impact, square-root impact, temporary/permanent impact,
+  impact decay, and child-order attribution
 - VPIN-style fixed-bucket toxicity primitives
 - fixed-window volatility/noise primitives and threshold-based regime
   classification

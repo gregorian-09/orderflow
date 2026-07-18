@@ -1086,6 +1086,447 @@ impl Default for ImpactTracker {
     }
 }
 
+/// Calibrated market-impact parameters for pre-trade estimates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImpactCalibration {
+    daily_volume: i64,
+    volatility_bps: u16,
+    square_root_coefficient_bps: u16,
+    temporary_impact_coefficient_bps: u16,
+    permanent_impact_coefficient_bps: u16,
+    decay_half_life_ns: u64,
+}
+
+impl ImpactCalibration {
+    /// Creates calibrated impact parameters.
+    ///
+    /// Coefficients are basis-point scaled. A `square_root_coefficient_bps` of
+    /// `10_000` means one volatility unit times the square-root participation
+    /// estimate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidTrade`] when daily volume is
+    /// non-positive.
+    pub const fn new(
+        daily_volume: i64,
+        volatility_bps: u16,
+        square_root_coefficient_bps: u16,
+        temporary_impact_coefficient_bps: u16,
+        permanent_impact_coefficient_bps: u16,
+        decay_half_life_ns: u64,
+    ) -> Result<Self, AnalyticsError> {
+        if daily_volume <= 0 {
+            return Err(AnalyticsError::InvalidTrade);
+        }
+        Ok(Self {
+            daily_volume,
+            volatility_bps,
+            square_root_coefficient_bps,
+            temporary_impact_coefficient_bps,
+            permanent_impact_coefficient_bps,
+            decay_half_life_ns,
+        })
+    }
+
+    /// Returns expected daily volume.
+    pub const fn daily_volume(&self) -> i64 {
+        self.daily_volume
+    }
+
+    /// Returns volatility in basis points.
+    pub const fn volatility_bps(&self) -> u16 {
+        self.volatility_bps
+    }
+
+    /// Returns square-root impact coefficient in basis points.
+    pub const fn square_root_coefficient_bps(&self) -> u16 {
+        self.square_root_coefficient_bps
+    }
+
+    /// Returns temporary impact coefficient in basis points.
+    pub const fn temporary_impact_coefficient_bps(&self) -> u16 {
+        self.temporary_impact_coefficient_bps
+    }
+
+    /// Returns permanent impact coefficient in basis points.
+    pub const fn permanent_impact_coefficient_bps(&self) -> u16 {
+        self.permanent_impact_coefficient_bps
+    }
+
+    /// Returns impact decay half-life in nanoseconds.
+    pub const fn decay_half_life_ns(&self) -> u64 {
+        self.decay_half_life_ns
+    }
+}
+
+/// Pre-trade impact estimate input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExpectedImpactInput {
+    side: Side,
+    order_qty: i64,
+    expected_interval_volume: i64,
+    arrival_midpoint: i64,
+    horizon_ns: u64,
+    calibration: ImpactCalibration,
+}
+
+impl ExpectedImpactInput {
+    /// Creates pre-trade impact estimate input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidTrade`] when quantities, price, or
+    /// horizon are invalid.
+    pub const fn new(
+        side: Side,
+        order_qty: i64,
+        expected_interval_volume: i64,
+        arrival_midpoint: i64,
+        horizon_ns: u64,
+        calibration: ImpactCalibration,
+    ) -> Result<Self, AnalyticsError> {
+        if order_qty <= 0
+            || expected_interval_volume <= 0
+            || arrival_midpoint <= 0
+            || horizon_ns == 0
+        {
+            return Err(AnalyticsError::InvalidTrade);
+        }
+        Ok(Self {
+            side,
+            order_qty,
+            expected_interval_volume,
+            arrival_midpoint,
+            horizon_ns,
+            calibration,
+        })
+    }
+
+    /// Returns execution side.
+    pub const fn side(&self) -> Side {
+        self.side
+    }
+
+    /// Returns proposed order quantity.
+    pub const fn order_qty(&self) -> i64 {
+        self.order_qty
+    }
+
+    /// Returns expected interval volume.
+    pub const fn expected_interval_volume(&self) -> i64 {
+        self.expected_interval_volume
+    }
+
+    /// Returns arrival midpoint.
+    pub const fn arrival_midpoint(&self) -> i64 {
+        self.arrival_midpoint
+    }
+
+    /// Returns execution horizon in nanoseconds.
+    pub const fn horizon_ns(&self) -> u64 {
+        self.horizon_ns
+    }
+
+    /// Returns impact calibration.
+    pub const fn calibration(&self) -> ImpactCalibration {
+        self.calibration
+    }
+}
+
+/// Pre-trade market-impact estimate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExpectedImpactSnapshot {
+    participation_bps: u16,
+    daily_participation_bps: u16,
+    square_root_impact_bps: i32,
+    temporary_impact_bps: i32,
+    permanent_impact_bps: i32,
+    instantaneous_impact_bps: i32,
+    decay_remaining_bps: u16,
+    expected_total_impact_bps: i32,
+    expected_signed_price_move: i64,
+}
+
+impl ExpectedImpactSnapshot {
+    /// Returns interval participation in basis points.
+    pub const fn participation_bps(&self) -> u16 {
+        self.participation_bps
+    }
+
+    /// Returns daily participation in basis points.
+    pub const fn daily_participation_bps(&self) -> u16 {
+        self.daily_participation_bps
+    }
+
+    /// Returns square-root impact estimate in basis points.
+    pub const fn square_root_impact_bps(&self) -> i32 {
+        self.square_root_impact_bps
+    }
+
+    /// Returns temporary impact estimate in basis points.
+    pub const fn temporary_impact_bps(&self) -> i32 {
+        self.temporary_impact_bps
+    }
+
+    /// Returns permanent impact estimate in basis points.
+    pub const fn permanent_impact_bps(&self) -> i32 {
+        self.permanent_impact_bps
+    }
+
+    /// Returns instantaneous impact estimate in basis points.
+    pub const fn instantaneous_impact_bps(&self) -> i32 {
+        self.instantaneous_impact_bps
+    }
+
+    /// Returns remaining temporary impact after the horizon in basis points.
+    pub const fn decay_remaining_bps(&self) -> u16 {
+        self.decay_remaining_bps
+    }
+
+    /// Returns expected total impact cost in basis points.
+    pub const fn expected_total_impact_bps(&self) -> i32 {
+        self.expected_total_impact_bps
+    }
+
+    /// Returns expected signed midpoint move in normalized price units.
+    pub const fn expected_signed_price_move(&self) -> i64 {
+        self.expected_signed_price_move
+    }
+}
+
+/// Deterministic pre-trade market-impact estimator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExpectedImpactEstimator;
+
+impl ExpectedImpactEstimator {
+    /// Estimates pre-trade market impact from explicit calibration.
+    pub fn estimate(input: ExpectedImpactInput) -> ExpectedImpactSnapshot {
+        let participation_bps = ratio_bps_i64(input.order_qty(), input.expected_interval_volume());
+        let daily_participation_bps =
+            ratio_bps_i64(input.order_qty(), input.calibration().daily_volume());
+        let sqrt_participation_bps =
+            integer_sqrt_u128(u128::from(daily_participation_bps) * 10_000);
+        let square_root_impact_bps = i32::try_from(
+            (u128::from(input.calibration().volatility_bps())
+                * u128::from(input.calibration().square_root_coefficient_bps())
+                * sqrt_participation_bps)
+                / 100_000_000,
+        )
+        .unwrap_or(i32::MAX);
+        let temporary_impact_bps = coefficient_impact_bps(
+            participation_bps,
+            input.calibration().temporary_impact_coefficient_bps(),
+        );
+        let permanent_impact_bps = coefficient_impact_bps(
+            participation_bps,
+            input.calibration().permanent_impact_coefficient_bps(),
+        );
+        let instantaneous_impact_bps = temporary_impact_bps.saturating_add(permanent_impact_bps);
+        let decay_remaining_bps =
+            decay_remaining_bps(input.horizon_ns(), input.calibration().decay_half_life_ns());
+        let decayed_temporary_bps = i32::try_from(
+            (i128::from(temporary_impact_bps) * i128::from(decay_remaining_bps)) / 10_000,
+        )
+        .unwrap_or(0);
+        let expected_total_impact_bps = square_root_impact_bps
+            .saturating_add(permanent_impact_bps)
+            .saturating_add(decayed_temporary_bps);
+        let price_move =
+            bps_to_price_delta(input.arrival_midpoint(), expected_total_impact_bps.abs());
+        let expected_signed_price_move = match input.side() {
+            Side::Ask => price_move,
+            Side::Bid => price_move.saturating_neg(),
+        };
+        ExpectedImpactSnapshot {
+            participation_bps,
+            daily_participation_bps,
+            square_root_impact_bps,
+            temporary_impact_bps,
+            permanent_impact_bps,
+            instantaneous_impact_bps,
+            decay_remaining_bps,
+            expected_total_impact_bps,
+            expected_signed_price_move,
+        }
+    }
+}
+
+/// Child-order impact attribution context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChildOrderImpactContext {
+    side: Side,
+    parent_qty: i64,
+    child_qty: i64,
+    arrival_midpoint: i64,
+    child_fill_price: i64,
+    post_child_midpoint: i64,
+    final_midpoint: i64,
+}
+
+impl ChildOrderImpactContext {
+    /// Creates child-order impact attribution context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidTrade`] when quantities or prices are
+    /// invalid.
+    pub const fn new(
+        side: Side,
+        parent_qty: i64,
+        child_qty: i64,
+        arrival_midpoint: i64,
+        child_fill_price: i64,
+        post_child_midpoint: i64,
+        final_midpoint: i64,
+    ) -> Result<Self, AnalyticsError> {
+        if parent_qty <= 0
+            || child_qty <= 0
+            || child_qty > parent_qty
+            || arrival_midpoint <= 0
+            || child_fill_price <= 0
+            || post_child_midpoint <= 0
+            || final_midpoint <= 0
+        {
+            return Err(AnalyticsError::InvalidTrade);
+        }
+        Ok(Self {
+            side,
+            parent_qty,
+            child_qty,
+            arrival_midpoint,
+            child_fill_price,
+            post_child_midpoint,
+            final_midpoint,
+        })
+    }
+
+    /// Returns execution side.
+    pub const fn side(&self) -> Side {
+        self.side
+    }
+
+    /// Returns parent order quantity.
+    pub const fn parent_qty(&self) -> i64 {
+        self.parent_qty
+    }
+
+    /// Returns child order quantity.
+    pub const fn child_qty(&self) -> i64 {
+        self.child_qty
+    }
+
+    /// Returns arrival midpoint.
+    pub const fn arrival_midpoint(&self) -> i64 {
+        self.arrival_midpoint
+    }
+
+    /// Returns child fill price.
+    pub const fn child_fill_price(&self) -> i64 {
+        self.child_fill_price
+    }
+
+    /// Returns midpoint immediately after the child order.
+    pub const fn post_child_midpoint(&self) -> i64 {
+        self.post_child_midpoint
+    }
+
+    /// Returns final midpoint after the attribution horizon.
+    pub const fn final_midpoint(&self) -> i64 {
+        self.final_midpoint
+    }
+}
+
+/// Child-order impact attribution snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChildOrderImpactSnapshot {
+    child_participation_bps: u16,
+    child_slippage_bps: i32,
+    instantaneous_impact_bps: i32,
+    permanent_impact_bps: i32,
+    temporary_impact_bps: i32,
+    impact_decay_bps: i32,
+    attributed_impact_bps: i32,
+}
+
+impl ChildOrderImpactSnapshot {
+    /// Returns child share of parent quantity in basis points.
+    pub const fn child_participation_bps(&self) -> u16 {
+        self.child_participation_bps
+    }
+
+    /// Returns child fill slippage versus arrival in basis points.
+    pub const fn child_slippage_bps(&self) -> i32 {
+        self.child_slippage_bps
+    }
+
+    /// Returns immediate post-child impact in basis points.
+    pub const fn instantaneous_impact_bps(&self) -> i32 {
+        self.instantaneous_impact_bps
+    }
+
+    /// Returns permanent impact at the attribution horizon in basis points.
+    pub const fn permanent_impact_bps(&self) -> i32 {
+        self.permanent_impact_bps
+    }
+
+    /// Returns temporary impact component in basis points.
+    pub const fn temporary_impact_bps(&self) -> i32 {
+        self.temporary_impact_bps
+    }
+
+    /// Returns impact decay from immediate to final mark in basis points.
+    pub const fn impact_decay_bps(&self) -> i32 {
+        self.impact_decay_bps
+    }
+
+    /// Returns parent-weighted child attribution in basis points.
+    pub const fn attributed_impact_bps(&self) -> i32 {
+        self.attributed_impact_bps
+    }
+}
+
+/// Deterministic child-order impact attribution analyzer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChildOrderImpactAnalyzer;
+
+impl ChildOrderImpactAnalyzer {
+    /// Evaluates child-order impact attribution.
+    pub fn evaluate(context: ChildOrderImpactContext) -> ChildOrderImpactSnapshot {
+        let child_participation_bps = ratio_bps_i64(context.child_qty(), context.parent_qty());
+        let child_slippage_bps = side_aware_price_move_bps(
+            context.side(),
+            context.arrival_midpoint(),
+            context.child_fill_price(),
+        );
+        let instantaneous_impact_bps = side_aware_price_move_bps(
+            context.side(),
+            context.arrival_midpoint(),
+            context.post_child_midpoint(),
+        );
+        let permanent_impact_bps = side_aware_price_move_bps(
+            context.side(),
+            context.arrival_midpoint(),
+            context.final_midpoint(),
+        );
+        let temporary_impact_bps = child_slippage_bps.saturating_sub(permanent_impact_bps);
+        let impact_decay_bps = instantaneous_impact_bps.saturating_sub(permanent_impact_bps);
+        let attributed_impact_bps = i32::try_from(
+            (i128::from(child_slippage_bps) * i128::from(child_participation_bps)) / 10_000,
+        )
+        .unwrap_or(0);
+        ChildOrderImpactSnapshot {
+            child_participation_bps,
+            child_slippage_bps,
+            instantaneous_impact_bps,
+            permanent_impact_bps,
+            temporary_impact_bps,
+            impact_decay_bps,
+            attributed_impact_bps,
+        }
+    }
+}
+
 /// VPIN-style toxicity snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VpinSnapshot {
@@ -4540,6 +4981,61 @@ fn qty_rate_per_sec(qty: i64, elapsed_ns: u64) -> i64 {
         .unwrap_or(i64::MAX)
 }
 
+fn ratio_bps_i64(value: i64, total: i64) -> u16 {
+    if value <= 0 || total <= 0 {
+        return 0;
+    }
+    u16::try_from(((i128::from(value) * 10_000) / i128::from(total)).min(10_000)).unwrap_or(10_000)
+}
+
+fn coefficient_impact_bps(participation_bps: u16, coefficient_bps: u16) -> i32 {
+    i32::try_from((u128::from(participation_bps) * u128::from(coefficient_bps)) / 10_000)
+        .unwrap_or(i32::MAX)
+}
+
+fn decay_remaining_bps(horizon_ns: u64, half_life_ns: u64) -> u16 {
+    if half_life_ns == 0 {
+        return 0;
+    }
+    let denominator = u128::from(half_life_ns).saturating_add(u128::from(horizon_ns));
+    u16::try_from((u128::from(half_life_ns) * 10_000) / denominator).unwrap_or(0)
+}
+
+fn integer_sqrt_u128(value: u128) -> u128 {
+    if value <= 1 {
+        return value;
+    }
+    let mut low = 1_u128;
+    let mut high = value;
+    let mut answer = 1_u128;
+    while low <= high {
+        let mid = low + ((high - low) / 2);
+        let square = mid.saturating_mul(mid);
+        if square <= value {
+            answer = mid;
+            low = mid.saturating_add(1);
+        } else {
+            high = mid.saturating_sub(1);
+        }
+    }
+    answer
+}
+
+fn bps_to_price_delta(price: i64, bps: i32) -> i64 {
+    if price <= 0 || bps <= 0 {
+        return 0;
+    }
+    i64::try_from((i128::from(price) * i128::from(bps)) / 10_000).unwrap_or(i64::MAX)
+}
+
+fn side_aware_price_move_bps(side: Side, reference_price: i64, observed_price: i64) -> i32 {
+    let distance = match side {
+        Side::Ask => observed_price.saturating_sub(reference_price),
+        Side::Bid => reference_price.saturating_sub(observed_price),
+    };
+    price_to_bps(distance, reference_price)
+}
+
 fn price_to_bps(value: i64, reference: i64) -> i32 {
     if reference <= 0 {
         return 0;
@@ -4913,6 +5409,74 @@ mod tests {
         assert_eq!(snapshot.absolute_volume(), 150);
         assert_eq!(snapshot.signed_price_change(), 1_500);
         assert!(snapshot.kyle_lambda_ppm() > 0);
+    }
+
+    #[test]
+    fn expected_impact_estimator_combines_calibrated_components() {
+        let calibration = ImpactCalibration::new(1_000_000, 200, 10_000, 500, 250, 1_000_000_000)
+            .expect("calibration");
+        let input = ExpectedImpactInput::new(
+            Side::Ask,
+            1_000,
+            10_000,
+            100_000,
+            1_000_000_000,
+            calibration,
+        )
+        .expect("input");
+
+        let snapshot = ExpectedImpactEstimator::estimate(input);
+
+        assert_eq!(snapshot.participation_bps(), 1_000);
+        assert_eq!(snapshot.daily_participation_bps(), 10);
+        assert_eq!(snapshot.square_root_impact_bps(), 6);
+        assert_eq!(snapshot.temporary_impact_bps(), 50);
+        assert_eq!(snapshot.permanent_impact_bps(), 25);
+        assert_eq!(snapshot.instantaneous_impact_bps(), 75);
+        assert_eq!(snapshot.decay_remaining_bps(), 5_000);
+        assert_eq!(snapshot.expected_total_impact_bps(), 56);
+        assert_eq!(snapshot.expected_signed_price_move(), 560);
+    }
+
+    #[test]
+    fn child_order_impact_attribution_is_side_aware() {
+        let buy =
+            ChildOrderImpactContext::new(Side::Ask, 1_000, 100, 100_000, 100_500, 100_800, 100_200)
+                .expect("buy context");
+        let buy_snapshot = ChildOrderImpactAnalyzer::evaluate(buy);
+
+        assert_eq!(buy_snapshot.child_participation_bps(), 1_000);
+        assert_eq!(buy_snapshot.child_slippage_bps(), 50);
+        assert_eq!(buy_snapshot.instantaneous_impact_bps(), 80);
+        assert_eq!(buy_snapshot.permanent_impact_bps(), 20);
+        assert_eq!(buy_snapshot.temporary_impact_bps(), 30);
+        assert_eq!(buy_snapshot.impact_decay_bps(), 60);
+        assert_eq!(buy_snapshot.attributed_impact_bps(), 5);
+
+        let sell =
+            ChildOrderImpactContext::new(Side::Bid, 1_000, 100, 100_000, 99_500, 99_200, 99_800)
+                .expect("sell context");
+        assert_eq!(
+            ChildOrderImpactAnalyzer::evaluate(sell).child_slippage_bps(),
+            50
+        );
+    }
+
+    #[test]
+    fn impact_primitives_reject_invalid_inputs() {
+        assert_eq!(
+            ImpactCalibration::new(0, 0, 0, 0, 0, 0),
+            Err(AnalyticsError::InvalidTrade)
+        );
+        let calibration = ImpactCalibration::new(1_000, 100, 10_000, 100, 100, 1).unwrap();
+        assert_eq!(
+            ExpectedImpactInput::new(Side::Ask, 0, 1, 1, 1, calibration),
+            Err(AnalyticsError::InvalidTrade)
+        );
+        assert_eq!(
+            ChildOrderImpactContext::new(Side::Ask, 100, 101, 1, 1, 1, 1),
+            Err(AnalyticsError::InvalidTrade)
+        );
     }
 
     #[test]

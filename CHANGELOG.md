@@ -16,6 +16,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Hardened `of_analytics` liquidity/depth analytics with depth convexity,
   book-pressure, target sweepability scores, order-flow imbalance,
   replenishment/depletion rates, and liquidity-drought detection.
+- Hardened `of_analytics` market-impact analytics with calibrated expected
+  impact, square-root impact, temporary/permanent impact, impact decay, and
+  child-order attribution primitives.
 - Added `of_analytics` market-impact and VPIN-style toxicity primitives with
   Kyle-style lambda, Amihud-style illiquidity, fixed-capacity VPIN buckets, and
   deterministic integer-scaled snapshots.

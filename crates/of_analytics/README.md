@@ -22,8 +22,9 @@ The first foundation is dependency-light:
   proportional imbalance, order-flow imbalance, depth slope, depth convexity,
   book pressure, replenishment/depletion rates, drought detection, and
   sweepability,
-- market-impact primitives for Kyle-style lambda and Amihud-style
-  illiquidity,
+- market-impact primitives for Kyle-style lambda, Amihud-style illiquidity,
+  calibrated expected impact, square-root impact, temporary/permanent impact,
+  impact decay, and child-order attribution,
 - VPIN-style fixed-bucket toxicity primitives,
 - fixed-window volatility/noise primitives,
 - threshold-based market regime classification,
@@ -156,12 +157,33 @@ assert!(flow.snapshot().order_flow_imbalance_bps() > 0);
 ## Impact And Toxicity Example
 
 ```rust
-use of_analytics::{ImpactSample, ImpactTracker, TradeContext, VpinTracker};
+use of_analytics::{
+    ExpectedImpactEstimator, ExpectedImpactInput, ImpactCalibration,
+    ImpactSample, ImpactTracker, TradeContext, VpinTracker,
+};
 use of_core::Side;
 
 let mut impact = ImpactTracker::new();
 impact.on_sample(ImpactSample::new(500_000, 501_000, 100, 50_000_000)?);
 assert!(impact.snapshot().kyle_lambda_ppm() > 0);
+
+let calibration = ImpactCalibration::new(
+    1_000_000,
+    200,
+    10_000,
+    500,
+    250,
+    1_000_000_000,
+)?;
+let estimate = ExpectedImpactEstimator::estimate(ExpectedImpactInput::new(
+    Side::Ask,
+    1_000,
+    10_000,
+    100_000,
+    1_000_000_000,
+    calibration,
+)?);
+assert!(estimate.expected_total_impact_bps() > 0);
 
 let mut vpin = VpinTracker::<4>::new(100)?;
 vpin.on_trade(TradeContext::new(500_000, 80, Side::Ask, 1)?);

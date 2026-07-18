@@ -705,6 +705,13 @@ Public market-quality and liquidity types:
 - `ImpactSample`
 - `ImpactSnapshot`
 - `ImpactTracker`
+- `ImpactCalibration`
+- `ExpectedImpactInput`
+- `ExpectedImpactSnapshot`
+- `ExpectedImpactEstimator`
+- `ChildOrderImpactContext`
+- `ChildOrderImpactSnapshot`
+- `ChildOrderImpactAnalyzer`
 - `VpinSnapshot`
 - `VpinTracker`
 - `VolatilitySnapshot`
