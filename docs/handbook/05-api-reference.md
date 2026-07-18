@@ -604,6 +604,13 @@ Public parent/child and decision types:
 - `VwapVolumeCurve`
 - `VwapSlicePlanner`
 - `IcebergSlicePlanner`
+- `PassivePegMode`
+- `PassiveQueueAction`
+- `PassiveQueueContext`
+- `PassiveQueueConfig`
+- `PassiveQueueEstimate`
+- `PassiveQueueDecision`
+- `PassiveQueuePlanner`
 - `ImplementationShortfallContext`
 - `ImplementationShortfallConfig`
 - `ImplementationShortfallEstimate`

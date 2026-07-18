@@ -143,6 +143,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added deterministic implementation-shortfall planning in
   `of_execution_algos` with arrival-price context, adverse-move detection,
   urgency weights, impact patience, and auditable target-release estimates.
+- Added deterministic passive queue planning in `of_execution_algos` with
+  host-owned best bid/ask, queue-ahead quantity, expected contra volume,
+  adverse-selection estimates, passive improvement, and optional late crossing.
 - Additive `of_signals` metadata and lifecycle APIs:
   `SignalDescriptor`, `SignalInputMask`, `SignalWarmupRequirement`,
   `SignalWarmupProgress`, `SignalLifecycleState`, `SignalLifecycle`,

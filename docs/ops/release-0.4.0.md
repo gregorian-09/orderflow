@@ -149,6 +149,9 @@ foundation:
 - deterministic `ImplementationShortfallPlanner` with explicit market context,
   urgency weights, adverse-move detection from arrival price, and auditable
   target-release estimates
+- deterministic `PassiveQueuePlanner` with host-owned best bid/ask, queue
+  depth, expected contra volume, adverse-selection estimates, passive
+  improvement, and optional late crossing
 
 The crate does not bypass OMS risk, journaling, adapter capability checks, kill
 switches, or reconciliation. Hosts should submit child orders through

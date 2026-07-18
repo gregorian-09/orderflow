@@ -24,6 +24,8 @@ The first foundation focuses on deterministic parent/child order handling:
 - deterministic synthetic iceberg replenishment planning,
 - deterministic implementation-shortfall planning from urgency, arrival price,
   adverse move, volatility, spread, and impact estimates,
+- deterministic passive queue planning from host-owned best bid/ask, queue
+  depth, expected contra volume, and adverse-selection estimates,
 - deterministic TWAP replay over explicit timer/execution/status inputs.
 
 The crate does not submit orders, open sockets, own an OMS, bypass risk, or
@@ -36,7 +38,7 @@ reconciliation remain authoritative.
 ```mermaid
 flowchart LR
     Strategy[Strategy intent] --> Parent[ParentOrder]
-    Parent --> Algo[TWAP / future algos]
+    Parent --> Algo[TWAP / POV / VWAP / Iceberg / IS / Passive queue]
     Market[Market data / timers / OMS events] --> Algo
     Algo --> Decision[AlgoDecision]
     Decision --> Child[ChildOrderPlan]
@@ -288,6 +290,67 @@ assert!(plan.request().quantity.0 >= parent.min_clip().0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+## Passive Queue Example
+
+`PassiveQueuePlanner` chooses whether to wait, join a passive queue, improve
+inside the spread, or optionally cross late in the parent interval. The host
+owns market-data normalization, queue-depth estimation, and adverse-selection
+models; the planner stays deterministic and allocation-light.
+
+```rust
+use of_execution_algos::{
+    AlgoProgress, ChildOrderId, ParentOrder, ParentOrderId, PassivePegMode,
+    PassiveQueueConfig, PassiveQueueContext, PassiveQueuePlanner,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-1")?,
+    AccountId::new("acct")?,
+    RouteId::new("sim")?,
+    StrategyId::new("passive")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+
+let config = PassiveQueueConfig::new(PassivePegMode::SameSide, OrderPrice(25))?;
+let planner = PassiveQueuePlanner::new(config);
+let context = PassiveQueueContext::new(
+    OrderPrice::new(499_975)?,
+    OrderPrice::new(500_025)?,
+    OrderQty::new(25)?,
+    OrderQty::new(100)?,
+    10,
+)?;
+let progress = AlgoProgress::new(parent.id(), parent.total_qty());
+let decision = planner.plan_passive_slice(
+    &parent,
+    progress,
+    2_000,
+    context,
+    ChildOrderId::new("child-1")?,
+    ClientOrderId::new("cl-1")?,
+    2_000,
+)?;
+
+assert!(decision.action().releases_child());
+assert!(decision.child().is_some());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 ## VWAP Example
 
 `VwapSlicePlanner` follows a historical or configured cumulative volume curve.
@@ -352,6 +415,5 @@ is:
 3. submit the resulting `OrderRequest` through the existing OMS,
 4. feed resulting `ExecutionEvent` values back into algo progress state.
 
-Future algorithms such as VWAP, POV, iceberg, implementation shortfall, passive
-peg, SOR, basket, and market-making helpers should build on this substrate
-instead of bypassing it.
+Future algorithms such as SOR, basket, and market-making helpers should build
+on this substrate instead of bypassing it.
