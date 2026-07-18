@@ -156,6 +156,10 @@ foundation:
   available quantity, fees/rebates, latency, reject rate, fill probability,
   toxicity, data-quality scoring, fixed-capacity allocations, and OMS-safe
   child plans
+- deterministic `LiquiditySeekingPlanner` with SOR candidate reuse,
+  hidden-liquidity and price-improvement scoring, probe/take decisions,
+  toxicity filtering, minimum quantity checks, and OMS-safe route-specific
+  child plans
 - deterministic `BasketPlanner` with leg roles, hedge-ratio metadata,
   synchronized per-leg release, fixed-capacity decisions, and explicit
   non-atomic multi-leg semantics

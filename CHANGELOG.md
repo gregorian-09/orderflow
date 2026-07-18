@@ -149,6 +149,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added deterministic smart-order-routing planning in `of_execution_algos`
   with route status, order-type capability, route metrics, configurable score
   weights, fixed-capacity allocations, and OMS-safe child plans.
+- Added deterministic liquidity-seeking planning in `of_execution_algos` with
+  SOR candidate reuse, hidden-liquidity and price-improvement scoring,
+  probe/take decisions, toxicity filtering, minimum quantity checks, and
+  OMS-safe route-specific child plans.
 - Added deterministic basket/spread planning in `of_execution_algos` with leg
   roles, hedge-ratio metadata, synchronized per-leg release, fixed-capacity
   decisions, and explicit non-atomic multi-leg semantics.

@@ -620,6 +620,12 @@ Public parent/child and decision types:
 - `SorChildAllocation`
 - `SorDecision`
 - `SorPlanner`
+- `LiquiditySeekingAction`
+- `LiquiditySeekingCandidate`
+- `LiquiditySeekingConfig`
+- `LiquiditySeekingAllocation`
+- `LiquiditySeekingDecision`
+- `LiquiditySeekingPlanner`
 - `BasketLegRole`
 - `BasketLeg`
 - `BasketChildAllocation`

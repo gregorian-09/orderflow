@@ -29,6 +29,9 @@ The first foundation focuses on deterministic parent/child order handling:
 - deterministic smart order routing from route price, available quantity,
   capability, health/status, latency, reject rate, fill probability, fees, and
   toxicity metrics,
+- deterministic liquidity-seeking planning for probe/take decisions using SOR
+  route candidates, hidden-liquidity estimates, price improvement, and toxicity
+  controls,
 - deterministic basket/spread planning for synchronized multi-leg child
   release with leg roles and hedge-ratio metadata,
 - deterministic market-making quote planning from fair value, inventory,
@@ -45,7 +48,7 @@ reconciliation remain authoritative.
 ```mermaid
 flowchart LR
     Strategy[Strategy intent] --> Parent[ParentOrder]
-    Parent --> Algo[TWAP / POV / VWAP / Iceberg / IS / Passive queue / SOR / Basket / MM]
+    Parent --> Algo[TWAP / POV / VWAP / Iceberg / IS / Passive queue / SOR / Liquidity / Basket / MM]
     Market[Market data / timers / OMS events] --> Algo
     Algo --> Decision[AlgoDecision]
     Decision --> Child[ChildOrderPlan]
@@ -409,6 +412,70 @@ let child_ids = [ChildOrderId::new("child-1")?, ChildOrderId::new("child-2")?];
 let client_ids = [ClientOrderId::new("cl-1")?, ClientOrderId::new("cl-2")?];
 let planner = SorPlanner::new(SorConfig::default());
 let decision = planner.plan_routes::<2>(
+    &parent,
+    AlgoProgress::new(parent.id(), parent.total_qty()),
+    2_000,
+    &candidates,
+    &child_ids,
+    &client_ids,
+    2_000,
+)?;
+
+assert!(!decision.is_empty());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Liquidity-Seeking Example
+
+`LiquiditySeekingPlanner` ranks route candidates, skips toxic venues, probes
+uncertain hidden liquidity, and takes larger clips when fill probability is
+high. It builds on SOR route candidates and still emits ordinary child orders
+for the OMS.
+
+```rust
+use of_execution_algos::{
+    AlgoProgress, ChildOrderId, LiquiditySeekingCandidate,
+    LiquiditySeekingConfig, LiquiditySeekingPlanner, ParentOrder, ParentOrderId,
+    SorConfig, SorRouteCandidate, SorRouteMetrics,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let parent = ParentOrder::new(
+    ParentOrderId::new("parent-1")?,
+    AccountId::new("acct")?,
+    RouteId::new("default")?,
+    StrategyId::new("liq")?,
+    ExecutionSymbol::new("SIM", "ESZ6")?,
+    OrderSide::Buy,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderQty::new(100)?,
+    OrderPrice::new(500_000)?,
+    OrderPrice(0),
+    1_000,
+    11_000,
+    OrderQty::new(10)?,
+    OrderQty::new(25)?,
+    0,
+)?;
+
+let route = SorRouteCandidate::new(
+    RouteId::new("dark-1")?,
+    OrderPrice::new(500_000)?,
+    OrderQty::new(100)?,
+)?
+.with_metrics(SorRouteMetrics::new(0, 200, 0, 4_000, 100, 9_000)?);
+let candidates = [LiquiditySeekingCandidate::new(route, 2_500, 50, OrderQty::new(10)?)?];
+let child_ids = [ChildOrderId::new("child-1")?];
+let client_ids = [ClientOrderId::new("cl-1")?];
+let planner = LiquiditySeekingPlanner::new(
+    LiquiditySeekingConfig::new(1, OrderQty::new(10)?, 0, 7_500, 1_500, 3, 4)?,
+    SorConfig::default(),
+);
+let decision = planner.plan_liquidity::<1>(
     &parent,
     AlgoProgress::new(parent.id(), parent.total_qty()),
     2_000,
