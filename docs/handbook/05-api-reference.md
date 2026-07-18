@@ -32,6 +32,9 @@ Rust crate chapters:
 - [`of_execution_core` reference](./05g-of-execution-core-reference.md)
 - [`of_execution` reference](./05h-of-execution-reference.md)
 - [`of_execution_adapters` reference](./05i-of-execution-adapters-reference.md)
+- [`of_fix` reference](./05j-of-fix-reference.md)
+- [`of_execution_algos` reference](./05k-of-execution-algos-reference.md)
+- [`of_analytics` reference](./05l-of-analytics-reference.md)
 
 Binding-specific docs:
 
@@ -680,6 +683,21 @@ Public constants:
 
 For parent/child and TWAP planning details, see
 [`of_execution_algos` reference](./05k-of-execution-algos-reference.md).
+
+### `of_analytics`
+
+Public market-quality and liquidity types:
+
+- `AnalyticsError`
+- `QuoteContext`
+- `TradeContext`
+- `MarketQualitySnapshot`
+- `MarketQualityTracker`
+- `LiquidityDepthSnapshot`
+- `LiquidityDepthAnalyzer`
+
+For advanced analytics crate details, see
+[`of_analytics` reference](./05l-of-analytics-reference.md).
 
 ### `of_fix`
 

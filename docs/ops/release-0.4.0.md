@@ -15,20 +15,21 @@ This release uses a split version model:
 | Existing Rust crates: `of_core`, `of_adapters`, `of_signals`, `of_persist`, `of_runtime`, `of_ffi_c` | `0.4.0` |
 | Python binding: `orderflow-gregorian09` | `0.4.0` |
 | Java binding: `orderflow-java-binding` | `0.4.0` |
-| New Rust execution/FIX/algo crates: `of_execution_core`, `of_fix`, `of_execution`, `of_execution_adapters`, `of_execution_algos` | `0.1.0` |
+| New Rust advanced analytics/execution/FIX/algo crates: `of_analytics`, `of_execution_core`, `of_fix`, `of_execution`, `of_execution_adapters`, `of_execution_algos` | `0.1.0` |
 
 The split is intentional. The analytics/runtime/binding stack is the existing
-public package family. The execution/FIX crates are new public Rust surfaces and
-should start at `0.1.0` so their traits, codec APIs, and adapter contracts can mature
-honestly.
+public package family. The advanced analytics/execution/FIX crates are new
+public Rust surfaces and should start at `0.1.0` so their traits, codec APIs,
+and adapter contracts can mature honestly.
 
 Rust publish order for the new crate family:
 
-1. `of_execution_core`
-2. `of_fix`
-3. `of_execution`
-4. `of_execution_adapters`
-5. `of_execution_algos`
+1. `of_analytics`
+2. `of_execution_core`
+3. `of_fix`
+4. `of_execution`
+5. `of_execution_adapters`
+6. `of_execution_algos`
 
 `of_execution_adapters`' `fix` feature depends on `of_fix`, so local
 `cargo package -p of_execution_adapters` verification can only resolve the
@@ -36,7 +37,24 @@ registry dependency after `of_fix 0.1.0` is published.
 
 ## What Is New
 
-### 1. Execution core
+### 1. Advanced analytics crate split
+
+`of_analytics 0.1.0` adds a dependency-light advanced analytics home:
+
+- market-quality/TCA primitives for quoted spread, effective spread, realized
+  spread, price improvement, quote freshness, and side-aware slippage
+- liquidity/depth primitives for top-of-book depth, multi-level depth,
+  proportional imbalance, depth slope, and sweepability
+- feature profiles for future impact, toxicity, volatility, regime, patterns,
+  derivatives, institutional, and ML feature modules
+- borrowed `of_core::BookLevel` analysis paths that avoid copying book
+  snapshots in hot analytics loops
+
+Existing `of_core`, runtime, C ABI, Python, and Java analytics APIs remain
+valid. The split is additive and provides a clean home for heavier models
+without forcing all users to compile them.
+
+### 2. Execution core
 
 `of_execution_core 0.1.0` adds:
 
@@ -48,7 +66,7 @@ registry dependency after `of_fix 0.1.0` is published.
 - strict order-state machine with validated transitions
 - basic route-scoped risk limits and structured risk rejection reasons
 
-### 2. Execution engine and OMS helpers
+### 3. Execution engine and OMS helpers
 
 `of_execution 0.1.0` adds:
 
@@ -64,7 +82,7 @@ registry dependency after `of_fix 0.1.0` is published.
 - lifecycle, fanout, command correlation, throttling, sharding, telemetry,
   position ledger, safety policy, and replay helpers
 
-### 3. FIX codec foundation
+### 4. FIX codec foundation
 
 `of_fix 0.1.0` adds a reusable low-allocation FIX tag-value codec foundation:
 
@@ -105,7 +123,7 @@ message replay, gap-fill generation, persistence, venue certification, and
 counterparty-specific business rules remain separate future layers built on top
 of the codec.
 
-### 4. Execution adapter scaffolding
+### 5. Execution adapter scaffolding
 
 `of_execution_adapters 0.1.0` adds a feature-gated FIX scaffold:
 
@@ -120,7 +138,7 @@ of the codec.
 - explicit stop and stop-limit amend encoding through
   `encode_stop_amend_request`
 
-### 5. Execution algorithm foundation
+### 6. Execution algorithm foundation
 
 `of_execution_algos 0.1.0` adds an optional parent/child execution-algorithm
 foundation:
@@ -203,7 +221,7 @@ switches, or reconciliation. Hosts should submit child orders through
 This is not a production FIX engine. It is a reusable mapping and adapter
 authoring scaffold.
 
-### 5. C, Python, and Java execution APIs
+### 7. C, Python, and Java execution APIs
 
 `of_ffi_c 0.4.0`, Python `0.4.0`, and Java `0.4.0` expose the execution layer
 through additive handles/classes:
@@ -218,7 +236,7 @@ through additive handles/classes:
 
 Existing analytics handles and classes remain separate and unchanged.
 
-### 6. Documentation expansion
+### 8. Documentation expansion
 
 The documentation now teaches the full workflow:
 

@@ -6,6 +6,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added new `of_analytics` crate foundation with dependency-light
+  market-quality/TCA primitives, liquidity/depth primitives, feature profiles
+  for future advanced analytics modules, and borrowed `of_core::BookLevel`
+  analysis paths that avoid copying book snapshots.
 - Added `tools/check_binding_parity.py` and CI coverage to validate that
   manifest-exposed C ABI symbols have matching Python ctypes registrations and
   Java JNA declarations before release.

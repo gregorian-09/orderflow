@@ -31,7 +31,7 @@ Package versions for this release:
 | Existing Rust crates: `of_core`, `of_adapters`, `of_signals`, `of_persist`, `of_runtime`, `of_ffi_c` | `0.4.0` | Same established API line, additive analytics/execution exposure |
 | Python binding: `orderflow-gregorian09` | `0.4.0` | Matches the native `of_ffi_c` ABI package line |
 | Java binding: `orderflow-java-binding` | `0.4.0` | Matches the native `of_ffi_c` ABI package line |
-| New Rust crates: `of_execution_core`, `of_fix`, `of_execution`, `of_execution_adapters`, `of_execution_algos` | `0.1.0` | New execution/FIX/algo crate family, intentionally versioned from its own first public release |
+| New Rust crates: `of_analytics`, `of_execution_core`, `of_fix`, `of_execution`, `of_execution_adapters`, `of_execution_algos` | `0.1.0` | New advanced analytics/execution/FIX/algo crate family, intentionally versioned from its own first public release |
 
 Major additions:
 
@@ -54,6 +54,10 @@ Major additions:
 - execution algorithms: additive parent/child order primitives, fixed-capacity
   decision buffers, OMS execution-event progress folding, and deterministic
   TWAP slice planning in `of_execution_algos`
+- advanced analytics split: new `of_analytics` crate with dependency-light
+  market-quality/TCA and liquidity/depth primitives plus feature profiles for
+  future impact, toxicity, volatility, regime, pattern, derivatives,
+  institutional, and ML-feature modules
 - bindings: additive C ABI, Python, and Java execution APIs that do not change
   existing analytics APIs
 - documentation: end-to-end strategy workflow, OMS architecture, OMS cookbook,

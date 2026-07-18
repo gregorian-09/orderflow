@@ -139,6 +139,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "of_analytics"
+version = "0.1.0"
+dependencies = [
+ "of_core",
+]
+
+[[package]]
 name = "of_core"
 version = "0.4.0"
 dependencies = [

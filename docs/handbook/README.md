@@ -44,6 +44,8 @@ It is written for three audiences:
    Low-allocation FIX tag-value codec, borrowed parser, validation, and encoder.
 5k. [of_execution_algos Reference](./05k-of-execution-algos-reference.md)
    Parent/child execution-algorithm primitives and deterministic TWAP planning.
+5l. [of_analytics Reference](./05l-of-analytics-reference.md)
+   Advanced market-quality and liquidity/depth analytics crate split.
 6. [Contributor Guide](./06-contributor-guide.md)  
    Build/test/extend instructions and implementation notes.
 7. [References](./07-references.md)  

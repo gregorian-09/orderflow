@@ -1,0 +1,95 @@
+# `of_analytics`
+
+[![Crates.io](https://img.shields.io/crates/v/of_analytics.svg)](https://crates.io/crates/of_analytics)
+[![Docs.rs](https://docs.rs/of_analytics/badge.svg)](https://docs.rs/of_analytics)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../../LICENSE)
+
+`of_analytics` contains additive advanced market microstructure analytics for
+Orderflow. The crate exists so heavier analytics can evolve outside `of_core`
+without breaking existing `AnalyticsAccumulator`, runtime, C ABI, Python, or
+Java APIs.
+
+`of_analytics` starts at `0.1.0` in the broader Orderflow `0.4.0` development
+line because it is a new public Rust surface.
+
+The first foundation is dependency-light:
+
+- market-quality/TCA primitives for quoted spread, effective spread, realized
+  spread, price improvement, quote freshness, and side-aware slippage,
+- liquidity/depth primitives for top-of-book depth, multi-level depth,
+  proportional imbalance, depth slope, and sweepability,
+- explicit feature profiles so users can opt into future impact, toxicity,
+  volatility, regime, pattern, derivatives, institutional, and ML feature
+  modules without forcing all downstream users to compile them.
+
+The crate does not submit orders, manage runtime state, own persistence, or
+replace existing `of_core` APIs. It consumes normalized market data and returns
+typed snapshots that hosts can wire into runtime, research, or execution
+systems.
+
+## Feature Profiles
+
+Default features:
+
+- `market-quality`
+- `liquidity`
+
+Reserved additive profiles:
+
+- `impact`
+- `toxicity`
+- `volatility`
+- `regime`
+- `patterns`
+- `derivatives`
+- `institutional`
+- `ml-features`
+- `all`
+
+## Market Quality Example
+
+```rust
+use of_analytics::{MarketQualityTracker, QuoteContext, TradeContext};
+use of_core::Side;
+
+let mut tracker = MarketQualityTracker::new(1_000_000);
+tracker.on_quote(QuoteContext::new(499_975, 500_025, 100, 120, 1_000)?);
+let snapshot = tracker.evaluate_trade(
+    TradeContext::new(500_050, 10, Side::Ask, 1_500)?,
+    Some(500_075),
+)?;
+
+assert_eq!(snapshot.quoted_spread(), 50);
+assert!(snapshot.effective_spread_bps() > 0);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Liquidity Example
+
+```rust
+use of_analytics::LiquidityDepthAnalyzer;
+use of_core::BookLevel;
+
+let bids = [
+    BookLevel { level: 0, price: 499_975, size: 100 },
+    BookLevel { level: 1, price: 499_950, size: 80 },
+];
+let asks = [
+    BookLevel { level: 0, price: 500_025, size: 120 },
+    BookLevel { level: 1, price: 500_050, size: 90 },
+];
+let snapshot = LiquidityDepthAnalyzer::new(2).analyze(&bids, &asks, 150)?;
+
+assert_eq!(snapshot.bid_depth(), 180);
+assert_eq!(snapshot.ask_depth(), 210);
+assert!(snapshot.sweepable_buy_qty() >= 120);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Low-Latency Principles
+
+- No async runtime dependency.
+- No heap allocation in hot update/evaluate methods.
+- Borrow existing `of_core` book levels instead of copying snapshots.
+- Use integer arithmetic for prices, quantities, spreads, and basis points.
+- Keep batch/research features separate from live hot-path trackers.
