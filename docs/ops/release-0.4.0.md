@@ -61,6 +61,8 @@ registry dependency after `of_fix 0.1.0` is published.
   probability, expected time-to-fill, amend queue loss, and maker/taker scoring
 - pattern-risk primitives for spoofing/layering, quote-stuffing, stop-run,
   absorption, and momentum-ignition risk indicators
+- venue/route primitives for fill, reject, cancel, latency, and route-health
+  diagnostics
 - feature profiles for future impact, toxicity, volatility, regime,
   data-quality, feature-vector, resiliency, queue-fill, patterns, derivatives,
   institutional, and ML feature modules

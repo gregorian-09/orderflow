@@ -736,6 +736,10 @@ Public market-quality and liquidity types:
 - `PatternRiskConfig`
 - `PatternRiskSnapshot`
 - `PatternRiskClassifier`
+- `VenueRouteEventKind`
+- `VenueRouteEvent`
+- `VenueRouteSnapshot`
+- `VenueRouteTracker`
 
 For advanced analytics crate details, see
 [`of_analytics` reference](./05l-of-analytics-reference.md).

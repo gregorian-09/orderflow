@@ -27,6 +27,8 @@ pub enum AnalyticsError {
     InvalidQueue,
     /// Pattern-risk configuration or input fields are invalid.
     InvalidPattern,
+    /// Venue/route analytics configuration or event fields are invalid.
+    InvalidRoute,
     /// Requested analytics require a quote but no quote is available.
     MissingQuote,
 }
@@ -42,6 +44,7 @@ impl fmt::Display for AnalyticsError {
             Self::InvalidResiliency => write!(f, "invalid resiliency context"),
             Self::InvalidQueue => write!(f, "invalid queue/fill context"),
             Self::InvalidPattern => write!(f, "invalid pattern risk context"),
+            Self::InvalidRoute => write!(f, "invalid venue/route context"),
             Self::MissingQuote => write!(f, "missing quote context"),
         }
     }
@@ -2814,6 +2817,289 @@ impl Default for PatternRiskClassifier {
     }
 }
 
+/// Venue route event kind.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum VenueRouteEventKind {
+    /// Child order was sent.
+    Sent = 1,
+    /// Child order received a fill.
+    Fill = 2,
+    /// Child order was rejected.
+    Reject = 3,
+    /// Child order was canceled.
+    Cancel = 4,
+}
+
+/// Venue route analytics event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VenueRouteEvent {
+    kind: VenueRouteEventKind,
+    qty: i64,
+    quote_to_fill_latency_ns: u64,
+    market_data_to_order_latency_ns: u64,
+}
+
+impl VenueRouteEvent {
+    /// Creates a venue route event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidRoute`] when quantity is negative.
+    pub const fn new(
+        kind: VenueRouteEventKind,
+        qty: i64,
+        quote_to_fill_latency_ns: u64,
+        market_data_to_order_latency_ns: u64,
+    ) -> Result<Self, AnalyticsError> {
+        if qty < 0 {
+            return Err(AnalyticsError::InvalidRoute);
+        }
+        Ok(Self {
+            kind,
+            qty,
+            quote_to_fill_latency_ns,
+            market_data_to_order_latency_ns,
+        })
+    }
+
+    /// Returns event kind.
+    pub const fn kind(&self) -> VenueRouteEventKind {
+        self.kind
+    }
+
+    /// Returns event quantity.
+    pub const fn qty(&self) -> i64 {
+        self.qty
+    }
+
+    /// Returns quote-to-fill latency in nanoseconds.
+    pub const fn quote_to_fill_latency_ns(&self) -> u64 {
+        self.quote_to_fill_latency_ns
+    }
+
+    /// Returns market-data-to-order latency in nanoseconds.
+    pub const fn market_data_to_order_latency_ns(&self) -> u64 {
+        self.market_data_to_order_latency_ns
+    }
+}
+
+/// Venue route analytics snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VenueRouteSnapshot {
+    sent: u64,
+    fills: u64,
+    rejects: u64,
+    cancels: u64,
+    sent_qty: i64,
+    filled_qty: i64,
+    fill_rate_bps: u16,
+    reject_rate_bps: u16,
+    cancel_rate_bps: u16,
+    avg_quote_to_fill_latency_ns: u64,
+    max_quote_to_fill_latency_ns: u64,
+    avg_market_data_to_order_latency_ns: u64,
+    max_market_data_to_order_latency_ns: u64,
+    route_health_bps: u16,
+}
+
+impl VenueRouteSnapshot {
+    /// Returns sent order count.
+    pub const fn sent(&self) -> u64 {
+        self.sent
+    }
+
+    /// Returns fill count.
+    pub const fn fills(&self) -> u64 {
+        self.fills
+    }
+
+    /// Returns reject count.
+    pub const fn rejects(&self) -> u64 {
+        self.rejects
+    }
+
+    /// Returns cancel count.
+    pub const fn cancels(&self) -> u64 {
+        self.cancels
+    }
+
+    /// Returns sent quantity.
+    pub const fn sent_qty(&self) -> i64 {
+        self.sent_qty
+    }
+
+    /// Returns filled quantity.
+    pub const fn filled_qty(&self) -> i64 {
+        self.filled_qty
+    }
+
+    /// Returns fill rate in basis points.
+    pub const fn fill_rate_bps(&self) -> u16 {
+        self.fill_rate_bps
+    }
+
+    /// Returns reject rate in basis points.
+    pub const fn reject_rate_bps(&self) -> u16 {
+        self.reject_rate_bps
+    }
+
+    /// Returns cancel rate in basis points.
+    pub const fn cancel_rate_bps(&self) -> u16 {
+        self.cancel_rate_bps
+    }
+
+    /// Returns average quote-to-fill latency.
+    pub const fn avg_quote_to_fill_latency_ns(&self) -> u64 {
+        self.avg_quote_to_fill_latency_ns
+    }
+
+    /// Returns maximum quote-to-fill latency.
+    pub const fn max_quote_to_fill_latency_ns(&self) -> u64 {
+        self.max_quote_to_fill_latency_ns
+    }
+
+    /// Returns average market-data-to-order latency.
+    pub const fn avg_market_data_to_order_latency_ns(&self) -> u64 {
+        self.avg_market_data_to_order_latency_ns
+    }
+
+    /// Returns maximum market-data-to-order latency.
+    pub const fn max_market_data_to_order_latency_ns(&self) -> u64 {
+        self.max_market_data_to_order_latency_ns
+    }
+
+    /// Returns route health score in basis points.
+    pub const fn route_health_bps(&self) -> u16 {
+        self.route_health_bps
+    }
+}
+
+/// Venue route analytics tracker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VenueRouteTracker {
+    sent: u64,
+    fills: u64,
+    rejects: u64,
+    cancels: u64,
+    sent_qty: i64,
+    filled_qty: i64,
+    quote_to_fill_latency_sum: u128,
+    quote_to_fill_latency_samples: u64,
+    max_quote_to_fill_latency_ns: u64,
+    md_to_order_latency_sum: u128,
+    md_to_order_latency_samples: u64,
+    max_md_to_order_latency_ns: u64,
+}
+
+impl VenueRouteTracker {
+    /// Creates an empty venue route tracker.
+    pub const fn new() -> Self {
+        Self {
+            sent: 0,
+            fills: 0,
+            rejects: 0,
+            cancels: 0,
+            sent_qty: 0,
+            filled_qty: 0,
+            quote_to_fill_latency_sum: 0,
+            quote_to_fill_latency_samples: 0,
+            max_quote_to_fill_latency_ns: 0,
+            md_to_order_latency_sum: 0,
+            md_to_order_latency_samples: 0,
+            max_md_to_order_latency_ns: 0,
+        }
+    }
+
+    /// Records a venue route event.
+    pub fn on_event(&mut self, event: VenueRouteEvent) {
+        match event.kind() {
+            VenueRouteEventKind::Sent => {
+                self.sent = self.sent.saturating_add(1);
+                self.sent_qty = self.sent_qty.saturating_add(event.qty());
+            }
+            VenueRouteEventKind::Fill => {
+                self.fills = self.fills.saturating_add(1);
+                self.filled_qty = self.filled_qty.saturating_add(event.qty());
+                self.record_quote_to_fill(event.quote_to_fill_latency_ns());
+            }
+            VenueRouteEventKind::Reject => self.rejects = self.rejects.saturating_add(1),
+            VenueRouteEventKind::Cancel => self.cancels = self.cancels.saturating_add(1),
+        }
+        self.record_md_to_order(event.market_data_to_order_latency_ns());
+    }
+
+    /// Returns current snapshot.
+    pub fn snapshot(&self) -> VenueRouteSnapshot {
+        let terminal = self
+            .fills
+            .saturating_add(self.rejects)
+            .saturating_add(self.cancels);
+        let reject_rate = rate_bps(self.rejects, terminal.max(1));
+        let cancel_rate = rate_bps(self.cancels, terminal.max(1));
+        let fill_rate = rate_bps(self.fills, terminal.max(1));
+        let route_health = fill_rate
+            .saturating_sub(reject_rate / 2)
+            .saturating_sub(cancel_rate / 4);
+        VenueRouteSnapshot {
+            sent: self.sent,
+            fills: self.fills,
+            rejects: self.rejects,
+            cancels: self.cancels,
+            sent_qty: self.sent_qty,
+            filled_qty: self.filled_qty,
+            fill_rate_bps: fill_rate,
+            reject_rate_bps: reject_rate,
+            cancel_rate_bps: cancel_rate,
+            avg_quote_to_fill_latency_ns: avg_u128(
+                self.quote_to_fill_latency_sum,
+                self.quote_to_fill_latency_samples,
+            ),
+            max_quote_to_fill_latency_ns: self.max_quote_to_fill_latency_ns,
+            avg_market_data_to_order_latency_ns: avg_u128(
+                self.md_to_order_latency_sum,
+                self.md_to_order_latency_samples,
+            ),
+            max_market_data_to_order_latency_ns: self.max_md_to_order_latency_ns,
+            route_health_bps: route_health,
+        }
+    }
+
+    /// Clears accumulated route state.
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    fn record_quote_to_fill(&mut self, latency_ns: u64) {
+        if latency_ns == 0 {
+            return;
+        }
+        self.quote_to_fill_latency_sum = self
+            .quote_to_fill_latency_sum
+            .saturating_add(u128::from(latency_ns));
+        self.quote_to_fill_latency_samples = self.quote_to_fill_latency_samples.saturating_add(1);
+        self.max_quote_to_fill_latency_ns = self.max_quote_to_fill_latency_ns.max(latency_ns);
+    }
+
+    fn record_md_to_order(&mut self, latency_ns: u64) {
+        if latency_ns == 0 {
+            return;
+        }
+        self.md_to_order_latency_sum = self
+            .md_to_order_latency_sum
+            .saturating_add(u128::from(latency_ns));
+        self.md_to_order_latency_samples = self.md_to_order_latency_samples.saturating_add(1);
+        self.max_md_to_order_latency_ns = self.max_md_to_order_latency_ns.max(latency_ns);
+    }
+}
+
+impl Default for VenueRouteTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Borrowed depth analyzer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiquidityDepthAnalyzer {
@@ -2973,6 +3259,13 @@ fn average_score(scores: &[u16]) -> u16 {
         .iter()
         .fold(0_u32, |acc, score| acc.saturating_add(u32::from(*score)));
     u16::try_from(sum / u32::try_from(scores.len()).unwrap_or(1)).unwrap_or(10_000)
+}
+
+fn avg_u128(sum: u128, count: u64) -> u64 {
+    if count == 0 {
+        return 0;
+    }
+    u64::try_from(sum / u128::from(count)).unwrap_or(u64::MAX)
 }
 
 fn fnv1a64(mut hash: u64, bytes: &[u8]) -> u64 {
@@ -3441,5 +3734,38 @@ mod tests {
 
         assert!(stop_run.stop_run_risk_bps() > absorption.stop_run_risk_bps());
         assert!(absorption.absorption_risk_bps() > stop_run.absorption_risk_bps());
+    }
+
+    #[test]
+    fn venue_route_tracker_computes_rates_and_latency() {
+        let mut tracker = VenueRouteTracker::new();
+        tracker.on_event(VenueRouteEvent::new(VenueRouteEventKind::Sent, 100, 0, 10).unwrap());
+        tracker.on_event(VenueRouteEvent::new(VenueRouteEventKind::Fill, 60, 100, 20).unwrap());
+        tracker.on_event(VenueRouteEvent::new(VenueRouteEventKind::Reject, 0, 0, 30).unwrap());
+        tracker.on_event(VenueRouteEvent::new(VenueRouteEventKind::Cancel, 40, 0, 40).unwrap());
+
+        let snapshot = tracker.snapshot();
+
+        assert_eq!(snapshot.sent(), 1);
+        assert_eq!(snapshot.fills(), 1);
+        assert_eq!(snapshot.rejects(), 1);
+        assert_eq!(snapshot.cancels(), 1);
+        assert_eq!(snapshot.sent_qty(), 100);
+        assert_eq!(snapshot.filled_qty(), 60);
+        assert_eq!(snapshot.fill_rate_bps(), 3_333);
+        assert_eq!(snapshot.avg_quote_to_fill_latency_ns(), 100);
+        assert_eq!(snapshot.max_market_data_to_order_latency_ns(), 40);
+        assert!(snapshot.route_health_bps() < snapshot.fill_rate_bps());
+    }
+
+    #[test]
+    fn venue_route_tracker_resets_state() {
+        let mut tracker = VenueRouteTracker::new();
+        tracker.on_event(VenueRouteEvent::new(VenueRouteEventKind::Sent, 100, 0, 10).unwrap());
+
+        tracker.reset();
+
+        assert_eq!(tracker.snapshot().sent(), 0);
+        assert_eq!(tracker.snapshot().route_health_bps(), 0);
     }
 }

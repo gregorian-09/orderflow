@@ -17,6 +17,7 @@ The first public slice is dependency-light and live-path friendly:
 - liquidity resiliency analytics,
 - queue/fill probability analytics,
 - pattern-risk analytics,
+- venue/route analytics,
 - feature profiles for future impact, toxicity, volatility, regime,
   data-quality, feature-vector, resiliency, queue-fill, pattern, derivatives,
   institutional, and ML-feature modules.
@@ -121,6 +122,13 @@ Pattern risk:
 - `PatternRiskConfig`
 - `PatternRiskSnapshot`
 - `PatternRiskClassifier`
+
+Venue and route:
+
+- `VenueRouteEventKind`
+- `VenueRouteEvent`
+- `VenueRouteSnapshot`
+- `VenueRouteTracker`
 
 ## Market Quality
 
@@ -481,6 +489,36 @@ let snapshot = classifier.classify(PatternRiskInput::new(
 
 assert!(snapshot.spoofing_layering_risk_bps() > 0);
 assert!(snapshot.quote_stuffing_risk_bps() > 0);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Venue And Route Analytics
+
+`VenueRouteTracker` records route lifecycle events and latency samples for one
+caller-defined venue, route, account, strategy, symbol, or other key. The crate
+does not own those identifiers, which keeps this analytics layer reusable
+across OMS implementations.
+
+The snapshot reports:
+
+- sent, fill, reject, and cancel counts,
+- sent and filled quantity,
+- fill, reject, and cancel rates,
+- average and max quote-to-fill latency,
+- average and max market-data-to-order latency,
+- route health score.
+
+```rust
+use of_analytics::{VenueRouteEvent, VenueRouteEventKind, VenueRouteTracker};
+
+let mut tracker = VenueRouteTracker::new();
+tracker.on_event(VenueRouteEvent::new(VenueRouteEventKind::Sent, 100, 0, 10)?);
+tracker.on_event(VenueRouteEvent::new(VenueRouteEventKind::Fill, 60, 100, 20)?);
+let snapshot = tracker.snapshot();
+
+assert_eq!(snapshot.sent(), 1);
+assert_eq!(snapshot.fills(), 1);
+assert_eq!(snapshot.avg_quote_to_fill_latency_ns(), 100);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

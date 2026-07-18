@@ -35,6 +35,8 @@ The first foundation is dependency-light:
   probability, expected time-to-fill, amend queue loss, and maker/taker scoring,
 - pattern-risk primitives for spoofing/layering, quote-stuffing, stop-run,
   absorption, and momentum-ignition risk indicators,
+- venue/route primitives for fill, reject, cancel, latency, and route-health
+  diagnostics,
 - explicit feature profiles so users can opt into future impact, toxicity,
   volatility, regime, data-quality, feature-vector, resiliency, queue-fill, pattern,
   derivatives, institutional, and ML feature modules without forcing all
@@ -271,6 +273,22 @@ let snapshot = classifier.classify(PatternRiskInput::new(
 
 assert!(snapshot.spoofing_layering_risk_bps() > 0);
 assert!(snapshot.quote_stuffing_risk_bps() > 0);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Venue Route Example
+
+```rust
+use of_analytics::{VenueRouteEvent, VenueRouteEventKind, VenueRouteTracker};
+
+let mut tracker = VenueRouteTracker::new();
+tracker.on_event(VenueRouteEvent::new(VenueRouteEventKind::Sent, 100, 0, 10)?);
+tracker.on_event(VenueRouteEvent::new(VenueRouteEventKind::Fill, 60, 100, 20)?);
+let snapshot = tracker.snapshot();
+
+assert_eq!(snapshot.sent(), 1);
+assert_eq!(snapshot.fills(), 1);
+assert_eq!(snapshot.avg_quote_to_fill_latency_ns(), 100);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
