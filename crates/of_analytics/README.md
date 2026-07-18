@@ -29,10 +29,12 @@ The first foundation is dependency-light:
 - feature-vector primitives for stable feature ids, ordered schemas, schema
   hashes, missing-value policy, quality labels, and reusable fixed-capacity
   writers,
+- resiliency primitives for threshold-based spread/depth shock detection,
+  recovery timing, and liquidity resiliency scoring,
 - explicit feature profiles so users can opt into future impact, toxicity,
-  volatility, regime, data-quality, feature-vector, pattern, derivatives,
-  institutional, and ML feature modules without forcing all downstream users to
-  compile them.
+  volatility, regime, data-quality, feature-vector, resiliency, pattern,
+  derivatives, institutional, and ML feature modules without forcing all
+  downstream users to compile them.
 
 The crate does not submit orders, manage runtime state, own persistence, or
 replace existing `of_core` APIs. It consumes normalized market data and returns
@@ -54,6 +56,7 @@ Reserved additive profiles:
 - `regime`
 - `data-quality`
 - `feature-vector`
+- `resiliency`
 - `patterns`
 - `derivatives`
 - `institutional`
@@ -200,6 +203,24 @@ let vector = writer.finish();
 
 assert_eq!(vector.values(), &[25, 0]);
 assert_eq!(vector.schema_hash(), schema.schema_hash());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Resiliency Example
+
+```rust
+use of_analytics::{ResiliencyConfig, ResiliencySample, ResiliencyTracker};
+
+let config = ResiliencyConfig::new(5, 1_000, 25, 5_000, 8, 9_000)?;
+let mut tracker = ResiliencyTracker::new(config);
+
+tracker.on_sample(ResiliencySample::new(100, 5, 500, 500)?);
+let shock = tracker.on_sample(ResiliencySample::new(200, 30, 400, 400)?);
+let recovered = tracker.on_sample(ResiliencySample::new(1_000_200, 7, 500, 500)?);
+
+assert!(shock.active_shock());
+assert_eq!(recovered.recovery_count(), 1);
+assert_eq!(recovered.last_recovery_time_ns(), 1_000_000);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

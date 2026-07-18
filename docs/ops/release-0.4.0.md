@@ -55,9 +55,11 @@ registry dependency after `of_fix 0.1.0` is published.
 - feature-vector primitives for stable feature ids, ordered schemas, schema
   hashes, missing-value policy, quality labels, reusable fixed-capacity
   writers, and extractor contracts
+- resiliency primitives for threshold-based spread/depth shock detection,
+  recovery timing, and liquidity resiliency scoring
 - feature profiles for future impact, toxicity, volatility, regime,
-  data-quality, feature-vector, patterns, derivatives, institutional, and ML
-  feature modules
+  data-quality, feature-vector, resiliency, patterns, derivatives,
+  institutional, and ML feature modules
 - borrowed `of_core::BookLevel` analysis paths that avoid copying book
   snapshots in hot analytics loops
 

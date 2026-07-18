@@ -26,6 +26,7 @@ volatility = []
 regime = []
 data-quality = []
 feature-vector = []
+resiliency = []
 patterns = []
 derivatives = []
 institutional = []
@@ -39,6 +40,7 @@ all = [
   "regime",
   "data-quality",
   "feature-vector",
+  "resiliency",
   "patterns",
   "derivatives",
   "institutional",

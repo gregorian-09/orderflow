@@ -721,6 +721,10 @@ Public market-quality and liquidity types:
 - `FeatureVector`
 - `FeatureVectorWriter`
 - `FeatureExtractor`
+- `ResiliencySample`
+- `ResiliencyConfig`
+- `ResiliencySnapshot`
+- `ResiliencyTracker`
 
 For advanced analytics crate details, see
 [`of_analytics` reference](./05l-of-analytics-reference.md).
