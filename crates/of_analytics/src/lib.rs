@@ -476,8 +476,13 @@ pub struct LiquidityDepthSnapshot {
     ask_depth: i64,
     proportional_imbalance_bps: i32,
     depth_slope_bps: i32,
+    depth_convexity_bps: i32,
+    book_pressure_bps: i32,
     sweepable_buy_qty: i64,
     sweepable_sell_qty: i64,
+    buy_sweepability_bps: u16,
+    sell_sweepability_bps: u16,
+    sweepability_score_bps: u16,
 }
 
 impl LiquidityDepthSnapshot {
@@ -516,6 +521,16 @@ impl LiquidityDepthSnapshot {
         self.depth_slope_bps
     }
 
+    /// Returns aggregate second-difference depth curvature in basis points.
+    pub const fn depth_convexity_bps(&self) -> i32 {
+        self.depth_convexity_bps
+    }
+
+    /// Returns distance-weighted bid-minus-ask book pressure in basis points.
+    pub const fn book_pressure_bps(&self) -> i32 {
+        self.book_pressure_bps
+    }
+
     /// Returns ask-side quantity sweepable by a buy order up to target
     /// quantity.
     pub const fn sweepable_buy_qty(&self) -> i64 {
@@ -526,6 +541,364 @@ impl LiquidityDepthSnapshot {
     /// quantity.
     pub const fn sweepable_sell_qty(&self) -> i64 {
         self.sweepable_sell_qty
+    }
+
+    /// Returns buy-side target sweepability in basis points.
+    pub const fn buy_sweepability_bps(&self) -> u16 {
+        self.buy_sweepability_bps
+    }
+
+    /// Returns sell-side target sweepability in basis points.
+    pub const fn sell_sweepability_bps(&self) -> u16 {
+        self.sell_sweepability_bps
+    }
+
+    /// Returns conservative target sweepability in basis points.
+    pub const fn sweepability_score_bps(&self) -> u16 {
+        self.sweepability_score_bps
+    }
+}
+
+/// Liquidity-flow event over a book observation interval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LiquidityFlowEvent {
+    side: Side,
+    added_qty: i64,
+    removed_qty: i64,
+    traded_qty: i64,
+    ts_ns: u64,
+}
+
+impl LiquidityFlowEvent {
+    /// Creates a liquidity-flow event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidDepth`] when quantities are negative,
+    /// timestamp is zero, or the event carries no quantity.
+    pub const fn new(
+        side: Side,
+        added_qty: i64,
+        removed_qty: i64,
+        traded_qty: i64,
+        ts_ns: u64,
+    ) -> Result<Self, AnalyticsError> {
+        if added_qty < 0
+            || removed_qty < 0
+            || traded_qty < 0
+            || ts_ns == 0
+            || added_qty
+                .saturating_add(removed_qty)
+                .saturating_add(traded_qty)
+                == 0
+        {
+            return Err(AnalyticsError::InvalidDepth);
+        }
+        Ok(Self {
+            side,
+            added_qty,
+            removed_qty,
+            traded_qty,
+            ts_ns,
+        })
+    }
+
+    /// Returns the book side affected by the event.
+    pub const fn side(&self) -> Side {
+        self.side
+    }
+
+    /// Returns quantity added to the side.
+    pub const fn added_qty(&self) -> i64 {
+        self.added_qty
+    }
+
+    /// Returns quantity removed or canceled from the side.
+    pub const fn removed_qty(&self) -> i64 {
+        self.removed_qty
+    }
+
+    /// Returns quantity traded through the side.
+    pub const fn traded_qty(&self) -> i64 {
+        self.traded_qty
+    }
+
+    /// Returns event timestamp in nanoseconds.
+    pub const fn ts_ns(&self) -> u64 {
+        self.ts_ns
+    }
+}
+
+/// Liquidity-flow tracker configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LiquidityFlowConfig {
+    window_ns: u64,
+    drought_replenishment_bps: u16,
+    drought_min_depletion_qty: i64,
+}
+
+impl LiquidityFlowConfig {
+    /// Creates liquidity-flow configuration.
+    ///
+    /// `drought_replenishment_bps` compares added quantity with depleted
+    /// quantity. For example, `2_500` marks drought risk when replenishment is
+    /// less than 25% of depletion.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidDepth`] when the window is zero,
+    /// threshold exceeds 10,000 basis points, or the minimum depletion quantity
+    /// is negative.
+    pub const fn new(
+        window_ns: u64,
+        drought_replenishment_bps: u16,
+        drought_min_depletion_qty: i64,
+    ) -> Result<Self, AnalyticsError> {
+        if window_ns == 0 || drought_replenishment_bps > 10_000 || drought_min_depletion_qty < 0 {
+            return Err(AnalyticsError::InvalidDepth);
+        }
+        Ok(Self {
+            window_ns,
+            drought_replenishment_bps,
+            drought_min_depletion_qty,
+        })
+    }
+
+    /// Returns configured observation window in nanoseconds.
+    pub const fn window_ns(&self) -> u64 {
+        self.window_ns
+    }
+
+    /// Returns drought replenishment threshold in basis points.
+    pub const fn drought_replenishment_bps(&self) -> u16 {
+        self.drought_replenishment_bps
+    }
+
+    /// Returns minimum depletion quantity before drought can be flagged.
+    pub const fn drought_min_depletion_qty(&self) -> i64 {
+        self.drought_min_depletion_qty
+    }
+}
+
+impl Default for LiquidityFlowConfig {
+    fn default() -> Self {
+        Self {
+            window_ns: 1_000_000_000,
+            drought_replenishment_bps: 2_500,
+            drought_min_depletion_qty: 1,
+        }
+    }
+}
+
+/// Liquidity-flow snapshot over accumulated book events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LiquidityFlowSnapshot {
+    events: u64,
+    elapsed_ns: u64,
+    bid_added_qty: i64,
+    ask_added_qty: i64,
+    bid_depleted_qty: i64,
+    ask_depleted_qty: i64,
+    bid_traded_qty: i64,
+    ask_traded_qty: i64,
+    order_flow_imbalance_bps: i32,
+    replenishment_rate_per_sec: i64,
+    depletion_rate_per_sec: i64,
+    liquidity_drought: bool,
+}
+
+impl LiquidityFlowSnapshot {
+    /// Returns number of events included in the snapshot.
+    pub const fn events(&self) -> u64 {
+        self.events
+    }
+
+    /// Returns elapsed observation time in nanoseconds.
+    pub const fn elapsed_ns(&self) -> u64 {
+        self.elapsed_ns
+    }
+
+    /// Returns bid-side added quantity.
+    pub const fn bid_added_qty(&self) -> i64 {
+        self.bid_added_qty
+    }
+
+    /// Returns ask-side added quantity.
+    pub const fn ask_added_qty(&self) -> i64 {
+        self.ask_added_qty
+    }
+
+    /// Returns bid-side canceled or removed quantity.
+    pub const fn bid_depleted_qty(&self) -> i64 {
+        self.bid_depleted_qty
+    }
+
+    /// Returns ask-side canceled or removed quantity.
+    pub const fn ask_depleted_qty(&self) -> i64 {
+        self.ask_depleted_qty
+    }
+
+    /// Returns bid-side traded quantity.
+    pub const fn bid_traded_qty(&self) -> i64 {
+        self.bid_traded_qty
+    }
+
+    /// Returns ask-side traded quantity.
+    pub const fn ask_traded_qty(&self) -> i64 {
+        self.ask_traded_qty
+    }
+
+    /// Returns signed order-flow imbalance in basis points.
+    pub const fn order_flow_imbalance_bps(&self) -> i32 {
+        self.order_flow_imbalance_bps
+    }
+
+    /// Returns replenishment rate in quantity per second.
+    pub const fn replenishment_rate_per_sec(&self) -> i64 {
+        self.replenishment_rate_per_sec
+    }
+
+    /// Returns depletion rate in quantity per second.
+    pub const fn depletion_rate_per_sec(&self) -> i64 {
+        self.depletion_rate_per_sec
+    }
+
+    /// Returns whether replenishment is low relative to depletion.
+    pub const fn liquidity_drought(&self) -> bool {
+        self.liquidity_drought
+    }
+}
+
+/// Allocation-free liquidity-flow tracker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiquidityFlowTracker {
+    config: LiquidityFlowConfig,
+    events: u64,
+    first_ts_ns: u64,
+    last_ts_ns: u64,
+    bid_added_qty: i64,
+    ask_added_qty: i64,
+    bid_depleted_qty: i64,
+    ask_depleted_qty: i64,
+    bid_traded_qty: i64,
+    ask_traded_qty: i64,
+}
+
+impl LiquidityFlowTracker {
+    /// Creates a liquidity-flow tracker.
+    pub const fn new(config: LiquidityFlowConfig) -> Self {
+        Self {
+            config,
+            events: 0,
+            first_ts_ns: 0,
+            last_ts_ns: 0,
+            bid_added_qty: 0,
+            ask_added_qty: 0,
+            bid_depleted_qty: 0,
+            ask_depleted_qty: 0,
+            bid_traded_qty: 0,
+            ask_traded_qty: 0,
+        }
+    }
+
+    /// Returns tracker configuration.
+    pub const fn config(&self) -> LiquidityFlowConfig {
+        self.config
+    }
+
+    /// Records a liquidity-flow event.
+    pub fn on_event(&mut self, event: LiquidityFlowEvent) {
+        if self.first_ts_ns == 0 {
+            self.first_ts_ns = event.ts_ns();
+        }
+        self.last_ts_ns = self.last_ts_ns.max(event.ts_ns());
+        self.events = self.events.saturating_add(1);
+        match event.side() {
+            Side::Bid => {
+                self.bid_added_qty = self.bid_added_qty.saturating_add(event.added_qty());
+                self.bid_depleted_qty = self.bid_depleted_qty.saturating_add(event.removed_qty());
+                self.bid_traded_qty = self.bid_traded_qty.saturating_add(event.traded_qty());
+            }
+            Side::Ask => {
+                self.ask_added_qty = self.ask_added_qty.saturating_add(event.added_qty());
+                self.ask_depleted_qty = self.ask_depleted_qty.saturating_add(event.removed_qty());
+                self.ask_traded_qty = self.ask_traded_qty.saturating_add(event.traded_qty());
+            }
+        }
+    }
+
+    /// Returns current liquidity-flow snapshot.
+    pub fn snapshot(&self) -> LiquidityFlowSnapshot {
+        let elapsed_ns = self.elapsed_ns();
+        let replenishment = self.bid_added_qty.saturating_add(self.ask_added_qty);
+        let depletion = self
+            .bid_depleted_qty
+            .saturating_add(self.ask_depleted_qty)
+            .saturating_add(self.bid_traded_qty)
+            .saturating_add(self.ask_traded_qty);
+        let upward_pressure = self
+            .bid_added_qty
+            .saturating_add(self.ask_depleted_qty)
+            .saturating_add(self.ask_traded_qty);
+        let downward_pressure = self
+            .ask_added_qty
+            .saturating_add(self.bid_depleted_qty)
+            .saturating_add(self.bid_traded_qty);
+        let total_pressure = upward_pressure.saturating_add(downward_pressure);
+        let order_flow_imbalance_bps = if total_pressure <= 0 {
+            0
+        } else {
+            i32::try_from(
+                (i128::from(upward_pressure.saturating_sub(downward_pressure)) * 10_000)
+                    / i128::from(total_pressure),
+            )
+            .unwrap_or(0)
+        };
+        let liquidity_drought = depletion >= self.config.drought_min_depletion_qty()
+            && replenishment.saturating_mul(10_000)
+                < depletion.saturating_mul(i64::from(self.config.drought_replenishment_bps()));
+        LiquidityFlowSnapshot {
+            events: self.events,
+            elapsed_ns,
+            bid_added_qty: self.bid_added_qty,
+            ask_added_qty: self.ask_added_qty,
+            bid_depleted_qty: self.bid_depleted_qty,
+            ask_depleted_qty: self.ask_depleted_qty,
+            bid_traded_qty: self.bid_traded_qty,
+            ask_traded_qty: self.ask_traded_qty,
+            order_flow_imbalance_bps,
+            replenishment_rate_per_sec: qty_rate_per_sec(replenishment, elapsed_ns),
+            depletion_rate_per_sec: qty_rate_per_sec(depletion, elapsed_ns),
+            liquidity_drought,
+        }
+    }
+
+    /// Resets accumulated liquidity-flow state.
+    pub fn reset(&mut self) {
+        self.events = 0;
+        self.first_ts_ns = 0;
+        self.last_ts_ns = 0;
+        self.bid_added_qty = 0;
+        self.ask_added_qty = 0;
+        self.bid_depleted_qty = 0;
+        self.ask_depleted_qty = 0;
+        self.bid_traded_qty = 0;
+        self.ask_traded_qty = 0;
+    }
+
+    fn elapsed_ns(&self) -> u64 {
+        let observed = self.last_ts_ns.saturating_sub(self.first_ts_ns);
+        if observed == 0 {
+            self.config.window_ns()
+        } else {
+            observed.min(self.config.window_ns())
+        }
+    }
+}
+
+impl Default for LiquidityFlowTracker {
+    fn default() -> Self {
+        Self::new(LiquidityFlowConfig::default())
     }
 }
 
@@ -4047,6 +4420,10 @@ impl LiquidityDepthAnalyzer {
             )
             .unwrap_or(0)
         };
+        let sweepable_buy_qty = sweep_qty(asks, target_qty);
+        let sweepable_sell_qty = sweep_qty(bids, target_qty);
+        let buy_sweepability_bps = sweepability_bps(sweepable_buy_qty, target_qty);
+        let sell_sweepability_bps = sweepability_bps(sweepable_sell_qty, target_qty);
         Ok(LiquidityDepthSnapshot {
             levels_used: self.levels.min(bids.len()).min(asks.len()),
             top_bid_qty: bids[0].size,
@@ -4055,8 +4432,13 @@ impl LiquidityDepthAnalyzer {
             ask_depth,
             proportional_imbalance_bps,
             depth_slope_bps: depth_slope_bps(bids, asks, self.levels),
-            sweepable_buy_qty: sweep_qty(asks, target_qty),
-            sweepable_sell_qty: sweep_qty(bids, target_qty),
+            depth_convexity_bps: depth_convexity_bps(bids, asks, self.levels),
+            book_pressure_bps: book_pressure_bps(bids, asks, self.levels),
+            sweepable_buy_qty,
+            sweepable_sell_qty,
+            buy_sweepability_bps,
+            sell_sweepability_bps,
+            sweepability_score_bps: buy_sweepability_bps.min(sell_sweepability_bps),
         })
     }
 }
@@ -4102,6 +4484,60 @@ fn depth_slope_bps(bids: &[BookLevel], asks: &[BookLevel], max_levels: usize) ->
         return 0;
     }
     i32::try_from((i128::from(outer.saturating_sub(top)) * 10_000) / i128::from(top)).unwrap_or(0)
+}
+
+fn depth_convexity_bps(bids: &[BookLevel], asks: &[BookLevel], max_levels: usize) -> i32 {
+    let used = max_levels.min(bids.len()).min(asks.len());
+    if used < 3 {
+        return 0;
+    }
+    let first = bids[0].size.saturating_add(asks[0].size);
+    let mid_index = used / 2;
+    let mid = bids[mid_index].size.saturating_add(asks[mid_index].size);
+    let outer = bids[used - 1].size.saturating_add(asks[used - 1].size);
+    if mid <= 0 {
+        return 0;
+    }
+    let first_slope = mid.saturating_sub(first);
+    let second_slope = outer.saturating_sub(mid);
+    i32::try_from((i128::from(second_slope.saturating_sub(first_slope)) * 10_000) / i128::from(mid))
+        .unwrap_or(0)
+}
+
+fn book_pressure_bps(bids: &[BookLevel], asks: &[BookLevel], max_levels: usize) -> i32 {
+    let used = max_levels.min(bids.len()).min(asks.len());
+    if used == 0 {
+        return 0;
+    }
+    let mut signed = 0_i128;
+    let mut total = 0_i128;
+    for index in 0..used {
+        let weight = i128::try_from(used.saturating_sub(index)).unwrap_or(i128::MAX);
+        let bid = i128::from(bids[index].size);
+        let ask = i128::from(asks[index].size);
+        signed = signed.saturating_add(weight.saturating_mul(bid.saturating_sub(ask)));
+        total = total.saturating_add(weight.saturating_mul(bid.saturating_add(ask)));
+    }
+    if total <= 0 {
+        return 0;
+    }
+    i32::try_from((signed * 10_000) / total).unwrap_or(0)
+}
+
+fn sweepability_bps(sweepable_qty: i64, target_qty: i64) -> u16 {
+    if target_qty <= 0 {
+        return 10_000;
+    }
+    u16::try_from(((i128::from(sweepable_qty) * 10_000) / i128::from(target_qty)).min(10_000))
+        .unwrap_or(10_000)
+}
+
+fn qty_rate_per_sec(qty: i64, elapsed_ns: u64) -> i64 {
+    if elapsed_ns == 0 {
+        return 0;
+    }
+    i64::try_from((i128::from(qty) * 1_000_000_000_i128) / i128::from(elapsed_ns))
+        .unwrap_or(i64::MAX)
 }
 
 fn price_to_bps(value: i64, reference: i64) -> i32 {
@@ -4345,7 +4781,59 @@ mod tests {
         assert_eq!(snapshot.ask_depth(), 210);
         assert_eq!(snapshot.sweepable_buy_qty(), 150);
         assert_eq!(snapshot.sweepable_sell_qty(), 150);
+        assert_eq!(snapshot.buy_sweepability_bps(), 10_000);
+        assert_eq!(snapshot.sell_sweepability_bps(), 10_000);
+        assert_eq!(snapshot.sweepability_score_bps(), 10_000);
         assert!(snapshot.proportional_imbalance_bps() < 0);
+    }
+
+    #[test]
+    fn liquidity_depth_reports_shape_pressure_and_partial_sweepability() {
+        let bids = [
+            BookLevel {
+                level: 0,
+                price: 500_000,
+                size: 300,
+            },
+            BookLevel {
+                level: 1,
+                price: 499_975,
+                size: 200,
+            },
+            BookLevel {
+                level: 2,
+                price: 499_950,
+                size: 100,
+            },
+        ];
+        let asks = [
+            BookLevel {
+                level: 0,
+                price: 500_025,
+                size: 50,
+            },
+            BookLevel {
+                level: 1,
+                price: 500_050,
+                size: 100,
+            },
+            BookLevel {
+                level: 2,
+                price: 500_075,
+                size: 150,
+            },
+        ];
+
+        let snapshot = LiquidityDepthAnalyzer::new(3)
+            .analyze(&bids, &asks, 500)
+            .expect("snapshot");
+
+        assert_eq!(snapshot.depth_slope_bps(), -2_857);
+        assert_eq!(snapshot.depth_convexity_bps(), 0);
+        assert!(snapshot.book_pressure_bps() > 0);
+        assert_eq!(snapshot.buy_sweepability_bps(), 6_000);
+        assert_eq!(snapshot.sell_sweepability_bps(), 10_000);
+        assert_eq!(snapshot.sweepability_score_bps(), 6_000);
     }
 
     #[test]
@@ -4363,6 +4851,51 @@ mod tests {
 
         assert_eq!(
             LiquidityDepthAnalyzer::new(1).analyze(&bids, &asks, 10),
+            Err(AnalyticsError::InvalidDepth)
+        );
+    }
+
+    #[test]
+    fn liquidity_flow_tracks_imbalance_rates_and_drought() {
+        let config = LiquidityFlowConfig::new(1_000_000_000, 2_500, 100).unwrap();
+        let mut tracker = LiquidityFlowTracker::new(config);
+
+        tracker.on_event(LiquidityFlowEvent::new(Side::Bid, 100, 0, 0, 1).unwrap());
+        tracker.on_event(LiquidityFlowEvent::new(Side::Ask, 0, 250, 50, 500_000_001).unwrap());
+
+        let snapshot = tracker.snapshot();
+
+        assert_eq!(snapshot.events(), 2);
+        assert_eq!(snapshot.bid_added_qty(), 100);
+        assert_eq!(snapshot.ask_depleted_qty(), 250);
+        assert_eq!(snapshot.ask_traded_qty(), 50);
+        assert_eq!(snapshot.order_flow_imbalance_bps(), 10_000);
+        assert_eq!(snapshot.replenishment_rate_per_sec(), 200);
+        assert_eq!(snapshot.depletion_rate_per_sec(), 600);
+        assert!(!snapshot.liquidity_drought());
+
+        tracker.on_event(LiquidityFlowEvent::new(Side::Bid, 0, 600, 0, 1_000_000_001).unwrap());
+        let snapshot = tracker.snapshot();
+
+        assert_eq!(snapshot.depletion_rate_per_sec(), 900);
+        assert!(snapshot.liquidity_drought());
+
+        tracker.reset();
+        assert_eq!(tracker.snapshot().events(), 0);
+    }
+
+    #[test]
+    fn liquidity_flow_rejects_empty_or_invalid_events() {
+        assert_eq!(
+            LiquidityFlowEvent::new(Side::Bid, 0, 0, 0, 1),
+            Err(AnalyticsError::InvalidDepth)
+        );
+        assert_eq!(
+            LiquidityFlowEvent::new(Side::Ask, 1, 0, 0, 0),
+            Err(AnalyticsError::InvalidDepth)
+        );
+        assert_eq!(
+            LiquidityFlowConfig::new(0, 0, 0),
             Err(AnalyticsError::InvalidDepth)
         );
     }

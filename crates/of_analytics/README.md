@@ -19,7 +19,9 @@ The first foundation is dependency-light:
 - execution-quality/TCA primitives for implementation shortfall, arrival and
   decision slippage, adverse selection, trade-through, and fill-quality score,
 - liquidity/depth primitives for top-of-book depth, multi-level depth,
-  proportional imbalance, depth slope, and sweepability,
+  proportional imbalance, order-flow imbalance, depth slope, depth convexity,
+  book pressure, replenishment/depletion rates, drought detection, and
+  sweepability,
 - market-impact primitives for Kyle-style lambda and Amihud-style
   illiquidity,
 - VPIN-style fixed-bucket toxicity primitives,
@@ -46,8 +48,8 @@ The first foundation is dependency-light:
   funding divergence,
 - explicit feature profiles so users can opt into future impact, toxicity,
   volatility, regime, data-quality, feature-vector, resiliency, queue-fill,
-  cross-asset, pattern, derivatives, institutional, and ML feature modules without forcing all
-  downstream users to compile them.
+  cross-asset, pattern, derivatives, institutional, and ML feature modules
+  without forcing all downstream users to compile them.
 
 The crate does not submit orders, manage runtime state, own persistence, or
 replace existing `of_core` APIs. It consumes normalized market data and returns
@@ -120,22 +122,34 @@ assert!(snapshot.trade_through());
 ## Liquidity Example
 
 ```rust
-use of_analytics::LiquidityDepthAnalyzer;
+use of_analytics::{
+    LiquidityDepthAnalyzer, LiquidityFlowConfig, LiquidityFlowEvent,
+    LiquidityFlowTracker,
+};
 use of_core::BookLevel;
+use of_core::Side;
 
 let bids = [
     BookLevel { level: 0, price: 499_975, size: 100 },
     BookLevel { level: 1, price: 499_950, size: 80 },
+    BookLevel { level: 2, price: 499_925, size: 70 },
 ];
 let asks = [
     BookLevel { level: 0, price: 500_025, size: 120 },
     BookLevel { level: 1, price: 500_050, size: 90 },
+    BookLevel { level: 2, price: 500_075, size: 60 },
 ];
-let snapshot = LiquidityDepthAnalyzer::new(2).analyze(&bids, &asks, 150)?;
+let snapshot = LiquidityDepthAnalyzer::new(3).analyze(&bids, &asks, 150)?;
 
-assert_eq!(snapshot.bid_depth(), 180);
-assert_eq!(snapshot.ask_depth(), 210);
+assert_eq!(snapshot.bid_depth(), 250);
+assert_eq!(snapshot.ask_depth(), 270);
 assert!(snapshot.sweepable_buy_qty() >= 120);
+assert!(snapshot.book_pressure_bps() < 0);
+
+let mut flow = LiquidityFlowTracker::new(LiquidityFlowConfig::default());
+flow.on_event(LiquidityFlowEvent::new(Side::Bid, 100, 0, 0, 1)?);
+flow.on_event(LiquidityFlowEvent::new(Side::Ask, 0, 250, 25, 500_000_001)?);
+assert!(flow.snapshot().order_flow_imbalance_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

@@ -70,6 +70,10 @@ Liquidity/depth:
 
 - `LiquidityDepthSnapshot`
 - `LiquidityDepthAnalyzer`
+- `LiquidityFlowEvent`
+- `LiquidityFlowConfig`
+- `LiquidityFlowSnapshot`
+- `LiquidityFlowTracker`
 
 Impact/toxicity:
 
@@ -225,26 +229,53 @@ The snapshot reports:
 - cumulative ask depth,
 - bid-minus-ask proportional imbalance,
 - simple depth slope proxy,
+- depth convexity proxy,
+- distance-weighted book pressure,
 - quantity sweepable by a buy order up to a target quantity,
-- quantity sweepable by a sell order up to a target quantity.
+- quantity sweepable by a sell order up to a target quantity,
+- buy, sell, and conservative sweepability scores.
+
+`LiquidityFlowTracker` consumes explicit book-flow events. It is intentionally
+separate from `LiquidityDepthAnalyzer` because not every provider exposes enough
+book-delta, market-order, and cancellation detail to estimate order-flow
+imbalance correctly. When those events are available, the tracker reports:
+
+- bid and ask replenishment,
+- bid and ask depletion,
+- bid and ask traded quantity,
+- signed order-flow imbalance,
+- replenishment and depletion rates,
+- liquidity-drought flag.
 
 ```rust
-use of_analytics::LiquidityDepthAnalyzer;
+use of_analytics::{
+    LiquidityDepthAnalyzer, LiquidityFlowConfig, LiquidityFlowEvent,
+    LiquidityFlowTracker,
+};
 use of_core::BookLevel;
+use of_core::Side;
 
 let bids = [
     BookLevel { level: 0, price: 499_975, size: 100 },
     BookLevel { level: 1, price: 499_950, size: 80 },
+    BookLevel { level: 2, price: 499_925, size: 70 },
 ];
 let asks = [
     BookLevel { level: 0, price: 500_025, size: 120 },
     BookLevel { level: 1, price: 500_050, size: 90 },
+    BookLevel { level: 2, price: 500_075, size: 60 },
 ];
-let snapshot = LiquidityDepthAnalyzer::new(2).analyze(&bids, &asks, 150)?;
+let snapshot = LiquidityDepthAnalyzer::new(3).analyze(&bids, &asks, 150)?;
 
-assert_eq!(snapshot.bid_depth(), 180);
-assert_eq!(snapshot.ask_depth(), 210);
+assert_eq!(snapshot.bid_depth(), 250);
+assert_eq!(snapshot.ask_depth(), 270);
 assert_eq!(snapshot.sweepable_buy_qty(), 150);
+assert!(snapshot.book_pressure_bps() < 0);
+
+let mut flow = LiquidityFlowTracker::new(LiquidityFlowConfig::default());
+flow.on_event(LiquidityFlowEvent::new(Side::Bid, 100, 0, 0, 1)?);
+flow.on_event(LiquidityFlowEvent::new(Side::Ask, 0, 250, 25, 500_000_001)?);
+assert!(flow.snapshot().order_flow_imbalance_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

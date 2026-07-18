@@ -46,7 +46,9 @@ registry dependency after `of_fix 0.1.0` is published.
 - execution-quality/TCA primitives for implementation shortfall, arrival and
   decision slippage, adverse selection, trade-through, and fill-quality score
 - liquidity/depth primitives for top-of-book depth, multi-level depth,
-  proportional imbalance, depth slope, and sweepability
+  proportional imbalance, order-flow imbalance, depth slope, depth convexity,
+  book pressure, replenishment/depletion rates, drought detection, and
+  sweepability
 - market-impact primitives for Kyle-style lambda and Amihud-style illiquidity
 - VPIN-style fixed-bucket toxicity primitives
 - fixed-window volatility/noise primitives and threshold-based regime

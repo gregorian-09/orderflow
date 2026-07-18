@@ -13,6 +13,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `of_analytics` execution-quality/TCA primitives for implementation
   shortfall, arrival and decision slippage, adverse selection, trade-through,
   and fill-quality scoring.
+- Hardened `of_analytics` liquidity/depth analytics with depth convexity,
+  book-pressure, target sweepability scores, order-flow imbalance,
+  replenishment/depletion rates, and liquidity-drought detection.
 - Added `of_analytics` market-impact and VPIN-style toxicity primitives with
   Kyle-style lambda, Amihud-style illiquidity, fixed-capacity VPIN buckets, and
   deterministic integer-scaled snapshots.

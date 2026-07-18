@@ -698,6 +698,10 @@ Public market-quality and liquidity types:
 - `ExecutionQualityAnalyzer`
 - `LiquidityDepthSnapshot`
 - `LiquidityDepthAnalyzer`
+- `LiquidityFlowEvent`
+- `LiquidityFlowConfig`
+- `LiquidityFlowSnapshot`
+- `LiquidityFlowTracker`
 - `ImpactSample`
 - `ImpactSnapshot`
 - `ImpactTracker`
