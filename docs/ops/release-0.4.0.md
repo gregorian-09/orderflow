@@ -79,7 +79,9 @@ registry dependency after `of_fix 0.1.0` is published.
   venue-liquidity, toxicity, fill-quality, reliability, route-quality, drift,
   and degradation diagnostics
 - cross-asset primitives for rolling correlation, beta, pair divergence,
-  thresholded basis pressure, and correlation-breakdown diagnostics
+  thresholded basis pressure, latency-adjusted correlation, cross-venue
+  divergence, ETF/component imbalance, and relationship-degradation
+  diagnostics
 - derivatives primitives for put/call pressure, volume/open-interest anomaly,
   implied-volatility flow, gamma exposure, futures basis, roll pressure, and
   funding divergence

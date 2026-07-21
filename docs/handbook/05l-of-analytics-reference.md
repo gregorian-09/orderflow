@@ -185,6 +185,10 @@ Cross asset:
 - `CrossAssetConfig`
 - `CrossAssetSnapshot`
 - `CrossAssetTracker`
+- `CrossAssetDiagnosticConfig`
+- `CrossAssetDiagnosticInput`
+- `CrossAssetDiagnosticSnapshot`
+- `CrossAssetDiagnosticAnalyzer`
 
 Derivatives:
 
@@ -829,17 +833,31 @@ cross-asset relationships can change quickly, so production users should
 calibrate windows and thresholds out of sample before using them in live risk
 or routing decisions.
 
+`CrossAssetDiagnosticAnalyzer` adds an opt-in second-stage diagnostic for
+production routing and strategy monitoring. It combines the tracker snapshot
+with caller-owned event timestamps, cross-venue divergence, and ETF/component
+imbalance. The output includes sample skew, synchronization quality,
+latency-adjusted correlation, aggregate divergence pressure, cross-venue and
+component flags, and a relationship-degraded flag.
+
 ```rust
-use of_analytics::{CrossAssetConfig, CrossAssetSample, CrossAssetTracker};
+use of_analytics::{
+    CrossAssetConfig, CrossAssetDiagnosticAnalyzer, CrossAssetDiagnosticInput,
+    CrossAssetSample, CrossAssetTracker,
+};
 
 let mut tracker = CrossAssetTracker::<8>::new(CrossAssetConfig::default())?;
 tracker.on_sample(CrossAssetSample::new(100_000, 200_000, 1)?);
 tracker.on_sample(CrossAssetSample::new(101_000, 202_000, 2)?);
 tracker.on_sample(CrossAssetSample::new(102_000, 204_000, 3)?);
 let snapshot = tracker.snapshot();
+let diagnostic = CrossAssetDiagnosticAnalyzer::default().evaluate(
+    CrossAssetDiagnosticInput::new(snapshot, 1_000_000, 1_100_000, 5, 100)?,
+);
 
 assert!(snapshot.correlation_bps() > 0);
 assert!(snapshot.lead_lag_score_bps() > 0);
+assert!(diagnostic.synchronization_quality_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

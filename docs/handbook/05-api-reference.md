@@ -789,6 +789,10 @@ Public market-quality and liquidity types:
 - `CrossAssetConfig`
 - `CrossAssetSnapshot`
 - `CrossAssetTracker`
+- `CrossAssetDiagnosticConfig`
+- `CrossAssetDiagnosticInput`
+- `CrossAssetDiagnosticSnapshot`
+- `CrossAssetDiagnosticAnalyzer`
 - `OptionKind`
 - `OptionFlowSample`
 - `OptionFlowSnapshot`

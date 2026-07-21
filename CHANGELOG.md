@@ -57,8 +57,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   latency, route-health, venue-liquidity, toxicity, fill-quality, reliability,
   route-quality, drift, and degradation diagnostics.
 - Added `of_analytics` cross-asset analytics for rolling correlation, beta,
-  pair divergence, thresholded basis pressure, and correlation-breakdown
-  diagnostics.
+  pair divergence, thresholded basis pressure, latency-adjusted correlation,
+  cross-venue divergence, ETF/component imbalance, and
+  relationship-degradation diagnostics.
 - Added `of_analytics` derivatives analytics for put/call pressure,
   volume/open-interest anomaly, implied-volatility flow, gamma exposure,
   futures basis, roll pressure, and funding divergence.

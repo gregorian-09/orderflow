@@ -6360,6 +6360,278 @@ impl<const N: usize> CrossAssetTracker<N> {
     }
 }
 
+/// Cross-asset diagnostic thresholds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CrossAssetDiagnosticConfig {
+    min_latency_adjusted_correlation_bps: u16,
+    aggregate_divergence_threshold_bps: u16,
+    cross_venue_divergence_threshold_bps: u16,
+    component_imbalance_threshold_bps: u16,
+    max_sample_skew_ns: u64,
+    min_sync_quality_bps: u16,
+}
+
+impl CrossAssetDiagnosticConfig {
+    /// Creates cross-asset diagnostic thresholds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidCrossAsset`] when basis-point
+    /// thresholds exceed 10,000 or maximum sample skew is zero.
+    pub const fn new(
+        min_latency_adjusted_correlation_bps: u16,
+        aggregate_divergence_threshold_bps: u16,
+        cross_venue_divergence_threshold_bps: u16,
+        component_imbalance_threshold_bps: u16,
+        max_sample_skew_ns: u64,
+        min_sync_quality_bps: u16,
+    ) -> Result<Self, AnalyticsError> {
+        if min_latency_adjusted_correlation_bps > 10_000
+            || aggregate_divergence_threshold_bps > 10_000
+            || cross_venue_divergence_threshold_bps > 10_000
+            || component_imbalance_threshold_bps > 10_000
+            || max_sample_skew_ns == 0
+            || min_sync_quality_bps > 10_000
+        {
+            return Err(AnalyticsError::InvalidCrossAsset);
+        }
+        Ok(Self {
+            min_latency_adjusted_correlation_bps,
+            aggregate_divergence_threshold_bps,
+            cross_venue_divergence_threshold_bps,
+            component_imbalance_threshold_bps,
+            max_sample_skew_ns,
+            min_sync_quality_bps,
+        })
+    }
+
+    /// Returns minimum latency-adjusted absolute correlation in basis points.
+    pub const fn min_latency_adjusted_correlation_bps(&self) -> u16 {
+        self.min_latency_adjusted_correlation_bps
+    }
+
+    /// Returns aggregate divergence threshold in basis points.
+    pub const fn aggregate_divergence_threshold_bps(&self) -> u16 {
+        self.aggregate_divergence_threshold_bps
+    }
+
+    /// Returns cross-venue divergence threshold in basis points.
+    pub const fn cross_venue_divergence_threshold_bps(&self) -> u16 {
+        self.cross_venue_divergence_threshold_bps
+    }
+
+    /// Returns ETF/component imbalance threshold in basis points.
+    pub const fn component_imbalance_threshold_bps(&self) -> u16 {
+        self.component_imbalance_threshold_bps
+    }
+
+    /// Returns maximum acceptable sample timestamp skew in nanoseconds.
+    pub const fn max_sample_skew_ns(&self) -> u64 {
+        self.max_sample_skew_ns
+    }
+
+    /// Returns minimum synchronization quality in basis points.
+    pub const fn min_sync_quality_bps(&self) -> u16 {
+        self.min_sync_quality_bps
+    }
+}
+
+impl Default for CrossAssetDiagnosticConfig {
+    fn default() -> Self {
+        Self {
+            min_latency_adjusted_correlation_bps: 2_000,
+            aggregate_divergence_threshold_bps: 250,
+            cross_venue_divergence_threshold_bps: 25,
+            component_imbalance_threshold_bps: 1_000,
+            max_sample_skew_ns: 1_000_000,
+            min_sync_quality_bps: 5_000,
+        }
+    }
+}
+
+/// Cross-asset diagnostic input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CrossAssetDiagnosticInput {
+    snapshot: CrossAssetSnapshot,
+    leader_event_ts_ns: u64,
+    follower_event_ts_ns: u64,
+    cross_venue_divergence_bps: i32,
+    component_imbalance_bps: i32,
+}
+
+impl CrossAssetDiagnosticInput {
+    /// Creates cross-asset diagnostic input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidCrossAsset`] when either event
+    /// timestamp is zero.
+    pub const fn new(
+        snapshot: CrossAssetSnapshot,
+        leader_event_ts_ns: u64,
+        follower_event_ts_ns: u64,
+        cross_venue_divergence_bps: i32,
+        component_imbalance_bps: i32,
+    ) -> Result<Self, AnalyticsError> {
+        if leader_event_ts_ns == 0 || follower_event_ts_ns == 0 {
+            return Err(AnalyticsError::InvalidCrossAsset);
+        }
+        Ok(Self {
+            snapshot,
+            leader_event_ts_ns,
+            follower_event_ts_ns,
+            cross_venue_divergence_bps,
+            component_imbalance_bps,
+        })
+    }
+
+    /// Returns the base cross-asset tracker snapshot.
+    pub const fn snapshot(&self) -> CrossAssetSnapshot {
+        self.snapshot
+    }
+
+    /// Returns leader event timestamp in nanoseconds.
+    pub const fn leader_event_ts_ns(&self) -> u64 {
+        self.leader_event_ts_ns
+    }
+
+    /// Returns follower event timestamp in nanoseconds.
+    pub const fn follower_event_ts_ns(&self) -> u64 {
+        self.follower_event_ts_ns
+    }
+
+    /// Returns signed cross-venue divergence in basis points.
+    pub const fn cross_venue_divergence_bps(&self) -> i32 {
+        self.cross_venue_divergence_bps
+    }
+
+    /// Returns signed ETF/component imbalance in basis points.
+    pub const fn component_imbalance_bps(&self) -> i32 {
+        self.component_imbalance_bps
+    }
+}
+
+/// Cross-asset diagnostic snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CrossAssetDiagnosticSnapshot {
+    sample_skew_ns: u64,
+    synchronization_quality_bps: u16,
+    latency_adjusted_correlation_bps: i32,
+    cross_venue_divergence_bps: i32,
+    component_imbalance_bps: i32,
+    aggregate_divergence_score_bps: u16,
+    cross_venue_divergence: bool,
+    component_imbalance: bool,
+    relationship_degraded: bool,
+}
+
+impl CrossAssetDiagnosticSnapshot {
+    /// Returns absolute sample timestamp skew in nanoseconds.
+    pub const fn sample_skew_ns(&self) -> u64 {
+        self.sample_skew_ns
+    }
+
+    /// Returns synchronization quality in basis points.
+    pub const fn synchronization_quality_bps(&self) -> u16 {
+        self.synchronization_quality_bps
+    }
+
+    /// Returns signed latency-adjusted correlation in basis points.
+    pub const fn latency_adjusted_correlation_bps(&self) -> i32 {
+        self.latency_adjusted_correlation_bps
+    }
+
+    /// Returns signed cross-venue divergence in basis points.
+    pub const fn cross_venue_divergence_bps(&self) -> i32 {
+        self.cross_venue_divergence_bps
+    }
+
+    /// Returns signed ETF/component imbalance in basis points.
+    pub const fn component_imbalance_bps(&self) -> i32 {
+        self.component_imbalance_bps
+    }
+
+    /// Returns aggregate divergence score in basis points.
+    pub const fn aggregate_divergence_score_bps(&self) -> u16 {
+        self.aggregate_divergence_score_bps
+    }
+
+    /// Returns true when cross-venue divergence exceeds threshold.
+    pub const fn cross_venue_divergence(&self) -> bool {
+        self.cross_venue_divergence
+    }
+
+    /// Returns true when ETF/component imbalance exceeds threshold.
+    pub const fn component_imbalance(&self) -> bool {
+        self.component_imbalance
+    }
+
+    /// Returns true when the relationship is degraded.
+    pub const fn relationship_degraded(&self) -> bool {
+        self.relationship_degraded
+    }
+}
+
+/// Deterministic cross-asset diagnostic analyzer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CrossAssetDiagnosticAnalyzer {
+    config: CrossAssetDiagnosticConfig,
+}
+
+impl CrossAssetDiagnosticAnalyzer {
+    /// Creates a cross-asset diagnostic analyzer.
+    pub const fn new(config: CrossAssetDiagnosticConfig) -> Self {
+        Self { config }
+    }
+
+    /// Returns analyzer configuration.
+    pub const fn config(&self) -> CrossAssetDiagnosticConfig {
+        self.config
+    }
+
+    /// Evaluates cross-asset synchronization, divergence, and degradation.
+    pub fn evaluate(&self, input: CrossAssetDiagnosticInput) -> CrossAssetDiagnosticSnapshot {
+        let sample_skew = abs_diff_u64(input.leader_event_ts_ns(), input.follower_event_ts_ns());
+        let sync_quality = latency_quality_bps(sample_skew, self.config.max_sample_skew_ns());
+        let latency_adjusted_correlation =
+            signed_scaled_bps(input.snapshot().correlation_bps(), sync_quality);
+        let cross_venue_score = bounded_abs_bps(input.cross_venue_divergence_bps());
+        let component_score = bounded_abs_bps(input.component_imbalance_bps());
+        let aggregate_divergence = average_score(&[
+            bounded_abs_bps(input.snapshot().pair_divergence_bps()),
+            bounded_abs_bps(input.snapshot().basis_pressure_bps()),
+            cross_venue_score,
+            component_score,
+        ]);
+        let cross_venue_divergence =
+            cross_venue_score >= self.config.cross_venue_divergence_threshold_bps();
+        let component_imbalance =
+            component_score >= self.config.component_imbalance_threshold_bps();
+        let relationship_degraded = input.snapshot().correlation_breakdown()
+            || latency_adjusted_correlation.unsigned_abs()
+                < u32::from(self.config.min_latency_adjusted_correlation_bps())
+            || aggregate_divergence >= self.config.aggregate_divergence_threshold_bps()
+            || sync_quality < self.config.min_sync_quality_bps();
+        CrossAssetDiagnosticSnapshot {
+            sample_skew_ns: sample_skew,
+            synchronization_quality_bps: sync_quality,
+            latency_adjusted_correlation_bps: latency_adjusted_correlation,
+            cross_venue_divergence_bps: input.cross_venue_divergence_bps(),
+            component_imbalance_bps: input.component_imbalance_bps(),
+            aggregate_divergence_score_bps: aggregate_divergence,
+            cross_venue_divergence,
+            component_imbalance,
+            relationship_degraded,
+        }
+    }
+}
+
+impl Default for CrossAssetDiagnosticAnalyzer {
+    fn default() -> Self {
+        Self::new(CrossAssetDiagnosticConfig::default())
+    }
+}
+
 /// Option contract kind.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -7310,6 +7582,24 @@ fn route_reliability_bps(snapshot: VenueRouteSnapshot, config: VenueRouteQuality
     fill_component
         .saturating_sub(reject_penalty / 2)
         .saturating_sub(cancel_penalty / 4)
+}
+
+fn abs_diff_u64(left: u64, right: u64) -> u64 {
+    left.abs_diff(right)
+}
+
+fn bounded_abs_bps(value: i32) -> u16 {
+    u16::try_from(value.unsigned_abs().min(10_000)).unwrap_or(10_000)
+}
+
+fn signed_scaled_bps(value_bps: i32, scale_bps: u16) -> i32 {
+    i32::try_from((i128::from(value_bps) * i128::from(scale_bps)) / 10_000).unwrap_or_else(|_| {
+        if value_bps.is_negative() {
+            i32::MIN
+        } else {
+            i32::MAX
+        }
+    })
 }
 
 fn ratio_i64_to_u32(numerator: i64, denominator: i64) -> u32 {
@@ -8460,6 +8750,68 @@ mod tests {
         assert_eq!(reset.samples(), 0);
         assert_eq!(reset.last_ts_ns(), 0);
         assert_eq!(reset.correlation_bps(), 0);
+    }
+
+    #[test]
+    fn cross_asset_diagnostics_score_synchronized_relationship() {
+        let mut tracker =
+            CrossAssetTracker::<4>::new(CrossAssetConfig::default()).expect("tracker");
+        tracker.on_sample(CrossAssetSample::new(100_000, 100_100, 1).unwrap());
+        tracker.on_sample(CrossAssetSample::new(101_000, 101_100, 2).unwrap());
+        tracker.on_sample(CrossAssetSample::new(102_000, 102_100, 3).unwrap());
+
+        let diagnostic = CrossAssetDiagnosticAnalyzer::default().evaluate(
+            CrossAssetDiagnosticInput::new(tracker.snapshot(), 1_000_000, 1_100_000, 5, 100)
+                .expect("input"),
+        );
+
+        assert_eq!(diagnostic.sample_skew_ns(), 100_000);
+        assert!(diagnostic.synchronization_quality_bps() > 8_000);
+        assert!(diagnostic.latency_adjusted_correlation_bps() > 8_000);
+        assert!(!diagnostic.cross_venue_divergence());
+        assert!(!diagnostic.component_imbalance());
+        assert!(!diagnostic.relationship_degraded());
+    }
+
+    #[test]
+    fn cross_asset_diagnostics_detect_degraded_relationship() {
+        let config = CrossAssetConfig::new(50, 25, 2_000).expect("config");
+        let mut tracker = CrossAssetTracker::<4>::new(config).expect("tracker");
+        tracker.on_sample(CrossAssetSample::new(100_000, 100_000, 1).unwrap());
+        tracker.on_sample(CrossAssetSample::new(101_000, 99_000, 2).unwrap());
+        tracker.on_sample(CrossAssetSample::new(102_000, 98_000, 3).unwrap());
+
+        let diagnostic = CrossAssetDiagnosticAnalyzer::default().evaluate(
+            CrossAssetDiagnosticInput::new(tracker.snapshot(), 1_000_000, 3_000_000, 100, 2_000)
+                .expect("input"),
+        );
+
+        assert_eq!(diagnostic.synchronization_quality_bps(), 0);
+        assert_eq!(diagnostic.latency_adjusted_correlation_bps(), 0);
+        assert!(diagnostic.cross_venue_divergence());
+        assert!(diagnostic.component_imbalance());
+        assert!(diagnostic.aggregate_divergence_score_bps() >= 250);
+        assert!(diagnostic.relationship_degraded());
+    }
+
+    #[test]
+    fn cross_asset_diagnostics_reject_invalid_inputs() {
+        let snapshot = CrossAssetTracker::<2>::new(CrossAssetConfig::default())
+            .expect("tracker")
+            .snapshot();
+
+        assert_eq!(
+            CrossAssetDiagnosticConfig::new(10_001, 250, 25, 1_000, 1, 5_000),
+            Err(AnalyticsError::InvalidCrossAsset)
+        );
+        assert_eq!(
+            CrossAssetDiagnosticConfig::new(2_000, 250, 25, 1_000, 0, 5_000),
+            Err(AnalyticsError::InvalidCrossAsset)
+        );
+        assert_eq!(
+            CrossAssetDiagnosticInput::new(snapshot, 0, 1, 0, 0),
+            Err(AnalyticsError::InvalidCrossAsset)
+        );
     }
 
     #[test]

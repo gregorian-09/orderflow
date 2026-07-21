@@ -51,7 +51,9 @@ The first foundation is dependency-light:
   venue-liquidity, toxicity, fill-quality, reliability, route-quality, drift,
   and degradation diagnostics,
 - cross-asset primitives for rolling correlation, beta, pair divergence,
-  thresholded basis pressure, and correlation-breakdown diagnostics,
+  thresholded basis pressure, latency-adjusted correlation, cross-venue
+  divergence, ETF/component imbalance, and relationship-degradation
+  diagnostics,
 - derivatives primitives for put/call pressure, volume/open-interest anomaly,
   implied-volatility flow, gamma exposure, futures basis, roll pressure, and
   funding divergence,
@@ -456,16 +458,23 @@ assert!(!quality.route_degraded());
 ## Cross-Asset Example
 
 ```rust
-use of_analytics::{CrossAssetConfig, CrossAssetSample, CrossAssetTracker};
+use of_analytics::{
+    CrossAssetConfig, CrossAssetDiagnosticAnalyzer, CrossAssetDiagnosticInput,
+    CrossAssetSample, CrossAssetTracker,
+};
 
 let mut tracker = CrossAssetTracker::<8>::new(CrossAssetConfig::default())?;
 tracker.on_sample(CrossAssetSample::new(100_000, 200_000, 1)?);
 tracker.on_sample(CrossAssetSample::new(101_000, 202_000, 2)?);
 tracker.on_sample(CrossAssetSample::new(102_000, 204_000, 3)?);
 let snapshot = tracker.snapshot();
+let diagnostic = CrossAssetDiagnosticAnalyzer::default().evaluate(
+    CrossAssetDiagnosticInput::new(snapshot, 1_000_000, 1_100_000, 5, 100)?,
+);
 
 assert!(snapshot.correlation_bps() > 0);
 assert!(snapshot.lead_lag_score_bps() > 0);
+assert!(diagnostic.synchronization_quality_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
