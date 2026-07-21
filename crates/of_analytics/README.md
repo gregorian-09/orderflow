@@ -42,7 +42,8 @@ The first foundation is dependency-light:
 - resiliency primitives for threshold-based spread/depth shock detection,
   recovery timing, and liquidity resiliency scoring,
 - queue/fill primitives for passive queue position estimates, fill
-  probability, expected time-to-fill, amend queue loss, and maker/taker scoring,
+  probability, expected time-to-fill, amend queue loss, top-level survival,
+  cancel/replace cost, and maker/taker decision scoring,
 - pattern-risk primitives for spoofing/layering, quote-stuffing, stop-run,
   absorption, momentum-ignition, iceberg, hidden accumulation/distribution,
   stacked-imbalance, and failed-breakout risk indicators,
@@ -361,6 +362,7 @@ assert_eq!(recovered.last_recovery_time_ns(), 1_000_000);
 
 ```rust
 use of_analytics::{
+    QueueDecisionAnalyzer, QueueDecisionConfig, QueueDecisionInput,
     QueueFillConfig, QueueFillTracker, QueueFillUpdate, QueuePositionEstimate,
     QueueUpdateKind,
 };
@@ -378,6 +380,22 @@ let snapshot = tracker.on_update(QueueFillUpdate::new(
 
 assert_eq!(snapshot.qty_ahead(), 60);
 assert!(snapshot.fill_probability_bps() > 0);
+
+let decision = QueueDecisionAnalyzer::new(
+    QueueDecisionConfig::new(5_000, 5_000, 10_000_000_000)?,
+)
+.evaluate(QueueDecisionInput::new(
+    snapshot,
+    10,
+    5,
+    1,
+    2,
+    1,
+    1_000,
+    0,
+    0,
+)?);
+assert!(decision.maker_taker_decision_score_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

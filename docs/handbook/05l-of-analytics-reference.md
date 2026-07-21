@@ -151,6 +151,10 @@ Queue and fill:
 - `QueueFillUpdate`
 - `QueueFillSnapshot`
 - `QueueFillTracker`
+- `QueueDecisionConfig`
+- `QueueDecisionInput`
+- `QueueDecisionSnapshot`
+- `QueueDecisionAnalyzer`
 
 Pattern risk:
 
@@ -669,8 +673,16 @@ The snapshot reports:
 - top-level survival proxy,
 - latest update timestamp.
 
+`QueueDecisionAnalyzer` evaluates the queue snapshot against explicit economics:
+spread, passive price improvement, maker rebate, taker fee, adverse-selection
+cost, urgency, replacement price improvement, and replacement queue loss. It
+reports passive edge, aggressive cost, wait penalty, priority loss,
+cancel/replace cost, maker/taker decision score, and passive/replace
+preferences.
+
 ```rust
 use of_analytics::{
+    QueueDecisionAnalyzer, QueueDecisionConfig, QueueDecisionInput,
     QueueFillConfig, QueueFillTracker, QueueFillUpdate, QueuePositionEstimate,
     QueueUpdateKind,
 };
@@ -688,6 +700,22 @@ let snapshot = tracker.on_update(QueueFillUpdate::new(
 
 assert_eq!(snapshot.qty_ahead(), 60);
 assert!(snapshot.fill_probability_bps() > 0);
+
+let decision = QueueDecisionAnalyzer::new(
+    QueueDecisionConfig::new(5_000, 5_000, 10_000_000_000)?,
+)
+.evaluate(QueueDecisionInput::new(
+    snapshot,
+    10,
+    5,
+    1,
+    2,
+    1,
+    1_000,
+    0,
+    0,
+)?);
+assert!(decision.maker_taker_decision_score_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

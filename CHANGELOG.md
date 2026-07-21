@@ -31,6 +31,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Hardened `of_analytics` pattern-risk analytics with iceberg/hidden-refresh,
   hidden accumulation/distribution, stacked-imbalance, absorption-strength, and
   failed-breakout diagnostics.
+- Hardened `of_analytics` queue/fill analytics with cancel/replace cost,
+  priority-loss, wait-penalty, passive-edge, aggressive-cost, and maker/taker
+  decision primitives.
 - Added `of_analytics` market-impact and VPIN-style toxicity primitives with
   Kyle-style lambda, Amihud-style illiquidity, fixed-capacity VPIN buckets, and
   deterministic integer-scaled snapshots.

@@ -764,6 +764,10 @@ Public market-quality and liquidity types:
 - `QueueFillUpdate`
 - `QueueFillSnapshot`
 - `QueueFillTracker`
+- `QueueDecisionConfig`
+- `QueueDecisionInput`
+- `QueueDecisionSnapshot`
+- `QueueDecisionAnalyzer`
 - `PatternRiskInput`
 - `PatternRiskLiquidity`
 - `PatternRiskConfig`

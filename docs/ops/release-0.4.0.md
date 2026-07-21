@@ -70,7 +70,8 @@ registry dependency after `of_fix 0.1.0` is published.
 - resiliency primitives for threshold-based spread/depth shock detection,
   recovery timing, and liquidity resiliency scoring
 - queue/fill primitives for passive queue position estimates, fill
-  probability, expected time-to-fill, amend queue loss, and maker/taker scoring
+  probability, expected time-to-fill, amend queue loss, top-level survival,
+  cancel/replace cost, and maker/taker decision scoring
 - pattern-risk primitives for spoofing/layering, quote-stuffing, stop-run,
   absorption, momentum-ignition, iceberg, hidden accumulation/distribution,
   stacked-imbalance, and failed-breakout risk indicators

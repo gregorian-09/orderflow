@@ -4592,6 +4592,286 @@ impl QueueFillTracker {
     }
 }
 
+/// Queue decision thresholds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueDecisionConfig {
+    min_fill_probability_bps: u16,
+    min_top_level_survival_bps: u16,
+    max_wait_ns: u64,
+}
+
+impl QueueDecisionConfig {
+    /// Creates queue decision thresholds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidQueue`] when basis-point thresholds
+    /// exceed 10,000 or the maximum wait is zero.
+    pub const fn new(
+        min_fill_probability_bps: u16,
+        min_top_level_survival_bps: u16,
+        max_wait_ns: u64,
+    ) -> Result<Self, AnalyticsError> {
+        if min_fill_probability_bps > 10_000
+            || min_top_level_survival_bps > 10_000
+            || max_wait_ns == 0
+        {
+            return Err(AnalyticsError::InvalidQueue);
+        }
+        Ok(Self {
+            min_fill_probability_bps,
+            min_top_level_survival_bps,
+            max_wait_ns,
+        })
+    }
+
+    /// Returns minimum passive fill probability in basis points.
+    pub const fn min_fill_probability_bps(&self) -> u16 {
+        self.min_fill_probability_bps
+    }
+
+    /// Returns minimum top-level survival probability in basis points.
+    pub const fn min_top_level_survival_bps(&self) -> u16 {
+        self.min_top_level_survival_bps
+    }
+
+    /// Returns maximum acceptable passive wait in nanoseconds.
+    pub const fn max_wait_ns(&self) -> u64 {
+        self.max_wait_ns
+    }
+}
+
+impl Default for QueueDecisionConfig {
+    fn default() -> Self {
+        Self {
+            min_fill_probability_bps: 5_000,
+            min_top_level_survival_bps: 5_000,
+            max_wait_ns: 1_000_000_000,
+        }
+    }
+}
+
+/// Queue decision economics and replacement context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueDecisionInput {
+    snapshot: QueueFillSnapshot,
+    spread_bps: u32,
+    price_improvement_bps: u32,
+    maker_rebate_bps: u32,
+    taker_fee_bps: u32,
+    adverse_selection_bps: u32,
+    urgency_bps: u16,
+    replace_price_improvement_bps: u32,
+    replace_queue_loss_qty: i64,
+}
+
+impl QueueDecisionInput {
+    /// Creates queue decision input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidQueue`] when urgency exceeds 10,000
+    /// basis points or replacement queue loss is negative.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn new(
+        snapshot: QueueFillSnapshot,
+        spread_bps: u32,
+        price_improvement_bps: u32,
+        maker_rebate_bps: u32,
+        taker_fee_bps: u32,
+        adverse_selection_bps: u32,
+        urgency_bps: u16,
+        replace_price_improvement_bps: u32,
+        replace_queue_loss_qty: i64,
+    ) -> Result<Self, AnalyticsError> {
+        if urgency_bps > 10_000 || replace_queue_loss_qty < 0 {
+            return Err(AnalyticsError::InvalidQueue);
+        }
+        Ok(Self {
+            snapshot,
+            spread_bps,
+            price_improvement_bps,
+            maker_rebate_bps,
+            taker_fee_bps,
+            adverse_selection_bps,
+            urgency_bps,
+            replace_price_improvement_bps,
+            replace_queue_loss_qty,
+        })
+    }
+
+    /// Returns queue/fill snapshot.
+    pub const fn snapshot(&self) -> QueueFillSnapshot {
+        self.snapshot
+    }
+
+    /// Returns current spread in basis points.
+    pub const fn spread_bps(&self) -> u32 {
+        self.spread_bps
+    }
+
+    /// Returns passive price-improvement benefit in basis points.
+    pub const fn price_improvement_bps(&self) -> u32 {
+        self.price_improvement_bps
+    }
+
+    /// Returns maker rebate benefit in basis points.
+    pub const fn maker_rebate_bps(&self) -> u32 {
+        self.maker_rebate_bps
+    }
+
+    /// Returns taker fee cost in basis points.
+    pub const fn taker_fee_bps(&self) -> u32 {
+        self.taker_fee_bps
+    }
+
+    /// Returns passive adverse-selection cost in basis points.
+    pub const fn adverse_selection_bps(&self) -> u32 {
+        self.adverse_selection_bps
+    }
+
+    /// Returns execution urgency in basis points.
+    pub const fn urgency_bps(&self) -> u16 {
+        self.urgency_bps
+    }
+
+    /// Returns replacement price-improvement benefit in basis points.
+    pub const fn replace_price_improvement_bps(&self) -> u32 {
+        self.replace_price_improvement_bps
+    }
+
+    /// Returns estimated replacement queue loss quantity.
+    pub const fn replace_queue_loss_qty(&self) -> i64 {
+        self.replace_queue_loss_qty
+    }
+}
+
+/// Queue decision snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueDecisionSnapshot {
+    passive_edge_bps: i32,
+    aggressive_cost_bps: u32,
+    expected_wait_penalty_bps: u16,
+    queue_priority_loss_bps: u16,
+    cancel_replace_cost_bps: i32,
+    maker_taker_decision_score_bps: u16,
+    prefer_passive: bool,
+    prefer_replace: bool,
+}
+
+impl QueueDecisionSnapshot {
+    /// Returns passive edge estimate in basis points.
+    pub const fn passive_edge_bps(&self) -> i32 {
+        self.passive_edge_bps
+    }
+
+    /// Returns aggressive execution cost estimate in basis points.
+    pub const fn aggressive_cost_bps(&self) -> u32 {
+        self.aggressive_cost_bps
+    }
+
+    /// Returns passive wait penalty in basis points.
+    pub const fn expected_wait_penalty_bps(&self) -> u16 {
+        self.expected_wait_penalty_bps
+    }
+
+    /// Returns queue priority loss from replacement in basis points.
+    pub const fn queue_priority_loss_bps(&self) -> u16 {
+        self.queue_priority_loss_bps
+    }
+
+    /// Returns cancel/replace cost estimate in basis points.
+    pub const fn cancel_replace_cost_bps(&self) -> i32 {
+        self.cancel_replace_cost_bps
+    }
+
+    /// Returns maker-versus-taker decision score in basis points.
+    pub const fn maker_taker_decision_score_bps(&self) -> u16 {
+        self.maker_taker_decision_score_bps
+    }
+
+    /// Returns whether passive execution is preferred.
+    pub const fn prefer_passive(&self) -> bool {
+        self.prefer_passive
+    }
+
+    /// Returns whether cancel/replace is preferred over keeping queue priority.
+    pub const fn prefer_replace(&self) -> bool {
+        self.prefer_replace
+    }
+}
+
+/// Deterministic queue decision analyzer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueDecisionAnalyzer {
+    config: QueueDecisionConfig,
+}
+
+impl QueueDecisionAnalyzer {
+    /// Creates a queue decision analyzer.
+    pub const fn new(config: QueueDecisionConfig) -> Self {
+        Self { config }
+    }
+
+    /// Returns analyzer configuration.
+    pub const fn config(&self) -> QueueDecisionConfig {
+        self.config
+    }
+
+    /// Evaluates passive, aggressive, and replacement queue trade-offs.
+    pub fn evaluate(&self, input: QueueDecisionInput) -> QueueDecisionSnapshot {
+        let snapshot = input.snapshot();
+        let wait_penalty = wait_penalty_bps(
+            snapshot.expected_time_to_fill_ns(),
+            self.config.max_wait_ns(),
+            input.urgency_bps(),
+        );
+        let queue_priority_loss =
+            queue_priority_loss_bps(input.replace_queue_loss_qty(), snapshot.total_queue_qty());
+        let passive_edge = i32::try_from(
+            input
+                .spread_bps()
+                .saturating_add(input.price_improvement_bps())
+                .saturating_add(input.maker_rebate_bps()),
+        )
+        .unwrap_or(i32::MAX)
+        .saturating_sub(i32::try_from(input.adverse_selection_bps()).unwrap_or(i32::MAX))
+        .saturating_sub(i32::from(wait_penalty));
+        let aggressive_cost = input.taker_fee_bps().saturating_add(input.spread_bps() / 2);
+        let cancel_replace_cost = i32::from(queue_priority_loss)
+            .saturating_add(i32::from(wait_penalty))
+            .saturating_sub(
+                i32::try_from(input.replace_price_improvement_bps()).unwrap_or(i32::MAX),
+            );
+        let decision_score = maker_taker_score_bps(
+            passive_edge,
+            aggressive_cost,
+            snapshot.fill_probability_bps(),
+            snapshot.top_level_survival_bps(),
+            input.urgency_bps(),
+        );
+        let prefer_passive = decision_score >= 5_000
+            && snapshot.fill_probability_bps() >= self.config.min_fill_probability_bps()
+            && snapshot.top_level_survival_bps() >= self.config.min_top_level_survival_bps();
+        QueueDecisionSnapshot {
+            passive_edge_bps: passive_edge,
+            aggressive_cost_bps: aggressive_cost,
+            expected_wait_penalty_bps: wait_penalty,
+            queue_priority_loss_bps: queue_priority_loss,
+            cancel_replace_cost_bps: cancel_replace_cost,
+            maker_taker_decision_score_bps: decision_score,
+            prefer_passive,
+            prefer_replace: cancel_replace_cost < 0 && input.replace_price_improvement_bps() > 0,
+        }
+    }
+}
+
+impl Default for QueueDecisionAnalyzer {
+    fn default() -> Self {
+        Self::new(QueueDecisionConfig::default())
+    }
+}
+
 /// Pattern-risk liquidity summary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PatternRiskLiquidity {
@@ -6672,6 +6952,46 @@ fn score_ratio_i64(value: i64, threshold: i64) -> u16 {
         .unwrap_or(10_000)
 }
 
+fn wait_penalty_bps(expected_time_to_fill_ns: u64, max_wait_ns: u64, urgency_bps: u16) -> u16 {
+    if max_wait_ns == 0 || urgency_bps == 0 {
+        return 0;
+    }
+    let wait_ratio = if expected_time_to_fill_ns == u64::MAX {
+        10_000
+    } else {
+        u16::try_from(
+            ((u128::from(expected_time_to_fill_ns) * 10_000) / u128::from(max_wait_ns)).min(10_000),
+        )
+        .unwrap_or(10_000)
+    };
+    u16::try_from((u32::from(wait_ratio) * u32::from(urgency_bps)) / 10_000).unwrap_or(10_000)
+}
+
+fn queue_priority_loss_bps(replace_queue_loss_qty: i64, total_queue_qty: i64) -> u16 {
+    if replace_queue_loss_qty <= 0 || total_queue_qty <= 0 {
+        return 0;
+    }
+    u16::try_from(
+        ((i128::from(replace_queue_loss_qty) * 10_000) / i128::from(total_queue_qty)).min(10_000),
+    )
+    .unwrap_or(10_000)
+}
+
+fn maker_taker_score_bps(
+    passive_edge_bps: i32,
+    aggressive_cost_bps: u32,
+    fill_probability_bps: u16,
+    top_level_survival_bps: u16,
+    urgency_bps: u16,
+) -> u16 {
+    let delta = passive_edge_bps
+        .saturating_sub(i32::try_from(aggressive_cost_bps).unwrap_or(i32::MAX))
+        .saturating_add((i32::from(fill_probability_bps) - 5_000) / 2)
+        .saturating_add((i32::from(top_level_survival_bps) - 5_000) / 2)
+        .saturating_sub(i32::from(urgency_bps) / 2);
+    u16::try_from(5_000_i32.saturating_add(delta).clamp(0, 10_000)).unwrap_or(0)
+}
+
 fn ratio_i64_to_u32(numerator: i64, denominator: i64) -> u32 {
     if denominator <= 0 {
         return 0;
@@ -7515,6 +7835,81 @@ mod tests {
         assert_eq!(snapshot.queue_loss_after_amend(), 100);
         assert_eq!(snapshot.last_update_ts_ns(), 2);
         assert!(snapshot.maker_taker_score_bps() < 10_000);
+    }
+
+    #[test]
+    fn queue_decision_prefers_passive_when_queue_is_healthy() {
+        let fill_config = QueueFillConfig::new(5_000, 100, 1_000_000_000).expect("config");
+        let estimate = QueuePositionEstimate::new(10, 10, 100, 1).expect("estimate");
+        let snapshot = QueueFillTracker::new(fill_config, estimate).snapshot();
+        let analyzer = QueueDecisionAnalyzer::new(
+            QueueDecisionConfig::new(5_000, 5_000, 10_000_000_000).unwrap(),
+        );
+
+        let decision = analyzer.evaluate(
+            QueueDecisionInput::new(snapshot, 10, 5, 1, 2, 1, 1_000, 0, 0).expect("input"),
+        );
+
+        assert_eq!(decision.expected_wait_penalty_bps(), 20);
+        assert_eq!(decision.queue_priority_loss_bps(), 0);
+        assert!(decision.passive_edge_bps() < 10);
+        assert_eq!(decision.aggressive_cost_bps(), 7);
+        assert!(decision.maker_taker_decision_score_bps() > 5_000);
+        assert!(decision.prefer_passive());
+        assert!(!decision.prefer_replace());
+    }
+
+    #[test]
+    fn queue_decision_blocks_passive_when_fill_is_weak() {
+        let fill_config = QueueFillConfig::new(0, 10, 1_000_000_000).expect("config");
+        let estimate = QueuePositionEstimate::new(1_000, 100, 1_100, 1).expect("estimate");
+        let snapshot = QueueFillTracker::new(fill_config, estimate).snapshot();
+        let decision = QueueDecisionAnalyzer::default().evaluate(
+            QueueDecisionInput::new(snapshot, 1, 0, 0, 1, 100, 10_000, 0, 0).expect("input"),
+        );
+
+        assert!(decision.expected_wait_penalty_bps() > 0);
+        assert!(decision.maker_taker_decision_score_bps() < 5_000);
+        assert!(!decision.prefer_passive());
+    }
+
+    #[test]
+    fn queue_decision_prices_cancel_replace_priority_loss() {
+        let fill_config = QueueFillConfig::new(5_000, 100, 1_000_000_000).expect("config");
+        let estimate = QueuePositionEstimate::new(10, 10, 100, 1).expect("estimate");
+        let snapshot = QueueFillTracker::new(fill_config, estimate).snapshot();
+        let analyzer =
+            QueueDecisionAnalyzer::new(QueueDecisionConfig::new(0, 0, 10_000_000_000).unwrap());
+
+        let decision = analyzer.evaluate(
+            QueueDecisionInput::new(snapshot, 1, 0, 0, 1, 0, 1_000, 2_000, 10).expect("input"),
+        );
+
+        assert_eq!(decision.queue_priority_loss_bps(), 1_000);
+        assert!(decision.cancel_replace_cost_bps() < 0);
+        assert!(decision.prefer_replace());
+    }
+
+    #[test]
+    fn queue_decision_primitives_reject_invalid_inputs() {
+        let snapshot = QueueFillTracker::new(
+            QueueFillConfig::new(0, 1, 1).unwrap(),
+            QueuePositionEstimate::new(0, 1, 1, 1).unwrap(),
+        )
+        .snapshot();
+
+        assert_eq!(
+            QueueDecisionConfig::new(10_001, 0, 1),
+            Err(AnalyticsError::InvalidQueue)
+        );
+        assert_eq!(
+            QueueDecisionInput::new(snapshot, 0, 0, 0, 0, 0, 10_001, 0, 0),
+            Err(AnalyticsError::InvalidQueue)
+        );
+        assert_eq!(
+            QueueDecisionInput::new(snapshot, 0, 0, 0, 0, 0, 0, 0, -1),
+            Err(AnalyticsError::InvalidQueue)
+        );
     }
 
     #[test]
