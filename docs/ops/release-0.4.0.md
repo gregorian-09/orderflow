@@ -62,8 +62,8 @@ registry dependency after `of_fix 0.1.0` is published.
   liquidity, spread, session, hidden-liquidity, and transition-confidence
   labels
 - feed-quality primitives for sequence gaps, out-of-order events, duplicates,
-  stale events, locked/crossed books, timestamp skew, resets, and health
-  scoring
+  stale events, locked/crossed books, timestamp skew, resets, health scoring,
+  replay usability, primary issue selection, and operator review reports
 - feature-vector primitives for stable feature ids, ordered schemas, schema
   hashes, missing-value policy, quality labels, reusable fixed-capacity
   writers, and extractor contracts

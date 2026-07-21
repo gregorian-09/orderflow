@@ -744,6 +744,9 @@ Public market-quality and liquidity types:
 - `FeedQualityEvent`
 - `FeedQualitySnapshot`
 - `FeedQualityTracker`
+- `ReplayQualityConfig`
+- `ReplayQualityReport`
+- `ReplayQualityAnalyzer`
 - `FeatureId`
 - `FeatureUnit`
 - `FeatureQuality`

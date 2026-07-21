@@ -122,6 +122,9 @@ Feed quality:
 - `FeedQualityEvent`
 - `FeedQualitySnapshot`
 - `FeedQualityTracker`
+- `ReplayQualityConfig`
+- `ReplayQualityReport`
+- `ReplayQualityAnalyzer`
 
 Feature vectors:
 
@@ -550,9 +553,17 @@ The tracker reports:
 - event-rate metrics in basis points,
 - aggregate health score where 10,000 is best.
 
+`ReplayQualityAnalyzer` converts a `FeedQualitySnapshot` into a replay report
+with configured quality gates. The report keeps the original feed-quality flags
+and adds worst issue rate, primary issue, sequence completeness, replay
+usability, and operator-review decisions. It does not clean or reorder replay
+data; it only reports whether the captured stream is fit for deterministic
+analysis.
+
 ```rust
 use of_analytics::{
     FeedQualityConfig, FeedQualityEvent, FeedQualityFlags, FeedQualityTracker,
+    ReplayQualityAnalyzer,
 };
 
 let config = FeedQualityConfig::new(10, 20, 1)?;
@@ -578,6 +589,8 @@ assert!(flags.contains(FeedQualityFlags::SEQUENCE_GAP));
 assert!(flags.contains(FeedQualityFlags::LOCKED_BOOK));
 assert_eq!(snapshot.sequence_gap_events(), 1);
 assert!(snapshot.health_score_bps() < 10_000);
+let report = ReplayQualityAnalyzer::default().evaluate(snapshot);
+assert!(report.operator_review_required());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

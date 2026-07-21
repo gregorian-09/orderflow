@@ -3532,6 +3532,258 @@ impl Default for FeedQualityTracker {
     }
 }
 
+/// Replay-quality report thresholds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReplayQualityConfig {
+    min_events: u64,
+    min_health_score_bps: u16,
+    max_issue_rate_bps: u16,
+    max_sequence_gap_units: u64,
+}
+
+impl ReplayQualityConfig {
+    /// Creates replay-quality report thresholds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidQuality`] when basis-point thresholds
+    /// exceed 10,000.
+    pub const fn new(
+        min_events: u64,
+        min_health_score_bps: u16,
+        max_issue_rate_bps: u16,
+        max_sequence_gap_units: u64,
+    ) -> Result<Self, AnalyticsError> {
+        if min_health_score_bps > 10_000 || max_issue_rate_bps > 10_000 {
+            return Err(AnalyticsError::InvalidQuality);
+        }
+        Ok(Self {
+            min_events,
+            min_health_score_bps,
+            max_issue_rate_bps,
+            max_sequence_gap_units,
+        })
+    }
+
+    /// Returns minimum event count required for replay usability.
+    pub const fn min_events(&self) -> u64 {
+        self.min_events
+    }
+
+    /// Returns minimum health score in basis points.
+    pub const fn min_health_score_bps(&self) -> u16 {
+        self.min_health_score_bps
+    }
+
+    /// Returns maximum acceptable per-issue rate in basis points.
+    pub const fn max_issue_rate_bps(&self) -> u16 {
+        self.max_issue_rate_bps
+    }
+
+    /// Returns maximum acceptable missing sequence units.
+    pub const fn max_sequence_gap_units(&self) -> u64 {
+        self.max_sequence_gap_units
+    }
+}
+
+impl Default for ReplayQualityConfig {
+    fn default() -> Self {
+        Self {
+            min_events: 1,
+            min_health_score_bps: 9_000,
+            max_issue_rate_bps: 100,
+            max_sequence_gap_units: 0,
+        }
+    }
+}
+
+/// Replay-quality report derived from feed-quality counters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReplayQualityReport {
+    events: u64,
+    min_events_met: bool,
+    health_score_bps: u16,
+    sequence_gap_rate_bps: u16,
+    out_of_order_rate_bps: u16,
+    duplicate_rate_bps: u16,
+    stale_rate_bps: u16,
+    bad_book_rate_bps: u16,
+    timestamp_skew_rate_bps: u16,
+    sequence_reset_rate_bps: u16,
+    worst_issue_rate_bps: u16,
+    sequence_gap_units: u64,
+    sequence_complete: bool,
+    primary_issue: FeedQualityFlags,
+    flags: FeedQualityFlags,
+    replay_usable: bool,
+    operator_review_required: bool,
+}
+
+impl ReplayQualityReport {
+    /// Returns observed event count.
+    pub const fn events(&self) -> u64 {
+        self.events
+    }
+
+    /// Returns true when the report has enough events for the configured gate.
+    pub const fn min_events_met(&self) -> bool {
+        self.min_events_met
+    }
+
+    /// Returns aggregate health score in basis points.
+    pub const fn health_score_bps(&self) -> u16 {
+        self.health_score_bps
+    }
+
+    /// Returns sequence gap event rate in basis points.
+    pub const fn sequence_gap_rate_bps(&self) -> u16 {
+        self.sequence_gap_rate_bps
+    }
+
+    /// Returns out-of-order event rate in basis points.
+    pub const fn out_of_order_rate_bps(&self) -> u16 {
+        self.out_of_order_rate_bps
+    }
+
+    /// Returns duplicate event rate in basis points.
+    pub const fn duplicate_rate_bps(&self) -> u16 {
+        self.duplicate_rate_bps
+    }
+
+    /// Returns stale event rate in basis points.
+    pub const fn stale_rate_bps(&self) -> u16 {
+        self.stale_rate_bps
+    }
+
+    /// Returns locked/crossed top-of-book event rate in basis points.
+    pub const fn bad_book_rate_bps(&self) -> u16 {
+        self.bad_book_rate_bps
+    }
+
+    /// Returns timestamp-skew event rate in basis points.
+    pub const fn timestamp_skew_rate_bps(&self) -> u16 {
+        self.timestamp_skew_rate_bps
+    }
+
+    /// Returns sequence-reset event rate in basis points.
+    pub const fn sequence_reset_rate_bps(&self) -> u16 {
+        self.sequence_reset_rate_bps
+    }
+
+    /// Returns highest individual issue rate in basis points.
+    pub const fn worst_issue_rate_bps(&self) -> u16 {
+        self.worst_issue_rate_bps
+    }
+
+    /// Returns total missing sequence units.
+    pub const fn sequence_gap_units(&self) -> u64 {
+        self.sequence_gap_units
+    }
+
+    /// Returns true when missing sequence units stay within threshold.
+    pub const fn sequence_complete(&self) -> bool {
+        self.sequence_complete
+    }
+
+    /// Returns the primary issue flag selected by severity-weighted rate.
+    pub const fn primary_issue(&self) -> FeedQualityFlags {
+        self.primary_issue
+    }
+
+    /// Returns cumulative feed-quality flags.
+    pub const fn flags(&self) -> FeedQualityFlags {
+        self.flags
+    }
+
+    /// Returns true when replay quality passes configured gates.
+    pub const fn replay_usable(&self) -> bool {
+        self.replay_usable
+    }
+
+    /// Returns true when an operator should review replay quality.
+    pub const fn operator_review_required(&self) -> bool {
+        self.operator_review_required
+    }
+}
+
+/// Deterministic replay-quality report analyzer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReplayQualityAnalyzer {
+    config: ReplayQualityConfig,
+}
+
+impl ReplayQualityAnalyzer {
+    /// Creates a replay-quality analyzer.
+    pub const fn new(config: ReplayQualityConfig) -> Self {
+        Self { config }
+    }
+
+    /// Returns analyzer configuration.
+    pub const fn config(&self) -> ReplayQualityConfig {
+        self.config
+    }
+
+    /// Builds a replay-quality report from a feed-quality snapshot.
+    pub fn evaluate(&self, snapshot: FeedQualitySnapshot) -> ReplayQualityReport {
+        let sequence_gap_rate = snapshot.sequence_gap_rate_bps();
+        let out_of_order_rate = snapshot.out_of_order_rate_bps();
+        let duplicate_rate = snapshot.duplicate_rate_bps();
+        let stale_rate = snapshot.stale_rate_bps();
+        let bad_book_rate = snapshot.bad_book_rate_bps();
+        let timestamp_skew_rate = rate_bps(snapshot.timestamp_skew_events(), snapshot.events());
+        let sequence_reset_rate = rate_bps(snapshot.sequence_reset_events(), snapshot.events());
+        let worst_issue_rate = max_u16(&[
+            sequence_gap_rate,
+            out_of_order_rate,
+            duplicate_rate,
+            stale_rate,
+            bad_book_rate,
+            timestamp_skew_rate,
+            sequence_reset_rate,
+        ]);
+        let min_events_met = snapshot.events() >= self.config.min_events();
+        let sequence_complete =
+            snapshot.sequence_gap_units() <= self.config.max_sequence_gap_units();
+        let replay_usable = min_events_met
+            && sequence_complete
+            && snapshot.health_score_bps() >= self.config.min_health_score_bps()
+            && worst_issue_rate <= self.config.max_issue_rate_bps();
+        ReplayQualityReport {
+            events: snapshot.events(),
+            min_events_met,
+            health_score_bps: snapshot.health_score_bps(),
+            sequence_gap_rate_bps: sequence_gap_rate,
+            out_of_order_rate_bps: out_of_order_rate,
+            duplicate_rate_bps: duplicate_rate,
+            stale_rate_bps: stale_rate,
+            bad_book_rate_bps: bad_book_rate,
+            timestamp_skew_rate_bps: timestamp_skew_rate,
+            sequence_reset_rate_bps: sequence_reset_rate,
+            worst_issue_rate_bps: worst_issue_rate,
+            sequence_gap_units: snapshot.sequence_gap_units(),
+            sequence_complete,
+            primary_issue: primary_feed_quality_issue(
+                sequence_gap_rate,
+                out_of_order_rate,
+                duplicate_rate,
+                stale_rate,
+                bad_book_rate,
+                timestamp_skew_rate,
+                sequence_reset_rate,
+            ),
+            flags: snapshot.flags(),
+            replay_usable,
+            operator_review_required: !replay_usable || !snapshot.flags().is_ok(),
+        }
+    }
+}
+
+impl Default for ReplayQualityAnalyzer {
+    fn default() -> Self {
+        Self::new(ReplayQualityConfig::default())
+    }
+}
+
 /// Stable feature identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FeatureId {
@@ -7861,6 +8113,60 @@ fn rate_bps(count: u64, total: u64) -> u16 {
     u16::try_from(((u128::from(count) * 10_000) / u128::from(total)).min(10_000)).unwrap_or(10_000)
 }
 
+fn max_u16(values: &[u16]) -> u16 {
+    values.iter().copied().max().unwrap_or(0)
+}
+
+fn primary_feed_quality_issue(
+    sequence_gap_rate: u16,
+    out_of_order_rate: u16,
+    duplicate_rate: u16,
+    stale_rate: u16,
+    bad_book_rate: u16,
+    timestamp_skew_rate: u16,
+    sequence_reset_rate: u16,
+) -> FeedQualityFlags {
+    let weighted = [
+        (
+            u32::from(sequence_gap_rate).saturating_mul(10),
+            FeedQualityFlags::SEQUENCE_GAP,
+        ),
+        (
+            u32::from(out_of_order_rate).saturating_mul(15),
+            FeedQualityFlags::OUT_OF_ORDER,
+        ),
+        (
+            u32::from(duplicate_rate).saturating_mul(5),
+            FeedQualityFlags::DUPLICATE,
+        ),
+        (
+            u32::from(stale_rate).saturating_mul(8),
+            FeedQualityFlags::STALE,
+        ),
+        (
+            u32::from(bad_book_rate).saturating_mul(20),
+            FeedQualityFlags::CROSSED_BOOK,
+        ),
+        (
+            u32::from(timestamp_skew_rate).saturating_mul(10),
+            FeedQualityFlags::TIMESTAMP_SKEW,
+        ),
+        (
+            u32::from(sequence_reset_rate).saturating_mul(15),
+            FeedQualityFlags::SEQUENCE_RESET,
+        ),
+    ];
+    let mut primary = FeedQualityFlags::OK;
+    let mut primary_score = 0_u32;
+    for (score, flag) in weighted {
+        if score > primary_score {
+            primary_score = score;
+            primary = flag;
+        }
+    }
+    primary
+}
+
 fn rate_scaled(count: u64, total: u64) -> u32 {
     if total == 0 {
         return 0;
@@ -8703,6 +9009,63 @@ mod tests {
         assert_eq!(snapshot.sequence_reset_events(), 1);
         assert_eq!(snapshot.last_sequence(), Some(1));
         assert_eq!(snapshot.last_event_ts_ns(), 101);
+    }
+
+    #[test]
+    fn replay_quality_report_accepts_clean_replay() {
+        let mut tracker = FeedQualityTracker::default();
+        tracker.on_event(FeedQualityEvent::new(Some(1), 100, 100, Some(99), Some(101)).unwrap());
+        tracker.on_event(FeedQualityEvent::new(Some(2), 101, 101, Some(100), Some(102)).unwrap());
+
+        let report = ReplayQualityAnalyzer::default().evaluate(tracker.snapshot());
+
+        assert_eq!(report.events(), 2);
+        assert!(report.min_events_met());
+        assert_eq!(report.health_score_bps(), 10_000);
+        assert_eq!(report.worst_issue_rate_bps(), 0);
+        assert!(report.sequence_complete());
+        assert_eq!(report.primary_issue(), FeedQualityFlags::OK);
+        assert!(report.replay_usable());
+        assert!(!report.operator_review_required());
+    }
+
+    #[test]
+    fn replay_quality_report_flags_degraded_replay() {
+        let config = FeedQualityConfig::new(10, 20, 1).expect("config");
+        let mut tracker = FeedQualityTracker::new(config);
+        tracker.on_event(FeedQualityEvent::new(Some(1), 100, 100, Some(99), Some(101)).unwrap());
+        tracker.on_event(FeedQualityEvent::new(Some(4), 101, 150, Some(100), Some(100)).unwrap());
+        tracker.on_event(FeedQualityEvent::new(Some(3), 90, 200, Some(103), Some(102)).unwrap());
+
+        let analyzer =
+            ReplayQualityAnalyzer::new(ReplayQualityConfig::new(3, 9_000, 100, 0).unwrap());
+        let report = analyzer.evaluate(tracker.snapshot());
+
+        assert!(report.min_events_met());
+        assert!(!report.sequence_complete());
+        assert!(report.sequence_gap_rate_bps() > 0);
+        assert!(report.out_of_order_rate_bps() > 0);
+        assert!(report.bad_book_rate_bps() > 0);
+        assert!(report.timestamp_skew_rate_bps() > 0);
+        assert!(report.worst_issue_rate_bps() > 100);
+        assert!(report.flags().contains(FeedQualityFlags::SEQUENCE_GAP));
+        assert!(report
+            .primary_issue()
+            .contains(FeedQualityFlags::CROSSED_BOOK));
+        assert!(!report.replay_usable());
+        assert!(report.operator_review_required());
+    }
+
+    #[test]
+    fn replay_quality_config_rejects_invalid_thresholds() {
+        assert_eq!(
+            ReplayQualityConfig::new(0, 10_001, 0, 0),
+            Err(AnalyticsError::InvalidQuality)
+        );
+        assert_eq!(
+            ReplayQualityConfig::new(0, 0, 10_001, 0),
+            Err(AnalyticsError::InvalidQuality)
+        );
     }
 
     #[test]

@@ -34,8 +34,8 @@ The first foundation is dependency-light:
   liquidity, spread, session, hidden-liquidity, and transition-confidence
   labels,
 - feed-quality primitives for sequence gaps, out-of-order events, duplicates,
-  stale events, locked/crossed books, timestamp skew, resets, and health
-  scoring,
+  stale events, locked/crossed books, timestamp skew, resets, health scoring,
+  replay usability, primary issue selection, and operator review reports,
 - feature-vector primitives for stable feature ids, ordered schemas, schema
   hashes, missing-value policy, quality labels, and reusable fixed-capacity
   writers,
@@ -285,6 +285,7 @@ assert_eq!(seasonality.snapshot(0)?.jump_count(), 1);
 ```rust
 use of_analytics::{
     FeedQualityConfig, FeedQualityEvent, FeedQualityFlags, FeedQualityTracker,
+    ReplayQualityAnalyzer,
 };
 
 let config = FeedQualityConfig::new(10, 20, 1)?;
@@ -308,6 +309,8 @@ let flags = tracker.on_event(FeedQualityEvent::new(
 assert!(flags.contains(FeedQualityFlags::SEQUENCE_GAP));
 assert!(flags.contains(FeedQualityFlags::LOCKED_BOOK));
 assert!(tracker.snapshot().health_score_bps() < 10_000);
+let report = ReplayQualityAnalyzer::default().evaluate(tracker.snapshot());
+assert!(report.operator_review_required());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

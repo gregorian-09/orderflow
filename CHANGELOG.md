@@ -42,7 +42,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
   and illiquid regimes.
 - Added `of_analytics` feed-quality analytics for sequence gaps,
   out-of-order events, duplicates, stale events, locked/crossed books,
-  timestamp skew, sequence resets, rates, flags, and health scoring.
+  timestamp skew, sequence resets, rates, flags, health scoring, replay
+  usability, primary issue selection, and operator review reports.
 - Added `of_analytics` feature-vector APIs for stable feature ids, schemas,
   schema hashes, missing-value policies, per-feature quality labels, reusable
   fixed-capacity writers, and extractor contracts.
