@@ -199,6 +199,11 @@ Derivatives:
 - `FuturesBasisInput`
 - `FuturesBasisSnapshot`
 - `FuturesBasisAnalyzer`
+- `DerivativesVolatilitySurface`
+- `DerivativesDiagnosticConfig`
+- `DerivativesDiagnosticInput`
+- `DerivativesDiagnosticSnapshot`
+- `DerivativesDiagnosticAnalyzer`
 
 ## Market Quality
 
@@ -873,10 +878,19 @@ gamma exposure into the tracker.
 calendar spread, roll-pressure proxy, and funding/basis divergence from one
 caller-supplied input snapshot.
 
+`DerivativesDiagnosticAnalyzer` adds an opt-in second-stage diagnostic over
+option flow, a caller-supplied volatility surface summary, and futures basis.
+It reports IV skew, volatility term structure, implied-versus-realized
+richness, gamma pressure, option risk, futures stress, aggregate derivatives
+stress, and explicit stress flags. The crate still does not price options,
+calibrate volatility surfaces, or derive Greeks; production hosts retain those
+model and data-vendor responsibilities.
+
 ```rust
 use of_analytics::{
-    FuturesBasisAnalyzer, FuturesBasisInput, OptionFlowSample, OptionFlowTracker,
-    OptionKind,
+    DerivativesDiagnosticAnalyzer, DerivativesDiagnosticInput,
+    DerivativesVolatilitySurface, FuturesBasisAnalyzer, FuturesBasisInput,
+    OptionFlowSample, OptionFlowTracker, OptionKind,
 };
 
 let mut options = OptionFlowTracker::new();
@@ -906,7 +920,15 @@ let basis = FuturesBasisAnalyzer::analyze(FuturesBasisInput::new(
     102_000,
     25,
 )?);
+let diagnostic = DerivativesDiagnosticAnalyzer::default().evaluate(
+    DerivativesDiagnosticInput::new(
+        options.snapshot(),
+        basis,
+        DerivativesVolatilitySurface::new(3_000, 3_500, 2_500, 3_000, 3_250, 2_000)?,
+    ),
+);
 assert!(basis.basis_bps() > 0);
+assert!(diagnostic.iv_richness_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

@@ -83,8 +83,9 @@ registry dependency after `of_fix 0.1.0` is published.
   divergence, ETF/component imbalance, and relationship-degradation
   diagnostics
 - derivatives primitives for put/call pressure, volume/open-interest anomaly,
-  implied-volatility flow, gamma exposure, futures basis, roll pressure, and
-  funding divergence
+  implied-volatility flow, gamma exposure, IV skew, term structure,
+  implied-versus-realized richness, gamma pressure, futures basis, roll
+  pressure, funding divergence, and aggregate derivatives stress
 - feature profiles for future impact, toxicity, volatility, regime,
   data-quality, feature-vector, resiliency, queue-fill, cross-asset, patterns,
   derivatives, institutional, and ML feature modules

@@ -62,7 +62,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   relationship-degradation diagnostics.
 - Added `of_analytics` derivatives analytics for put/call pressure,
   volume/open-interest anomaly, implied-volatility flow, gamma exposure,
-  futures basis, roll pressure, and funding divergence.
+  IV skew, term structure, implied-versus-realized richness, gamma pressure,
+  futures basis, roll pressure, funding divergence, and aggregate derivatives
+  stress.
 - Added `tools/check_binding_parity.py` and CI coverage to validate that
   manifest-exposed C ABI symbols have matching Python ctypes registrations and
   Java JNA declarations before release.

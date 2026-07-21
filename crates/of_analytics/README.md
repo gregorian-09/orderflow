@@ -55,8 +55,9 @@ The first foundation is dependency-light:
   divergence, ETF/component imbalance, and relationship-degradation
   diagnostics,
 - derivatives primitives for put/call pressure, volume/open-interest anomaly,
-  implied-volatility flow, gamma exposure, futures basis, roll pressure, and
-  funding divergence,
+  implied-volatility flow, gamma exposure, IV skew, term structure,
+  implied-versus-realized richness, gamma pressure, futures basis, roll
+  pressure, funding divergence, and aggregate derivatives stress,
 - explicit feature profiles so users can opt into future impact, toxicity,
   volatility, regime, data-quality, feature-vector, resiliency, queue-fill,
   cross-asset, pattern, derivatives, institutional, and ML feature modules
@@ -482,8 +483,9 @@ assert!(diagnostic.synchronization_quality_bps() > 0);
 
 ```rust
 use of_analytics::{
-    FuturesBasisAnalyzer, FuturesBasisInput, OptionFlowSample, OptionFlowTracker,
-    OptionKind,
+    DerivativesDiagnosticAnalyzer, DerivativesDiagnosticInput,
+    DerivativesVolatilitySurface, FuturesBasisAnalyzer, FuturesBasisInput,
+    OptionFlowSample, OptionFlowTracker, OptionKind,
 };
 
 let mut options = OptionFlowTracker::new();
@@ -513,7 +515,15 @@ let basis = FuturesBasisAnalyzer::analyze(FuturesBasisInput::new(
     102_000,
     25,
 )?);
+let diagnostic = DerivativesDiagnosticAnalyzer::default().evaluate(
+    DerivativesDiagnosticInput::new(
+        options.snapshot(),
+        basis,
+        DerivativesVolatilitySurface::new(3_000, 3_500, 2_500, 3_000, 3_250, 2_000)?,
+    ),
+);
 assert!(basis.basis_bps() > 0);
+assert!(diagnostic.iv_richness_bps() > 0);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

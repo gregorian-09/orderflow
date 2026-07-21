@@ -7042,6 +7042,392 @@ impl FuturesBasisAnalyzer {
     }
 }
 
+/// Derivatives diagnostic thresholds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DerivativesDiagnosticConfig {
+    skew_threshold_bps: u32,
+    term_structure_threshold_bps: u32,
+    iv_richness_threshold_bps: u32,
+    gamma_pressure_threshold_bps: u16,
+    basis_stress_threshold_bps: u32,
+    funding_stress_threshold_bps: u32,
+    stress_threshold_bps: u16,
+}
+
+impl DerivativesDiagnosticConfig {
+    /// Creates derivatives diagnostic thresholds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidDerivative`] when basis-point
+    /// thresholds exceed 10,000 where the field is capped as a score.
+    pub const fn new(
+        skew_threshold_bps: u32,
+        term_structure_threshold_bps: u32,
+        iv_richness_threshold_bps: u32,
+        gamma_pressure_threshold_bps: u16,
+        basis_stress_threshold_bps: u32,
+        funding_stress_threshold_bps: u32,
+        stress_threshold_bps: u16,
+    ) -> Result<Self, AnalyticsError> {
+        if gamma_pressure_threshold_bps > 10_000 || stress_threshold_bps > 10_000 {
+            return Err(AnalyticsError::InvalidDerivative);
+        }
+        Ok(Self {
+            skew_threshold_bps,
+            term_structure_threshold_bps,
+            iv_richness_threshold_bps,
+            gamma_pressure_threshold_bps,
+            basis_stress_threshold_bps,
+            funding_stress_threshold_bps,
+            stress_threshold_bps,
+        })
+    }
+
+    /// Returns volatility-skew stress threshold in basis points.
+    pub const fn skew_threshold_bps(&self) -> u32 {
+        self.skew_threshold_bps
+    }
+
+    /// Returns term-structure stress threshold in basis points.
+    pub const fn term_structure_threshold_bps(&self) -> u32 {
+        self.term_structure_threshold_bps
+    }
+
+    /// Returns implied-versus-realized richness threshold in basis points.
+    pub const fn iv_richness_threshold_bps(&self) -> u32 {
+        self.iv_richness_threshold_bps
+    }
+
+    /// Returns gamma-pressure threshold in basis points.
+    pub const fn gamma_pressure_threshold_bps(&self) -> u16 {
+        self.gamma_pressure_threshold_bps
+    }
+
+    /// Returns basis-stress threshold in basis points.
+    pub const fn basis_stress_threshold_bps(&self) -> u32 {
+        self.basis_stress_threshold_bps
+    }
+
+    /// Returns funding/basis stress threshold in basis points.
+    pub const fn funding_stress_threshold_bps(&self) -> u32 {
+        self.funding_stress_threshold_bps
+    }
+
+    /// Returns aggregate derivatives stress threshold in basis points.
+    pub const fn stress_threshold_bps(&self) -> u16 {
+        self.stress_threshold_bps
+    }
+}
+
+impl Default for DerivativesDiagnosticConfig {
+    fn default() -> Self {
+        Self {
+            skew_threshold_bps: 500,
+            term_structure_threshold_bps: 500,
+            iv_richness_threshold_bps: 1_000,
+            gamma_pressure_threshold_bps: 1_000,
+            basis_stress_threshold_bps: 100,
+            funding_stress_threshold_bps: 100,
+            stress_threshold_bps: 2_500,
+        }
+    }
+}
+
+/// Caller-supplied derivatives volatility surface summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DerivativesVolatilitySurface {
+    atm_iv_bps: u32,
+    put_wing_iv_bps: u32,
+    call_wing_iv_bps: u32,
+    front_expiry_iv_bps: u32,
+    back_expiry_iv_bps: u32,
+    realized_vol_bps: u32,
+}
+
+impl DerivativesVolatilitySurface {
+    /// Creates a derivatives volatility surface summary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidDerivative`] when required implied
+    /// volatility inputs are zero.
+    pub const fn new(
+        atm_iv_bps: u32,
+        put_wing_iv_bps: u32,
+        call_wing_iv_bps: u32,
+        front_expiry_iv_bps: u32,
+        back_expiry_iv_bps: u32,
+        realized_vol_bps: u32,
+    ) -> Result<Self, AnalyticsError> {
+        if atm_iv_bps == 0
+            || put_wing_iv_bps == 0
+            || call_wing_iv_bps == 0
+            || front_expiry_iv_bps == 0
+            || back_expiry_iv_bps == 0
+        {
+            return Err(AnalyticsError::InvalidDerivative);
+        }
+        Ok(Self {
+            atm_iv_bps,
+            put_wing_iv_bps,
+            call_wing_iv_bps,
+            front_expiry_iv_bps,
+            back_expiry_iv_bps,
+            realized_vol_bps,
+        })
+    }
+
+    /// Returns at-the-money implied volatility in basis points.
+    pub const fn atm_iv_bps(&self) -> u32 {
+        self.atm_iv_bps
+    }
+
+    /// Returns put-wing implied volatility in basis points.
+    pub const fn put_wing_iv_bps(&self) -> u32 {
+        self.put_wing_iv_bps
+    }
+
+    /// Returns call-wing implied volatility in basis points.
+    pub const fn call_wing_iv_bps(&self) -> u32 {
+        self.call_wing_iv_bps
+    }
+
+    /// Returns front-expiry implied volatility in basis points.
+    pub const fn front_expiry_iv_bps(&self) -> u32 {
+        self.front_expiry_iv_bps
+    }
+
+    /// Returns back-expiry implied volatility in basis points.
+    pub const fn back_expiry_iv_bps(&self) -> u32 {
+        self.back_expiry_iv_bps
+    }
+
+    /// Returns realized volatility in basis points.
+    pub const fn realized_vol_bps(&self) -> u32 {
+        self.realized_vol_bps
+    }
+}
+
+/// Derivatives diagnostic input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DerivativesDiagnosticInput {
+    option_snapshot: OptionFlowSnapshot,
+    futures_snapshot: FuturesBasisSnapshot,
+    volatility_surface: DerivativesVolatilitySurface,
+}
+
+impl DerivativesDiagnosticInput {
+    /// Creates derivatives diagnostic input.
+    pub const fn new(
+        option_snapshot: OptionFlowSnapshot,
+        futures_snapshot: FuturesBasisSnapshot,
+        volatility_surface: DerivativesVolatilitySurface,
+    ) -> Self {
+        Self {
+            option_snapshot,
+            futures_snapshot,
+            volatility_surface,
+        }
+    }
+
+    /// Returns option-flow snapshot.
+    pub const fn option_snapshot(&self) -> OptionFlowSnapshot {
+        self.option_snapshot
+    }
+
+    /// Returns futures-basis snapshot.
+    pub const fn futures_snapshot(&self) -> FuturesBasisSnapshot {
+        self.futures_snapshot
+    }
+
+    /// Returns volatility surface summary.
+    pub const fn volatility_surface(&self) -> DerivativesVolatilitySurface {
+        self.volatility_surface
+    }
+}
+
+/// Derivatives diagnostic snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DerivativesDiagnosticSnapshot {
+    skew_bps: i32,
+    term_structure_bps: i32,
+    iv_richness_bps: i32,
+    gamma_pressure_bps: i32,
+    options_risk_score_bps: u16,
+    futures_stress_score_bps: u16,
+    derivatives_stress_score_bps: u16,
+    skew_stress: bool,
+    term_structure_stress: bool,
+    iv_richness_stress: bool,
+    gamma_pressure_stress: bool,
+    basis_stress: bool,
+    funding_basis_stress: bool,
+    derivatives_stressed: bool,
+}
+
+impl DerivativesDiagnosticSnapshot {
+    /// Returns put-wing minus call-wing implied-volatility skew.
+    pub const fn skew_bps(&self) -> i32 {
+        self.skew_bps
+    }
+
+    /// Returns back-expiry minus front-expiry implied-volatility term structure.
+    pub const fn term_structure_bps(&self) -> i32 {
+        self.term_structure_bps
+    }
+
+    /// Returns at-the-money implied volatility minus realized volatility.
+    pub const fn iv_richness_bps(&self) -> i32 {
+        self.iv_richness_bps
+    }
+
+    /// Returns net gamma exposure normalized by option premium.
+    pub const fn gamma_pressure_bps(&self) -> i32 {
+        self.gamma_pressure_bps
+    }
+
+    /// Returns aggregate option-flow and volatility-surface risk score.
+    pub const fn options_risk_score_bps(&self) -> u16 {
+        self.options_risk_score_bps
+    }
+
+    /// Returns aggregate futures basis/funding stress score.
+    pub const fn futures_stress_score_bps(&self) -> u16 {
+        self.futures_stress_score_bps
+    }
+
+    /// Returns aggregate derivatives stress score.
+    pub const fn derivatives_stress_score_bps(&self) -> u16 {
+        self.derivatives_stress_score_bps
+    }
+
+    /// Returns true when volatility skew exceeds threshold.
+    pub const fn skew_stress(&self) -> bool {
+        self.skew_stress
+    }
+
+    /// Returns true when volatility term structure exceeds threshold.
+    pub const fn term_structure_stress(&self) -> bool {
+        self.term_structure_stress
+    }
+
+    /// Returns true when implied volatility is rich versus realized volatility.
+    pub const fn iv_richness_stress(&self) -> bool {
+        self.iv_richness_stress
+    }
+
+    /// Returns true when normalized gamma pressure exceeds threshold.
+    pub const fn gamma_pressure_stress(&self) -> bool {
+        self.gamma_pressure_stress
+    }
+
+    /// Returns true when basis/fair-value/roll stress exceeds threshold.
+    pub const fn basis_stress(&self) -> bool {
+        self.basis_stress
+    }
+
+    /// Returns true when funding/basis divergence exceeds threshold.
+    pub const fn funding_basis_stress(&self) -> bool {
+        self.funding_basis_stress
+    }
+
+    /// Returns true when aggregate derivatives stress exceeds threshold.
+    pub const fn derivatives_stressed(&self) -> bool {
+        self.derivatives_stressed
+    }
+}
+
+/// Deterministic derivatives diagnostic analyzer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DerivativesDiagnosticAnalyzer {
+    config: DerivativesDiagnosticConfig,
+}
+
+impl DerivativesDiagnosticAnalyzer {
+    /// Creates a derivatives diagnostic analyzer.
+    pub const fn new(config: DerivativesDiagnosticConfig) -> Self {
+        Self { config }
+    }
+
+    /// Returns analyzer configuration.
+    pub const fn config(&self) -> DerivativesDiagnosticConfig {
+        self.config
+    }
+
+    /// Evaluates option-flow, volatility-surface, and futures-basis stress.
+    pub fn evaluate(&self, input: DerivativesDiagnosticInput) -> DerivativesDiagnosticSnapshot {
+        let options = input.option_snapshot();
+        let futures = input.futures_snapshot();
+        let surface = input.volatility_surface();
+        let skew = signed_u32_diff_to_i32(surface.put_wing_iv_bps(), surface.call_wing_iv_bps());
+        let term_structure =
+            signed_u32_diff_to_i32(surface.back_expiry_iv_bps(), surface.front_expiry_iv_bps());
+        let iv_richness = signed_u32_diff_to_i32(surface.atm_iv_bps(), surface.realized_vol_bps());
+        let gamma_pressure = signed_i128_ratio_to_i32(
+            options.net_gamma_exposure(),
+            options.call_premium().saturating_add(options.put_premium()),
+        );
+        let options_risk = average_score(&[
+            bounded_abs_bps(options.put_call_pressure_bps()),
+            bounded_u32_bps(options.volume_open_interest_anomaly_bps()),
+            bounded_abs_bps(skew),
+            bounded_abs_bps(iv_richness),
+            bounded_abs_bps(gamma_pressure),
+        ]);
+        let futures_stress = average_score(&[
+            bounded_abs_bps(futures.basis_bps()),
+            bounded_abs_bps(futures.fair_value_gap_bps()),
+            bounded_abs_bps(futures.roll_pressure_bps()),
+            bounded_abs_bps(futures.funding_basis_divergence_bps()),
+        ]);
+        let derivatives_stress = average_score(&[options_risk, futures_stress]);
+        let skew_stress = skew.unsigned_abs() >= self.config.skew_threshold_bps();
+        let term_structure_stress =
+            term_structure.unsigned_abs() >= self.config.term_structure_threshold_bps();
+        let iv_richness_stress =
+            iv_richness.unsigned_abs() >= self.config.iv_richness_threshold_bps();
+        let gamma_pressure_stress =
+            gamma_pressure.unsigned_abs() >= u32::from(self.config.gamma_pressure_threshold_bps());
+        let basis_stress = futures.basis_bps().unsigned_abs()
+            >= self.config.basis_stress_threshold_bps()
+            || futures.fair_value_gap_bps().unsigned_abs()
+                >= self.config.basis_stress_threshold_bps()
+            || futures.roll_pressure_bps().unsigned_abs()
+                >= self.config.basis_stress_threshold_bps();
+        let funding_basis_stress = futures.funding_basis_divergence_bps().unsigned_abs()
+            >= self.config.funding_stress_threshold_bps();
+        DerivativesDiagnosticSnapshot {
+            skew_bps: skew,
+            term_structure_bps: term_structure,
+            iv_richness_bps: iv_richness,
+            gamma_pressure_bps: gamma_pressure,
+            options_risk_score_bps: options_risk,
+            futures_stress_score_bps: futures_stress,
+            derivatives_stress_score_bps: derivatives_stress,
+            skew_stress,
+            term_structure_stress,
+            iv_richness_stress,
+            gamma_pressure_stress,
+            basis_stress,
+            funding_basis_stress,
+            derivatives_stressed: derivatives_stress >= self.config.stress_threshold_bps()
+                || skew_stress
+                || term_structure_stress
+                || iv_richness_stress
+                || gamma_pressure_stress
+                || basis_stress
+                || funding_basis_stress,
+        }
+    }
+}
+
+impl Default for DerivativesDiagnosticAnalyzer {
+    fn default() -> Self {
+        Self::new(DerivativesDiagnosticConfig::default())
+    }
+}
+
 /// Borrowed depth analyzer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiquidityDepthAnalyzer {
@@ -7600,6 +7986,28 @@ fn signed_scaled_bps(value_bps: i32, scale_bps: u16) -> i32 {
             i32::MAX
         }
     })
+}
+
+fn bounded_u32_bps(value: u32) -> u16 {
+    u16::try_from(value.min(10_000)).unwrap_or(10_000)
+}
+
+fn signed_u32_diff_to_i32(left: u32, right: u32) -> i32 {
+    i32::try_from(i128::from(left) - i128::from(right)).unwrap_or({
+        if left < right {
+            i32::MIN
+        } else {
+            i32::MAX
+        }
+    })
+}
+
+fn signed_i128_ratio_to_i32(numerator: i128, denominator: i128) -> i32 {
+    if denominator <= 0 {
+        return 0;
+    }
+    let scaled = (numerator.saturating_mul(10_000)) / denominator;
+    i32::try_from(scaled.clamp(i128::from(i32::MIN), i128::from(i32::MAX))).unwrap_or(0)
 }
 
 fn ratio_i64_to_u32(numerator: i64, denominator: i64) -> u32 {
@@ -8852,5 +9260,90 @@ mod tests {
         assert_eq!(snapshot.calendar_spread_bps(), 99);
         assert_eq!(snapshot.roll_pressure_bps(), -1);
         assert_eq!(snapshot.funding_basis_divergence_bps(), 75);
+    }
+
+    #[test]
+    fn derivatives_diagnostics_score_balanced_surface() {
+        let mut options = OptionFlowTracker::new();
+        options.on_sample(
+            OptionFlowSample::new(OptionKind::Call, 100, 1_000, 100_000, 2_000, 500).expect("call"),
+        );
+        options.on_sample(
+            OptionFlowSample::new(OptionKind::Put, 100, 1_000, 100_000, 2_100, -500).expect("put"),
+        );
+        let basis = FuturesBasisAnalyzer::analyze(
+            FuturesBasisInput::new(100_000, 100_100, 100_100, 100_100, 100_150, 5).expect("basis"),
+        );
+
+        let diagnostic =
+            DerivativesDiagnosticAnalyzer::default().evaluate(DerivativesDiagnosticInput::new(
+                options.snapshot(),
+                basis,
+                DerivativesVolatilitySurface::new(2_000, 2_100, 2_000, 2_000, 2_050, 1_900)
+                    .expect("surface"),
+            ));
+
+        assert_eq!(diagnostic.skew_bps(), 100);
+        assert_eq!(diagnostic.term_structure_bps(), 50);
+        assert_eq!(diagnostic.iv_richness_bps(), 100);
+        assert_eq!(diagnostic.gamma_pressure_bps(), 0);
+        assert!(!diagnostic.skew_stress());
+        assert!(!diagnostic.term_structure_stress());
+        assert!(!diagnostic.iv_richness_stress());
+        assert!(!diagnostic.gamma_pressure_stress());
+        assert!(!diagnostic.derivatives_stressed());
+    }
+
+    #[test]
+    fn derivatives_diagnostics_detect_stressed_surface_and_basis() {
+        let mut options = OptionFlowTracker::new();
+        options.on_sample(
+            OptionFlowSample::new(OptionKind::Call, 100, 1_000, 50_000, 2_000, 10_000)
+                .expect("call"),
+        );
+        options.on_sample(
+            OptionFlowSample::new(OptionKind::Put, 400, 1_000, 200_000, 4_500, 30_000)
+                .expect("put"),
+        );
+        let basis = FuturesBasisAnalyzer::analyze(
+            FuturesBasisInput::new(100_000, 102_000, 100_500, 100_000, 103_000, -500)
+                .expect("basis"),
+        );
+
+        let diagnostic =
+            DerivativesDiagnosticAnalyzer::default().evaluate(DerivativesDiagnosticInput::new(
+                options.snapshot(),
+                basis,
+                DerivativesVolatilitySurface::new(4_000, 5_000, 2_000, 3_000, 5_000, 1_000)
+                    .expect("surface"),
+            ));
+
+        assert!(diagnostic.skew_stress());
+        assert!(diagnostic.term_structure_stress());
+        assert!(diagnostic.iv_richness_stress());
+        assert!(diagnostic.gamma_pressure_stress());
+        assert!(diagnostic.basis_stress());
+        assert!(diagnostic.funding_basis_stress());
+        assert!(diagnostic.derivatives_stressed());
+    }
+
+    #[test]
+    fn derivatives_diagnostics_reject_invalid_inputs() {
+        let options = OptionFlowTracker::new().snapshot();
+        let basis = FuturesBasisAnalyzer::analyze(
+            FuturesBasisInput::new(100_000, 100_100, 100_100, 100_100, 100_150, 5).expect("basis"),
+        );
+
+        assert_eq!(
+            DerivativesDiagnosticConfig::new(0, 0, 0, 10_001, 0, 0, 0),
+            Err(AnalyticsError::InvalidDerivative)
+        );
+        assert_eq!(
+            DerivativesVolatilitySurface::new(0, 1, 1, 1, 1, 0),
+            Err(AnalyticsError::InvalidDerivative)
+        );
+        let surface = DerivativesVolatilitySurface::new(1, 1, 1, 1, 1, 0).expect("surface");
+        let input = DerivativesDiagnosticInput::new(options, basis, surface);
+        assert_eq!(input.volatility_surface().realized_vol_bps(), 0);
     }
 }
