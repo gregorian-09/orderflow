@@ -75,8 +75,9 @@ registry dependency after `of_fix 0.1.0` is published.
 - pattern-risk primitives for spoofing/layering, quote-stuffing, stop-run,
   absorption, momentum-ignition, iceberg, hidden accumulation/distribution,
   stacked-imbalance, and failed-breakout risk indicators
-- venue/route primitives for fill, reject, cancel, latency, and route-health
-  diagnostics
+- venue/route primitives for fill, reject, cancel, latency, route-health,
+  venue-liquidity, toxicity, fill-quality, reliability, route-quality, drift,
+  and degradation diagnostics
 - cross-asset primitives for rolling correlation, beta, pair divergence,
   thresholded basis pressure, and correlation-breakdown diagnostics
 - derivatives primitives for put/call pressure, volume/open-interest anomaly,

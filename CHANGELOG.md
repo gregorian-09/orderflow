@@ -54,7 +54,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `of_analytics` pattern-risk analytics for spoofing/layering,
   quote-stuffing, stop-run, absorption, and momentum-ignition indicators.
 - Added `of_analytics` venue/route analytics for fill, reject, cancel,
-  latency, and route-health diagnostics.
+  latency, route-health, venue-liquidity, toxicity, fill-quality, reliability,
+  route-quality, drift, and degradation diagnostics.
 - Added `of_analytics` cross-asset analytics for rolling correlation, beta,
   pair divergence, thresholded basis pressure, and correlation-breakdown
   diagnostics.

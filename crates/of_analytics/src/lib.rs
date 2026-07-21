@@ -5747,6 +5747,289 @@ impl Default for VenueRouteTracker {
     }
 }
 
+/// Venue route quality thresholds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VenueRouteQualityConfig {
+    target_fill_rate_bps: u16,
+    max_reject_rate_bps: u16,
+    max_cancel_rate_bps: u16,
+    max_quote_to_fill_latency_ns: u64,
+    max_market_data_to_order_latency_ns: u64,
+    degradation_threshold_bps: u16,
+    drift_threshold_bps: u16,
+}
+
+impl VenueRouteQualityConfig {
+    /// Creates venue route quality thresholds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidRoute`] when basis-point thresholds
+    /// exceed 10,000, target fill rate is zero, or latency limits are zero.
+    pub const fn new(
+        target_fill_rate_bps: u16,
+        max_reject_rate_bps: u16,
+        max_cancel_rate_bps: u16,
+        max_quote_to_fill_latency_ns: u64,
+        max_market_data_to_order_latency_ns: u64,
+        degradation_threshold_bps: u16,
+        drift_threshold_bps: u16,
+    ) -> Result<Self, AnalyticsError> {
+        if target_fill_rate_bps > 10_000
+            || max_reject_rate_bps > 10_000
+            || max_cancel_rate_bps > 10_000
+            || degradation_threshold_bps > 10_000
+            || drift_threshold_bps > 10_000
+            || target_fill_rate_bps == 0
+            || max_quote_to_fill_latency_ns == 0
+            || max_market_data_to_order_latency_ns == 0
+        {
+            return Err(AnalyticsError::InvalidRoute);
+        }
+        Ok(Self {
+            target_fill_rate_bps,
+            max_reject_rate_bps,
+            max_cancel_rate_bps,
+            max_quote_to_fill_latency_ns,
+            max_market_data_to_order_latency_ns,
+            degradation_threshold_bps,
+            drift_threshold_bps,
+        })
+    }
+
+    /// Returns target fill rate in basis points.
+    pub const fn target_fill_rate_bps(&self) -> u16 {
+        self.target_fill_rate_bps
+    }
+
+    /// Returns maximum acceptable reject rate in basis points.
+    pub const fn max_reject_rate_bps(&self) -> u16 {
+        self.max_reject_rate_bps
+    }
+
+    /// Returns maximum acceptable cancel rate in basis points.
+    pub const fn max_cancel_rate_bps(&self) -> u16 {
+        self.max_cancel_rate_bps
+    }
+
+    /// Returns maximum acceptable quote-to-fill latency in nanoseconds.
+    pub const fn max_quote_to_fill_latency_ns(&self) -> u64 {
+        self.max_quote_to_fill_latency_ns
+    }
+
+    /// Returns maximum acceptable market-data-to-order latency in nanoseconds.
+    pub const fn max_market_data_to_order_latency_ns(&self) -> u64 {
+        self.max_market_data_to_order_latency_ns
+    }
+
+    /// Returns degradation threshold in basis points.
+    pub const fn degradation_threshold_bps(&self) -> u16 {
+        self.degradation_threshold_bps
+    }
+
+    /// Returns route drift threshold in basis points.
+    pub const fn drift_threshold_bps(&self) -> u16 {
+        self.drift_threshold_bps
+    }
+}
+
+impl Default for VenueRouteQualityConfig {
+    fn default() -> Self {
+        Self {
+            target_fill_rate_bps: 7_500,
+            max_reject_rate_bps: 1_000,
+            max_cancel_rate_bps: 5_000,
+            max_quote_to_fill_latency_ns: 1_000_000,
+            max_market_data_to_order_latency_ns: 1_000_000,
+            degradation_threshold_bps: 5_000,
+            drift_threshold_bps: 2_000,
+        }
+    }
+}
+
+/// Venue route quality input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VenueRouteQualityInput {
+    snapshot: VenueRouteSnapshot,
+    venue_liquidity_bps: u16,
+    venue_toxicity_bps: u16,
+    venue_fill_quality_bps: u16,
+    baseline_route_health_bps: u16,
+}
+
+impl VenueRouteQualityInput {
+    /// Creates venue route quality input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalyticsError::InvalidRoute`] when any basis-point value
+    /// exceeds 10,000.
+    pub const fn new(
+        snapshot: VenueRouteSnapshot,
+        venue_liquidity_bps: u16,
+        venue_toxicity_bps: u16,
+        venue_fill_quality_bps: u16,
+        baseline_route_health_bps: u16,
+    ) -> Result<Self, AnalyticsError> {
+        if venue_liquidity_bps > 10_000
+            || venue_toxicity_bps > 10_000
+            || venue_fill_quality_bps > 10_000
+            || baseline_route_health_bps > 10_000
+        {
+            return Err(AnalyticsError::InvalidRoute);
+        }
+        Ok(Self {
+            snapshot,
+            venue_liquidity_bps,
+            venue_toxicity_bps,
+            venue_fill_quality_bps,
+            baseline_route_health_bps,
+        })
+    }
+
+    /// Returns route lifecycle snapshot.
+    pub const fn snapshot(&self) -> VenueRouteSnapshot {
+        self.snapshot
+    }
+
+    /// Returns venue liquidity score in basis points.
+    pub const fn venue_liquidity_bps(&self) -> u16 {
+        self.venue_liquidity_bps
+    }
+
+    /// Returns venue toxicity risk in basis points.
+    pub const fn venue_toxicity_bps(&self) -> u16 {
+        self.venue_toxicity_bps
+    }
+
+    /// Returns venue fill-quality score in basis points.
+    pub const fn venue_fill_quality_bps(&self) -> u16 {
+        self.venue_fill_quality_bps
+    }
+
+    /// Returns baseline route health in basis points.
+    pub const fn baseline_route_health_bps(&self) -> u16 {
+        self.baseline_route_health_bps
+    }
+}
+
+/// Venue route quality snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VenueRouteQualitySnapshot {
+    venue_liquidity_score_bps: u16,
+    venue_toxicity_score_bps: u16,
+    venue_fill_quality_bps: u16,
+    latency_score_bps: u16,
+    reliability_score_bps: u16,
+    route_quality_score_bps: u16,
+    route_drift_bps: u16,
+    route_degraded: bool,
+}
+
+impl VenueRouteQualitySnapshot {
+    /// Returns venue liquidity score in basis points.
+    pub const fn venue_liquidity_score_bps(&self) -> u16 {
+        self.venue_liquidity_score_bps
+    }
+
+    /// Returns venue toxicity risk score in basis points.
+    pub const fn venue_toxicity_score_bps(&self) -> u16 {
+        self.venue_toxicity_score_bps
+    }
+
+    /// Returns venue fill-quality score in basis points.
+    pub const fn venue_fill_quality_bps(&self) -> u16 {
+        self.venue_fill_quality_bps
+    }
+
+    /// Returns combined latency score in basis points.
+    pub const fn latency_score_bps(&self) -> u16 {
+        self.latency_score_bps
+    }
+
+    /// Returns route reliability score in basis points.
+    pub const fn reliability_score_bps(&self) -> u16 {
+        self.reliability_score_bps
+    }
+
+    /// Returns aggregate route quality score in basis points.
+    pub const fn route_quality_score_bps(&self) -> u16 {
+        self.route_quality_score_bps
+    }
+
+    /// Returns degradation drift from baseline route health in basis points.
+    pub const fn route_drift_bps(&self) -> u16 {
+        self.route_drift_bps
+    }
+
+    /// Returns whether the route is degraded.
+    pub const fn route_degraded(&self) -> bool {
+        self.route_degraded
+    }
+}
+
+/// Deterministic venue route quality analyzer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VenueRouteQualityAnalyzer {
+    config: VenueRouteQualityConfig,
+}
+
+impl VenueRouteQualityAnalyzer {
+    /// Creates a venue route quality analyzer.
+    pub const fn new(config: VenueRouteQualityConfig) -> Self {
+        Self { config }
+    }
+
+    /// Returns analyzer configuration.
+    pub const fn config(&self) -> VenueRouteQualityConfig {
+        self.config
+    }
+
+    /// Evaluates venue route quality and degradation.
+    pub fn evaluate(&self, input: VenueRouteQualityInput) -> VenueRouteQualitySnapshot {
+        let snapshot = input.snapshot();
+        let latency_score = average_score(&[
+            latency_quality_bps(
+                snapshot.avg_quote_to_fill_latency_ns(),
+                self.config.max_quote_to_fill_latency_ns(),
+            ),
+            latency_quality_bps(
+                snapshot.avg_market_data_to_order_latency_ns(),
+                self.config.max_market_data_to_order_latency_ns(),
+            ),
+        ]);
+        let reliability = route_reliability_bps(snapshot, self.config);
+        let route_quality = average_score(&[
+            input.venue_liquidity_bps(),
+            10_000_u16.saturating_sub(input.venue_toxicity_bps()),
+            input.venue_fill_quality_bps(),
+            latency_score,
+            reliability,
+            snapshot.route_health_bps(),
+        ]);
+        let route_drift = input
+            .baseline_route_health_bps()
+            .saturating_sub(snapshot.route_health_bps());
+        VenueRouteQualitySnapshot {
+            venue_liquidity_score_bps: input.venue_liquidity_bps(),
+            venue_toxicity_score_bps: input.venue_toxicity_bps(),
+            venue_fill_quality_bps: input.venue_fill_quality_bps(),
+            latency_score_bps: latency_score,
+            reliability_score_bps: reliability,
+            route_quality_score_bps: route_quality,
+            route_drift_bps: route_drift,
+            route_degraded: route_quality < self.config.degradation_threshold_bps()
+                || route_drift >= self.config.drift_threshold_bps(),
+        }
+    }
+}
+
+impl Default for VenueRouteQualityAnalyzer {
+    fn default() -> Self {
+        Self::new(VenueRouteQualityConfig::default())
+    }
+}
+
 /// Cross-asset paired price sample.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CrossAssetSample {
@@ -6992,6 +7275,43 @@ fn maker_taker_score_bps(
     u16::try_from(5_000_i32.saturating_add(delta).clamp(0, 10_000)).unwrap_or(0)
 }
 
+fn latency_quality_bps(latency_ns: u64, max_latency_ns: u64) -> u16 {
+    if max_latency_ns == 0 {
+        return 0;
+    }
+    if latency_ns == 0 {
+        return 10_000;
+    }
+    let used =
+        u16::try_from(((u128::from(latency_ns) * 10_000) / u128::from(max_latency_ns)).min(10_000))
+            .unwrap_or(10_000);
+    10_000_u16.saturating_sub(used)
+}
+
+fn threshold_penalty_bps(value_bps: u16, max_bps: u16) -> u16 {
+    if value_bps == 0 {
+        return 0;
+    }
+    if max_bps == 0 {
+        return 10_000;
+    }
+    score_ratio(u32::from(value_bps), u32::from(max_bps))
+}
+
+fn route_reliability_bps(snapshot: VenueRouteSnapshot, config: VenueRouteQualityConfig) -> u16 {
+    let fill_component = score_ratio(
+        u32::from(snapshot.fill_rate_bps()),
+        u32::from(config.target_fill_rate_bps()),
+    );
+    let reject_penalty =
+        threshold_penalty_bps(snapshot.reject_rate_bps(), config.max_reject_rate_bps());
+    let cancel_penalty =
+        threshold_penalty_bps(snapshot.cancel_rate_bps(), config.max_cancel_rate_bps());
+    fill_component
+        .saturating_sub(reject_penalty / 2)
+        .saturating_sub(cancel_penalty / 4)
+}
+
 fn ratio_i64_to_u32(numerator: i64, denominator: i64) -> u32 {
     if denominator <= 0 {
         return 0;
@@ -8037,6 +8357,65 @@ mod tests {
 
         assert_eq!(tracker.snapshot().sent(), 0);
         assert_eq!(tracker.snapshot().route_health_bps(), 0);
+    }
+
+    #[test]
+    fn venue_route_quality_scores_healthy_route() {
+        let mut tracker = VenueRouteTracker::new();
+        tracker.on_event(VenueRouteEvent::new(VenueRouteEventKind::Sent, 100, 0, 100_000).unwrap());
+        tracker.on_event(
+            VenueRouteEvent::new(VenueRouteEventKind::Fill, 100, 100_000, 100_000).unwrap(),
+        );
+
+        let input =
+            VenueRouteQualityInput::new(tracker.snapshot(), 9_000, 500, 9_500, 9_500).unwrap();
+        let snapshot = VenueRouteQualityAnalyzer::default().evaluate(input);
+
+        assert!(snapshot.latency_score_bps() > 8_000);
+        assert!(snapshot.reliability_score_bps() > 8_000);
+        assert!(snapshot.route_quality_score_bps() > 8_000);
+        assert_eq!(snapshot.route_drift_bps(), 0);
+        assert!(!snapshot.route_degraded());
+    }
+
+    #[test]
+    fn venue_route_quality_detects_degraded_route() {
+        let mut tracker = VenueRouteTracker::new();
+        tracker
+            .on_event(VenueRouteEvent::new(VenueRouteEventKind::Sent, 100, 0, 2_000_000).unwrap());
+        tracker
+            .on_event(VenueRouteEvent::new(VenueRouteEventKind::Reject, 0, 0, 2_000_000).unwrap());
+        tracker.on_event(
+            VenueRouteEvent::new(VenueRouteEventKind::Cancel, 100, 0, 2_000_000).unwrap(),
+        );
+
+        let input =
+            VenueRouteQualityInput::new(tracker.snapshot(), 2_000, 9_000, 1_000, 9_000).unwrap();
+        let snapshot = VenueRouteQualityAnalyzer::default().evaluate(input);
+
+        assert!(snapshot.route_degraded());
+        assert!(snapshot.route_drift_bps() >= 9_000);
+        assert!(snapshot.route_quality_score_bps() < 5_000);
+    }
+
+    #[test]
+    fn venue_route_quality_rejects_invalid_inputs() {
+        assert_eq!(
+            VenueRouteQualityConfig::new(0, 1_000, 5_000, 1, 1, 5_000, 2_000),
+            Err(AnalyticsError::InvalidRoute)
+        );
+        assert_eq!(
+            VenueRouteQualityConfig::new(7_500, 10_001, 5_000, 1, 1, 5_000, 2_000),
+            Err(AnalyticsError::InvalidRoute)
+        );
+        assert_eq!(
+            VenueRouteQualityConfig::new(7_500, 1_000, 5_000, 0, 1, 5_000, 2_000),
+            Err(AnalyticsError::InvalidRoute)
+        );
+        assert_eq!(
+            VenueRouteQualityInput::new(VenueRouteTracker::new().snapshot(), 10_001, 0, 0, 0),
+            Err(AnalyticsError::InvalidRoute)
+        );
     }
 
     #[test]

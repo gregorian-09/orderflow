@@ -174,6 +174,10 @@ Venue and route:
 - `VenueRouteEvent`
 - `VenueRouteSnapshot`
 - `VenueRouteTracker`
+- `VenueRouteQualityConfig`
+- `VenueRouteQualityInput`
+- `VenueRouteQualitySnapshot`
+- `VenueRouteQualityAnalyzer`
 
 Cross asset:
 
@@ -773,7 +777,7 @@ caller-defined venue, route, account, strategy, symbol, or other key. The crate
 does not own those identifiers, which keeps this analytics layer reusable
 across OMS implementations.
 
-The snapshot reports:
+The route snapshot reports:
 
 - sent, fill, reject, and cancel counts,
 - sent and filled quantity,
@@ -782,17 +786,33 @@ The snapshot reports:
 - average and max market-data-to-order latency,
 - route health score.
 
+`VenueRouteQualityAnalyzer` adds a second deterministic scoring layer for
+route-selection and route-monitoring loops. It combines the lifecycle snapshot
+with caller-owned venue liquidity, venue toxicity, venue fill-quality, and
+baseline route health scores. The resulting quality snapshot reports combined
+latency quality, reliability, aggregate route quality, route-health drift, and a
+degraded flag. This keeps exchange-specific identifiers, fee models, and venue
+classification outside the crate while still giving execution systems a stable
+low-allocation diagnostic contract.
+
 ```rust
-use of_analytics::{VenueRouteEvent, VenueRouteEventKind, VenueRouteTracker};
+use of_analytics::{
+    VenueRouteEvent, VenueRouteEventKind, VenueRouteQualityAnalyzer,
+    VenueRouteQualityInput, VenueRouteTracker,
+};
 
 let mut tracker = VenueRouteTracker::new();
 tracker.on_event(VenueRouteEvent::new(VenueRouteEventKind::Sent, 100, 0, 10)?);
 tracker.on_event(VenueRouteEvent::new(VenueRouteEventKind::Fill, 60, 100, 20)?);
 let snapshot = tracker.snapshot();
+let quality = VenueRouteQualityAnalyzer::default().evaluate(
+    VenueRouteQualityInput::new(snapshot, 9_000, 500, 9_500, 9_500)?,
+);
 
 assert_eq!(snapshot.sent(), 1);
 assert_eq!(snapshot.fills(), 1);
 assert_eq!(snapshot.avg_quote_to_fill_latency_ns(), 100);
+assert!(!quality.route_degraded());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

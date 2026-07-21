@@ -47,8 +47,9 @@ The first foundation is dependency-light:
 - pattern-risk primitives for spoofing/layering, quote-stuffing, stop-run,
   absorption, momentum-ignition, iceberg, hidden accumulation/distribution,
   stacked-imbalance, and failed-breakout risk indicators,
-- venue/route primitives for fill, reject, cancel, latency, and route-health
-  diagnostics,
+- venue/route primitives for fill, reject, cancel, latency, route-health,
+  venue-liquidity, toxicity, fill-quality, reliability, route-quality, drift,
+  and degradation diagnostics,
 - cross-asset primitives for rolling correlation, beta, pair divergence,
   thresholded basis pressure, and correlation-breakdown diagnostics,
 - derivatives primitives for put/call pressure, volume/open-interest anomaly,
@@ -432,16 +433,23 @@ assert!(detail.failed_breakout_risk_bps() > 0);
 ## Venue Route Example
 
 ```rust
-use of_analytics::{VenueRouteEvent, VenueRouteEventKind, VenueRouteTracker};
+use of_analytics::{
+    VenueRouteEvent, VenueRouteEventKind, VenueRouteQualityAnalyzer,
+    VenueRouteQualityInput, VenueRouteTracker,
+};
 
 let mut tracker = VenueRouteTracker::new();
 tracker.on_event(VenueRouteEvent::new(VenueRouteEventKind::Sent, 100, 0, 10)?);
 tracker.on_event(VenueRouteEvent::new(VenueRouteEventKind::Fill, 60, 100, 20)?);
 let snapshot = tracker.snapshot();
+let quality = VenueRouteQualityAnalyzer::default().evaluate(
+    VenueRouteQualityInput::new(snapshot, 9_000, 500, 9_500, 9_500)?,
+);
 
 assert_eq!(snapshot.sent(), 1);
 assert_eq!(snapshot.fills(), 1);
 assert_eq!(snapshot.avg_quote_to_fill_latency_ns(), 100);
+assert!(!quality.route_degraded());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

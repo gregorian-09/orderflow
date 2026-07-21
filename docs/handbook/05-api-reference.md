@@ -781,6 +781,10 @@ Public market-quality and liquidity types:
 - `VenueRouteEvent`
 - `VenueRouteSnapshot`
 - `VenueRouteTracker`
+- `VenueRouteQualityConfig`
+- `VenueRouteQualityInput`
+- `VenueRouteQualitySnapshot`
+- `VenueRouteQualityAnalyzer`
 - `CrossAssetSample`
 - `CrossAssetConfig`
 - `CrossAssetSnapshot`
