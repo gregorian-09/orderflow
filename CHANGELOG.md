@@ -320,6 +320,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `RecoveryResult`, and segmented-WAL recovery helpers that load the latest
   checkpoint, replay the WAL tail, fail closed on unsafe unknown orders, and
   require venue reconciliation by default.
+- Additive `of_execution` recovery-readiness gate with
+  `RecoveryReadinessConfig`, `RecoveryReadinessBlocker`,
+  `RecoveryReadinessDecision`, and `evaluate_recovery_readiness` so production
+  hosts can combine WAL integrity, checkpoint integrity, recovery output, and
+  reconciliation policy into one fail-closed resume decision.
 - Additive `of_execution` venue reconciliation policy APIs with
   `ReconciliationIssueKind`, `VenueReconciliationReport`,
   `ReconciliationPolicy`, `ReconciliationPolicyDecision`, detailed mismatch

@@ -509,6 +509,10 @@ Public journal types:
 - `RecoveryPlan`
 - `RecoveredOmsState`
 - `RecoveryResult`
+- `RecoveryReadinessConfig`
+- `RecoveryReadinessBlocker`
+- `RecoveryReadinessDecision`
+- `evaluate_recovery_readiness`
 - `recover_oms_state_from_records`
 - `recover_oms_state_from_segmented_wal`
 - `recover_latest_checkpoint_from_segmented_wal`

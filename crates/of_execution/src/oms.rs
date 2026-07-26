@@ -2380,6 +2380,292 @@ pub struct RecoveryResult {
     pub submissions_enabled: bool,
 }
 
+/// Fail-closed reason emitted by recovery-readiness evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum RecoveryReadinessBlocker {
+    /// Segmented WAL integrity inspection reported corruption or sequence issues.
+    WalIntegrityFailed,
+    /// A checkpoint is required but no valid checkpoint was discovered.
+    CheckpointMissing,
+    /// Checkpoint-store integrity inspection reported at least one invalid file.
+    CheckpointIntegrityFailed,
+    /// Recovery did not replay through the latest inspected WAL sequence.
+    RecoveryDidNotReachLatestWal,
+    /// The recovery plan/result keeps strategy submissions disabled.
+    RecoverySubmissionsDisabled,
+    /// Venue reconciliation is required but no policy decision was supplied.
+    VenueReconciliationMissing,
+    /// Reconciliation policy selected at least one blocking action.
+    ReconciliationPolicyBlocks,
+    /// Reconciliation requires explicit operator approval.
+    OperatorApprovalRequired,
+    /// Reconciliation requires cancelling venue-side orders before resume.
+    VenueCancelsRequired,
+    /// Reconciliation requires restating local state from venue truth.
+    LocalRestatesRequired,
+}
+
+impl RecoveryReadinessBlocker {
+    /// Returns true when this blocker requires human/operator attention.
+    pub const fn requires_operator_attention(self) -> bool {
+        matches!(
+            self,
+            Self::CheckpointIntegrityFailed
+                | Self::RecoverySubmissionsDisabled
+                | Self::VenueReconciliationMissing
+                | Self::ReconciliationPolicyBlocks
+                | Self::OperatorApprovalRequired
+        )
+    }
+}
+
+/// Policy for evaluating whether recovered OMS state may resume submissions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct RecoveryReadinessConfig {
+    require_valid_wal: bool,
+    require_checkpoint: bool,
+    require_valid_checkpoint_store: bool,
+    require_recovery_latest_wal: bool,
+    require_recovery_submissions_enabled: bool,
+    require_reconciliation_when_required: bool,
+    require_reconciliation_policy_allows_submissions: bool,
+}
+
+impl RecoveryReadinessConfig {
+    /// Creates a fail-closed recovery-readiness policy.
+    pub const fn strict() -> Self {
+        Self {
+            require_valid_wal: true,
+            require_checkpoint: true,
+            require_valid_checkpoint_store: true,
+            require_recovery_latest_wal: true,
+            require_recovery_submissions_enabled: true,
+            require_reconciliation_when_required: true,
+            require_reconciliation_policy_allows_submissions: true,
+        }
+    }
+
+    /// Sets whether WAL integrity must be valid.
+    pub const fn with_require_valid_wal(mut self, require_valid_wal: bool) -> Self {
+        self.require_valid_wal = require_valid_wal;
+        self
+    }
+
+    /// Sets whether at least one valid checkpoint is required.
+    pub const fn with_require_checkpoint(mut self, require_checkpoint: bool) -> Self {
+        self.require_checkpoint = require_checkpoint;
+        self
+    }
+
+    /// Sets whether every discovered checkpoint file must validate.
+    pub const fn with_require_valid_checkpoint_store(
+        mut self,
+        require_valid_checkpoint_store: bool,
+    ) -> Self {
+        self.require_valid_checkpoint_store = require_valid_checkpoint_store;
+        self
+    }
+
+    /// Sets whether recovery must reach the latest inspected WAL sequence.
+    pub const fn with_require_recovery_latest_wal(
+        mut self,
+        require_recovery_latest_wal: bool,
+    ) -> Self {
+        self.require_recovery_latest_wal = require_recovery_latest_wal;
+        self
+    }
+
+    /// Sets whether the recovery result itself must enable submissions.
+    pub const fn with_require_recovery_submissions_enabled(
+        mut self,
+        require_recovery_submissions_enabled: bool,
+    ) -> Self {
+        self.require_recovery_submissions_enabled = require_recovery_submissions_enabled;
+        self
+    }
+
+    /// Sets whether required venue reconciliation must be represented.
+    pub const fn with_require_reconciliation_when_required(
+        mut self,
+        require_reconciliation_when_required: bool,
+    ) -> Self {
+        self.require_reconciliation_when_required = require_reconciliation_when_required;
+        self
+    }
+
+    /// Sets whether reconciliation policy must allow submissions.
+    pub const fn with_require_reconciliation_policy_allows_submissions(
+        mut self,
+        require_reconciliation_policy_allows_submissions: bool,
+    ) -> Self {
+        self.require_reconciliation_policy_allows_submissions =
+            require_reconciliation_policy_allows_submissions;
+        self
+    }
+
+    /// Returns whether WAL integrity must be valid.
+    pub const fn require_valid_wal(&self) -> bool {
+        self.require_valid_wal
+    }
+
+    /// Returns whether a valid checkpoint is required.
+    pub const fn require_checkpoint(&self) -> bool {
+        self.require_checkpoint
+    }
+
+    /// Returns whether every discovered checkpoint file must validate.
+    pub const fn require_valid_checkpoint_store(&self) -> bool {
+        self.require_valid_checkpoint_store
+    }
+
+    /// Returns whether recovery must reach the latest inspected WAL sequence.
+    pub const fn require_recovery_latest_wal(&self) -> bool {
+        self.require_recovery_latest_wal
+    }
+
+    /// Returns whether recovery must enable submissions.
+    pub const fn require_recovery_submissions_enabled(&self) -> bool {
+        self.require_recovery_submissions_enabled
+    }
+
+    /// Returns whether required venue reconciliation must be represented.
+    pub const fn require_reconciliation_when_required(&self) -> bool {
+        self.require_reconciliation_when_required
+    }
+
+    /// Returns whether reconciliation policy must allow submissions.
+    pub const fn require_reconciliation_policy_allows_submissions(&self) -> bool {
+        self.require_reconciliation_policy_allows_submissions
+    }
+}
+
+impl Default for RecoveryReadinessConfig {
+    fn default() -> Self {
+        Self::strict()
+    }
+}
+
+/// Aggregate recovery-readiness decision for restart workflows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RecoveryReadinessDecision {
+    /// True when strategy submissions may resume under the selected policy.
+    pub submissions_enabled: bool,
+    /// True when at least one blocker requires fail-closed behavior.
+    pub fail_closed: bool,
+    /// True when at least one blocker requires operator attention.
+    pub operator_attention_required: bool,
+    /// Latest sequence decoded during WAL integrity inspection.
+    pub latest_wal_sequence: Option<WalSequence>,
+    /// Latest sequence covered by a valid checkpoint.
+    pub latest_checkpoint_sequence: Option<WalSequence>,
+    /// Latest sequence applied by recovery.
+    pub latest_recovered_sequence: Option<WalSequence>,
+    /// Number of reconciliation policy items evaluated.
+    pub reconciliation_items: usize,
+    /// Fail-closed blockers found by the evaluator.
+    pub blockers: Vec<RecoveryReadinessBlocker>,
+}
+
+impl RecoveryReadinessDecision {
+    /// Returns true when the decision contains no blockers.
+    pub fn is_ready(&self) -> bool {
+        self.blockers.is_empty() && self.submissions_enabled
+    }
+
+    /// Returns true when `blocker` is present.
+    pub fn has_blocker(&self, blocker: RecoveryReadinessBlocker) -> bool {
+        self.blockers.contains(&blocker)
+    }
+}
+
+/// Evaluates WAL, checkpoint, recovery, and reconciliation evidence before
+/// live submissions resume.
+pub fn evaluate_recovery_readiness(
+    recovery: &RecoveryResult,
+    wal: &WalSegmentIntegrityReport,
+    checkpoint_store: &CheckpointStoreIntegrityReport,
+    reconciliation: Option<&ReconciliationPolicyDecision>,
+    config: RecoveryReadinessConfig,
+) -> RecoveryReadinessDecision {
+    let mut blockers = Vec::with_capacity(8);
+
+    if config.require_valid_wal()
+        && (!wal.valid || wal.checksum_failures > 0 || wal.sequence_failures > 0)
+    {
+        blockers.push(RecoveryReadinessBlocker::WalIntegrityFailed);
+    }
+
+    if config.require_checkpoint() && checkpoint_store.latest_checkpoint_id.is_none() {
+        blockers.push(RecoveryReadinessBlocker::CheckpointMissing);
+    }
+
+    if config.require_valid_checkpoint_store()
+        && (!checkpoint_store.valid || checkpoint_store.invalid_checkpoints > 0)
+    {
+        blockers.push(RecoveryReadinessBlocker::CheckpointIntegrityFailed);
+    }
+
+    let latest_recovered_sequence = recovery
+        .replay
+        .last_sequence
+        .or(checkpoint_store.latest_last_applied_sequence);
+    if config.require_recovery_latest_wal()
+        && wal.last_sequence.is_some()
+        && latest_recovered_sequence != wal.last_sequence
+    {
+        blockers.push(RecoveryReadinessBlocker::RecoveryDidNotReachLatestWal);
+    }
+
+    if config.require_recovery_submissions_enabled() && !recovery.submissions_enabled {
+        blockers.push(RecoveryReadinessBlocker::RecoverySubmissionsDisabled);
+    }
+
+    let reconciliation_items = reconciliation.map_or(0, |decision| decision.items.len());
+    if recovery.venue_reconciliation_required
+        && config.require_reconciliation_when_required()
+        && reconciliation.is_none()
+    {
+        blockers.push(RecoveryReadinessBlocker::VenueReconciliationMissing);
+    }
+
+    if let Some(decision) = reconciliation {
+        if config.require_reconciliation_policy_allows_submissions()
+            && !decision.submissions_enabled
+        {
+            blockers.push(RecoveryReadinessBlocker::ReconciliationPolicyBlocks);
+        }
+        if decision.operator_approval_required {
+            blockers.push(RecoveryReadinessBlocker::OperatorApprovalRequired);
+        }
+        if decision.venue_cancels_required {
+            blockers.push(RecoveryReadinessBlocker::VenueCancelsRequired);
+        }
+        if decision.local_restates_required {
+            blockers.push(RecoveryReadinessBlocker::LocalRestatesRequired);
+        }
+    }
+
+    let operator_attention_required = blockers
+        .iter()
+        .copied()
+        .any(RecoveryReadinessBlocker::requires_operator_attention);
+    let submissions_enabled = blockers.is_empty();
+
+    RecoveryReadinessDecision {
+        submissions_enabled,
+        fail_closed: !submissions_enabled,
+        operator_attention_required,
+        latest_wal_sequence: wal.last_sequence,
+        latest_checkpoint_sequence: checkpoint_store.latest_last_applied_sequence,
+        latest_recovered_sequence,
+        reconciliation_items,
+        blockers,
+    }
+}
+
 /// Recovers OMS state from already decoded journal records.
 ///
 /// # Errors
@@ -5752,6 +6038,117 @@ mod tests {
         let err =
             recover_oms_state_from_records(RecoveryPlan::default(), None, &[record]).unwrap_err();
         assert!(err.to_string().contains("unknown order"));
+    }
+
+    #[test]
+    fn recovery_readiness_allows_clean_host_controlled_resume() {
+        let plan = RecoveryPlan::new(WalSequence(1))
+            .with_venue_policy(RecoveryVenuePolicy::HostControlled)
+            .with_submissions_disabled(false);
+        let recovery = recover_oms_state_from_records(plan, None, &[]).unwrap();
+        let wal = WalSegmentIntegrityReport {
+            valid: true,
+            last_sequence: Some(WalSequence(10)),
+            ..WalSegmentIntegrityReport::default()
+        };
+        let checkpoint_store = CheckpointStoreIntegrityReport {
+            valid: true,
+            latest_checkpoint_id: Some(3),
+            latest_last_applied_sequence: Some(WalSequence(10)),
+            ..CheckpointStoreIntegrityReport::default()
+        };
+        let reconciliation_report = reconcile_open_orders_detailed(&[], &[]);
+        let reconciliation =
+            evaluate_reconciliation_policy(&reconciliation_report, ReconciliationPolicy::default());
+
+        let decision = evaluate_recovery_readiness(
+            &recovery,
+            &wal,
+            &checkpoint_store,
+            Some(&reconciliation),
+            RecoveryReadinessConfig::strict(),
+        );
+
+        assert!(decision.is_ready());
+        assert!(decision.submissions_enabled);
+        assert!(!decision.fail_closed);
+        assert_eq!(decision.latest_recovered_sequence, Some(WalSequence(10)));
+        assert_eq!(decision.reconciliation_items, 0);
+        assert!(decision.blockers.is_empty());
+    }
+
+    #[test]
+    fn recovery_readiness_blocks_corrupt_unreconciled_restart() {
+        let recovery = recover_oms_state_from_records(RecoveryPlan::default(), None, &[]).unwrap();
+        let wal = WalSegmentIntegrityReport {
+            checksum_failures: 1,
+            valid: false,
+            last_sequence: Some(WalSequence(7)),
+            ..WalSegmentIntegrityReport::default()
+        };
+        let checkpoint_store = CheckpointStoreIntegrityReport {
+            invalid_checkpoints: 1,
+            valid: false,
+            ..CheckpointStoreIntegrityReport::default()
+        };
+
+        let decision = evaluate_recovery_readiness(
+            &recovery,
+            &wal,
+            &checkpoint_store,
+            None,
+            RecoveryReadinessConfig::strict(),
+        );
+
+        assert!(!decision.is_ready());
+        assert!(decision.fail_closed);
+        assert!(decision.operator_attention_required);
+        assert!(decision.has_blocker(RecoveryReadinessBlocker::WalIntegrityFailed));
+        assert!(decision.has_blocker(RecoveryReadinessBlocker::CheckpointMissing));
+        assert!(decision.has_blocker(RecoveryReadinessBlocker::CheckpointIntegrityFailed));
+        assert!(decision.has_blocker(RecoveryReadinessBlocker::RecoveryDidNotReachLatestWal));
+        assert!(decision.has_blocker(RecoveryReadinessBlocker::RecoverySubmissionsDisabled));
+        assert!(decision.has_blocker(RecoveryReadinessBlocker::VenueReconciliationMissing));
+    }
+
+    #[test]
+    fn recovery_readiness_reports_reconciliation_actions() {
+        let plan = RecoveryPlan::new(WalSequence(1))
+            .with_venue_policy(RecoveryVenuePolicy::HostControlled)
+            .with_submissions_disabled(false);
+        let recovery = recover_oms_state_from_records(plan, None, &[]).unwrap();
+        let wal = WalSegmentIntegrityReport {
+            valid: true,
+            last_sequence: Some(WalSequence(1)),
+            ..WalSegmentIntegrityReport::default()
+        };
+        let checkpoint_store = CheckpointStoreIntegrityReport {
+            valid: true,
+            latest_checkpoint_id: Some(1),
+            latest_last_applied_sequence: Some(WalSequence(1)),
+            ..CheckpointStoreIntegrityReport::default()
+        };
+        let req = order("C1");
+        let venue_state = OrderState::pending_new(&req);
+        let reconciliation_report = reconcile_open_orders_detailed(&[], &[venue_state]);
+        let reconciliation = evaluate_reconciliation_policy(
+            &reconciliation_report,
+            ReconciliationPolicy::fail_closed()
+                .with_venue_only(ReconciliationPolicyAction::CancelVenueOrder),
+        );
+
+        let decision = evaluate_recovery_readiness(
+            &recovery,
+            &wal,
+            &checkpoint_store,
+            Some(&reconciliation),
+            RecoveryReadinessConfig::strict(),
+        );
+
+        assert!(!decision.submissions_enabled);
+        assert!(decision.has_blocker(RecoveryReadinessBlocker::ReconciliationPolicyBlocks));
+        assert!(decision.has_blocker(RecoveryReadinessBlocker::VenueCancelsRequired));
+        assert_eq!(decision.reconciliation_items, 1);
     }
 
     #[test]

@@ -90,6 +90,10 @@ Journaling:
 - [`RecoveryPlan`]
 - [`RecoveredOmsState`]
 - [`RecoveryResult`]
+- [`RecoveryReadinessConfig`]
+- [`RecoveryReadinessBlocker`]
+- [`RecoveryReadinessDecision`]
+- [`evaluate_recovery_readiness`]
 - [`recover_oms_state_from_records`]
 - [`recover_oms_state_from_segmented_wal`]
 - [`recover_latest_checkpoint_from_segmented_wal`]
@@ -663,6 +667,64 @@ command WAL payload records command kind, id, and timestamp, not the full
 or quantity. Production hosts should checkpoint frequently, require venue
 reconciliation, and add full command-payload journaling before relying on
 checkpoint-only recovery for long uncheckpointed windows.
+
+### Recovery readiness gate
+
+[`evaluate_recovery_readiness`] combines the independent restart evidence into
+one typed, fail-closed resume decision:
+
+- segmented WAL integrity;
+- checkpoint-store integrity;
+- latest recovered WAL sequence;
+- whether recovery still disables submissions;
+- required venue reconciliation;
+- reconciliation policy actions such as venue cancels, local restates, and
+  operator approval.
+
+The gate does not perform I/O, replay WAL bytes, mutate checkpoints, call
+venues, or enable trading. It is a deterministic policy evaluator over reports
+the host already produced during startup. That keeps the low-latency restart
+path explicit and lets production hosts replace the policy without replacing
+the WAL or checkpoint implementations.
+
+```rust
+use of_execution::{
+    evaluate_reconciliation_policy, evaluate_recovery_readiness,
+    recover_oms_state_from_records, CheckpointStoreIntegrityReport,
+    ReconciliationPolicy, RecoveryPlan, RecoveryReadinessConfig,
+    VenueReconciliationReport,
+    RecoveryVenuePolicy, WalSegmentIntegrityReport,
+};
+use of_execution_core::WalSequence;
+
+let recovery = recover_oms_state_from_records(
+    RecoveryPlan::new(WalSequence(1))
+        .with_venue_policy(RecoveryVenuePolicy::HostControlled)
+        .with_submissions_disabled(false),
+    None,
+    &[],
+)?;
+let mut wal = WalSegmentIntegrityReport::default();
+wal.valid = true;
+wal.last_sequence = Some(WalSequence(10));
+let mut checkpoints = CheckpointStoreIntegrityReport::default();
+checkpoints.valid = true;
+checkpoints.latest_checkpoint_id = Some(3);
+checkpoints.latest_last_applied_sequence = Some(WalSequence(10));
+let reconciliation_report = VenueReconciliationReport::default();
+let reconciliation =
+    evaluate_reconciliation_policy(&reconciliation_report, ReconciliationPolicy::default());
+
+let decision = evaluate_recovery_readiness(
+    &recovery,
+    &wal,
+    &checkpoints,
+    Some(&reconciliation),
+    RecoveryReadinessConfig::strict(),
+);
+assert!(decision.is_ready());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
 
 ## Concurrent Worker
 

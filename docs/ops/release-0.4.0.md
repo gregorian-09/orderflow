@@ -121,6 +121,8 @@ without forcing all users to compile them.
 - deterministic simulated execution adapter
 - in-memory and file-backed execution journal helpers
 - recovery and open-order reconciliation primitives
+- recovery-readiness evaluation that gates resume decisions on WAL integrity,
+  checkpoint integrity, recovery output, and reconciliation policy
 - lifecycle, fanout, command correlation, throttling, sharding, telemetry,
   position ledger, safety policy, and replay helpers
 
