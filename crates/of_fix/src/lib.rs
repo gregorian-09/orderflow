@@ -4,9 +4,16 @@
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+const SEQUENCE_SNAPSHOT_MAGIC: &[u8; 8] = b"OFIXSEQ\0";
+const SEQUENCE_SNAPSHOT_VERSION: u16 = 1;
+const SEQUENCE_SNAPSHOT_FILE: &str = "fix-sequence.snapshot";
+const SEQUENCE_SNAPSHOT_TMP_FILE: &str = "fix-sequence.snapshot.tmp";
 
 /// FIX field delimiter byte.
 pub const SOH: u8 = 0x01;
@@ -1046,6 +1053,400 @@ impl<'a> FixSequenceSnapshot<'a> {
     /// Returns the trading day or session date bytes.
     pub const fn trading_day(&self) -> &'a [u8] {
         self.trading_day
+    }
+}
+
+/// Owned FIX session identity loaded from durable storage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct FixOwnedSessionId {
+    version: FixVersion,
+    sender_comp_id: Vec<u8>,
+    target_comp_id: Vec<u8>,
+    qualifier: Vec<u8>,
+}
+
+impl FixOwnedSessionId {
+    /// Creates an owned session id.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixEncodeError`] when an identifier contains SOH.
+    pub fn new(
+        version: FixVersion,
+        sender_comp_id: impl Into<Vec<u8>>,
+        target_comp_id: impl Into<Vec<u8>>,
+    ) -> Result<Self, FixEncodeError> {
+        Self::with_qualifier(version, sender_comp_id, target_comp_id, Vec::new())
+    }
+
+    /// Creates an owned session id with a qualifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixEncodeError`] when an identifier contains SOH.
+    pub fn with_qualifier(
+        version: FixVersion,
+        sender_comp_id: impl Into<Vec<u8>>,
+        target_comp_id: impl Into<Vec<u8>>,
+        qualifier: impl Into<Vec<u8>>,
+    ) -> Result<Self, FixEncodeError> {
+        let sender_comp_id = sender_comp_id.into();
+        let target_comp_id = target_comp_id.into();
+        let qualifier = qualifier.into();
+        validate_value(FixTag::SENDER_COMP_ID, &sender_comp_id)?;
+        validate_value(FixTag::TARGET_COMP_ID, &target_comp_id)?;
+        validate_value(FixTag::TEXT, &qualifier)?;
+        Ok(Self {
+            version,
+            sender_comp_id,
+            target_comp_id,
+            qualifier,
+        })
+    }
+
+    /// Creates an owned id from a borrowed session id.
+    pub fn from_borrowed(session_id: FixSessionId<'_>) -> Self {
+        Self {
+            version: session_id.version(),
+            sender_comp_id: session_id.sender_comp_id().to_vec(),
+            target_comp_id: session_id.target_comp_id().to_vec(),
+            qualifier: session_id.qualifier().to_vec(),
+        }
+    }
+
+    /// Returns a borrowed session id view.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixEncodeError`] if stored bytes are invalid.
+    pub fn as_borrowed(&self) -> Result<FixSessionId<'_>, FixEncodeError> {
+        FixSessionId::with_qualifier(
+            self.version,
+            &self.sender_comp_id,
+            &self.target_comp_id,
+            &self.qualifier,
+        )
+    }
+
+    /// Returns the FIX version.
+    pub const fn version(&self) -> FixVersion {
+        self.version
+    }
+
+    /// Returns `SenderCompID(49)`.
+    pub fn sender_comp_id(&self) -> &[u8] {
+        &self.sender_comp_id
+    }
+
+    /// Returns `TargetCompID(56)`.
+    pub fn target_comp_id(&self) -> &[u8] {
+        &self.target_comp_id
+    }
+
+    /// Returns the optional session qualifier.
+    pub fn qualifier(&self) -> &[u8] {
+        &self.qualifier
+    }
+}
+
+/// Owned persistable sequence-state snapshot loaded from storage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct FixOwnedSequenceSnapshot {
+    session_id: FixOwnedSessionId,
+    next_inbound: u64,
+    next_outbound: u64,
+    trading_day: Vec<u8>,
+    checksum: u64,
+}
+
+impl FixOwnedSequenceSnapshot {
+    /// Creates an owned sequence snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixEncodeError`] when `trading_day` contains SOH.
+    pub fn new(
+        session_id: FixOwnedSessionId,
+        next_inbound: u64,
+        next_outbound: u64,
+        trading_day: impl Into<Vec<u8>>,
+    ) -> Result<Self, FixEncodeError> {
+        let trading_day = trading_day.into();
+        validate_value(FixTag::TEXT, &trading_day)?;
+        let mut snapshot = Self {
+            session_id,
+            next_inbound: clamp_seq_no(next_inbound),
+            next_outbound: clamp_seq_no(next_outbound),
+            trading_day,
+            checksum: 0,
+        };
+        snapshot.checksum = sequence_snapshot_checksum_owned(&snapshot);
+        Ok(snapshot)
+    }
+
+    /// Creates an owned snapshot from a borrowed sequence snapshot.
+    pub fn from_borrowed(snapshot: &FixSequenceSnapshot<'_>) -> Self {
+        let mut owned = Self {
+            session_id: FixOwnedSessionId::from_borrowed(snapshot.session_id()),
+            next_inbound: snapshot.next_inbound(),
+            next_outbound: snapshot.next_outbound(),
+            trading_day: snapshot.trading_day().to_vec(),
+            checksum: 0,
+        };
+        owned.checksum = sequence_snapshot_checksum_owned(&owned);
+        owned
+    }
+
+    /// Returns a borrowed snapshot view.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixEncodeError`] if stored identity or trading-day bytes are invalid.
+    pub fn as_borrowed(&self) -> Result<FixSequenceSnapshot<'_>, FixEncodeError> {
+        FixSequenceSnapshot::new(
+            self.session_id.as_borrowed()?,
+            self.next_inbound,
+            self.next_outbound,
+            &self.trading_day,
+        )
+    }
+
+    /// Returns the owned session id.
+    pub const fn session_id(&self) -> &FixOwnedSessionId {
+        &self.session_id
+    }
+
+    /// Returns the next inbound sequence number.
+    pub const fn next_inbound(&self) -> u64 {
+        self.next_inbound
+    }
+
+    /// Returns the next outbound sequence number.
+    pub const fn next_outbound(&self) -> u64 {
+        self.next_outbound
+    }
+
+    /// Returns the trading day bytes.
+    pub fn trading_day(&self) -> &[u8] {
+        &self.trading_day
+    }
+
+    /// Returns the stored snapshot checksum.
+    pub const fn checksum(&self) -> u64 {
+        self.checksum
+    }
+
+    /// Returns true when the stored checksum matches the snapshot payload.
+    pub fn validate_checksum(&self) -> bool {
+        self.checksum == sequence_snapshot_checksum_owned(self)
+    }
+}
+
+/// File-backed FIX sequence snapshot store configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct FixSequenceStoreConfig {
+    root: PathBuf,
+    sync_on_save: bool,
+}
+
+impl FixSequenceStoreConfig {
+    /// Creates a sequence store config rooted at `root`.
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self {
+            root: root.into(),
+            sync_on_save: true,
+        }
+    }
+
+    /// Sets whether snapshot files are synced before atomic rename.
+    pub const fn with_sync_on_save(mut self, sync_on_save: bool) -> Self {
+        self.sync_on_save = sync_on_save;
+        self
+    }
+
+    /// Returns the sequence snapshot root directory.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Returns whether save operations sync snapshot bytes.
+    pub const fn sync_on_save(&self) -> bool {
+        self.sync_on_save
+    }
+}
+
+/// Metadata for an installed FIX sequence snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct FixSequenceSnapshotManifest {
+    /// Snapshot file path.
+    pub path: PathBuf,
+    /// Encoded snapshot bytes.
+    pub bytes: u64,
+    /// Snapshot checksum.
+    pub checksum: u64,
+    /// Next inbound sequence number.
+    pub next_inbound: u64,
+    /// Next outbound sequence number.
+    pub next_outbound: u64,
+}
+
+/// Error returned by FIX sequence snapshot persistence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FixSequenceStoreError {
+    /// Filesystem operation failed.
+    Io(String),
+    /// Snapshot value validation failed.
+    Encode(FixEncodeError),
+    /// Snapshot file magic does not match the expected format.
+    InvalidMagic,
+    /// Snapshot file version is not supported.
+    UnsupportedVersion(u16),
+    /// Snapshot file ended before a complete field could be decoded.
+    Truncated,
+    /// Snapshot payload has an invalid known FIX begin string.
+    InvalidVersion,
+    /// Encoded field length exceeds the supported snapshot format.
+    FieldTooLarge,
+    /// Snapshot checksum does not match the encoded payload.
+    ChecksumMismatch {
+        /// Checksum stored in the snapshot file.
+        expected: u64,
+        /// Checksum recomputed from the decoded snapshot payload.
+        actual: u64,
+    },
+}
+
+impl fmt::Display for FixSequenceStoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(err) => write!(f, "FIX sequence store I/O error: {err}"),
+            Self::Encode(err) => write!(f, "FIX sequence store encode error: {err}"),
+            Self::InvalidMagic => write!(f, "invalid FIX sequence snapshot magic"),
+            Self::UnsupportedVersion(version) => {
+                write!(f, "unsupported FIX sequence snapshot version {version}")
+            }
+            Self::Truncated => write!(f, "truncated FIX sequence snapshot"),
+            Self::InvalidVersion => write!(f, "invalid FIX begin string in sequence snapshot"),
+            Self::FieldTooLarge => write!(f, "FIX sequence snapshot field is too large"),
+            Self::ChecksumMismatch { expected, actual } => write!(
+                f,
+                "FIX sequence snapshot checksum mismatch: expected {expected}, actual {actual}"
+            ),
+        }
+    }
+}
+
+impl Error for FixSequenceStoreError {}
+
+impl From<FixEncodeError> for FixSequenceStoreError {
+    fn from(value: FixEncodeError) -> Self {
+        Self::Encode(value)
+    }
+}
+
+/// FIX sequence snapshot persistence contract.
+pub trait FixSequenceSnapshotStore {
+    /// Saves a sequence snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixSequenceStoreError`] when validation or storage fails.
+    fn save_snapshot(
+        &mut self,
+        snapshot: &FixSequenceSnapshot<'_>,
+    ) -> Result<FixSequenceSnapshotManifest, FixSequenceStoreError>;
+
+    /// Loads the latest sequence snapshot, if present.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixSequenceStoreError`] when the snapshot cannot be decoded or
+    /// its checksum does not validate.
+    fn load_latest(&self) -> Result<Option<FixOwnedSequenceSnapshot>, FixSequenceStoreError>;
+}
+
+/// Atomic file-backed FIX sequence snapshot store.
+#[derive(Debug, Clone)]
+pub struct FileFixSequenceSnapshotStore {
+    config: FixSequenceStoreConfig,
+}
+
+impl FileFixSequenceSnapshotStore {
+    /// Opens or creates a file-backed sequence snapshot store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixSequenceStoreError`] when the root cannot be created.
+    pub fn open(config: FixSequenceStoreConfig) -> Result<Self, FixSequenceStoreError> {
+        fs::create_dir_all(config.root()).map_err(io_error)?;
+        Ok(Self { config })
+    }
+
+    /// Returns the store configuration.
+    pub const fn config(&self) -> &FixSequenceStoreConfig {
+        &self.config
+    }
+
+    /// Returns the latest snapshot path.
+    pub fn snapshot_path(&self) -> PathBuf {
+        self.config.root().join(SEQUENCE_SNAPSHOT_FILE)
+    }
+
+    fn temp_path(&self) -> PathBuf {
+        self.config.root().join(SEQUENCE_SNAPSHOT_TMP_FILE)
+    }
+}
+
+impl FixSequenceSnapshotStore for FileFixSequenceSnapshotStore {
+    fn save_snapshot(
+        &mut self,
+        snapshot: &FixSequenceSnapshot<'_>,
+    ) -> Result<FixSequenceSnapshotManifest, FixSequenceStoreError> {
+        let owned = FixOwnedSequenceSnapshot::from_borrowed(snapshot);
+        let bytes = encode_sequence_snapshot(&owned)?;
+        let checksum = owned.checksum();
+        let final_path = self.snapshot_path();
+        let tmp_path = self.temp_path();
+
+        {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&tmp_path)
+                .map_err(io_error)?;
+            file.write_all(&bytes).map_err(io_error)?;
+            file.flush().map_err(io_error)?;
+            if self.config.sync_on_save() {
+                file.sync_all().map_err(io_error)?;
+            }
+        }
+
+        fs::rename(&tmp_path, &final_path).map_err(io_error)?;
+
+        Ok(FixSequenceSnapshotManifest {
+            path: final_path,
+            bytes: usize_to_u64(bytes.len()),
+            checksum,
+            next_inbound: owned.next_inbound(),
+            next_outbound: owned.next_outbound(),
+        })
+    }
+
+    fn load_latest(&self) -> Result<Option<FixOwnedSequenceSnapshot>, FixSequenceStoreError> {
+        let path = self.snapshot_path();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let mut file = File::open(path).map_err(io_error)?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).map_err(io_error)?;
+        decode_sequence_snapshot(&bytes).map(Some)
     }
 }
 
@@ -3580,6 +3981,155 @@ fn hash_bytes_into(mut hash: u64, bytes: &[u8]) -> u64 {
     hash
 }
 
+fn sequence_snapshot_checksum_owned(snapshot: &FixOwnedSequenceSnapshot) -> u64 {
+    let mut hash = FNV_OFFSET_BASIS;
+    hash = hash_bytes_into(hash, snapshot.session_id.version().as_bytes());
+    hash = hash_bytes_into(hash, snapshot.session_id.sender_comp_id());
+    hash = hash_bytes_into(hash, snapshot.session_id.target_comp_id());
+    hash = hash_bytes_into(hash, snapshot.session_id.qualifier());
+    hash = hash_u64(hash, snapshot.next_inbound());
+    hash = hash_u64(hash, snapshot.next_outbound());
+    hash_bytes_into(hash, snapshot.trading_day())
+}
+
+fn encode_sequence_snapshot(
+    snapshot: &FixOwnedSequenceSnapshot,
+) -> Result<Vec<u8>, FixSequenceStoreError> {
+    let version = snapshot.session_id.version().as_bytes();
+    let sender = snapshot.session_id.sender_comp_id();
+    let target = snapshot.session_id.target_comp_id();
+    let qualifier = snapshot.session_id.qualifier();
+    let trading_day = snapshot.trading_day();
+    let capacity = SEQUENCE_SNAPSHOT_MAGIC.len()
+        + 2
+        + 8
+        + 8
+        + 8
+        + 5 * 2
+        + version.len()
+        + sender.len()
+        + target.len()
+        + qualifier.len()
+        + trading_day.len();
+    let mut out = Vec::with_capacity(capacity);
+    out.extend_from_slice(SEQUENCE_SNAPSHOT_MAGIC);
+    put_snapshot_u16(&mut out, SEQUENCE_SNAPSHOT_VERSION);
+    put_snapshot_u64(&mut out, snapshot.next_inbound());
+    put_snapshot_u64(&mut out, snapshot.next_outbound());
+    put_snapshot_bytes(&mut out, version)?;
+    put_snapshot_bytes(&mut out, sender)?;
+    put_snapshot_bytes(&mut out, target)?;
+    put_snapshot_bytes(&mut out, qualifier)?;
+    put_snapshot_bytes(&mut out, trading_day)?;
+    put_snapshot_u64(&mut out, snapshot.checksum());
+    Ok(out)
+}
+
+fn decode_sequence_snapshot(
+    bytes: &[u8],
+) -> Result<FixOwnedSequenceSnapshot, FixSequenceStoreError> {
+    let mut cursor = SnapshotCursor::new(bytes);
+    if cursor.read_exact(SEQUENCE_SNAPSHOT_MAGIC.len())? != SEQUENCE_SNAPSHOT_MAGIC {
+        return Err(FixSequenceStoreError::InvalidMagic);
+    }
+    let version = cursor.read_u16()?;
+    if version != SEQUENCE_SNAPSHOT_VERSION {
+        return Err(FixSequenceStoreError::UnsupportedVersion(version));
+    }
+    let next_inbound = cursor.read_u64()?;
+    let next_outbound = cursor.read_u64()?;
+    let begin_string = cursor.read_vec()?;
+    let sender_comp_id = cursor.read_vec()?;
+    let target_comp_id = cursor.read_vec()?;
+    let qualifier = cursor.read_vec()?;
+    let trading_day = cursor.read_vec()?;
+    let expected_checksum = cursor.read_u64()?;
+    if !cursor.is_done() {
+        return Err(FixSequenceStoreError::Truncated);
+    }
+    let version =
+        FixVersion::from_bytes(&begin_string).ok_or(FixSequenceStoreError::InvalidVersion)?;
+    let mut snapshot = FixOwnedSequenceSnapshot::new(
+        FixOwnedSessionId::with_qualifier(version, sender_comp_id, target_comp_id, qualifier)?,
+        next_inbound,
+        next_outbound,
+        trading_day,
+    )?;
+    let actual = snapshot.checksum();
+    if expected_checksum != actual {
+        return Err(FixSequenceStoreError::ChecksumMismatch {
+            expected: expected_checksum,
+            actual,
+        });
+    }
+    snapshot.checksum = expected_checksum;
+    Ok(snapshot)
+}
+
+fn put_snapshot_u16(out: &mut Vec<u8>, value: u16) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put_snapshot_u64(out: &mut Vec<u8>, value: u64) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put_snapshot_bytes(out: &mut Vec<u8>, value: &[u8]) -> Result<(), FixSequenceStoreError> {
+    let len = u16::try_from(value.len()).map_err(|_| FixSequenceStoreError::FieldTooLarge)?;
+    put_snapshot_u16(out, len);
+    out.extend_from_slice(value);
+    Ok(())
+}
+
+fn io_error(err: std::io::Error) -> FixSequenceStoreError {
+    FixSequenceStoreError::Io(err.to_string())
+}
+
+struct SnapshotCursor<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> SnapshotCursor<'a> {
+    const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn read_exact(&mut self, len: usize) -> Result<&'a [u8], FixSequenceStoreError> {
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or(FixSequenceStoreError::Truncated)?;
+        if end > self.bytes.len() {
+            return Err(FixSequenceStoreError::Truncated);
+        }
+        let value = &self.bytes[self.offset..end];
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn read_u16(&mut self) -> Result<u16, FixSequenceStoreError> {
+        let bytes = self.read_exact(2)?;
+        Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
+    }
+
+    fn read_u64(&mut self) -> Result<u64, FixSequenceStoreError> {
+        let bytes = self.read_exact(8)?;
+        Ok(u64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]))
+    }
+
+    fn read_vec(&mut self) -> Result<Vec<u8>, FixSequenceStoreError> {
+        let len = usize::from(self.read_u16()?);
+        Ok(self.read_exact(len)?.to_vec())
+    }
+
+    const fn is_done(&self) -> bool {
+        self.offset == self.bytes.len()
+    }
+}
+
 fn update_transcript_hash(
     mut hash: u64,
     ordinal: u64,
@@ -4158,6 +4708,91 @@ mod tests {
         let snapshot = FixSequenceSnapshot::new(session_id, 0, 0, b"20260717").expect("snapshot");
         assert_eq!(snapshot.next_inbound(), 1);
         assert_eq!(snapshot.next_outbound(), 1);
+    }
+
+    #[test]
+    fn file_sequence_snapshot_store_saves_and_loads_latest() {
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-fix-sequence-store-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+
+        let session_id =
+            FixSessionId::with_qualifier(FixVersion::Fix44, b"CLIENT", b"BROKER", b"PRIMARY")
+                .expect("session");
+        let snapshot = FixSequenceSnapshot::new(session_id, 42, 77, b"20260726").expect("snapshot");
+        let mut store = FileFixSequenceSnapshotStore::open(
+            FixSequenceStoreConfig::new(&root).with_sync_on_save(false),
+        )
+        .expect("store");
+
+        let manifest = store.save_snapshot(&snapshot).expect("save");
+        assert_eq!(manifest.next_inbound, 42);
+        assert_eq!(manifest.next_outbound, 77);
+        assert!(manifest.bytes > 0);
+
+        let loaded = store.load_latest().expect("load").expect("snapshot");
+        assert!(loaded.validate_checksum());
+        assert_eq!(loaded.session_id().version(), FixVersion::Fix44);
+        assert_eq!(loaded.session_id().sender_comp_id(), b"CLIENT");
+        assert_eq!(loaded.session_id().target_comp_id(), b"BROKER");
+        assert_eq!(loaded.session_id().qualifier(), b"PRIMARY");
+        assert_eq!(loaded.trading_day(), b"20260726");
+
+        let borrowed = loaded.as_borrowed().expect("borrowed");
+        let restored = FixSequenceTracker::from_snapshot(&borrowed);
+        assert_eq!(restored.next_inbound(), 42);
+        assert_eq!(restored.next_outbound(), 77);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn file_sequence_snapshot_store_returns_none_when_empty() {
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-fix-sequence-store-empty-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let store = FileFixSequenceSnapshotStore::open(
+            FixSequenceStoreConfig::new(&root).with_sync_on_save(false),
+        )
+        .expect("store");
+
+        assert!(store.load_latest().expect("load").is_none());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn file_sequence_snapshot_store_rejects_corrupt_checksum() {
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-fix-sequence-store-corrupt-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+
+        let session_id =
+            FixSessionId::new(FixVersion::Fix42, b"CLIENT", b"BROKER").expect("session");
+        let snapshot = FixSequenceSnapshot::new(session_id, 12, 21, b"20260726").expect("snapshot");
+        let mut store = FileFixSequenceSnapshotStore::open(
+            FixSequenceStoreConfig::new(&root).with_sync_on_save(false),
+        )
+        .expect("store");
+        store.save_snapshot(&snapshot).expect("save");
+
+        let path = store.snapshot_path();
+        let mut bytes = fs::read(&path).expect("read");
+        let last = bytes.last_mut().expect("byte");
+        *last ^= 0x01;
+        fs::write(&path, bytes).expect("write");
+
+        let err = store.load_latest().expect_err("checksum");
+        assert!(matches!(
+            err,
+            FixSequenceStoreError::ChecksumMismatch { .. }
+        ));
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

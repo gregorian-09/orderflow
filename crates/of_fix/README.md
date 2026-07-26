@@ -30,6 +30,8 @@ Included now:
 - resend-range detection for inbound sequence gaps;
 - sequence-reset guardrails that reject decreasing next expected sequence;
 - borrowed session identity and sequence snapshot primitives for persistence;
+- owned sequence snapshot types and an atomic file-backed sequence snapshot
+  store for durable restart/reconnect state;
 - bounded in-memory resend-store primitives for replay/gap-fill planning;
 - bounded in-memory transcript capture primitives for certification/audit
   workflows;
@@ -52,7 +54,6 @@ Not included yet:
 - TCP/TLS-driven Logon/Logout/Heartbeat/TestRequest lifecycle;
 - durable resend message persistence;
 - automatic resend response transmission;
-- persistent session store;
 - repeating group dictionaries;
 - venue certification harness;
 - OMS execution mapping.
@@ -70,6 +71,8 @@ The codec is designed for execution hot paths:
 - expose reject diagnostics as borrowed views;
 - track inbound/outbound sequence numbers with plain integer state;
 - snapshot sequence counters without tying the codec to a storage backend;
+- persist sequence snapshots outside the per-message hot path with explicit
+  sync policy and checksum validation;
 - retain outbound resend frames behind explicit message/byte bounds;
 - plan replay versus gap-fill actions into caller-owned buffers;
 - capture transcript metadata with bounded optional raw retention and a
@@ -216,6 +219,44 @@ let restored = FixSequenceTracker::from_snapshot(&snapshot);
 assert_eq!(restored.next_inbound(), 12);
 assert_eq!(restored.next_outbound(), 34);
 # Ok::<(), of_fix::FixEncodeError>(())
+```
+
+## Sequence Persistence Example
+
+`FileFixSequenceSnapshotStore` persists the latest FIX sequence snapshot as a
+small checksum-validated binary file. It is meant for session startup,
+reconnect, and end-of-day handoff logic, not for every inbound/outbound FIX
+message. Hot session code should update `FixSequenceTracker` in memory and save
+snapshots at explicit durability points chosen by the host.
+
+```rust
+use of_fix::{
+    FileFixSequenceSnapshotStore, FixSequenceSnapshotStore,
+    FixSequenceStoreConfig, FixSequenceTracker, FixSessionId, FixVersion,
+};
+
+let root = std::env::temp_dir().join(format!(
+    "orderflow-fix-sequence-readme-{}",
+    std::process::id()
+));
+let _ = std::fs::remove_dir_all(&root);
+
+let mut store = FileFixSequenceSnapshotStore::open(
+    FixSequenceStoreConfig::new(&root).with_sync_on_save(false),
+)?;
+let session = FixSessionId::new(FixVersion::Fix44, b"CLIENT", b"BROKER")?;
+let tracker = FixSequenceTracker::from_next(42, 77);
+let snapshot = tracker.snapshot(session, b"20260726")?;
+
+let manifest = store.save_snapshot(&snapshot)?;
+assert_eq!(manifest.next_inbound, 42);
+
+let loaded = store.load_latest()?.expect("snapshot");
+assert!(loaded.validate_checksum());
+let restored = FixSequenceTracker::from_snapshot(&loaded.as_borrowed()?);
+assert_eq!(restored.next_outbound(), 77);
+# let _ = std::fs::remove_dir_all(root);
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 ## Session Admin Builder Example

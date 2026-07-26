@@ -149,6 +149,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   outbound assignment, and guarded sequence-reset advancement.
 - Added `of_fix` borrowed session identity and sequence snapshot primitives for
   storage-neutral persistence of next inbound/outbound sequence counters.
+- Added `of_fix` owned sequence snapshots and
+  `FileFixSequenceSnapshotStore` for atomic, checksum-validated persistence of
+  latest FIX session sequence state across restart/reconnect workflows.
 - Added `of_fix` bounded resend-store primitives for replay/gap-fill planning
   with explicit message/byte retention metrics and sequence guardrails.
 - Added `of_fix` bounded transcript-capture primitives for certification/audit

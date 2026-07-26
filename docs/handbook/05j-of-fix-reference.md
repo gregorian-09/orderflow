@@ -32,6 +32,13 @@ maps parsed execution reports into canonical OMS events.
 | `FixResendRange` | struct | Missing sequence range for resend request generation |
 | `FixSessionId` | struct | Borrowed FIX session identity |
 | `FixSequenceSnapshot` | struct | Borrowed persistable sequence-state snapshot |
+| `FixOwnedSessionId` | struct | Owned FIX session identity loaded from durable storage |
+| `FixOwnedSequenceSnapshot` | struct | Owned sequence-state snapshot loaded from storage |
+| `FixSequenceStoreConfig` | struct | File-backed sequence snapshot store configuration |
+| `FixSequenceSnapshotManifest` | struct | Installed sequence snapshot metadata |
+| `FixSequenceStoreError` | enum | Sequence snapshot persistence errors |
+| `FixSequenceSnapshotStore` | trait | Sequence snapshot persistence contract |
+| `FileFixSequenceSnapshotStore` | struct | Atomic file-backed sequence snapshot store |
 | `FixSentMessageKind` | enum | Replayability classification for outbound messages |
 | `FixResendStoreConfig` | struct | Bounded in-memory resend-store limits |
 | `FixResendStore` | struct | Retained outbound frame store for resend planning |
@@ -375,9 +382,54 @@ Snapshot boundary:
 - captures session identity, trading day, next inbound, and next outbound;
 - clamps zero counters to one;
 - rejects SOH in identity/session-date values;
-- does not persist to disk;
+- can be saved through a host-selected `FixSequenceSnapshotStore`;
 - does not decide end-of-day reset policy;
 - does not retain sent application messages for resend replay.
+
+## Sequence Persistence Example
+
+`FileFixSequenceSnapshotStore` saves the latest sequence snapshot with an atomic
+temporary-file rename and validates a checksum on load. It is intentionally
+outside the per-message hot path: sessions should update `FixSequenceTracker` in
+memory and persist at explicit durability points such as logon success, clean
+logout, sequence reset, or operator checkpoint.
+
+```rust
+use of_fix::{
+    FileFixSequenceSnapshotStore, FixSequenceSnapshotStore,
+    FixSequenceStoreConfig, FixSequenceTracker, FixSessionId, FixVersion,
+};
+
+let root = std::env::temp_dir().join(format!(
+    "orderflow-fix-sequence-handbook-{}",
+    std::process::id()
+));
+let _ = std::fs::remove_dir_all(&root);
+
+let mut store = FileFixSequenceSnapshotStore::open(
+    FixSequenceStoreConfig::new(&root).with_sync_on_save(false),
+)?;
+let session = FixSessionId::new(FixVersion::Fix44, b"CLIENT", b"BROKER")?;
+let tracker = FixSequenceTracker::from_next(42, 77);
+let snapshot = tracker.snapshot(session, b"20260726")?;
+
+store.save_snapshot(&snapshot)?;
+let loaded = store.load_latest()?.expect("snapshot");
+assert!(loaded.validate_checksum());
+let restored = FixSequenceTracker::from_snapshot(&loaded.as_borrowed()?);
+assert_eq!(restored.next_inbound(), 42);
+# let _ = std::fs::remove_dir_all(root);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Persistence boundary:
+
+- stores only session id, trading day, next inbound, and next outbound;
+- uses a compact dependency-free binary format with a checksum;
+- optionally syncs snapshot bytes before rename;
+- does not write on every FIX message by itself;
+- does not persist resend frames;
+- does not replace certification transcript capture.
 
 ## Resend Store Example
 

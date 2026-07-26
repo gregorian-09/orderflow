@@ -142,6 +142,8 @@ without forcing all users to compile them.
   `FixResendRange` primitives for deterministic session sequence handling
 - `FixSessionId` and `FixSequenceSnapshot` primitives for storage-neutral
   session sequence persistence
+- `FixOwnedSequenceSnapshot` and `FileFixSequenceSnapshotStore` for atomic,
+  checksum-validated latest sequence snapshot persistence across restarts
 - bounded `FixResendStore` primitives for in-memory outbound frame retention,
   replay/gap-fill planning, and retention/drop/eviction metrics
 - bounded `FixTranscriptCapture` primitives for certification/audit transcript
@@ -162,10 +164,10 @@ without forcing all users to compile them.
 - caller-owned encoding buffers with computed body length and checksum
 - diagnostic rendering with `|` separators outside hot paths
 
-This is not a full FIX session engine. Transport, logon/logout, resend, sequence
-message replay, gap-fill generation, persistence, venue certification, and
-counterparty-specific business rules remain separate future layers built on top
-of the codec.
+This is not a full FIX session engine. Transport, logon/logout, automatic
+resend response transmission, durable resend-message persistence, venue
+certification, and counterparty-specific business rules remain separate future
+layers built on top of the codec.
 
 ### 5. Execution adapter scaffolding
 

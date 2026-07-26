@@ -842,6 +842,13 @@ Public FIX codec types:
 - `FixResendRange`
 - `FixSessionId`
 - `FixSequenceSnapshot`
+- `FixOwnedSessionId`
+- `FixOwnedSequenceSnapshot`
+- `FixSequenceStoreConfig`
+- `FixSequenceSnapshotManifest`
+- `FixSequenceStoreError`
+- `FixSequenceSnapshotStore` trait
+- `FileFixSequenceSnapshotStore`
 - `FixSentMessageKind`
 - `FixResendStoreConfig`
 - `FixResendStore`
