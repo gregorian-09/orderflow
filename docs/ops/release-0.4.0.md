@@ -96,6 +96,25 @@ Existing `of_core`, runtime, C ABI, Python, and Java analytics APIs remain
 valid. The split is additive and provides a clean home for heavier models
 without forcing all users to compile them.
 
+### 1A. Market-data adapter SDK conformance
+
+`of_adapters 0.4.0` keeps the existing `MarketDataAdapter` trait stable while
+adding adapter-authoring and operator discovery helpers:
+
+- expanded `AdapterQualityLevel` values for `Experimental`,
+  `SimulatedCertified`, `PaperTrading`, `Certified`, and
+  `ProductionObserved`
+- optional certification and production-observed evidence fields on
+  `AdapterDescriptor`
+- `AdapterConformanceRequirement`, `AdapterConformanceFailure`, and
+  `AdapterConformanceReport`
+- `adapter_quality_requirements(...)`,
+  `evaluate_adapter_conformance(...)`, and `adapter_conformance_report(...)`
+
+The conformance helpers are conservative. They report missing capability flags
+or evidence for a requested quality target and do not construct adapters,
+connect sockets, or upgrade any built-in provider claim automatically.
+
 ### 2. Execution core
 
 `of_execution_core 0.1.0` adds:

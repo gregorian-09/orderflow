@@ -98,6 +98,12 @@ Discovery APIs:
 - [`describe_adapter`] returns one descriptor for a [`ProviderKind`].
 - [`adapter_feature_enabled`] returns whether a provider can be constructed in
   this build.
+- [`adapter_quality_requirements`] returns the SDK conformance requirements for
+  a target quality level.
+- [`evaluate_adapter_conformance`] checks one descriptor against a target
+  quality level.
+- [`adapter_conformance_report`] checks a known provider against a target
+  quality level.
 
 Descriptor fields include:
 
@@ -108,13 +114,17 @@ Descriptor fields include:
 - [`AdapterQualityLevel`];
 - trade/book/level-2/reconnect/gap-recovery/backpressure/raw-capture/
   fixture-replay/stale-detection/latency-metrics/polling capability flags;
+- optional certification and production-observed evidence references;
 - operator-facing notes.
 
 Quality levels are intentionally conservative. A descriptor advertises current
 engineering maturity, not venue certification or capital-readiness.
 
 ```rust
-use of_adapters::{adapter_descriptors, adapter_feature_enabled, ProviderKind};
+use of_adapters::{
+    adapter_conformance_report, adapter_descriptors, adapter_feature_enabled,
+    AdapterQualityLevel, ProviderKind,
+};
 
 for descriptor in adapter_descriptors() {
     println!(
@@ -126,7 +136,37 @@ for descriptor in adapter_descriptors() {
 }
 
 assert!(adapter_feature_enabled(ProviderKind::Mock));
+
+let report = adapter_conformance_report(
+    ProviderKind::Binance,
+    AdapterQualityLevel::ProductionCandidate,
+);
+
+if !report.passed() {
+    for failure in report.failures {
+        eprintln!("{}: {}", failure.requirement.id(), failure.message);
+    }
+}
 ```
+
+The production adoption ladder is:
+
+| Level | Meaning |
+| --- | --- |
+| `Experimental` | Early implementation with no conformance claim |
+| `Simulation` | Deterministic local adapter for tests, demos, and replay |
+| `Scaffold` | Build-time integration scaffold, not live-production complete |
+| `SimulatedCertified` | Passed deterministic simulator/conformance scenarios |
+| `Functional` | Live-capable adapter that still requires operator validation |
+| `PaperTrading` | Exercised against a broker or exchange paper/sandbox environment |
+| `ProductionCandidate` | Has the recovery, runbook, backpressure, and metrics surface expected before live evaluation |
+| `Certified` | Passed provider certification for a documented profile |
+| `ProductionObserved` | Has documented production-observed behavior for a specific profile |
+
+The conformance report is deliberately fail-closed. `Certified` requires
+certification evidence, and `ProductionObserved` requires both certification and
+production evidence. The built-in provider descriptors currently do not claim
+either level.
 
 Current provider notes:
 

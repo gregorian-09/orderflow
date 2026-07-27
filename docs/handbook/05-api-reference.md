@@ -107,6 +107,9 @@ Public types:
 - `ProviderKind` (`Mock`, `Rithmic`, `Cqg`, `Binance`)
 - `AdapterQualityLevel`
 - `AdapterDescriptor`
+- `AdapterConformanceRequirement`
+- `AdapterConformanceFailure`
+- `AdapterConformanceReport`
 - `AdapterConfig`
 - `CredentialsRef`
 - `MockAdapter`
@@ -117,6 +120,9 @@ Public functions/methods:
 - `compiled_adapter_descriptors() -> Vec<AdapterDescriptor>`
 - `describe_adapter(ProviderKind) -> AdapterDescriptor`
 - `adapter_feature_enabled(ProviderKind) -> bool`
+- `adapter_quality_requirements(AdapterQualityLevel) -> &'static [AdapterConformanceRequirement]`
+- `evaluate_adapter_conformance(&AdapterDescriptor, AdapterQualityLevel) -> AdapterConformanceReport`
+- `adapter_conformance_report(ProviderKind, AdapterQualityLevel) -> AdapterConformanceReport`
 - `create_adapter(&AdapterConfig) -> AdapterResult<Box<dyn MarketDataAdapter>>`
 - `MockAdapter::push_event(RawEvent)`
 

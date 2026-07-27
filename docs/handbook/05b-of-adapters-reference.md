@@ -17,6 +17,9 @@ normalized `BookUpdate` and `TradePrint` events.
 | `ProviderKind` | enum | Adapter factory selector |
 | `AdapterQualityLevel` | enum | Conservative provider maturity label |
 | `AdapterDescriptor` | struct | Static provider capability descriptor |
+| `AdapterConformanceRequirement` | enum | SDK checklist requirement |
+| `AdapterConformanceFailure` | struct | Failed requirement detail |
+| `AdapterConformanceReport` | struct | Provider quality-gate result |
 | `AdapterConfig` | struct | Adapter factory configuration |
 | `CredentialsRef` | struct | Environment-variable references for secrets |
 | `MockAdapter` | struct | Deterministic in-memory adapter |
@@ -25,6 +28,9 @@ normalized `BookUpdate` and `TradePrint` events.
 | `compiled_adapter_descriptors` | fn | Returns descriptors enabled in this build |
 | `describe_adapter` | fn | Returns descriptor for one provider |
 | `adapter_feature_enabled` | fn | Returns whether provider can be constructed |
+| `adapter_quality_requirements` | fn | Returns target quality checklist |
+| `evaluate_adapter_conformance` | fn | Checks one descriptor against a target level |
+| `adapter_conformance_report` | fn | Checks one known provider against a target level |
 
 ## Core Types
 
@@ -78,10 +84,15 @@ Adapters do not emit provider-native payloads across the public boundary.
 
 | Variant | Meaning |
 | --- | --- |
+| `Experimental` | Early implementation with no conformance claim |
 | `Simulation` | Local deterministic adapter for tests, demos, and replay |
 | `Scaffold` | Build-time integration scaffold, not live-production complete |
+| `SimulatedCertified` | Passed deterministic simulator/conformance scenarios |
 | `Functional` | Live-capable adapter that still requires operator validation |
+| `PaperTrading` | Exercised against a provider paper/sandbox environment |
 | `ProductionCandidate` | Candidate for production use with runbook, recovery, and metrics |
+| `Certified` | Passed provider certification for a documented profile |
+| `ProductionObserved` | Has documented production-observed behavior for a profile |
 
 Quality levels are descriptive and conservative. They are not a claim that an
 adapter is certified for a venue or suitable for live capital without user
@@ -110,7 +121,38 @@ validation.
 | `supports_stale_detection` | Has stale-feed detection |
 | `supports_latency_metrics` | Reports parser or normalization latency metrics |
 | `supports_polling` | Driven through the runtime poll contract |
+| `certification_evidence` | Optional public/operator-verifiable certification reference |
+| `production_evidence` | Optional public/operator-verifiable production reference |
 | `notes` | Operator-facing maturity or usage note |
+
+### Adapter Conformance
+
+The SDK conformance helpers are startup/control-plane APIs. They let a host,
+dashboard, or certification script ask whether an adapter descriptor satisfies a
+target quality level without constructing the adapter or opening a socket.
+
+```rust
+use of_adapters::{
+    adapter_conformance_report, AdapterConformanceRequirement,
+    AdapterQualityLevel, ProviderKind,
+};
+
+let report = adapter_conformance_report(
+    ProviderKind::Binance,
+    AdapterQualityLevel::Certified,
+);
+
+assert!(!report.passed());
+assert!(report.failures.iter().any(|failure| {
+    failure.requirement == AdapterConformanceRequirement::CertificationEvidence
+}));
+```
+
+`ProductionCandidate`, `Certified`, and `ProductionObserved` intentionally have
+strict requirements for reconnect handling, gap recovery, backpressure, stale
+detection, latency metrics, raw capture, fixture replay, and evidence fields.
+This prevents scaffold adapters from being presented as capital-ready merely
+because they compile.
 
 ## Configuration Types
 
