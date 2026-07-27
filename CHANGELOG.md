@@ -6,6 +6,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added `of_adapters` adapter SDK conformance helpers with an expanded
+  production adoption quality ladder, descriptor evidence fields, target
+  quality requirements, and fail-closed conformance reports for adapter authors
+  and operator tooling.
 - Added new `of_analytics` crate foundation with dependency-light
   market-quality/TCA primitives, liquidity/depth primitives, feature profiles
   for future advanced analytics modules, and borrowed `of_core::BookLevel`
