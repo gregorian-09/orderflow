@@ -33,6 +33,8 @@ Included now:
 - owned sequence snapshot types and an atomic file-backed sequence snapshot
   store for durable restart/reconnect state;
 - bounded in-memory resend-store primitives for replay/gap-fill planning;
+- append-only file-backed durable resend-message persistence that rebuilds the
+  bounded in-memory resend planner after restart;
 - bounded in-memory transcript capture primitives for certification/audit
   workflows;
 - possible-duplicate replay encoding with `PossDupFlag(43)` and
@@ -52,7 +54,6 @@ Not included yet:
 
 - TCP/TLS transport;
 - TCP/TLS-driven Logon/Logout/Heartbeat/TestRequest lifecycle;
-- durable resend message persistence;
 - automatic resend response transmission;
 - repeating group dictionaries;
 - venue certification harness;
@@ -74,6 +75,8 @@ The codec is designed for execution hot paths:
 - persist sequence snapshots outside the per-message hot path with explicit
   sync policy and checksum validation;
 - retain outbound resend frames behind explicit message/byte bounds;
+- append original outbound frames to a durable resend log with monotonic
+  sequence validation and checksum-chain protection;
 - plan replay versus gap-fill actions into caller-owned buffers;
 - capture transcript metadata with bounded optional raw retention and a
   deterministic rolling hash;
@@ -352,6 +355,65 @@ assert_eq!(
 # Ok::<(), of_fix::FixResendStoreError>(())
 ```
 
+## Durable Resend Store Example
+
+`FileFixDurableResendStore` records original outbound FIX frames in an
+append-only binary log. On restart, the host can reload the durable records into
+`FixResendStore` and keep using the same resend planner. Retransmitted
+`PossDupFlag(43)=Y` messages should not be appended as new original sends.
+
+```rust
+use of_fix::{
+    FileFixDurableResendStore, FixDurableResendMessageStore,
+    FixDurableResendStoreConfig, FixResendAction, FixResendRange,
+    FixResendStore, FixResendStoreConfig, FixSentMessageKind,
+};
+
+let path = std::env::temp_dir().join(format!(
+    "orderflow-fix-resend-readme-{}.log",
+    std::process::id()
+));
+let _ = std::fs::remove_file(&path);
+
+let mut durable = FileFixDurableResendStore::open(
+    FixDurableResendStoreConfig::new(&path).with_sync_on_record(false),
+)?;
+durable.record_sent(1, FixSentMessageKind::Application, b"raw-new-order")?;
+durable.record_sent(2, FixSentMessageKind::Administrative, b"raw-heartbeat")?;
+drop(durable);
+
+let durable = FileFixDurableResendStore::open(
+    FixDurableResendStoreConfig::new(&path).with_sync_on_record(false),
+)?;
+let mut replay = FixResendStore::new(FixResendStoreConfig::new(128, 64 * 1024));
+let report = durable.load_into(&mut replay)?;
+assert_eq!(report.records, 2);
+
+let mut actions = Vec::new();
+replay.plan_resend_range(
+    FixResendRange {
+        begin_seq_no: 1,
+        end_seq_no: 2,
+    },
+    &mut actions,
+);
+assert_eq!(
+    actions,
+    vec![
+        FixResendAction::Replay {
+            seq_no: 1,
+            raw: b"raw-new-order".as_slice(),
+        },
+        FixResendAction::GapFill {
+            begin_seq_no: 2,
+            end_seq_no: 2,
+        },
+    ]
+);
+# let _ = std::fs::remove_file(path);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 ## Transcript Capture Example
 
 ```rust
@@ -507,8 +569,6 @@ codec.
 
 The planned next layers are:
 
-- FIX 4.2/4.4 message builders for order entry;
-- durable session sequence persistence;
 - venue/profile-specific resend suppression policy;
 - order mass cancel/status response parsers;
 - scripted certification scenarios and report generation;

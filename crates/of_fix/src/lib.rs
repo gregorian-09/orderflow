@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
@@ -14,6 +14,8 @@ const SEQUENCE_SNAPSHOT_MAGIC: &[u8; 8] = b"OFIXSEQ\0";
 const SEQUENCE_SNAPSHOT_VERSION: u16 = 1;
 const SEQUENCE_SNAPSHOT_FILE: &str = "fix-sequence.snapshot";
 const SEQUENCE_SNAPSHOT_TMP_FILE: &str = "fix-sequence.snapshot.tmp";
+const DURABLE_RESEND_MAGIC: &[u8; 8] = b"OFIXRSD\0";
+const DURABLE_RESEND_VERSION: u16 = 1;
 
 /// FIX field delimiter byte.
 pub const SOH: u8 = 0x01;
@@ -1541,6 +1543,323 @@ impl fmt::Display for FixResendStoreError {
 }
 
 impl Error for FixResendStoreError {}
+
+/// File-backed durable resend-message store configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct FixDurableResendStoreConfig {
+    path: PathBuf,
+    sync_on_record: bool,
+}
+
+impl FixDurableResendStoreConfig {
+    /// Creates a durable resend-store config for `path`.
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            sync_on_record: true,
+        }
+    }
+
+    /// Sets whether each appended resend record is synced before returning.
+    pub const fn with_sync_on_record(mut self, sync_on_record: bool) -> Self {
+        self.sync_on_record = sync_on_record;
+        self
+    }
+
+    /// Returns the durable resend log path.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Returns whether append operations sync record bytes.
+    pub const fn sync_on_record(&self) -> bool {
+        self.sync_on_record
+    }
+}
+
+/// Metadata for one durable resend append.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct FixDurableResendAppend {
+    /// Outbound `MsgSeqNum(34)` recorded by this append.
+    pub seq_no: u64,
+    /// Message replayability classification.
+    pub kind: FixSentMessageKind,
+    /// Byte offset where the encoded durable frame starts.
+    pub offset: u64,
+    /// Encoded durable frame length.
+    pub bytes: u64,
+    /// Rolling checksum after this append.
+    pub checksum: u64,
+}
+
+/// Summary produced by replaying durable resend frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct FixDurableResendReplayReport {
+    /// Durable records decoded.
+    pub records: u64,
+    /// Encoded durable bytes consumed.
+    pub bytes: u64,
+    /// First decoded outbound sequence number.
+    pub first_seq_no: Option<u64>,
+    /// Last decoded outbound sequence number.
+    pub last_seq_no: Option<u64>,
+    /// Rolling checksum after the last decoded record.
+    pub checksum: u64,
+    /// Messages retained by the target in-memory resend store.
+    pub retained_messages: u64,
+    /// Messages dropped by the target in-memory resend store.
+    pub dropped_messages: u64,
+}
+
+/// Error returned by durable FIX resend-message persistence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FixDurableResendStoreError {
+    /// Filesystem operation failed.
+    Io(String),
+    /// The in-memory resend store rejected a decoded record.
+    ResendStore(FixResendStoreError),
+    /// Durable frame magic does not match the expected format.
+    InvalidMagic,
+    /// Durable frame version is not supported.
+    UnsupportedVersion(u16),
+    /// Durable frame ended before a complete field could be decoded.
+    Truncated,
+    /// Durable frame message kind is unknown.
+    InvalidKind(u8),
+    /// Durable frame raw payload exceeds the supported format.
+    FrameTooLarge,
+    /// Durable frame sequence regressed or repeated.
+    SequenceRegression {
+        /// Latest decoded outbound sequence.
+        latest: u64,
+        /// Sequence number supplied by the durable frame.
+        received: u64,
+    },
+    /// Durable frame raw hash does not match the payload bytes.
+    RawHashMismatch {
+        /// Hash stored in the durable frame.
+        expected: u64,
+        /// Hash recomputed from the raw FIX frame bytes.
+        actual: u64,
+    },
+    /// Durable frame checksum chain is broken.
+    PreviousChecksumMismatch {
+        /// Previous checksum stored in the durable frame.
+        expected: u64,
+        /// Checksum produced by the previous decoded frame.
+        actual: u64,
+    },
+    /// Durable frame checksum does not match the encoded frame payload.
+    FrameChecksumMismatch {
+        /// Checksum stored in the durable frame.
+        expected: u64,
+        /// Checksum recomputed from the durable frame payload.
+        actual: u64,
+    },
+}
+
+impl fmt::Display for FixDurableResendStoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(err) => write!(f, "FIX durable resend store I/O error: {err}"),
+            Self::ResendStore(err) => write!(f, "FIX durable resend replay error: {err}"),
+            Self::InvalidMagic => write!(f, "invalid FIX durable resend frame magic"),
+            Self::UnsupportedVersion(version) => {
+                write!(f, "unsupported FIX durable resend frame version {version}")
+            }
+            Self::Truncated => write!(f, "truncated FIX durable resend frame"),
+            Self::InvalidKind(kind) => write!(f, "invalid FIX durable resend kind {kind}"),
+            Self::FrameTooLarge => write!(f, "FIX durable resend frame is too large"),
+            Self::SequenceRegression { latest, received } => write!(
+                f,
+                "FIX durable resend sequence regression: latest {latest}, received {received}"
+            ),
+            Self::RawHashMismatch { expected, actual } => write!(
+                f,
+                "FIX durable resend raw hash mismatch: expected {expected}, actual {actual}"
+            ),
+            Self::PreviousChecksumMismatch { expected, actual } => write!(
+                f,
+                "FIX durable resend previous checksum mismatch: expected {expected}, actual {actual}"
+            ),
+            Self::FrameChecksumMismatch { expected, actual } => write!(
+                f,
+                "FIX durable resend frame checksum mismatch: expected {expected}, actual {actual}"
+            ),
+        }
+    }
+}
+
+impl Error for FixDurableResendStoreError {}
+
+impl From<FixResendStoreError> for FixDurableResendStoreError {
+    fn from(value: FixResendStoreError) -> Self {
+        Self::ResendStore(value)
+    }
+}
+
+/// Durable resend-message persistence contract.
+pub trait FixDurableResendMessageStore {
+    /// Records an original outbound FIX frame for future resend handling.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixDurableResendStoreError`] when validation or storage fails.
+    fn record_sent(
+        &mut self,
+        seq_no: u64,
+        kind: FixSentMessageKind,
+        raw: &[u8],
+    ) -> Result<FixDurableResendAppend, FixDurableResendStoreError>;
+
+    /// Replays durable records into an in-memory resend store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixDurableResendStoreError`] when the durable log cannot be
+    /// decoded or the target resend store rejects a record.
+    fn load_into(
+        &self,
+        target: &mut FixResendStore,
+    ) -> Result<FixDurableResendReplayReport, FixDurableResendStoreError>;
+}
+
+/// Append-only file-backed durable FIX resend-message store.
+#[derive(Debug)]
+pub struct FileFixDurableResendStore {
+    config: FixDurableResendStoreConfig,
+    file: File,
+    scratch: Vec<u8>,
+    records: u64,
+    bytes: u64,
+    newest_seq_no: Option<u64>,
+    previous_checksum: u64,
+}
+
+impl FileFixDurableResendStore {
+    /// Opens or creates an append-only durable resend-message store.
+    ///
+    /// Existing bytes are validated before new records can be appended.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixDurableResendStoreError`] when parent directories cannot be
+    /// created, the log cannot be opened, or existing frames fail validation.
+    pub fn open(config: FixDurableResendStoreConfig) -> Result<Self, FixDurableResendStoreError> {
+        if let Some(parent) = config.path().parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent).map_err(durable_resend_io_error)?;
+            }
+        }
+        let report = inspect_durable_resend_path(config.path())?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .read(true)
+            .open(config.path())
+            .map_err(durable_resend_io_error)?;
+        file.seek(SeekFrom::End(0))
+            .map_err(durable_resend_io_error)?;
+        Ok(Self {
+            config,
+            file,
+            scratch: Vec::with_capacity(512),
+            records: report.records,
+            bytes: report.bytes,
+            newest_seq_no: report.last_seq_no,
+            previous_checksum: report.checksum,
+        })
+    }
+
+    /// Returns the durable resend-store configuration.
+    pub const fn config(&self) -> &FixDurableResendStoreConfig {
+        &self.config
+    }
+
+    /// Inspects a durable resend log without opening it for append.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixDurableResendStoreError`] when the file cannot be read or
+    /// any durable frame fails validation.
+    pub fn inspect_path(
+        path: impl AsRef<Path>,
+    ) -> Result<FixDurableResendReplayReport, FixDurableResendStoreError> {
+        inspect_durable_resend_path(path.as_ref())
+    }
+}
+
+impl FixDurableResendMessageStore for FileFixDurableResendStore {
+    fn record_sent(
+        &mut self,
+        seq_no: u64,
+        kind: FixSentMessageKind,
+        raw: &[u8],
+    ) -> Result<FixDurableResendAppend, FixDurableResendStoreError> {
+        if seq_no == 0 {
+            return Err(FixDurableResendStoreError::ResendStore(
+                FixResendStoreError::ZeroSeqNo,
+            ));
+        }
+        if let Some(latest) = self.newest_seq_no {
+            if seq_no <= latest {
+                return Err(FixDurableResendStoreError::SequenceRegression {
+                    latest,
+                    received: seq_no,
+                });
+            }
+        }
+
+        let offset = self.bytes;
+        encode_durable_resend_record(&mut self.scratch, seq_no, kind, raw, self.previous_checksum)?;
+        self.file
+            .write_all(&self.scratch)
+            .map_err(durable_resend_io_error)?;
+        self.file.flush().map_err(durable_resend_io_error)?;
+        if self.config.sync_on_record() {
+            self.file.sync_data().map_err(durable_resend_io_error)?;
+        }
+
+        let bytes = usize_to_u64(self.scratch.len());
+        let checksum = durable_resend_frame_checksum(seq_no, kind, raw, self.previous_checksum);
+        self.records = self.records.saturating_add(1);
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.newest_seq_no = Some(seq_no);
+        self.previous_checksum = checksum;
+
+        Ok(FixDurableResendAppend {
+            seq_no,
+            kind,
+            offset,
+            bytes,
+            checksum,
+        })
+    }
+
+    fn load_into(
+        &self,
+        target: &mut FixResendStore,
+    ) -> Result<FixDurableResendReplayReport, FixDurableResendStoreError> {
+        let records = read_durable_resend_records(self.config.path())?;
+        let mut report = FixDurableResendReplayReport::default();
+        for record in records {
+            report.records = report.records.saturating_add(1);
+            report.bytes = report.bytes.saturating_add(record.encoded_bytes);
+            report.first_seq_no.get_or_insert(record.seq_no);
+            report.last_seq_no = Some(record.seq_no);
+            report.checksum = record.checksum;
+            target.record_sent(record.seq_no, record.kind, &record.raw)?;
+        }
+        let metrics = target.metrics();
+        report.retained_messages = metrics.retained_messages();
+        report.dropped_messages = metrics.dropped_messages();
+        Ok(report)
+    }
+}
 
 /// Retained outbound FIX frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4130,6 +4449,229 @@ impl<'a> SnapshotCursor<'a> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DurableResendRecord {
+    seq_no: u64,
+    kind: FixSentMessageKind,
+    raw: Vec<u8>,
+    encoded_bytes: u64,
+    checksum: u64,
+}
+
+fn encode_durable_resend_record(
+    out: &mut Vec<u8>,
+    seq_no: u64,
+    kind: FixSentMessageKind,
+    raw: &[u8],
+    previous_checksum: u64,
+) -> Result<(), FixDurableResendStoreError> {
+    let raw_len =
+        u32::try_from(raw.len()).map_err(|_| FixDurableResendStoreError::FrameTooLarge)?;
+    let raw_hash = hash_bytes(raw);
+    let frame_checksum = durable_resend_frame_checksum(seq_no, kind, raw, previous_checksum);
+
+    out.clear();
+    out.reserve(DURABLE_RESEND_MAGIC.len() + 2 + 1 + 8 + 4 + 8 + 8 + 8 + raw.len());
+    out.extend_from_slice(DURABLE_RESEND_MAGIC);
+    put_snapshot_u16(out, DURABLE_RESEND_VERSION);
+    out.push(durable_resend_kind_to_byte(kind));
+    put_snapshot_u64(out, seq_no);
+    out.extend_from_slice(&raw_len.to_le_bytes());
+    put_snapshot_u64(out, raw_hash);
+    put_snapshot_u64(out, previous_checksum);
+    put_snapshot_u64(out, frame_checksum);
+    out.extend_from_slice(raw);
+    Ok(())
+}
+
+fn durable_resend_frame_checksum(
+    seq_no: u64,
+    kind: FixSentMessageKind,
+    raw: &[u8],
+    previous_checksum: u64,
+) -> u64 {
+    let mut hash = FNV_OFFSET_BASIS;
+    hash = hash_u64(hash, u64::from(DURABLE_RESEND_VERSION));
+    hash ^= u64::from(durable_resend_kind_to_byte(kind));
+    hash = hash.wrapping_mul(FNV_PRIME);
+    hash = hash_u64(hash, seq_no);
+    hash = hash_u64(hash, usize_to_u64(raw.len()));
+    hash = hash_u64(hash, hash_bytes(raw));
+    hash = hash_u64(hash, previous_checksum);
+    hash_bytes_into(hash, raw)
+}
+
+fn durable_resend_kind_to_byte(kind: FixSentMessageKind) -> u8 {
+    match kind {
+        FixSentMessageKind::Application => 1,
+        FixSentMessageKind::Administrative => 2,
+        FixSentMessageKind::Reject => 3,
+    }
+}
+
+fn durable_resend_kind_from_byte(
+    kind: u8,
+) -> Result<FixSentMessageKind, FixDurableResendStoreError> {
+    match kind {
+        1 => Ok(FixSentMessageKind::Application),
+        2 => Ok(FixSentMessageKind::Administrative),
+        3 => Ok(FixSentMessageKind::Reject),
+        _ => Err(FixDurableResendStoreError::InvalidKind(kind)),
+    }
+}
+
+fn inspect_durable_resend_path(
+    path: &Path,
+) -> Result<FixDurableResendReplayReport, FixDurableResendStoreError> {
+    if !path.exists() {
+        return Ok(FixDurableResendReplayReport::default());
+    }
+    let records = read_durable_resend_records(path)?;
+    let mut report = FixDurableResendReplayReport::default();
+    for record in records {
+        report.records = report.records.saturating_add(1);
+        report.bytes = report.bytes.saturating_add(record.encoded_bytes);
+        report.first_seq_no.get_or_insert(record.seq_no);
+        report.last_seq_no = Some(record.seq_no);
+        report.checksum = record.checksum;
+    }
+    Ok(report)
+}
+
+fn read_durable_resend_records(
+    path: &Path,
+) -> Result<Vec<DurableResendRecord>, FixDurableResendStoreError> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let mut file = File::open(path).map_err(durable_resend_io_error)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(durable_resend_io_error)?;
+    decode_durable_resend_records(&bytes)
+}
+
+fn decode_durable_resend_records(
+    bytes: &[u8],
+) -> Result<Vec<DurableResendRecord>, FixDurableResendStoreError> {
+    let mut cursor = DurableResendCursor::new(bytes);
+    let mut records = Vec::new();
+    let mut previous_checksum = 0_u64;
+    let mut latest_seq_no = None;
+
+    while !cursor.is_done() {
+        let offset = cursor.offset;
+        if cursor.read_exact(DURABLE_RESEND_MAGIC.len())? != DURABLE_RESEND_MAGIC {
+            return Err(FixDurableResendStoreError::InvalidMagic);
+        }
+        let version = cursor.read_u16()?;
+        if version != DURABLE_RESEND_VERSION {
+            return Err(FixDurableResendStoreError::UnsupportedVersion(version));
+        }
+        let kind = durable_resend_kind_from_byte(cursor.read_u8()?)?;
+        let seq_no = cursor.read_u64()?;
+        if let Some(latest) = latest_seq_no {
+            if seq_no <= latest {
+                return Err(FixDurableResendStoreError::SequenceRegression {
+                    latest,
+                    received: seq_no,
+                });
+            }
+        }
+        let raw_len = usize::try_from(cursor.read_u32()?)
+            .map_err(|_| FixDurableResendStoreError::FrameTooLarge)?;
+        let expected_raw_hash = cursor.read_u64()?;
+        let expected_previous_checksum = cursor.read_u64()?;
+        if expected_previous_checksum != previous_checksum {
+            return Err(FixDurableResendStoreError::PreviousChecksumMismatch {
+                expected: expected_previous_checksum,
+                actual: previous_checksum,
+            });
+        }
+        let expected_frame_checksum = cursor.read_u64()?;
+        let raw = cursor.read_exact(raw_len)?.to_vec();
+        let actual_raw_hash = hash_bytes(&raw);
+        if expected_raw_hash != actual_raw_hash {
+            return Err(FixDurableResendStoreError::RawHashMismatch {
+                expected: expected_raw_hash,
+                actual: actual_raw_hash,
+            });
+        }
+        let actual_frame_checksum =
+            durable_resend_frame_checksum(seq_no, kind, &raw, previous_checksum);
+        if expected_frame_checksum != actual_frame_checksum {
+            return Err(FixDurableResendStoreError::FrameChecksumMismatch {
+                expected: expected_frame_checksum,
+                actual: actual_frame_checksum,
+            });
+        }
+        previous_checksum = actual_frame_checksum;
+        latest_seq_no = Some(seq_no);
+        records.push(DurableResendRecord {
+            seq_no,
+            kind,
+            raw,
+            encoded_bytes: usize_to_u64(cursor.offset.saturating_sub(offset)),
+            checksum: actual_frame_checksum,
+        });
+    }
+
+    Ok(records)
+}
+
+fn durable_resend_io_error(err: std::io::Error) -> FixDurableResendStoreError {
+    FixDurableResendStoreError::Io(err.to_string())
+}
+
+struct DurableResendCursor<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> DurableResendCursor<'a> {
+    const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn read_exact(&mut self, len: usize) -> Result<&'a [u8], FixDurableResendStoreError> {
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or(FixDurableResendStoreError::Truncated)?;
+        if end > self.bytes.len() {
+            return Err(FixDurableResendStoreError::Truncated);
+        }
+        let value = &self.bytes[self.offset..end];
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn read_u8(&mut self) -> Result<u8, FixDurableResendStoreError> {
+        Ok(self.read_exact(1)?[0])
+    }
+
+    fn read_u16(&mut self) -> Result<u16, FixDurableResendStoreError> {
+        let bytes = self.read_exact(2)?;
+        Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
+    }
+
+    fn read_u32(&mut self) -> Result<u32, FixDurableResendStoreError> {
+        let bytes = self.read_exact(4)?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    fn read_u64(&mut self) -> Result<u64, FixDurableResendStoreError> {
+        let bytes = self.read_exact(8)?;
+        Ok(u64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]))
+    }
+
+    const fn is_done(&self) -> bool {
+        self.offset == self.bytes.len()
+    }
+}
+
 fn update_transcript_hash(
     mut hash: u64,
     ordinal: u64,
@@ -4978,6 +5520,137 @@ mod tests {
                 received: 10
             }
         );
+    }
+
+    #[test]
+    fn durable_resend_store_reopens_and_rebuilds_planner() {
+        let path = std::env::temp_dir().join(format!(
+            "orderflow-fix-durable-resend-{}.log",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+
+        {
+            let mut durable = FileFixDurableResendStore::open(
+                FixDurableResendStoreConfig::new(&path).with_sync_on_record(false),
+            )
+            .expect("durable");
+            let first = durable
+                .record_sent(1, FixSentMessageKind::Application, b"app-1")
+                .expect("seq 1");
+            assert_eq!(first.offset, 0);
+            assert!(first.bytes > 0);
+            durable
+                .record_sent(2, FixSentMessageKind::Administrative, b"admin-2")
+                .expect("seq 2");
+            durable
+                .record_sent(3, FixSentMessageKind::Reject, b"reject-3")
+                .expect("seq 3");
+        }
+
+        let durable = FileFixDurableResendStore::open(
+            FixDurableResendStoreConfig::new(&path).with_sync_on_record(false),
+        )
+        .expect("reopen");
+        let mut store = FixResendStore::new(FixResendStoreConfig::new(8, 1024));
+        let report = durable.load_into(&mut store).expect("load");
+        assert_eq!(report.records, 3);
+        assert_eq!(report.first_seq_no, Some(1));
+        assert_eq!(report.last_seq_no, Some(3));
+        assert_eq!(report.retained_messages, 3);
+
+        let mut actions = Vec::new();
+        let summary = store.plan_resend_range(
+            FixResendRange {
+                begin_seq_no: 1,
+                end_seq_no: 3,
+            },
+            &mut actions,
+        );
+        assert_eq!(summary.replay_messages(), 2);
+        assert_eq!(summary.gap_fill_sequences(), 1);
+        assert_eq!(
+            actions,
+            vec![
+                FixResendAction::Replay {
+                    seq_no: 1,
+                    raw: b"app-1"
+                },
+                FixResendAction::GapFill {
+                    begin_seq_no: 2,
+                    end_seq_no: 2
+                },
+                FixResendAction::Replay {
+                    seq_no: 3,
+                    raw: b"reject-3"
+                },
+            ]
+        );
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn durable_resend_store_rejects_corrupt_existing_log() {
+        let path = std::env::temp_dir().join(format!(
+            "orderflow-fix-durable-resend-corrupt-{}.log",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+
+        let mut durable = FileFixDurableResendStore::open(
+            FixDurableResendStoreConfig::new(&path).with_sync_on_record(false),
+        )
+        .expect("durable");
+        durable
+            .record_sent(1, FixSentMessageKind::Application, b"app-1")
+            .expect("seq 1");
+        drop(durable);
+
+        let mut bytes = fs::read(&path).expect("read");
+        let last = bytes.last_mut().expect("byte");
+        *last ^= 0x01;
+        fs::write(&path, bytes).expect("write");
+
+        let err = FileFixDurableResendStore::open(
+            FixDurableResendStoreConfig::new(&path).with_sync_on_record(false),
+        )
+        .expect_err("corrupt");
+        assert!(matches!(
+            err,
+            FixDurableResendStoreError::RawHashMismatch { .. }
+                | FixDurableResendStoreError::FrameChecksumMismatch { .. }
+        ));
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn durable_resend_store_rejects_sequence_regression() {
+        let path = std::env::temp_dir().join(format!(
+            "orderflow-fix-durable-resend-regression-{}.log",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        let mut durable = FileFixDurableResendStore::open(
+            FixDurableResendStoreConfig::new(&path).with_sync_on_record(false),
+        )
+        .expect("durable");
+        durable
+            .record_sent(7, FixSentMessageKind::Application, b"app-7")
+            .expect("seq 7");
+
+        let err = durable
+            .record_sent(7, FixSentMessageKind::Application, b"app-7-again")
+            .expect_err("same seq");
+        assert_eq!(
+            err,
+            FixDurableResendStoreError::SequenceRegression {
+                latest: 7,
+                received: 7
+            }
+        );
+        let _ = fs::remove_file(&path);
     }
 
     #[test]

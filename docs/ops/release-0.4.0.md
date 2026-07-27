@@ -146,6 +146,9 @@ without forcing all users to compile them.
   checksum-validated latest sequence snapshot persistence across restarts
 - bounded `FixResendStore` primitives for in-memory outbound frame retention,
   replay/gap-fill planning, and retention/drop/eviction metrics
+- `FileFixDurableResendStore` for append-only, checksum-chained durable
+  persistence of original outbound FIX frames and restart-time resend planner
+  rebuilds
 - bounded `FixTranscriptCapture` primitives for certification/audit transcript
   evidence with optional raw retention, metadata-only capture, and rolling hash
 - `encode_poss_dup_replay` for possible-duplicate replay encoding with
@@ -164,10 +167,10 @@ without forcing all users to compile them.
 - caller-owned encoding buffers with computed body length and checksum
 - diagnostic rendering with `|` separators outside hot paths
 
-This is not a full FIX session engine. Transport, logon/logout, automatic
-resend response transmission, durable resend-message persistence, venue
-certification, and counterparty-specific business rules remain separate future
-layers built on top of the codec.
+This is not a full FIX session engine. Transport, TCP/TLS-driven logon/logout,
+automatic resend response transmission, venue certification, and
+counterparty-specific business rules remain separate future layers built on top
+of the codec.
 
 ### 5. Execution adapter scaffolding
 

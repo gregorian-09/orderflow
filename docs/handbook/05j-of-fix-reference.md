@@ -46,6 +46,12 @@ maps parsed execution reports into canonical OMS events.
 | `FixResendRetention` | struct | Result of recording a sent frame |
 | `FixResendStoreMetrics` | struct | Retention/drop/eviction counters |
 | `FixResendStoreError` | enum | Resend-store append validation errors |
+| `FixDurableResendStoreConfig` | struct | File-backed durable resend log configuration |
+| `FixDurableResendAppend` | struct | Metadata for one durable resend append |
+| `FixDurableResendReplayReport` | struct | Durable resend replay/load summary |
+| `FixDurableResendStoreError` | enum | Durable resend persistence errors |
+| `FixDurableResendMessageStore` | trait | Durable resend persistence contract |
+| `FileFixDurableResendStore` | struct | Append-only durable resend-message store |
 | `FixResendAction` | enum | Replay or gap-fill action for a resend response |
 | `FixResendPlanSummary` | struct | Replay/gap-fill counts from planning |
 | `FixTranscriptDirection` | enum | Inbound/outbound transcript frame direction |
@@ -122,9 +128,8 @@ Not included:
 
 - TCP/TLS transport;
 - TCP/TLS-driven Logon/Logout/Heartbeat/TestRequest lifecycle;
-- durable resend message storage;
 - automatic resend response transmission;
-- persistent session store;
+- full session scheduler/state machine that owns transport and timers;
 - repeating group dictionaries;
 - scripted certification harness;
 - OMS execution-event mapping.
@@ -428,7 +433,7 @@ Persistence boundary:
 - uses a compact dependency-free binary format with a checksum;
 - optionally syncs snapshot bytes before rename;
 - does not write on every FIX message by itself;
-- does not persist resend frames;
+- does not replace durable resend-frame persistence;
 - does not replace certification transcript capture.
 
 ## Resend Store Example
@@ -490,11 +495,79 @@ Resend-store behavior:
 
 Resend-store boundary:
 
-- it does not persist frames durably;
+- durability is provided by `FixDurableResendMessageStore`;
 - it does not mutate sequence counters;
 - it does not send SequenceReset gap fills;
 - it does not decide whether an aged application message should be suppressed
   by venue policy.
+
+## Durable Resend Store Example
+
+`FileFixDurableResendStore` appends original outbound FIX frames to a compact
+binary log with monotonic sequence validation, raw-frame hashing, and a
+checksum chain. It is opt-in because hosts must choose their own sync policy,
+storage medium, and retention strategy for the venue/session.
+
+```rust
+use of_fix::{
+    FileFixDurableResendStore, FixDurableResendMessageStore,
+    FixDurableResendStoreConfig, FixResendAction, FixResendRange,
+    FixResendStore, FixResendStoreConfig, FixSentMessageKind,
+};
+
+let path = std::env::temp_dir().join(format!(
+    "orderflow-fix-resend-handbook-{}.log",
+    std::process::id()
+));
+let _ = std::fs::remove_file(&path);
+
+let mut durable = FileFixDurableResendStore::open(
+    FixDurableResendStoreConfig::new(&path).with_sync_on_record(false),
+)?;
+durable.record_sent(1, FixSentMessageKind::Application, b"new-order")?;
+durable.record_sent(2, FixSentMessageKind::Administrative, b"heartbeat")?;
+drop(durable);
+
+let durable = FileFixDurableResendStore::open(
+    FixDurableResendStoreConfig::new(&path).with_sync_on_record(false),
+)?;
+let mut replay = FixResendStore::new(FixResendStoreConfig::new(128, 64 * 1024));
+let report = durable.load_into(&mut replay)?;
+assert_eq!(report.records, 2);
+
+let mut actions = Vec::new();
+replay.plan_resend_range(
+    FixResendRange {
+        begin_seq_no: 1,
+        end_seq_no: 2,
+    },
+    &mut actions,
+);
+assert_eq!(
+    actions,
+    vec![
+        FixResendAction::Replay {
+            seq_no: 1,
+            raw: b"new-order".as_slice(),
+        },
+        FixResendAction::GapFill {
+            begin_seq_no: 2,
+            end_seq_no: 2,
+        },
+    ],
+);
+# let _ = std::fs::remove_file(path);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Durable resend-store boundary:
+
+- records original outbound frames only;
+- rejects zero, repeated, or decreasing outbound sequence numbers;
+- validates the full existing file before append on open;
+- reloads durable frames into the bounded in-memory `FixResendStore`;
+- does not append retransmitted `PossDupFlag(43)=Y` frames as new originals;
+- does not send replay or gap-fill messages itself.
 
 ## Transcript Capture
 
@@ -759,9 +832,6 @@ It rejects SOH bytes inside values and rejects caller-provided reserved tags.
 
 The next layers should remain additive:
 
-- typed builders for NewOrderSingle, Cancel, Replace, and session admin
-  messages;
-- sequence persistence and resend message stores;
-- resend/gap-fill policy and message generation;
-- transcript capture;
-- integration into `of_execution_adapters::fix`.
+- profile-level resend/gap-fill suppression policy and socket transmission;
+- deterministic counterparty certification scenarios;
+- deeper integration into `of_execution_adapters::fix`.

@@ -856,6 +856,12 @@ Public FIX codec types:
 - `FixResendRetention`
 - `FixResendStoreMetrics`
 - `FixResendStoreError`
+- `FixDurableResendStoreConfig`
+- `FixDurableResendAppend`
+- `FixDurableResendReplayReport`
+- `FixDurableResendStoreError`
+- `FixDurableResendMessageStore` trait
+- `FileFixDurableResendStore`
 - `FixResendAction`
 - `FixResendPlanSummary`
 - `FixTranscriptDirection`

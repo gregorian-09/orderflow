@@ -154,6 +154,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   latest FIX session sequence state across restart/reconnect workflows.
 - Added `of_fix` bounded resend-store primitives for replay/gap-fill planning
   with explicit message/byte retention metrics and sequence guardrails.
+- Added `of_fix` `FileFixDurableResendStore` for append-only,
+  checksum-chained durable persistence of original outbound FIX frames and
+  restart-time rebuilds of the bounded resend planner.
 - Added `of_fix` bounded transcript-capture primitives for certification/audit
   evidence with optional raw retention, metadata-only records, and rolling hash
   metrics.
