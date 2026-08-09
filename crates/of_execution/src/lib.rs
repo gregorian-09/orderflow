@@ -4,9 +4,11 @@
 mod drop_copy;
 mod kill_switch;
 mod oms;
+mod production_risk;
 pub use drop_copy::*;
 pub use kill_switch::*;
 pub use oms::*;
+pub use production_risk::*;
 
 use std::collections::HashMap;
 use std::error::Error;

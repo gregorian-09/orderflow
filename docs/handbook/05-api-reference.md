@@ -577,6 +577,26 @@ Public scoped kill-switch types:
 - `KillSwitchRegistry`
 - `KillSwitchError`
 
+Public production-risk types:
+
+- `ProductionRiskPolicyId`
+- `RiskInstrumentGroupId`
+- `ProductionRiskScope`
+- `RiskTradingWindow`
+- `ProductionRiskLimits`
+- `ProductionRiskPolicy`
+- `ProductionRiskCommandKind`
+- `ProductionRiskCommand`
+- `ProductionRiskContext`
+- `ProductionRiskReason`
+- `ProductionRiskJournalStatus`
+- `ProductionRiskDecision`
+- `ProductionRiskError`
+- `ProductionRiskJournalError`
+- `ProductionRiskDecisionJournal` trait
+- `InMemoryProductionRiskJournal`
+- `ProductionRiskEngine`
+
 Public OMS helper types:
 
 - `CommandId`

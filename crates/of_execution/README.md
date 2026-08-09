@@ -101,6 +101,26 @@ Scoped kill switches:
 - [`KillSwitchRegistry`]
 - [`KillSwitchError`]
 
+Production risk:
+
+- [`ProductionRiskPolicyId`]
+- [`RiskInstrumentGroupId`]
+- [`ProductionRiskScope`]
+- [`RiskTradingWindow`]
+- [`ProductionRiskLimits`]
+- [`ProductionRiskPolicy`]
+- [`ProductionRiskCommandKind`]
+- [`ProductionRiskCommand`]
+- [`ProductionRiskContext`]
+- [`ProductionRiskReason`]
+- [`ProductionRiskJournalStatus`]
+- [`ProductionRiskDecision`]
+- [`ProductionRiskError`]
+- [`ProductionRiskJournalError`]
+- [`ProductionRiskDecisionJournal`]
+- [`InMemoryProductionRiskJournal`]
+- [`ProductionRiskEngine`]
+
 Routing and risk:
 
 - [`RouteConfig`]
@@ -1074,6 +1094,131 @@ Operational references:
 
 - [CME Globex Kill Switch](https://www.cmegroup.com/tools-information/webhelp/globex-credit-controls/Content/Kill-Switch.html)
 - [CFTC automated-trading risk-control discussion](https://www.cftc.gov/LawRegulation/FederalRegister/finalrules/2013-22185.html)
+
+### Production risk engine
+
+[`ProductionRiskEngine`] is an additive, scoped pre-trade policy engine for
+deployments that need controls beyond [`RiskLimits`] and
+[`AdvancedRiskLimits`]. Existing engines, risk traits, request layouts, and
+bindings are unchanged. A host opts in by evaluating a canonical
+[`ProductionRiskCommand`] before submitting to [`ExecutionEngine`].
+
+Policies compose across global, account, strategy, route, symbol, venue, and
+host-defined instrument-group scopes. They evaluate in stable `(priority,
+policy_id)` order. Every matching policy is checked so its independent rate
+window advances, while the first ordered rejection remains the primary
+explanation. An empty policy set or a command matching no policy fails closed.
+
+```mermaid
+flowchart LR
+  Command[Submit / amend / cancel] --> Context[Authoritative host context]
+  Context --> Match[Match ordered scopes]
+  Match --> Rates[Update bounded rate windows]
+  Rates --> Controls[Operational, PnL, size,<br/>exposure, price, session checks]
+  Controls --> Decision[Explainable decision]
+  Decision --> Journal{Decision retained?}
+  Journal -- No --> Reject[Fail closed]
+  Journal -- Yes, allow --> OMS[ExecutionEngine]
+  Journal -- Yes, reject --> Audit[Operator / audit path]
+```
+
+The limit model covers:
+
+- order quantity and normalized notional;
+- projected position, gross exposure, net exposure, and open-order count;
+- independent trailing one-second submit/amend and cancel rates;
+- reference-price collars and typical-quantity fat-finger limits;
+- duplicate client ids, restricted scopes, and host self-trade checks;
+- UTC day, overnight, and full-day trading windows;
+- strict reduce-only behavior that cannot cross through flat;
+- loss and peak-to-current daily drawdown limits; and
+- fail-closed market-data, adapter, persistence, and risk-state health gates.
+
+The host supplies [`ProductionRiskContext`] from its authoritative position,
+PnL, market-data, duplicate-id, self-trade, and health stores. The default
+context reports unavailable risk state. [`ProductionRiskLimits::conservative`]
+enables operational blocks; [`ProductionRiskLimits::permissive`] is an
+explicit simulation/test profile.
+
+```rust
+use of_execution::{
+    InMemoryProductionRiskJournal, ProductionRiskCommand,
+    ProductionRiskContext, ProductionRiskEngine, ProductionRiskLimits,
+    ProductionRiskPolicy, ProductionRiskScope,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty,
+    OrderRequest, OrderSide, OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let mut limits = ProductionRiskLimits::conservative();
+limits.max_order_qty = 50;
+limits.max_order_notional = 50_000_000;
+limits.max_position_abs = 250;
+limits.max_order_rate_per_sec = 1_000;
+limits.price_collar_ticks = 20;
+
+let mut risk = ProductionRiskEngine::with_capacity(16);
+risk.add_policy(ProductionRiskPolicy::from_id(
+    "global-default",
+    ProductionRiskScope::Global,
+    100,
+    limits,
+)?)?;
+
+let request = OrderRequest {
+    client_order_id: ClientOrderId::new("strategy-a-42")?,
+    account_id: AccountId::new("account-a")?,
+    route_id: RouteId::new("fix-a")?,
+    strategy_id: StrategyId::new("strategy-a")?,
+    symbol: ExecutionSymbol::new("XCME", "ESM6")?,
+    side: OrderSide::Buy,
+    order_type: OrderType::Limit,
+    time_in_force: TimeInForce::Day,
+    quantity: OrderQty(2),
+    limit_price: OrderPrice(5_000),
+    stop_price: OrderPrice(0),
+    ts_exchange_ns: 0,
+    ts_recv_ns: 1_000_000_000,
+};
+let group = of_execution::RiskInstrumentGroupId::new("equity-index")?;
+let command = ProductionRiskCommand::submit(&request, group);
+let mut context = ProductionRiskContext::available();
+context.reference_price = OrderPrice(4_995);
+let mut journal = InMemoryProductionRiskJournal::with_capacity(1_024);
+let decision = risk.evaluate_and_record(command, context, &mut journal);
+if decision.allowed {
+    // Submit `request` through the existing ExecutionEngine.
+} else {
+    // Persist and expose decision.reason, policy_id, observed, and limit.
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Construction reserves policy and rate-window storage. Evaluation uses
+fixed-size identifiers, mutates only preallocated rate queues, performs no I/O,
+and does not read clocks. The caller supplies timestamps and owns
+synchronization; one worker should own one mutable risk engine.
+[`ProductionRiskEngine::evaluate_and_record`] records before routing, and
+journal failure converts even an allowed result to
+[`ProductionRiskReason::DecisionJournalUnavailable`]. Replace the bounded
+in-memory journal with a durable implementation in production.
+
+Policy installation rejects empty policy ids, negative signed limits, duplicate
+ids, exhausted policy capacity, and rate limits above the documented maximum.
+For amend evaluation, current gross and net context must include the order being
+replaced; the engine subtracts that existing exposure before adding the
+replacement.
+
+Cancels intentionally bypass exposure, market-data, and PnL blocks so
+operators can reduce risk during degradation, while their independent
+cancel-rate and timestamp controls remain active. Amend context includes the
+replaced quantity and price so projected position and exposure are computed
+from the delta.
+
+Regulatory design references include the
+[SEC Market Access Rule](https://www.sec.gov/rules-regulations/2010/11/risk-management-controls-brokers-dealers-market-access)
+and [FINRA market-access guidance](https://www.finra.org/rules-guidance/guidance/reports/2021-finras-examination-and-risk-monitoring-program/market-access-rule).
 
 ### Multi-account allocation
 

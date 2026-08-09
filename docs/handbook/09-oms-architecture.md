@@ -289,6 +289,51 @@ normally until every captured affected order succeeds. Truncated target output,
 failed cancels, or incomplete attempts remain visible and require an explicit
 forced-clear event rather than silently reopening flow.
 
+## Production Risk Policy Layer
+
+The additive production-risk engine composes policies across organizational and
+market scopes without changing the existing engine constructor.
+
+```mermaid
+sequenceDiagram
+    participant Strategy
+    participant Host as OMS host worker
+    participant Ledger as Position/PnL and health state
+    participant Risk as ProductionRiskEngine
+    participant Audit as Decision journal
+    participant OMS as ExecutionEngine
+    Strategy->>Host: Submit / amend / cancel
+    Host->>Ledger: Read authoritative context
+    Ledger-->>Host: Exposure, PnL, reference, health
+    Host->>Risk: ProductionRiskCommand + context
+    Risk->>Risk: Match ordered scopes and update rate windows
+    Risk-->>Host: Explainable decision
+    Host->>Audit: Record decision
+    alt journal failed or decision rejected
+        Host-->>Strategy: Reject and expose reason
+    else allowed and retained
+        Host->>OMS: Existing typed request
+    end
+```
+
+Global and narrow policies are cumulative. A host can use a global operational
+baseline, an account credit limit, a strategy loss limit, a route message-rate
+limit, a venue restriction, and symbol or product-group collars at the same
+time. Stable priority and id ordering makes the primary rejection deterministic
+under replay.
+
+The engine accepts host-owned state rather than borrowing the OMS internals.
+That boundary avoids locks and lets deployments source exposure from a richer
+ledger, independent drop copy, or broker reconciliation. It also makes
+availability explicit: missing authoritative state is a risk input, not an
+implicit zero.
+
+Policy installation is a control-plane operation and may allocate bounded rate
+storage. Evaluation uses fixed-size ids and preallocated queues, does not read
+clocks or perform I/O, and belongs on the single-owner command worker. Sharded
+deployments should route a command and every policy state affecting it to one
+deterministic owner or evaluate global limits in a separate serialized tier.
+
 ## Safety Policies
 
 `RouteSafetyPolicy` and `DisconnectPolicy` describe what should happen when

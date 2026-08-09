@@ -315,6 +315,7 @@ The `oms` module is re-exported from `of_execution`.
 | Reconciliation | `reconcile_open_orders`, `reconcile_open_orders_detailed`, `evaluate_reconciliation_policy`, `ReconciliationReport`, `VenueReconciliationReport`, `ReconciliationPolicy` |
 | Independent drop copy | `DropCopyAdapter`, `DropCopyReport`, `DropCopyReportBuffer`, `DropCopyReconciler`, `DropCopyObservation`, `DropCopyMetricsSnapshot` |
 | Scoped kill switches | `KillSwitchRegistry`, `KillSwitchScope`, `KillSwitchMode`, `KillSwitchEvent`, `KillSwitchDecision`, `KillSwitchAffectedOrderBuffer` |
+| Production risk | `ProductionRiskEngine`, `ProductionRiskPolicy`, `ProductionRiskLimits`, `ProductionRiskContext`, `ProductionRiskDecision`, `ProductionRiskDecisionJournal` |
 | Allocation | `AllocationGroup`, `AllocationLeg`, `AllocationMethod`, `AllocationReport`, `allocate_block_fill`, `reconcile_allocations` |
 | Safety policies | `DisconnectPolicy`, `RouteSafetyPolicy`, `SafetyPolicy`, `SafetyContext`, `evaluate_safety_policy` |
 | Advanced risk | `AdvancedRiskLimits`, `AdvancedRiskGate` |
@@ -401,6 +402,51 @@ adapter-session id. `KillSwitchDecision` tells the host whether to allow new
 flow or cancels, enforce reduce-only, pause strategy commands, or stop an
 adapter. The host remains responsible for authorization, WAL writes, actual
 cancel dispatch, adapter shutdown, and operator notification.
+
+## Production Risk Engine
+
+`ProductionRiskEngine` is an opt-in pre-trade layer placed before the existing
+`ExecutionEngine`. It does not replace `RiskCheck`, alter request layouts, or
+change existing route limits. This separation lets established integrations
+adopt the controls incrementally.
+
+Policies can match global, account, strategy, route, symbol, venue, and
+instrument-group scopes. Matching policies execute in deterministic priority
+then policy-id order. The first rejection supplies the primary reason, observed
+value, and limit, but all matching policies advance their independent bounded
+message-rate windows.
+
+| Control family | Checks |
+| --- | --- |
+| Identity | Duplicate client order id, restricted scope, host self-trade hook |
+| Order shape | Quantity, notional, price collar, typical-size multiple |
+| Exposure | Projected position, gross exposure, net exposure, open orders |
+| Flow | Independent submit/amend and cancel rates, timestamp regression |
+| Session | UTC daytime, overnight, and full-day windows |
+| Runtime | Reduce-only, loss, drawdown, stale data, adapter, persistence, unavailable state |
+
+The caller must construct `ProductionRiskContext` from authoritative ledgers
+and supervision state. Its default is unavailable and therefore fail closed
+under conservative limits. Cancels remain available during data, PnL, and
+exposure degradation, but continue through cancel-rate and timestamp checks.
+
+`ProductionRiskDecision` is allocation-free and carries command identity,
+policy-set version, matched count, scope, policy id, observed value, configured
+limit, reason, timestamp, and journal outcome. Use `evaluate_and_record` before
+OMS submission. Any decision-journal failure forces rejection. The supplied
+`InMemoryProductionRiskJournal` is bounded and suited to tests or a handoff
+stage; production hosts should implement `ProductionRiskDecisionJournal` over
+their durable audit path.
+
+Capacity is configured up front. Rate queues reserve their maximum policy
+limits during policy installation, evaluation does not read a clock, and the
+engine is intentionally mutable and single-owner. Put it on the same ordered
+worker as the OMS or shard both by a compatible ownership key.
+
+Installation rejects empty ids, negative signed limits, duplicate ids,
+capacity exhaustion, and unsafe rate-window sizes. Amend contexts must include
+the replaced order in current gross and net exposure so replacement deltas are
+projected correctly.
 
 ## Error Model
 
