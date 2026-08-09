@@ -350,6 +350,57 @@ Possible policies:
 Policies are separate from adapter code so users can apply them consistently
 across FIX, REST, WebSocket, or broker SDK adapters.
 
+## Order Intent And Child Ownership
+
+Execution algorithms decide when and where to release liquidity; the OMS owns
+the resulting order tree. `OrderIntentLifecycle` is that ownership boundary.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending
+    Pending --> Active: activate after risk acceptance
+    Pending --> Rejected
+    Active --> Paused
+    Paused --> Active
+    Active --> PendingCancel: cancel tree
+    Paused --> PendingCancel: cancel tree
+    Failed --> PendingCancel: emergency cancel tree
+    Active --> Completed: aggregate fill reaches target
+    PendingCancel --> Completed: final fill reaches target
+    PendingCancel --> Cancelled: every child terminal
+    Active --> Failed: uncertain state
+    Paused --> Failed: uncertain state
+    Recovering --> Active: reconciliation approved
+```
+
+```mermaid
+sequenceDiagram
+    participant Planner as Strategy / algo planner
+    participant Tree as OrderIntentLifecycle
+    participant Controls as Kill switch / risk / WAL
+    participant OMS as ExecutionEngine
+    participant Venue
+    Planner->>Tree: Plan bounded child
+    Tree-->>Planner: OmsChildOrder
+    Planner->>Controls: Submit child request
+    Controls->>OMS: Allowed and journaled request
+    OMS->>Venue: Provider order
+    Venue-->>OMS: Execution report
+    OMS-->>Tree: Canonical ExecutionEvent
+    Tree->>Tree: Validate and aggregate fills/leaves
+```
+
+This separation prevents planners from becoming a second order-state machine.
+The algorithm crate may produce TWAP, VWAP, POV, SOR, iceberg, or other plans,
+but each plan becomes an OMS child and remains subject to normal controls.
+Provider parent tags are optional metadata; canonical child client ids remain
+the execution-correlation authority.
+
+The tree is single-owner and sequence-driven. Child maps, indexes, and cancel
+scratch are reserved at construction. Recovery snapshot creation allocates and
+belongs to the control plane; planning, state transition, report folding, and
+cancel selection do not grow storage after configured capacity is reached.
+
 ## Position Ledger
 
 `PositionLedger` folds trade events into position state. It is intentionally

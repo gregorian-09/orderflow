@@ -121,6 +121,23 @@ Production risk:
 - [`InMemoryProductionRiskJournal`]
 - [`ProductionRiskEngine`]
 
+Order intent and parent/child lifecycle:
+
+- [`OrderIntentId`]
+- [`OmsParentOrderId`]
+- [`OmsChildOrderId`]
+- [`OrderIntentState`]
+- [`OmsChildOrderState`]
+- [`ExecutionInstruction`]
+- [`OrderIntent`]
+- [`OmsChildOrder`]
+- [`OrderIntentSnapshot`]
+- [`OrderIntentError`]
+- [`OmsChildCancelTarget`]
+- [`OmsChildCancelBuffer`]
+- [`OrderIntentRecoverySnapshot`]
+- [`OrderIntentLifecycle`]
+
 Routing and risk:
 
 - [`RouteConfig`]
@@ -1250,6 +1267,130 @@ from the delta.
 Regulatory design references include the
 [SEC Market Access Rule](https://www.sec.gov/rules-regulations/2010/11/risk-management-controls-brokers-dealers-market-access)
 and [FINRA market-access guidance](https://www.finra.org/rules-guidance/guidance/reports/2021-finras-examination-and-risk-monitoring-program/market-access-rule).
+
+### Order intent and parent/child lifecycle
+
+[`OrderIntentLifecycle`] is the additive OMS-owned bridge between a strategy or
+execution-algorithm decision and venue child orders. It does not alter the
+existing single-order [`ExecutionEngine`] API and does not make `of_execution`
+depend on `of_execution_algos`. Algorithm planners translate their child plans
+into [`ExecutionInstruction`] plus quantity, then submit every resulting child
+through the existing kill-switch, production-risk, journal, and execution
+paths.
+
+```mermaid
+flowchart LR
+  Strategy[Strategy decision] --> Intent[OrderIntent]
+  Algo[Optional algo planner] --> Plan[Child plan]
+  Intent --> Tree[OrderIntentLifecycle]
+  Plan --> Tree
+  Tree --> Child[OmsChildOrder]
+  Child --> Controls[Kill switch + risk + WAL]
+  Controls --> Engine[ExecutionEngine]
+  Engine --> Report[Canonical ExecutionEvent]
+  Report --> Tree
+  Tree --> Aggregate[Parent fills / leaves / status]
+```
+
+[`OrderIntent`] fixes the account, strategy, symbol, side, target quantity,
+parent limit, child-size cap, simultaneous open-child cap, participation target,
+and release window. [`ExecutionInstruction`] carries route, order type, TIF,
+limit/stop price, display/minimum quantity, post-only, and reduce-only intent.
+The participation field is declared metadata: the host or algorithm computes
+market volume and decides whether a proposed child is eligible. Every child
+still receives normal OMS risk; this lifecycle never bypasses it.
+
+```rust
+use of_execution::{
+    ExecutionInstruction, OmsChildOrderId, OrderIntent, OrderIntentId,
+    OrderIntentLifecycle, OmsParentOrderId,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty, OrderSide,
+    OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let intent = OrderIntent::new(
+    OrderIntentId::new("intent-20260809-1")?,
+    OmsParentOrderId::new("parent-20260809-1")?,
+    AccountId::new("account-a")?,
+    StrategyId::new("twap-a")?,
+    ExecutionSymbol::new("XCME", "ESM6")?,
+    OrderSide::Buy,
+    OrderQty(100),
+    OrderPrice(5_100),
+    OrderQty(10),
+    2,
+    2_000,
+    1_000_000,
+    2_000_000,
+    900_000,
+)?;
+let mut tree = OrderIntentLifecycle::new(intent, 128)?;
+tree.activate(1, 950_000)?;
+let instruction = ExecutionInstruction::new(
+    RouteId::new("fix-order-entry-a")?,
+    OrderType::Limit,
+    TimeInForce::Day,
+    OrderPrice(5_095),
+);
+let child = tree.plan_child(
+    2,
+    1_000_000,
+    OmsChildOrderId::new("parent-1-child-1")?,
+    ClientOrderId::new("twap-a-1")?,
+    OrderQty(10),
+    instruction,
+)?;
+assert_eq!(child.leaves_qty, OrderQty(10));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The parent state machine supports pending, active, paused, pending-cancel,
+completed, cancelled, rejected, failed, and recovering states. Child state
+covers planned, submitted, working, partial/full fill, pending cancel,
+cancelled, replaced, rejected, expired, and unknown. Mutation sequences are
+strictly increasing and caller/WAL supplied; the lifecycle never reads a clock.
+
+Child allocation enforces parent leaves, per-child quantity, total child-record
+capacity, simultaneous open-child count, release window, display/minimum
+quantity, route identity, order-type price requirements, and side-aware parent
+limit. Child records are lifetime-bounded rather than recycled silently, so
+undersized capacity fails explicitly.
+
+[`OrderIntentLifecycle::apply_execution_event`] accepts only a matching
+account, symbol, route, and client id. A cumulative fill advance must be a
+canonical trade whose `last_qty` exactly equals the advance. Parent and child
+fill notionals, averages, working quantity, leaves, and completion state update
+atomically. Regressing fills and parent overfills leave state unchanged.
+
+[`OrderIntentLifecycle::replace_child`] records old/new lineage and transfers
+working allocation only after complete validation. Call it when replacement is
+authoritatively accepted or ownership has otherwise transferred; pending venue
+replace transport still belongs to [`ExecutionEngine::amend`]. Late fills on
+replaced, cancelled, or expired children remain counted without reopening the
+child. Other terminal-state reports fail closed.
+
+Parent cancellation writes stable child-id-ordered targets into caller-owned
+[`OmsChildCancelBuffer`]. Planned children cancel locally; submitted/working/
+unknown children become pending-cancel and produce route/client targets. Output
+capacity is checked before any mutation, and selection reuses preallocated
+scratch storage. Failed parents retain emergency cancel access.
+
+[`OrderIntentRecoverySnapshot`] sorts child rows for deterministic persistence.
+Restore independently validates ids, quantities, leaves, averages, fill
+notional, child sequences, indexes, and recomputed parent aggregates. A
+non-terminal tree always restores as `Recovering`; the host must reconcile OMS
+and venue state before `activate` permits release. Terminal trees stay terminal.
+
+FIX identifiers remain adapter concerns. Hosts may map the intent/parent id to
+provider metadata such as `ListID` or a custom field, while every actual child
+uses a unique `ClOrdID`. FIX documents `ClOrdID` uniqueness and `ListID` as an
+association mechanism in the
+[FIX Latest field reference](https://fiximate.fixtrading.org/en/FIX.Latest/fields_sorted_by_name.html).
+FINRA also explicitly treats parent/child routing and automated cancellations
+as algorithmic trading activity in
+[Regulatory Notice 15-06](https://www.finra.org/rules-guidance/notices/15-06).
 
 ### Multi-account allocation
 

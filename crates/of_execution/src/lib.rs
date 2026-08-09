@@ -4,11 +4,13 @@
 mod drop_copy;
 mod kill_switch;
 mod oms;
+mod order_intent;
 mod position_ledger;
 mod production_risk;
 pub use drop_copy::*;
 pub use kill_switch::*;
 pub use oms::*;
+pub use order_intent::*;
 pub use position_ledger::*;
 pub use production_risk::*;
 

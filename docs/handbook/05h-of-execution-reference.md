@@ -316,6 +316,7 @@ The `oms` module is re-exported from `of_execution`.
 | Independent drop copy | `DropCopyAdapter`, `DropCopyReport`, `DropCopyReportBuffer`, `DropCopyReconciler`, `DropCopyObservation`, `DropCopyMetricsSnapshot` |
 | Scoped kill switches | `KillSwitchRegistry`, `KillSwitchScope`, `KillSwitchMode`, `KillSwitchEvent`, `KillSwitchDecision`, `KillSwitchAffectedOrderBuffer` |
 | Production risk | `ProductionRiskEngine`, `ProductionRiskPolicy`, `ProductionRiskLimits`, `ProductionRiskContext`, `ProductionRiskDecision`, `ProductionRiskDecisionJournal` |
+| Order intent | `OrderIntentLifecycle`, `OrderIntent`, `ExecutionInstruction`, `OmsChildOrder`, `OmsChildCancelBuffer`, `OrderIntentRecoverySnapshot` |
 | Allocation | `AllocationGroup`, `AllocationLeg`, `AllocationMethod`, `AllocationReport`, `allocate_block_fill`, `reconcile_allocations` |
 | Safety policies | `DisconnectPolicy`, `RouteSafetyPolicy`, `SafetyPolicy`, `SafetyContext`, `evaluate_safety_policy` |
 | Advanced risk | `AdvancedRiskLimits`, `AdvancedRiskGate` |
@@ -447,6 +448,37 @@ Installation rejects empty ids, negative signed limits, duplicate ids,
 capacity exhaustion, and unsafe rate-window sizes. Amend contexts must include
 the replaced order in current gross and net exposure so replacement deltas are
 projected correctly.
+
+## Order Intent And Parent/Child Lifecycle
+
+`OrderIntentLifecycle` owns bounded OMS parent/child state without changing the
+single-order engine or depending on the algorithm crate. `OrderIntent` records
+strategy ownership, symbol/side, target, limit, child and open-child bounds,
+participation metadata, and release window. `ExecutionInstruction` records the
+provider-neutral route and order constraints for one child.
+
+Planning is allowed only for active parents and enforces parent leaves, release
+time, parent price, clip size, open count, lifetime child capacity, displayed
+quantity, minimum quantity, and valid order-type prices. Planned children then
+pass through the ordinary kill switch, production risk, WAL, normalization,
+and `ExecutionEngine`; the lifecycle is not a routing shortcut.
+
+Canonical reports are correlated by client id and validated against account,
+symbol, and route. Fill advances require matching trade `last_qty`. Aggregates
+are exact fill notional plus derived average, filled, working, allocatable, and
+leaves quantities. Regressions and overfills fail atomically.
+
+Pause blocks release but not child management. Replace records immutable
+old/new lineage and transfers working allocation after validation. Late fills
+on replaced/cancelled/expired children are counted while terminal state is
+preserved. Parent cancel-tree selection is preallocated, deterministic, and
+all-or-nothing; planned children cancel locally and live children produce
+caller-owned cancel targets. Failed parents may still cancel risk.
+
+Recovery snapshots sort children and duplicate every parent aggregate for
+integrity checking. Restore recomputes those aggregates and validates child
+leaves, average, ids, indexes, and sequences. Non-terminal trees restore as
+`Recovering` and require explicit activation after venue reconciliation.
 
 ## Authoritative Position And PnL Ledger
 
