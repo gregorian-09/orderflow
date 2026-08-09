@@ -212,6 +212,45 @@ submissions disabled while any host action is still required.
 `ExecutionEngine::evaluate_reconciliation(venue, policy)` apply those helpers
 to the engine's current local non-terminal order states.
 
+## Independent Drop Copy
+
+The primary order-entry session is not the only source of execution truth.
+`DropCopyAdapter` models a separate provider session that maps independent
+reports into canonical `DropCopyReport` values. Keeping it separate avoids
+coupling order submission availability to the credentials, sequence state, or
+recovery state of the independent evidence channel.
+
+```mermaid
+sequenceDiagram
+    participant Strategy
+    participant OMS as Primary OMS session
+    participant Venue
+    participant Drop as Drop-copy session
+    participant Reconciler
+    Strategy->>OMS: OrderRequest
+    OMS->>Venue: Provider order
+    Venue-->>OMS: Primary ExecutionEvent
+    Venue-->>Drop: Independent report
+    Drop->>Reconciler: DropCopyReport
+    OMS->>Reconciler: Local OrderState snapshot
+    Reconciler-->>OMS: DropCopyObservation + metrics
+```
+
+`DropCopyReconciler` provides four deterministic stages:
+
+1. deduplicate by source plus report id, or source plus sequence;
+2. classify timestamp and cumulative-fill regressions under an explicit late
+   policy;
+3. correlate venue order id first and client-order aliases second; and
+4. compare identity, routing, status, fill quantities, leaves, and average
+   price without mutating OMS state.
+
+Duplicate identity retention and report/progress queues are bounded. Capacity
+exhaustion is observable, not silently expanded. Report timestamps are supplied
+by the adapter or host, so the hot path does not read clocks. Policy decisions,
+WAL writes, alert delivery, JSON export, and operator actions remain outside the
+reconciler and can use the existing safety and recovery gates.
+
 ## Safety Policies
 
 `RouteSafetyPolicy` and `DisconnectPolicy` describe what should happen when

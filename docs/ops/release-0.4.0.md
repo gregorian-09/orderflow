@@ -142,6 +142,10 @@ connect sockets, or upgrade any built-in provider claim automatically.
 - recovery and open-order reconciliation primitives
 - recovery-readiness evaluation that gates resume decisions on WAL integrity,
   checkpoint integrity, recovery output, and reconciliation policy
+- independent drop-copy adapter/session primitives with bounded canonical
+  report buffering, source-scoped duplicate detection, venue/client order
+  correlation, fill/state reconciliation, late-report handling, and
+  allocation-free lag/health metrics
 - lifecycle, fanout, command correlation, throttling, sharding, telemetry,
   position ledger, safety policy, and replay helpers
 

@@ -533,6 +533,24 @@ Public concurrent execution types:
 - `ExecutionCommandSender`
 - `ConcurrentExecutionEngine`
 
+Public independent drop-copy types:
+
+- `DropCopySourceId`
+- `DropCopyReportId`
+- `DropCopyReport`
+- `DropCopyReportBuffer`
+- `DropCopySourceState`
+- `DropCopySourceHealth`
+- `DropCopyAdapter` trait
+- `InMemoryDropCopyAdapter`
+- `DropCopyLateReportPolicy`
+- `DropCopyDisposition`
+- `DropCopyCorrelation`
+- `DropCopyIssueFlags`
+- `DropCopyObservation`
+- `DropCopyMetricsSnapshot`
+- `DropCopyReconciler`
+
 Public OMS helper types:
 
 - `CommandId`

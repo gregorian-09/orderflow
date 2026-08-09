@@ -313,6 +313,7 @@ The `oms` module is re-exported from `of_execution`.
 | Lifecycle | `ExecutionLifecycle`, `ExecutionAdapterState`, `ExecutionLifecycleSnapshot` |
 | Durable journal | `FileExecutionJournal` |
 | Reconciliation | `reconcile_open_orders`, `reconcile_open_orders_detailed`, `evaluate_reconciliation_policy`, `ReconciliationReport`, `VenueReconciliationReport`, `ReconciliationPolicy` |
+| Independent drop copy | `DropCopyAdapter`, `DropCopyReport`, `DropCopyReportBuffer`, `DropCopyReconciler`, `DropCopyObservation`, `DropCopyMetricsSnapshot` |
 | Allocation | `AllocationGroup`, `AllocationLeg`, `AllocationMethod`, `AllocationReport`, `allocate_block_fill`, `reconcile_allocations` |
 | Safety policies | `DisconnectPolicy`, `RouteSafetyPolicy`, `SafetyPolicy`, `SafetyContext`, `evaluate_safety_policy` |
 | Advanced risk | `AdvancedRiskLimits`, `AdvancedRiskGate` |
@@ -323,6 +324,51 @@ The `oms` module is re-exported from `of_execution`.
 | Throttling | `OrderThrottle` |
 | Replay | `ReplayDecision`, `ReplayResult`, `replay_simulated_oms` |
 | Adapter SDK | `ProviderAdapterContext`, `ExecutionAdapterFactory`, `ProviderAdapterSdk` |
+
+## Independent Drop Copy
+
+`DropCopyAdapter` defines a transport/session contract that is independent of
+the primary `ExecutionAdapter`. It emits canonical `DropCopyReport` values into
+a caller-owned `DropCopyReportBuffer`. The contract has explicit connect,
+disconnect, poll, and source-health operations; it does not add methods to the
+existing execution adapter trait.
+
+`DropCopyReport` carries:
+
+- `DropCopySourceId`, which scopes identity to one source/session;
+- `DropCopyReportId`, normally a provider report or execution identity;
+- a source/session sequence fallback;
+- the local drop-copy receive timestamp; and
+- a canonical `ExecutionEvent` mapped by the provider adapter.
+
+`DropCopyReconciler::new(duplicate_capacity, local_order_capacity, policy)`
+preallocates duplicate, local-order, and progress indexes. Load local OMS state
+with `replace_local_orders`, then call `observe` for each report. Correlation
+uses venue order id first and client/original-client aliases second.
+
+`DropCopyObservation` returns a `DropCopyDisposition`,
+`DropCopyCorrelation`, allocation-free `DropCopyIssueFlags`, matched local
+client id, and receive-minus-exchange lag. The issue bitset distinguishes
+identity, account, route, symbol, status, cumulative quantity, leaves quantity,
+average-price, invalid fill-total, late timestamp, regressive fill, and bounded
+tracking-capacity failures.
+
+`DropCopyLateReportPolicy::AuditOnly` is the conservative default. It keeps
+late evidence available but marks it ineligible for current-state
+reconciliation. `AcceptAndFlag` and `Reject` are explicit alternatives.
+Duplicate reports never pass through reconciliation twice.
+
+`DropCopyMetricsSnapshot` exposes report, duplicate, late, match, mismatch,
+venue-only, fill, missing-key, capacity-exhaustion, and lag counters without
+allocating or formatting. `DropCopySourceHealth` separately describes one
+adapter session. Hosts should combine both with `SafetyPolicy` and block new
+submissions when independent evidence is required but stale, disconnected, or
+unreconciled.
+
+`InMemoryDropCopyAdapter` is a bounded deterministic source for replay,
+certification, and provider bridge tests. A full provider implementation should
+decode into `DropCopyReport`, preserve provider sequencing, and never perform
+operator callbacks on its poll path.
 
 ## Error Model
 

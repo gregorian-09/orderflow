@@ -57,6 +57,24 @@ Event buffers and adapter metadata:
 - [`ExecutionHealth`]
 - [`ExecutionAdapter`]
 
+Independent drop copy:
+
+- [`DropCopySourceId`]
+- [`DropCopyReportId`]
+- [`DropCopyReport`]
+- [`DropCopyReportBuffer`]
+- [`DropCopySourceState`]
+- [`DropCopySourceHealth`]
+- [`DropCopyAdapter`]
+- [`InMemoryDropCopyAdapter`]
+- [`DropCopyLateReportPolicy`]
+- [`DropCopyDisposition`]
+- [`DropCopyCorrelation`]
+- [`DropCopyIssueFlags`]
+- [`DropCopyObservation`]
+- [`DropCopyMetricsSnapshot`]
+- [`DropCopyReconciler`]
+
 Routing and risk:
 
 - [`RouteConfig`]
@@ -848,6 +866,94 @@ host action completes.
 [`ExecutionEngine::reconcile_open_orders_with`] and
 [`ExecutionEngine::evaluate_reconciliation`] apply the same logic to the
 engine's current local non-terminal orders and a venue open-order snapshot.
+
+### Independent drop copy
+
+[`DropCopyAdapter`] is deliberately separate from [`ExecutionAdapter`]. A
+provider can therefore run order entry and independent execution evidence on
+different transports, credentials, sessions, and recovery sequences without
+changing existing execution adapter implementations.
+
+```mermaid
+flowchart LR
+    Primary[Primary order-entry session] --> OMS[ExecutionEngine]
+    Primary --> Venue[Venue matching engine]
+    Venue --> PrimaryReports[Primary execution reports]
+    PrimaryReports --> OMS
+    Venue --> DropSession[Independent drop-copy session]
+    DropSession --> Mapper[Provider mapping]
+    Mapper --> Report[DropCopyReport]
+    OMS --> Local[Local OrderState snapshot]
+    Report --> Reconciler[DropCopyReconciler]
+    Local --> Reconciler
+    Reconciler --> Observation[DropCopyObservation]
+    Reconciler --> Metrics[DropCopyMetricsSnapshot]
+```
+
+Provider adapters decode their wire message into an [`ExecutionEvent`] and
+place it in [`DropCopyReport`]. The envelope adds the independent source id,
+provider report id, source sequence, and local receive timestamp needed for
+deduplication and audit. Report identity is scoped by source. When a provider
+does not expose a report id, a nonzero source sequence is the fallback key;
+when neither exists, [`DropCopyIssueFlags::MISSING_DUPLICATE_KEY`] makes the
+loss of protection explicit.
+
+[`DropCopyReconciler`] correlates venue order id first, then current, previous,
+or original client order id. It compares account, route, symbol, status,
+cumulative quantity, leaves quantity, average price, and trade quantity
+invariants. It reports differences as a compact [`DropCopyIssueFlags`] bitset
+without mutating the engine. Venue-only evidence remains visible instead of
+being silently inserted into local state.
+
+```rust
+use of_execution::{
+    DropCopyLateReportPolicy, DropCopyReconciler, DropCopyReport,
+};
+use of_execution_core::OrderState;
+
+fn inspect_drop_copy(report: &DropCopyReport, local_orders: &[OrderState]) {
+    let mut reconciler = DropCopyReconciler::new(
+        16_384, // retained report identities
+        8_192,  // local/progress order identities
+        DropCopyLateReportPolicy::AuditOnly,
+    );
+    reconciler.replace_local_orders(local_orders);
+
+    let observation = reconciler.observe(report);
+    if observation.reconciliation_eligible() && observation.has_state_mismatch() {
+        // Keep submissions fail-closed and send the issue bitset to the
+        // operator/reconciliation control plane.
+    }
+    let metrics = reconciler.metrics();
+    assert_eq!(metrics.reports_received, 1);
+}
+```
+
+Late handling is explicit. A lower exchange timestamp or cumulative fill than
+previous independent evidence is classified as late. `AcceptAndFlag` keeps it
+eligible, `AuditOnly` retains evidence without treating it as current, and
+`Reject` excludes it from reconciliation. Duplicate reports are always marked
+`Duplicate` and are not reconciled twice.
+
+Capacity is part of the operational contract:
+
+- [`DropCopyReportBuffer`] and [`InMemoryDropCopyAdapter`] never grow beyond
+  their configured queue bounds;
+- duplicate retention uses a fixed-capacity FIFO window;
+- progress tracking does not grow on the report path after its configured
+  capacity is reached;
+- [`DropCopyIssueFlags::TRACKING_CAPACITY_EXHAUSTED`] and
+  [`DropCopyMetricsSnapshot::tracking_capacity_exhaustions`] expose undersized
+  deployments;
+- caller-supplied timestamps keep clock reads outside the reconciliation path;
+- JSON, logging, metric formatting, alerting, and policy actions stay in the
+  host control plane.
+
+Refreshing local orders is a control-plane operation and can allocate if the
+new snapshot exceeds the initial capacity. Size the reconciler from expected
+peak open-order cardinality, and alert on duplicate-window turnover,
+`venue_only_reports`, `mismatched_reports`, `late_reports`, source state, and
+drop-copy lag.
 
 ### Multi-account allocation
 
