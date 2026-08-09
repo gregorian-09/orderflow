@@ -43,6 +43,35 @@ worker threads, provider APIs, or host-language wrappers. The engine should not
 know how a specific broker encodes a request. Bindings should not duplicate
 order-state logic.
 
+## Certification Boundary
+
+The deterministic certification venue sits behind the unchanged
+`ExecutionAdapter` boundary. It validates OMS behavior before a provider
+adapter is connected to official certification infrastructure.
+
+```mermaid
+flowchart LR
+  Script[Bounded certification script]
+  Cert[CertificationVenue]
+  History[Bounded sequenced report history]
+  AdapterTrait[ExecutionAdapter contract]
+  OMS[ExecutionEngine / recovery harness]
+  Evidence[Transcript + 18-kind coverage]
+  Official[Provider certification environment]
+
+  Script --> Cert
+  Cert --> History
+  History --> Cert
+  Cert --> AdapterTrait --> OMS
+  Cert --> Evidence
+  Evidence --> Official
+```
+
+This division matters: deterministic local coverage catches state-machine,
+backpressure, duplicate, ordering, race, and recovery defects; official venue
+certification proves the actual transport and counterparty profile. Neither
+substitutes for the other.
+
 ## Synchronous Engine
 
 `ExecutionEngine` is the deterministic core. It owns mutable order state and is

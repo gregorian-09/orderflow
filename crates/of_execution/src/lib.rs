@@ -1,6 +1,7 @@
 //! Execution routing and adapter contracts for Orderflow.
 #![doc = include_str!("../README.md")]
 
+mod certification_venue;
 mod drop_copy;
 mod idempotency;
 mod kill_switch;
@@ -9,6 +10,7 @@ mod order_intent;
 mod position_ledger;
 mod production_risk;
 mod reconciliation;
+pub use certification_venue::*;
 pub use drop_copy::*;
 pub use idempotency::*;
 pub use kill_switch::*;

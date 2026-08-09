@@ -478,3 +478,108 @@ actions, retain the findings in the audit bundle, and run a new cycle from
 fresh evidence. A timeout, missing mass-status completion, mismatched claimed
 row count, stale sequence, corrupt checkpoint, or exhausted finding buffer is
 a blocked recovery, not a clean result.
+
+## 15. Certify OMS Failure Handling Before Provider Testing
+
+Use `CertificationVenue` as the adapter behind an `ExecutionEngine` or call it
+directly while testing an adapter-facing component. Build the script in the
+same order the host will invoke adapter methods. This example proves an
+accepted working order, an in-flight cancel race, duplicate delivery,
+disconnect/reconnect, and recovery restatement without sockets or clocks:
+
+```rust
+use of_execution::{
+    CertificationRaceOutcome, CertificationScenario, CertificationVenue,
+    ExecutionAdapter, ExecutionEventBuffer,
+};
+use of_execution_core::{
+    AccountId, CancelRequest, ClientOrderId, ExecutionSymbol, OrderPrice,
+    OrderQty, OrderRequest, OrderSide, OrderType, RouteId, StrategyId,
+    TimeInForce, VenueOrderId,
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let account = AccountId::new("ACCOUNT-A")?;
+    let route = RouteId::new("CERT")?;
+    let symbol = ExecutionSymbol::new("XCME", "ESM6")?;
+    let order_id = ClientOrderId::new("ORDER-1")?;
+
+    let mut venue = CertificationVenue::default();
+    venue.enqueue_all([
+        CertificationScenario::Accept,
+        CertificationScenario::CancelReplaceRace {
+            fill_quantity: OrderQty(2),
+            fill_price: OrderPrice(5_250_00),
+            outcome: CertificationRaceOutcome::Reject,
+        },
+        CertificationScenario::DuplicateReports { copies: 1 },
+        CertificationScenario::Disconnect,
+        CertificationScenario::Reconnect,
+        CertificationScenario::RecoveryRestatement,
+    ])?;
+    venue.connect()?;
+
+    let request = OrderRequest {
+        client_order_id: order_id,
+        account_id: account,
+        route_id: route,
+        strategy_id: StrategyId::new("TWAP-A")?,
+        symbol,
+        side: OrderSide::Buy,
+        order_type: OrderType::Limit,
+        time_in_force: TimeInForce::Day,
+        quantity: OrderQty(10),
+        limit_price: OrderPrice(5_250_00),
+        stop_price: OrderPrice(0),
+        ts_exchange_ns: 1_000,
+        ts_recv_ns: 1_001,
+    };
+    let mut reports = ExecutionEventBuffer::with_capacity(32);
+    venue.submit(&request, &mut reports)?;
+
+    venue.cancel(
+        &CancelRequest {
+            client_order_id: ClientOrderId::new("CANCEL-1")?,
+            orig_client_order_id: order_id,
+            venue_order_id: VenueOrderId::empty(),
+            account_id: account,
+            route_id: route,
+            symbol,
+            ts_recv_ns: 1_010,
+        },
+        &mut reports,
+    )?;
+    venue.poll(&mut reports)?; // duplicate latest report
+    venue.poll(&mut reports)?; // disconnect
+    assert!(!venue.health().connected);
+    venue.poll(&mut reports)?; // reconnect
+    assert!(venue.health().connected);
+    venue.recover_open_orders(&mut reports)?;
+
+    let snapshot = venue.snapshot();
+    assert_eq!(snapshot.remaining_scenarios(), 0);
+    assert!(snapshot.coverage().count(
+        of_execution::CertificationScenarioKind::CancelReplaceRace
+    ) > 0);
+    Ok(())
+}
+```
+
+For a complete suite, execute every value in
+`CertificationScenarioKind::ALL` and require
+`snapshot.coverage().is_complete()`. Persist or serialize the host's copy of
+`transcript()` and retained report metadata with the test build/version and
+adapter profile. The crate intentionally does not write evidence files or
+declare a provider certification result.
+
+Operational rules:
+
+1. Use separate scripts for normal flow, recovery, and each provider profile.
+2. Keep output buffers large enough for the largest atomic scenario or assert
+   the expected `ExecutionError::BufferFull` response.
+3. Test duplicates before any state or position mutation by placing the real
+   deduplicator in the loop.
+4. Test sequence reset and resend against the provider profile's actual FIX or
+   native-session rules.
+5. Run the same OMS assertions in the provider's official certification
+   environment before enabling live routes.
