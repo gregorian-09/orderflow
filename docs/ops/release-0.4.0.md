@@ -140,6 +140,10 @@ connect sockets, or upgrade any built-in provider claim automatically.
 - deterministic simulated execution adapter
 - in-memory and file-backed execution journal helpers
 - recovery and open-order reconciliation primitives
+- generalized recovery reconciliation across local OMS, WAL, checkpoint,
+  adapter recovery, independent drop copy, broker positions, and position
+  ledger evidence with verified watermarks, bounded machine-readable findings,
+  deterministic mismatch classification, and explicit host policy actions
 - recovery-readiness evaluation that gates resume decisions on WAL integrity,
   checkpoint integrity, recovery output, and reconciliation policy
 - independent drop-copy adapter/session primitives with bounded canonical
