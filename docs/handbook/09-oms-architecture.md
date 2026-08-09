@@ -510,6 +510,42 @@ whether to block, investigate, apply an authorized correction, or accept a new
 opening balance. This keeps external surprises from silently rewriting risk
 state.
 
+## Generalized Recovery Reconciliation
+
+`OmsReconciliationCoordinator` is the final fail-closed gate after component
+recovery. It requires deployment-selected evidence from local state, WAL,
+checkpoint, adapter recovery, independent drop copy, broker positions, and the
+local position ledger. Every source supplies integrity status, sequence, as-of
+time, and claimed row counts.
+
+```mermaid
+sequenceDiagram
+    participant Host
+    participant Sources as Recovery evidence sources
+    participant Cycle as OmsReconciliationCoordinator
+    participant Policy
+    participant Operator
+    Host->>Cycle: begin_cycle(expected WAL sequence)
+    Sources->>Cycle: integrity watermarks
+    Sources->>Cycle: order snapshots / position report
+    Cycle->>Cycle: classify missing, stale, corrupt, duplicate, and state mismatch
+    Cycle->>Policy: bounded machine-readable findings
+    alt clean
+        Policy-->>Host: submissions_enabled
+    else automated action configured
+        Policy-->>Host: cancel observed-only / restate local / accept truth
+        Host->>Cycle: start new verification cycle
+    else approval required
+        Policy-->>Operator: evidence and required action
+        Operator-->>Host: approve or remain blocked
+    end
+```
+
+The coordinator never edits state. A policy action is an obligation that must
+complete before a fresh cycle proves convergence. This separates evidence,
+decision, mutation, and verification and prevents partial recovery from being
+mistaken for readiness.
+
 ## Sharding
 
 `ShardRouter` maps route/account/symbol keys to shard indexes. A sharded OMS can

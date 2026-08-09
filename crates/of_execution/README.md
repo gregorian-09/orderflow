@@ -231,6 +231,12 @@ OMS helpers:
 - [`reconcile_open_orders`]
 - [`reconcile_open_orders_detailed`]
 - [`evaluate_reconciliation_policy`]
+- [`OmsReconciliationCoordinator`]
+- [`OmsReconciliationConfig`]
+- [`OmsReconciliationPolicy`]
+- [`OmsEvidenceWatermark`]
+- [`OmsReconciliationBuffer`]
+- [`OmsReconciliationSummary`]
 - [`AllocationMethod`]
 - [`AllocationLeg`]
 - [`AllocationGroup`]
@@ -1154,6 +1160,112 @@ host action completes.
 [`ExecutionEngine::reconcile_open_orders_with`] and
 [`ExecutionEngine::evaluate_reconciliation`] apply the same logic to the
 engine's current local non-terminal orders and a venue open-order snapshot.
+
+### Generalized reconciliation cycle
+
+[`OmsReconciliationCoordinator`] combines the existing order, drop-copy,
+checkpoint/WAL, and production-position reconciliation primitives under one
+explicit recovery gate. It does not mutate OMS state or call providers. Hosts
+first obtain authoritative snapshots, then supply one
+[`OmsEvidenceWatermark`] per source and compare the relevant data.
+
+```mermaid
+flowchart LR
+    Local[Local OMS] --> Cycle[OmsReconciliationCoordinator]
+    WAL[WAL replay] --> Cycle
+    Checkpoint[Checkpoint] --> Cycle
+    Adapter[Adapter mass/open-order recovery] --> Cycle
+    Drop[Independent drop copy] --> Cycle
+    Broker[Broker/clearing positions] --> Cycle
+    Ledger[ProductionPositionLedger] --> Cycle
+    Cycle --> Findings[Bounded machine-readable findings]
+    Findings --> Policy[Fail closed / venue truth / cancel / restate / approval]
+    Policy --> Resume{Submissions enabled?}
+```
+
+Sources are [`OmsReconciliationSource::LocalOms`], `WalReplay`, `Checkpoint`,
+`AdapterRecovery`, `DropCopy`, `BrokerPositions`, and `PositionLedger`.
+[`OmsReconciliationSourceSet`] declares which are mandatory for a deployment.
+Each watermark carries integrity status, complete sequence, as-of time, and
+claimed order/position counts. The coordinator turns missing, corrupt, stale,
+incomplete, sequence-lagged, or row-count-inconsistent evidence into findings.
+
+Order comparison uses `(account, route, venue, symbol, client_order_id)` scope,
+preserves deterministic input order, reports duplicate identities instead of
+overwriting them, and classifies:
+
+- `Matched`, `VenueOnly`, and `LocalOnly`;
+- `StatusMismatch`, `QuantityMismatch`, and `PriceMismatch`;
+- `Unknown` for direction or accepted/venue identity conflicts; and
+- `DuplicateEvidence`.
+
+Position comparison remains owned by [`reconcile_production_positions`]. Pass
+its [`PositionReconciliationBuffer`] to `observe_position_report`; all exact
+position issue flags become `PositionMismatch`, while duplicate external keys
+remain `DuplicateEvidence`.
+
+```rust
+use of_execution::{
+    OmsEvidenceStatus, OmsEvidenceWatermark, OmsReconciliationBuffer,
+    OmsReconciliationConfig, OmsReconciliationCoordinator,
+    OmsReconciliationPolicy, OmsReconciliationSource,
+    OmsReconciliationSourceSet,
+};
+# let local_orders: &[of_execution_core::OrderState] = &[];
+# let venue_orders: &[of_execution_core::OrderState] = &[];
+
+let required = OmsReconciliationSourceSet::one(OmsReconciliationSource::LocalOms)
+    .with(OmsReconciliationSource::WalReplay)
+    .with(OmsReconciliationSource::Checkpoint)
+    .with(OmsReconciliationSource::AdapterRecovery);
+let mut cycle = OmsReconciliationCoordinator::new(
+    OmsReconciliationConfig::new(required)
+        .with_max_sequence_lag(0)
+        .with_stale_after_ns(5_000_000_000),
+    OmsReconciliationPolicy::fail_closed(),
+);
+let mut findings = OmsReconciliationBuffer::with_capacity(10_000);
+cycle.begin_cycle(7, 42_000, 10_000_000_000, &mut findings)?;
+for source in [
+    OmsReconciliationSource::LocalOms,
+    OmsReconciliationSource::WalReplay,
+    OmsReconciliationSource::Checkpoint,
+    OmsReconciliationSource::AdapterRecovery,
+] {
+    cycle.observe_source(
+        OmsEvidenceWatermark::new(
+            source,
+            OmsEvidenceStatus::Valid,
+            42_000,
+            9_999_000_000,
+            local_orders.len() as u32,
+            0,
+        ),
+        &mut findings,
+    )?;
+}
+cycle.reconcile_orders(
+    OmsReconciliationSource::AdapterRecovery,
+    local_orders,
+    venue_orders,
+    &mut findings,
+)?;
+let summary = cycle.finish(&mut findings)?;
+assert_eq!(summary.submissions_enabled, findings.as_slice().is_empty());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+[`OmsReconciliationPolicy`] defaults every discrepancy to `FailClosed` and can
+map individual issues to `AcceptObservedTruth`, `CancelObservedOrder`,
+`RestateLocal`, or `RequireOperatorApproval`. These actions describe required
+host work; they never mutate state automatically. After action completion,
+start a new cycle with fresh evidence before enabling submissions.
+
+Reconciliation is a recovery/operations path, not an order hot path. Snapshot
+comparison allocates temporary hash indexes, while findings use caller-owned
+bounded storage. [`OmsReconciliationError::BufferFull`] is explicit and never
+silently truncates evidence. Size output for the worst-case sum of source,
+duplicate, order, and position discrepancies.
 
 ### Independent drop copy
 

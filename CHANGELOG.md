@@ -6,6 +6,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added a generalized, additive OMS reconciliation coordinator across local,
+  WAL, checkpoint, adapter recovery, drop-copy, broker-position, and position-
+  ledger evidence with sequence/time/count watermarks, deterministic scoped
+  order comparison, all mismatch classes, bounded findings, and explicit
+  fail-closed/venue-truth/cancel/restate/operator policy actions.
 - Added bounded, recovery-safe OMS command idempotency for submit, cancel, and
   amend requests with scoped request keys, semantic parameter matching, stable
   OMS/provider ID correlation, fail-closed capacity, strict sequencing,

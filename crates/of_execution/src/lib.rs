@@ -8,6 +8,7 @@ mod oms;
 mod order_intent;
 mod position_ledger;
 mod production_risk;
+mod reconciliation;
 pub use drop_copy::*;
 pub use idempotency::*;
 pub use kill_switch::*;
@@ -15,6 +16,7 @@ pub use oms::*;
 pub use order_intent::*;
 pub use position_ledger::*;
 pub use production_risk::*;
+pub use reconciliation::*;
 
 use std::collections::HashMap;
 use std::error::Error;

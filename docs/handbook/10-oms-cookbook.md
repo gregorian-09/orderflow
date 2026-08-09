@@ -459,3 +459,22 @@ Persist the report checkpoint with its `encoded_len`/`encode_into` binary codec
 and recover with `ExecutionReportDedupCheckpoint::decode`. Install command,
 report, order-tree, and position checkpoints under one host generation only
 after every component has reached the same WAL sequence boundary.
+
+## 14. Gate Recovery With All Evidence Sources
+
+After WAL/checkpoint restore, obtain fresh adapter open orders (FIX mass status
+or provider equivalent), drain independent drop copy through the recovery
+boundary, and reconcile broker positions with `ProductionPositionLedger`.
+Create an `OmsEvidenceWatermark` for every required source only after that
+source has proved integrity and completeness.
+
+Use `OmsReconciliationCoordinator::reconcile_orders` repeatedly for WAL,
+checkpoint, adapter, and drop-copy order snapshots against local OMS state.
+Pass the output of `reconcile_production_positions` to
+`observe_position_report`. Then call `finish`.
+
+Do not resume when `submissions_enabled` is false. Execute the selected policy
+actions, retain the findings in the audit bundle, and run a new cycle from
+fresh evidence. A timeout, missing mass-status completion, mismatched claimed
+row count, stale sequence, corrupt checkpoint, or exhausted finding buffer is
+a blocked recovery, not a clean result.
