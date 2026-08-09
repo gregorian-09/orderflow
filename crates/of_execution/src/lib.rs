@@ -1,7 +1,9 @@
 //! Execution routing and adapter contracts for Orderflow.
 #![doc = include_str!("../README.md")]
 
+mod drop_copy;
 mod oms;
+pub use drop_copy::*;
 pub use oms::*;
 
 use std::collections::HashMap;

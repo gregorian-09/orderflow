@@ -6,6 +6,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added independent OMS drop-copy primitives with a separate adapter/session
+  contract, canonical bounded report buffers, deterministic simulation source,
+  source-scoped duplicate suppression, venue/client order correlation,
+  fill/state reconciliation flags, explicit late-report policy, and
+  allocation-free health/lag metrics.
 - Added `of_adapters` adapter SDK conformance helpers with an expanded
   production adoption quality ladder, descriptor evidence fields, target
   quality requirements, and fail-closed conformance reports for adapter authors
