@@ -205,6 +205,13 @@ OMS helpers:
 - [`RequestId`]
 - [`CommandIdGenerator`]
 - [`CommandCorrelation`]
+- [`IdempotencyKey`]
+- [`IdempotentExecutionCommand`]
+- [`IdempotencyRegistry`]
+- [`IdempotencyCheckpoint`]
+- [`ExecutionReportKey`]
+- [`ExecutionReportDeduplicator`]
+- [`ExecutionReportDedupCheckpoint`]
 - [`ExecutionEventFanout`]
 - [`ExecutionEventSubscriber`]
 - [`ExecutionAdapterState`]
@@ -904,6 +911,193 @@ circuit breaker instead of assuming the command was accepted.
 [`CommandId`], [`RequestId`], [`CommandIdGenerator`], and
 [`CommandCorrelation`] let hosts associate strategy intent, submitted commands,
 and reports without relying only on venue ids.
+
+### Idempotent command admission
+
+[`IdempotencyRegistry`] protects submit, cancel, and amend commands against
+strategy retries, reconnect retries, and replay duplicates without changing
+[`ExecutionEngine`]. A key is the pair `(scope_id, request_id)`. The scope keeps
+identical request strings from independent gateways, tenants, or sessions from
+colliding. [`CommandId`] and the retained client/provider IDs provide the rest
+of the trace:
+
+```mermaid
+sequenceDiagram
+    participant Strategy
+    participant Guard as IdempotencyRegistry
+    participant WAL as Durable OMS WAL
+    participant Adapter
+    participant Venue
+    Strategy->>Guard: reserve(scope, request, command, parameters)
+    alt first request
+        Guard-->>Strategy: Accepted(original record)
+        Strategy->>WAL: append command + correlation
+        Strategy->>Guard: mark_journaled
+        Strategy->>Adapter: send with stable provider ID
+        Strategy->>Guard: mark_sent
+        Adapter->>Venue: provider command
+        Venue-->>Adapter: ack / reject
+        Adapter-->>Guard: complete
+    else matching retry
+        Guard-->>Strategy: Duplicate(original state; do not send)
+    else same key, different parameters
+        Guard-->>Strategy: ParameterMismatch; fail closed
+    end
+```
+
+The registry compares every semantic field but ignores request transport
+timestamps. Therefore, a reconstructed retry may carry a later receive time,
+while a changed quantity, price, route, account, symbol, side, order type,
+time-in-force, original client ID, or venue ID is rejected. This follows the
+common idempotent API rule that the same client token and same parameters return
+the original outcome, while changed parameters fail validation. FIX profiles
+still own their exact counterparty rules: FIX `ClOrdID(11)` is expected to be
+unique in its sender scope, and retransmission behavior must follow the
+session/profile contract.
+
+The registry also maintains bounded uniqueness indexes for `CommandId`, current
+client order ID, and `AdapterCommandId`. Two distinct retained requests cannot
+share any of those identities. Matching retries always return the identities
+owned by the original record.
+
+This matches the
+[AWS client-token guidance](https://docs.aws.amazon.com/ec2/latest/devguide/ec2-api-idempotency.html),
+which returns the original result for a matching token/payload and rejects a
+token reused with different parameters. Adapter profiles should also follow
+the official FIX definition of
+[`ClOrdID(11)`](https://fiximate.fixtrading.org/en/FIX.Latest/tag11.html) and
+their counterparty's duplicate/replay rules; the generic registry does not
+override venue certification requirements.
+
+```rust
+use of_execution::{
+    AdapterCommandId, CommandId, IdempotencyCompletion, IdempotencyDecision,
+    IdempotencyKey, IdempotencyRegistry, IdempotencyScopeId,
+    IdempotentExecutionCommand, RequestId,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty,
+    OrderRequest, OrderSide, OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let key = IdempotencyKey::new(
+    IdempotencyScopeId::new("gateway-a")?,
+    RequestId::new("strategy-request-42")?,
+)?;
+let request = OrderRequest {
+    client_order_id: ClientOrderId::new("GW-A-000042")?,
+    account_id: AccountId::new("ACCOUNT-A")?,
+    route_id: RouteId::new("FIX-A")?,
+    strategy_id: StrategyId::new("TWAP-A")?,
+    symbol: ExecutionSymbol::new("XCME", "ESM6")?,
+    side: OrderSide::Buy,
+    order_type: OrderType::Limit,
+    time_in_force: TimeInForce::Day,
+    quantity: OrderQty(2),
+    limit_price: OrderPrice(5_250_00),
+    stop_price: OrderPrice(0),
+    ts_exchange_ns: 0,
+    ts_recv_ns: 100,
+};
+
+let mut guard = IdempotencyRegistry::new(65_536)?;
+let decision = guard.reserve(
+    1,
+    100,
+    key,
+    CommandId(42),
+    IdempotentExecutionCommand::Submit(request),
+)?;
+assert!(matches!(decision, IdempotencyDecision::Accepted(_)));
+
+// Only advance after the corresponding host operation succeeded.
+// 1. Append the command and correlation to the durable OMS WAL.
+guard.mark_journaled(2, 101, key)?;
+// 2. Send through the adapter using this stable provider/FIX identity.
+guard.mark_sent(3, 102, key, AdapterCommandId::new("GW-A-000042")?)?;
+// 3. Fold the authoritative adapter/venue outcome.
+guard.complete(4, 110, key, IdempotencyCompletion::Acknowledged)?;
+
+// A retry returns the original record and must not call the adapter again.
+let retry = guard.reserve(
+    4,
+    200,
+    key,
+    CommandId(99),
+    IdempotentExecutionCommand::Submit(OrderRequest {
+        ts_recv_ns: 200,
+        ..request
+    }),
+)?;
+assert!(retry.is_duplicate());
+assert_eq!(retry.record().command_id, CommandId(42));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+State progression is strict and caller-sequenced:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Reserved
+    Reserved --> Journaled: durable append succeeded
+    Reserved --> Rejected: local/risk rejection
+    Reserved --> FailedDefinitive: definitive local failure
+    Journaled --> Sent: adapter send attempted
+    Journaled --> RecoveryPending: outcome uncertain
+    Sent --> Acknowledged: authoritative acceptance
+    Sent --> Rejected: authoritative rejection
+    Sent --> FailedDefinitive: definitive failure
+    Sent --> RecoveryPending: disconnect / timeout / restart
+    RecoveryPending --> Journaled: reconciled absent; retry exact command
+    RecoveryPending --> Acknowledged: reconciled accepted
+    RecoveryPending --> Rejected: reconciled rejected
+```
+
+Important operational rules:
+
+- reserve before creating side effects;
+- persist the command/key/correlation before `mark_journaled`;
+- never call `mark_sent` until the adapter accepted ownership of the send;
+- reuse the retained adapter ID after an authoritative absent-order result;
+- never blindly resend a restored or uncertain command;
+- checkpoint the registry with the same ordering authority as the OMS WAL;
+- restore marks every non-terminal command `RecoveryPending`;
+- retire terminal keys only after durable archival and the upstream retry
+  horizon, because retirement deliberately removes duplicate protection;
+- size capacity for the full active plus terminal retention horizon. The
+  registry never evicts a command key implicitly and returns
+  [`IdempotencyError::CapacityExceeded`] instead.
+
+[`IdempotencyCheckpoint`] is schema-versioned, deterministically key-sorted,
+and checksummed over complete records. `encoded_len` plus `encode_into` provide
+a canonical allocation-free binary write into a caller-owned buffer;
+`IdempotencyCheckpoint::decode` validates magic, schema, lengths, enum values,
+checksum, and trailing bytes before restore. Checkpoint creation and decode
+allocate and belong on the control plane; admission, lookup, encoding, and state
+transitions use caller/preallocated storage. Clocks, file writes, adapter sends,
+and callbacks remain host-owned and outside the registry.
+
+### Execution-report duplicate protection
+
+[`ExecutionReportDeduplicator`] is a separate bounded FIFO identity window for
+primary execution reports, replay, and drop copy. [`ExecutionReportKey`] scopes
+an execution ID to its source/session; when no execution ID exists it uses a
+source sequence. If an execution ID exists, sequence changes during replay do
+not defeat duplicate detection.
+
+Call `observe` before applying an event to order state or the position ledger.
+Apply only [`ExecutionReportDisposition::Fresh`]. The window preallocates its
+set and FIFO. Unlike command keys, report identities use an explicit sliding
+horizon and evict the oldest identity when full; monitor
+`ExecutionReportDedupMetrics::evicted` and size the horizon above the maximum
+replay/resend window. [`ExecutionReportDedupCheckpoint`] preserves exact
+oldest-to-newest eviction order across restart and exposes the same
+`encoded_len`, `encode_into`, and `decode` persistence pattern.
+
+The specialized [`DropCopyReconciler`] and [`ProductionPositionLedger`] retain
+their own source-scoped duplicate controls. Use one clear deduplication owner
+per ingestion path; do not count a report as independently accepted at several
+layers.
 
 ### Event fanout
 

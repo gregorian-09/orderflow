@@ -318,3 +318,144 @@ int32_t rc = of_execution_concurrent_try_recv_report(
 
 If no report is ready, the function returns `OF_ERR_BACKPRESSURE`. That is the
 non-blocking empty condition, not a fatal error.
+
+## 13. Make Submit, Cancel, And Amend Retries Idempotent
+
+Use `IdempotencyRegistry` immediately before the durable command journal. The
+registry is deliberately separate from `ExecutionEngine`: it cannot claim a
+WAL write or network send succeeded, so the host advances it only after those
+operations actually complete.
+
+```rust
+use of_execution::{
+    AdapterCommandId, CommandId, IdempotencyCompletion, IdempotencyDecision,
+    IdempotencyKey, IdempotencyRegistry, IdempotencyScopeId,
+    IdempotentExecutionCommand, RequestId,
+};
+
+let mut idempotency = IdempotencyRegistry::new(100_000)?;
+let key = IdempotencyKey::new(
+    IdempotencyScopeId::new("strategy-gateway-a")?,
+    RequestId::new("strategy-request-000042")?,
+)?;
+let command = IdempotentExecutionCommand::Submit(req);
+
+match idempotency.reserve(1, now_ns, key, CommandId(42), command)? {
+    IdempotencyDecision::Accepted(record) => {
+        // Append record.key, record.command_id, record.command, and the OMS
+        // mutation sequence to the WAL. Do not send if this fails.
+        wal_append_command(record)?;
+        idempotency.mark_journaled(2, now_ns + 1, key)?;
+
+        // The adapter maps this stable value to a provider token or FIX
+        // ClOrdID according to its profile.
+        let provider_id = AdapterCommandId::new("GW-A-000042")?;
+        adapter_send(record.command, provider_id)?;
+        idempotency.mark_sent(3, now_ns + 2, key, provider_id)?;
+    }
+    IdempotencyDecision::Duplicate(original) => {
+        // Return or inspect original.state. Never call adapter_send here.
+        return_existing_result(original)?;
+    }
+}
+
+// Fold an authoritative ack/reject using the same key.
+idempotency.complete(
+    4,
+    now_ns + 10,
+    key,
+    IdempotencyCompletion::Acknowledged,
+)?;
+```
+
+The same flow protects cancel and amend commands by using
+`IdempotentExecutionCommand::Cancel` or `::Amend`. A retry may have a different
+receive timestamp. It must not change any routing, account, symbol, quantity,
+price, side, order type, time-in-force, current client ID, original client ID,
+or venue order ID.
+
+### Restart Or Ambiguous Send
+
+Checkpoint after ordered mutations:
+
+```rust
+let checkpoint = idempotency.checkpoint();
+let mut encoded = vec![0_u8; checkpoint.encoded_len()];
+checkpoint.encode_into(&mut encoded)?;
+checkpoint_store.save_bytes_atomically(&encoded)?;
+```
+
+After restart:
+
+```rust
+let encoded = checkpoint_store.load_latest_bytes()?;
+let checkpoint = of_execution::IdempotencyCheckpoint::decode(&encoded)?;
+let mut idempotency = IdempotencyRegistry::restore(&checkpoint, 100_000)?;
+let record = idempotency.get(key).expect("checkpoint retained command");
+assert_eq!(record.state, of_execution::IdempotencyState::RecoveryPending);
+
+match venue_query(record.command, record.adapter_command_id)? {
+    VenueTruth::Accepted => {
+        idempotency.complete(
+            next_sequence,
+            now_ns,
+            key,
+            IdempotencyCompletion::Acknowledged,
+        )?;
+    }
+    VenueTruth::Rejected => {
+        idempotency.complete(
+            next_sequence,
+            now_ns,
+            key,
+            IdempotencyCompletion::Rejected,
+        )?;
+    }
+    VenueTruth::AbsentAfterAuthoritativeRecovery => {
+        let original = idempotency.retry_after_reconciliation(
+            next_sequence,
+            now_ns,
+            key,
+        )?;
+        // Reuse original.command and original.adapter_command_id. Do not
+        // manufacture a new semantic request under the old key.
+    }
+    VenueTruth::Unknown => {
+        // Stay fail closed in RecoveryPending and escalate.
+    }
+}
+```
+
+Never infer `AbsentAfterAuthoritativeRecovery` from a timeout alone. For FIX,
+complete session sequence recovery and use order-status/mass-status or drop-copy
+evidence required by the counterparty profile.
+
+### Suppress Duplicate Reports Before State Mutation
+
+```rust
+use of_execution::{
+    ExecutionReportDeduplicator, ExecutionReportDisposition,
+    ExecutionReportKey, ExecutionReportSourceId,
+};
+
+let mut reports = ExecutionReportDeduplicator::new(1_000_000)?;
+let key = ExecutionReportKey::from_event(
+    ExecutionReportSourceId::new("FIX-DROP-A")?,
+    &event,
+    provider_sequence,
+)?;
+if reports.observe(key)? == ExecutionReportDisposition::Fresh {
+    apply_to_order_state(event)?;
+    apply_to_position_ledger(event)?;
+}
+```
+
+Checkpoint `reports.checkpoint()` in the same recovery generation as order and
+position state. Alert on `reports.metrics().evicted`: it means the retained
+identity horizon advanced, and a replay older than that horizon can no longer
+be proven duplicate by this window.
+
+Persist the report checkpoint with its `encoded_len`/`encode_into` binary codec
+and recover with `ExecutionReportDedupCheckpoint::decode`. Install command,
+report, order-tree, and position checkpoints under one host generation only
+after every component has reached the same WAL sequence boundary.

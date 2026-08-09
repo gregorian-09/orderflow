@@ -42,8 +42,10 @@ Major additions:
 - concurrent OMS worker: bounded command/report queues for many producers while
   one native worker owns order state deterministically
 - OMS helpers: command correlation, event fanout, lifecycle snapshots, durable
-  file journal, reconciliation, safety policies, advanced risk, position ledger,
-  order normalization, telemetry, sharding, throttling, and replay simulation
+  file/WAL journals, checkpoint recovery, native order-intent and parent/child
+  lifecycle, scoped kill switches, production risk, exact position/PnL ledger,
+  command idempotency, execution-report deduplication, reconciliation, safety
+  policies, allocation, telemetry, sharding, throttling, and replay simulation
 - FIX foundation: borrowed tag-value codec, `BodyLength(9)` and `CheckSum(10)`
   validation, common tag extraction, typed `FixVersion`/`FixMsgType` helpers,
   static dictionary/profile validation, deterministic session sequence

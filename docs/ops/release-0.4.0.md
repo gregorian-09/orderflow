@@ -146,6 +146,12 @@ connect sockets, or upgrade any built-in provider claim automatically.
   report buffering, source-scoped duplicate detection, venue/client order
   correlation, fill/state reconciliation, late-report handling, and
   allocation-free lag/health metrics
+- bounded OMS command idempotency for submit/cancel/amend with scoped request
+  IDs, semantic parameter mismatch rejection, stable command/client/provider ID
+  mapping, strict lifecycle sequencing, fail-closed capacity, checksummed
+  recovery checkpoints with canonical caller-buffer binary codecs,
+  reconciliation-gated retries, and a checkpointed source-scoped
+  execution-report duplicate horizon
 - scoped fail-closed kill-switch primitives covering global, venue, route,
   account, strategy, symbol, order-type, and adapter-session controls, with
   bounded cancellation targets, reduce-only evaluation, complete actor/reason/

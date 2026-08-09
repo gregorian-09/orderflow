@@ -401,6 +401,65 @@ scratch are reserved at construction. Recovery snapshot creation allocates and
 belongs to the control plane; planning, state transition, report folding, and
 cancel selection do not grow storage after configured capacity is reached.
 
+## Idempotency Boundary
+
+Command queue delivery, process restart, network timeout, and FIX resend can
+all create retries. The OMS must distinguish a retry of the same intent from a
+new intent without assuming that a missing response means the venue did
+nothing.
+
+```mermaid
+flowchart TB
+    Request[Strategy request ID + command ID + client order ID]
+    Guard[Bounded IdempotencyRegistry]
+    WAL[Checksummed OMS WAL]
+    Send[Adapter send + provider command ID]
+    Venue[Venue / broker]
+    Reports[Primary and drop-copy reports]
+    Dedup[ExecutionReportDeduplicator]
+    State[Order tree and position ledger]
+    Recovery[Checkpoint + reconciliation]
+
+    Request --> Guard
+    Guard -->|new exact intent| WAL --> Send --> Venue
+    Guard -->|matching retry| Request
+    Guard -->|parameter mismatch| Recovery
+    Venue --> Reports --> Dedup --> State
+    Guard --> Recovery
+    Dedup --> Recovery
+    Recovery -->|authoritative absent result| Guard
+    Recovery -->|authoritative present result| State
+```
+
+`IdempotencyRegistry` owns command admission only. The host owns durability and
+side effects and advances state after each successful boundary:
+
+1. reserve the scoped request and complete semantic command;
+2. append the command/correlation to the WAL;
+3. mark it journaled;
+4. send using a stable adapter/FIX identity;
+5. mark it sent;
+6. complete it from authoritative evidence.
+
+A disconnect after step 4 is not a retry instruction. Mark the command
+`RecoveryPending`, query/reconcile venue and drop-copy state, and only then
+either complete the original record or release its exact retained command for
+retry. Restoring a checkpoint converts every non-terminal command to that same
+fail-closed recovery state.
+
+The registry does not evict command identities automatically. Capacity
+exhaustion blocks new admission, because silent eviction could turn a delayed
+retry into a second live order. Terminal retirement is an explicit operator or
+retention-policy action after durable archival and expiry of every upstream
+retry window.
+
+Execution reports have a different boundedness policy. Their source-scoped
+identity window is FIFO and exposes eviction metrics. Capacity must exceed the
+maximum provider replay, FIX resend, and delayed drop-copy horizon. Its
+checkpoint is part of the same recovery generation as order and position
+state, preventing a valid state checkpoint from being paired with an older
+deduplication horizon.
+
 ## Position Ledger
 
 `PositionLedger` folds trade events into position state. It is intentionally

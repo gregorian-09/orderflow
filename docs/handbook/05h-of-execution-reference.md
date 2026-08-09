@@ -309,6 +309,8 @@ The `oms` module is re-exported from `of_execution`.
 | Area | Types / Functions |
 | --- | --- |
 | Correlation | `CommandId`, `RequestId`, `CommandIdGenerator`, `CommandCorrelation` |
+| Command idempotency | `IdempotencyKey`, `IdempotentExecutionCommand`, `IdempotencyRegistry`, `IdempotencyRecord`, `IdempotencyCheckpoint`, `IdempotencyDecision`, `IdempotencyMetrics` |
+| Report deduplication | `ExecutionReportKey`, `ExecutionReportDeduplicator`, `ExecutionReportDisposition`, `ExecutionReportDedupCheckpoint`, `ExecutionReportDedupMetrics` |
 | Event fanout | `ExecutionEventFanout`, `ExecutionEventSubscriber` |
 | Lifecycle | `ExecutionLifecycle`, `ExecutionAdapterState`, `ExecutionLifecycleSnapshot` |
 | Durable journal | `FileExecutionJournal` |
@@ -327,6 +329,71 @@ The `oms` module is re-exported from `of_execution`.
 | Throttling | `OrderThrottle` |
 | Replay | `ReplayDecision`, `ReplayResult`, `replay_simulated_oms` |
 | Adapter SDK | `ProviderAdapterContext`, `ExecutionAdapterFactory`, `ProviderAdapterSdk` |
+
+## Command Idempotency And Report Deduplication
+
+`IdempotencyRegistry` is an additive guard for mutating submit, cancel, and
+amend commands. It does not change or wrap `ExecutionEngine`; the host places
+it before WAL append and adapter send. Keys are scoped by
+`IdempotencyScopeId + RequestId`, while `CommandId`, client order ID, and
+`AdapterCommandId` preserve traceability through local and provider layers.
+
+| Operation | Required prior state | Durable/side-effect boundary |
+| --- | --- | --- |
+| `reserve` | key absent, or exact semantic retry | no external side effect |
+| `mark_journaled` | `Reserved` | call only after durable command append |
+| `mark_sent` | `Journaled` | call when adapter owns the send |
+| `complete` | non-terminal; ack requires sent/reconciled state | fold authoritative outcome |
+| `mark_recovery_pending` | non-terminal | disconnect/timeout/restart uncertainty |
+| `retry_after_reconciliation` | `RecoveryPending` | only after authoritative absence |
+| `retire_terminal` | definitive terminal | only after archive and retry expiry |
+
+The first accepted command owns its IDs and semantic parameters. A matching
+retry returns `IdempotencyDecision::Duplicate` with the original record and
+does not consume the supplied mutation sequence. The same key with changed
+economics, routing, ownership, symbol, or lifecycle parameters returns
+`ParameterMismatch`. Transport timestamps are deliberately excluded from
+semantic matching but included in checkpoint integrity.
+
+Separate bounded indexes enforce uniqueness for OMS command IDs, client order
+IDs, and provider command IDs across all retained records. This catches a
+cross-request `ClOrdID`/provider-token collision before adapter I/O.
+
+`IdempotencyCheckpoint` records the complete command and provider-ID mapping,
+uses a stable key order and checksum, and restores every non-terminal entry as
+`RecoveryPending`. This forces venue/drop-copy reconciliation before retry.
+The registry preallocates all identity indexes, never evicts implicitly, and fails
+closed at capacity.
+
+`IdempotencyCheckpoint::encoded_len` and `encode_into` write a canonical binary
+image into caller storage without allocation. `decode` validates framing,
+schema, bounded ASCII lengths, typed enum discriminants, full-record checksum,
+and trailing data. The report-dedup checkpoint exposes the same codec contract.
+Hosts still own atomic file installation, generation naming, fsync policy, and
+retention.
+
+`ExecutionReportDeduplicator` handles execution-report identities separately.
+It prefers `(source_id, execution_id)` and falls back to
+`(source_id, source_sequence)`. It is a bounded FIFO horizon, so capacity
+turnover is visible through `ExecutionReportDedupMetrics::evicted`. Its
+checkpoint retains exact FIFO order so restart does not alter the next identity
+to be evicted.
+
+Use this order on an ingestion path:
+
+```mermaid
+flowchart LR
+    Provider[Provider report] --> Map[Canonical ExecutionEvent]
+    Map --> Key[ExecutionReportKey]
+    Key --> Window[ExecutionReportDeduplicator]
+    Window -->|Fresh| State[Order state]
+    State --> Ledger[Position and PnL ledger]
+    Window -->|Duplicate| Metrics[Suppress and count]
+```
+
+`DropCopyReconciler` and `ProductionPositionLedger` also provide specialized
+deduplication. Assign one authoritative duplicate owner for each path and keep
+its checkpoint in the same recovery generation as the state it protects.
 
 ## Independent Drop Copy
 

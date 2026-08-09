@@ -6,6 +6,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added bounded, recovery-safe OMS command idempotency for submit, cancel, and
+  amend requests with scoped request keys, semantic parameter matching, stable
+  OMS/provider ID correlation, fail-closed capacity, strict sequencing,
+  canonical caller-buffer binary checkpoints, reconciliation-gated retries,
+  and a separately checkpointed source-scoped execution-report duplicate
+  window.
 - Added an additive bounded OMS order-intent and native parent/child lifecycle
   with constrained child allocation, canonical fill aggregation, pause/resume,
   replace lineage, atomic cancel trees, late-fill handling, strict sequencing,
