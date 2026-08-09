@@ -6,6 +6,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added a bounded deterministic OMS certification venue implementing the
+  existing execution-adapter contract, with 18 scripted accept/fill/reject,
+  cancel/replace race, duplicate/out-of-order/resend, sequence reset,
+  disconnect/reconnect, recovery, slow-delivery, and malformed-provider
+  scenarios plus sequenced report history, transcript evidence, and complete
+  coverage reporting.
 - Added a generalized, additive OMS reconciliation coordinator across local,
   WAL, checkpoint, adapter recovery, drop-copy, broker-position, and position-
   ledger evidence with sequence/time/count watermarks, deterministic scoped

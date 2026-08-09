@@ -45,8 +45,9 @@ Major additions:
   file/WAL journals, checkpoint recovery, native order-intent and parent/child
   lifecycle, scoped kill switches, production risk, exact position/PnL ledger,
   command idempotency, execution-report deduplication, reconciliation, safety
-  policies, generalized multi-source recovery reconciliation, allocation,
-  telemetry, sharding, throttling, and replay simulation
+  policies, generalized multi-source recovery reconciliation, a deterministic
+  18-scenario adapter/OMS certification venue, allocation, telemetry, sharding,
+  throttling, and replay simulation
 - FIX foundation: borrowed tag-value codec, `BodyLength(9)` and `CheckSum(10)`
   validation, common tag extraction, typed `FixVersion`/`FixMsgType` helpers,
   static dictionary/profile validation, deterministic session sequence

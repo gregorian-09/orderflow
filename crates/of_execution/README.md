@@ -186,6 +186,18 @@ Engine and simulation:
 - [`ExecutionRunbookSnapshot`]
 - [`ExecutionAuditBundleManifest`]
 - [`SimExecutionAdapter`]
+- [`CertificationCommandKind`]
+- [`CertificationRaceOutcome`]
+- [`CertificationScenarioKind`]
+- [`CertificationScenario`]
+- [`CertificationVenueConfig`]
+- [`CertificationVenueError`]
+- [`CertificationReport`]
+- [`CertificationStepResult`]
+- [`CertificationTranscriptEntry`]
+- [`CertificationCoverage`]
+- [`CertificationVenueSnapshot`]
+- [`CertificationVenue`]
 - [`simulated_engine`]
 - [`simulated_engine_with_routes`]
 
@@ -535,6 +547,125 @@ engine.submit(req, &mut events)?;
 assert!(!events.is_empty());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+## Deterministic Certification Venue
+
+[`CertificationVenue`] is the strict, script-driven counterpart to
+[`SimExecutionAdapter`]. Use the convenience simulator when a test only needs
+an immediate accept/fill. Use the certification venue when an adapter, OMS,
+recovery path, or duplicate guard must prove behavior under an exact sequence
+of acknowledgements, fills, rejects, races, replay, and session faults.
+
+The built-in scenarios cover:
+
+| Order flow | Session and delivery faults |
+| --- | --- |
+| accept, reject, partial fill, full fill | disconnect, reconnect, deterministic slow delivery |
+| cancel ack/reject, replace ack/reject | duplicate reports, out-of-order reports, resend |
+| fill-versus-cancel/replace race | sequence reset, malformed provider response |
+| open-order recovery restatement | bounded history and transcript eviction evidence |
+
+This mirrors the responsibilities of FIX `ExecutionReport(35=8)`, which is
+used for order acknowledgement, changes, status, fills, and rejection. A
+retransmitted FIX report carries duplicate/replay identity, while venue
+certification suites test acknowledgement, partial/complete fills,
+cancel/replace, rejects, and abnormal recovery. See the official
+[FIX ExecutionReport definition](https://fiximate.fixtrading.org/en/FIX.Latest/msg9.html)
+and the
+[CME AutoCert+ order-entry manual](https://www.cmegroup.com/tools-information/webhelp/acp-ebs-oe/Content/ebsoeusermanual.pdf).
+
+```mermaid
+sequenceDiagram
+    participant Test as Adapter / OMS test
+    participant Venue as CertificationVenue
+    participant History as Bounded report history
+    participant OMS
+    Test->>Venue: enqueue exact scenarios
+    Test->>Venue: connect + submit/cancel/amend/poll/recover
+    Venue->>History: assign sequence and retain canonical report
+    alt normal or delayed report
+        Venue-->>OMS: ExecutionEvent via caller-owned buffer
+    else duplicate / resend / out-of-order
+        History-->>OMS: preserved report identity in scripted order
+    else malformed provider input
+        Venue-->>Test: explicit adapter error + degraded health
+    end
+    Test->>Venue: snapshot / transcript / coverage
+```
+
+The venue reads no wall clock and uses no randomness. Construction reserves
+the configured script, order, delayed-report, history, and transcript
+collections. Command paths validate the full scripted action before consuming
+it or emitting a report. Newly generated ids use fixed stack formatting;
+normal report generation does not format JSON. Bounds are explicit:
+
+- script and tracked-order exhaustion fail closed;
+- output-buffer exhaustion returns [`ExecutionError::BufferFull`];
+- delayed-report exhaustion returns a typed adapter failure;
+- report history and transcript are bounded rings with visible eviction counts;
+- replay scenarios preserve original `CertificationReport::sequence()` values;
+- invalid provider bytes never become a fabricated canonical event.
+
+The script queue is operation-sensitive. `Accept`, `Reject`, `PartialFill`, and
+`FullFill` are consumed by `submit`; cancel and replace outcomes are consumed
+by their matching operation; `RecoveryRestatement` is consumed by
+`recover_open_orders`; session/delivery controls are consumed one per `poll`.
+`CancelReplaceRace` may be consumed by either cancel or amend. A mismatched
+operation does not consume the scenario.
+
+```rust
+use of_execution::{
+    CertificationScenario, CertificationVenue, ExecutionAdapter,
+    ExecutionEventBuffer,
+};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, OrderPrice, OrderQty,
+    OrderRequest, OrderSide, OrderType, RouteId, StrategyId, TimeInForce,
+};
+
+let mut venue = CertificationVenue::default();
+venue.enqueue_all([
+    CertificationScenario::PartialFill {
+        quantity: OrderQty(2),
+        price: OrderPrice(5_250_00),
+    },
+    CertificationScenario::RecoveryRestatement,
+])?;
+venue.connect()?;
+
+let request = OrderRequest {
+    client_order_id: ClientOrderId::new("CERT-ORDER-1")?,
+    account_id: AccountId::new("ACCOUNT-A")?,
+    route_id: RouteId::new("CERT")?,
+    strategy_id: StrategyId::new("TWAP-A")?,
+    symbol: ExecutionSymbol::new("XCME", "ESM6")?,
+    side: OrderSide::Buy,
+    order_type: OrderType::Limit,
+    time_in_force: TimeInForce::Day,
+    quantity: OrderQty(10),
+    limit_price: OrderPrice(5_250_00),
+    stop_price: OrderPrice(0),
+    ts_exchange_ns: 100,
+    ts_recv_ns: 101,
+};
+
+let mut reports = ExecutionEventBuffer::with_capacity(8);
+venue.submit(&request, &mut reports)?;
+assert_eq!(reports.len(), 2); // ack, then partial fill
+
+reports.clear();
+assert_eq!(venue.recover_open_orders(&mut reports)?, 1);
+assert_eq!(reports.len(), 1);
+assert_eq!(venue.snapshot().remaining_scenarios(), 0);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`CertificationCoverage::is_complete()` requires all 18 built-in scenario
+kinds. `CertificationVenue::transcript()` records scenario, consuming command,
+poll index, outcome, first report sequence, and report count. These are
+deterministic test artifacts, not a claim of exchange certification. Real
+production approval still requires the selected provider profile, credentials,
+transport, and official venue test environment.
 
 ## Journaling
 

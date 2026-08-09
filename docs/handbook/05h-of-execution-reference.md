@@ -50,6 +50,38 @@ The adapter writes events into caller-owned `ExecutionEventBuffer`. It should
 not allocate per report on the hot path unless the provider protocol requires
 it.
 
+### `CertificationVenue`
+
+`CertificationVenue` is an additive implementation of `ExecutionAdapter` for
+deterministic pre-production certification. It does not alter the trait or the
+existing `SimExecutionAdapter` behavior.
+
+| Type | Purpose |
+| --- | --- |
+| `CertificationScenario` | Scripted order/session outcome with typed parameters |
+| `CertificationScenarioKind` | Stable 18-kind coverage classification |
+| `CertificationVenueConfig` | Script/order/pending/history/transcript bounds |
+| `CertificationVenue` | Single-owner deterministic mock exchange |
+| `CertificationReport` | Canonical event plus preserved venue report sequence |
+| `CertificationTranscriptEntry` | Bounded evidence for one consumed step |
+| `CertificationCoverage` | Per-kind counts and complete-suite predicate |
+| `CertificationVenueSnapshot` | Health, queues, evictions, sequence, delay, coverage |
+| `CertificationVenueError` | Typed configuration, script, capacity, and state failures |
+
+Command scenarios are consumed only by the matching adapter method. Control
+scenarios are processed one per `poll`, after ready delayed reports are drained.
+Scenario validation and output-capacity reservation happen before script
+consumption, state mutation, or report generation. `DuplicateReports`,
+`OutOfOrderReports`, and `Resend` re-emit retained events without assigning new
+report sequences. `MalformedProviderResponse` returns an adapter error and
+marks health degraded because malformed wire bytes cannot safely satisfy the
+canonical `ExecutionEvent` contract.
+
+All collections are bounded and reserved at construction. Report history and
+transcript use bounded rings and expose eviction counters; script, order, and
+delayed-report overflow fail explicitly. The venue is a test/certification
+primitive and does not claim provider approval.
+
 ### `ExecutionJournal`
 
 Journals implement:

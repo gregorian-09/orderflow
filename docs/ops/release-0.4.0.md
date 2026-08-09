@@ -138,6 +138,10 @@ connect sockets, or upgrade any built-in provider claim automatically.
 - route/account/symbol configuration and open-order risk accounting
 - bounded `ExecutionEventBuffer`
 - deterministic simulated execution adapter
+- bounded deterministic certification venue with 18 scripted order/session
+  scenarios, preserved report-sequence history, duplicate/out-of-order/resend
+  injection, cancel/replace race handling, recovery restatement, degraded
+  malformed-input behavior, transcript evidence, and completion coverage
 - in-memory and file-backed execution journal helpers
 - recovery and open-order reconciliation primitives
 - generalized recovery reconciliation across local OMS, WAL, checkpoint,
