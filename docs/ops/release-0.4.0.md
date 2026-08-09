@@ -165,6 +165,13 @@ connect sockets, or upgrade any built-in provider claim automatically.
   bounded cancellation targets, reduce-only evaluation, complete actor/reason/
   timestamp/WAL audit metadata, idempotent cancel outcomes, and explicit forced
   clear evidence
+- fixed-memory `ExecutionSloCollector` latency histograms with exact extrema
+  and bounded p50/p95/p99 estimates, submit/cancel/replace reject rates,
+  adapter/command/event queue gauges, WAL and checkpoint lag, recovery,
+  reconciliation, route-health, and drop-copy indicators
+- additive `ExecutionSloTargets` and machine-readable violation reports with
+  explicit minimum-sample policy; exporter I/O and metric cardinality remain
+  host-owned and outside the execution path
 - lifecycle, fanout, command correlation, throttling, sharding, telemetry,
   position ledger, safety policy, and replay helpers
 

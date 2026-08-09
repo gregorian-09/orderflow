@@ -583,3 +583,76 @@ Operational rules:
    native-session rules.
 5. Run the same OMS assertions in the provider's official certification
    environment before enabling live routes.
+
+## 16. Measure Execution SLOs Without Polluting The Hot Path
+
+Create one `ExecutionSloCollector` per stable execution scope and keep it next
+to the single owner of that scope. Capture timestamps in the host before and
+after the adapter boundary, then submit the complete observation in one call.
+Never use wall-clock or exchange timestamps as endpoints of host-monotonic
+latencies.
+
+```rust
+use of_execution::{
+    ExecutionLatencyKind, ExecutionOperationalObservation, ExecutionQueueKind,
+    ExecutionRouteHealth, ExecutionSloCollector, ExecutionSloTargets,
+    ExecutionSubmitObservation, ExecutionSubmitOutcome,
+};
+
+fn sample_and_evaluate() -> Result<bool, of_execution::ExecutionMetricsError> {
+    let mut sli = ExecutionSloCollector::new();
+    sli.observe_submit(ExecutionSubmitObservation::new(
+        10_000,
+        10_250,
+        11_000,
+        ExecutionSubmitOutcome::Ack,
+    ))?;
+    sli.observe_fill(10_000, 12_500)?;
+    sli.observe_operational(
+        ExecutionOperationalObservation::new(20_000)
+            .with_queue_depths(1, 2, 0)
+            .with_wal_progress(500, 499, Some(19_900))
+            .with_checkpoint_ns(15_000)
+            .with_reconciliation_mismatches(0)
+            .with_route_health(ExecutionRouteHealth::Healthy)
+            .with_drop_copy_lag_ns(400),
+    )?;
+
+    let targets = ExecutionSloTargets::new()
+        .with_latency_p99_ns(ExecutionLatencyKind::SubmitToAck, 2_000)
+        .with_latency_p99_ns(ExecutionLatencyKind::DropCopyLag, 1_000)
+        .with_queue_depth(ExecutionQueueKind::Command, 64)
+        .with_wal_lag_records(8)
+        .with_checkpoint_age_ns(10_000)
+        .with_reconciliation_mismatch_count(0)
+        .with_healthy_route_required(true)
+        .with_minimum_samples(1);
+    Ok(sli.snapshot().evaluate(targets).is_compliant())
+}
+
+assert!(sample_and_evaluate()?);
+# Ok::<(), of_execution::ExecutionMetricsError>(())
+```
+
+Production sampling loop:
+
+1. Capture local timestamps from one monotonic source.
+2. Validate and record complete command/report observations on the owner.
+3. Sample queues, durability, recovery, reconciliation, route, and drop-copy
+   state at a bounded control-plane cadence.
+4. Copy `snapshot()` to the sampler; do not share/mutex the collector among
+   producers.
+5. Evaluate explicit targets and map violation flags into alert and safety
+   policy.
+6. Export stable series such as route, venue, and account group. Never attach
+   order id, execution id, client id, or raw symbol unless cardinality is
+   independently bounded.
+7. Preserve the SLO snapshot and report in an incident audit bundle.
+
+Prometheus users should export histogram buckets only when cross-instance
+quantiles are required; otherwise typed p50/p95/p99 gauges are inexpensive but
+cannot be re-aggregated as distributions. OpenTelemetry users should define
+Views in the host to choose boundaries and attribute sets. See the official
+[OpenTelemetry Metrics SDK](https://opentelemetry.io/docs/specs/otel/metrics/sdk/),
+[Prometheus histogram practices](https://prometheus.io/docs/practices/histograms/),
+and [Google SRE SLO workbook](https://sre.google/workbook/implementing-slos/).
