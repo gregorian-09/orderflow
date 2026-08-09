@@ -551,6 +551,32 @@ Public independent drop-copy types:
 - `DropCopyMetricsSnapshot`
 - `DropCopyReconciler`
 
+Public scoped kill-switch types:
+
+- `KillSwitchId`
+- `KillSwitchSessionId`
+- `KillSwitchActorId`
+- `KillSwitchSourceKind`
+- `KillSwitchSource`
+- `KillSwitchScope`
+- `KillSwitchMode`
+- `KillSwitchReasonCode`
+- `KillSwitchStateCertainty`
+- `KillSwitchActivation`
+- `KillSwitchCancelResult`
+- `KillSwitchClear`
+- `KillSwitchEventKind`
+- `KillSwitchCancelOutcome`
+- `KillSwitchEvent`
+- `KillSwitchOrderContext`
+- `KillSwitchAffectedOrder`
+- `KillSwitchAffectedOrderBuffer`
+- `ActiveKillSwitch`
+- `KillSwitchDecisionReason`
+- `KillSwitchDecision`
+- `KillSwitchRegistry`
+- `KillSwitchError`
+
 Public OMS helper types:
 
 - `CommandId`

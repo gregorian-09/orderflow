@@ -314,6 +314,7 @@ The `oms` module is re-exported from `of_execution`.
 | Durable journal | `FileExecutionJournal` |
 | Reconciliation | `reconcile_open_orders`, `reconcile_open_orders_detailed`, `evaluate_reconciliation_policy`, `ReconciliationReport`, `VenueReconciliationReport`, `ReconciliationPolicy` |
 | Independent drop copy | `DropCopyAdapter`, `DropCopyReport`, `DropCopyReportBuffer`, `DropCopyReconciler`, `DropCopyObservation`, `DropCopyMetricsSnapshot` |
+| Scoped kill switches | `KillSwitchRegistry`, `KillSwitchScope`, `KillSwitchMode`, `KillSwitchEvent`, `KillSwitchDecision`, `KillSwitchAffectedOrderBuffer` |
 | Allocation | `AllocationGroup`, `AllocationLeg`, `AllocationMethod`, `AllocationReport`, `allocate_block_fill`, `reconcile_allocations` |
 | Safety policies | `DisconnectPolicy`, `RouteSafetyPolicy`, `SafetyPolicy`, `SafetyContext`, `evaluate_safety_policy` |
 | Advanced risk | `AdvancedRiskLimits`, `AdvancedRiskGate` |
@@ -369,6 +370,37 @@ unreconciled.
 certification, and provider bridge tests. A full provider implementation should
 decode into `DropCopyReport`, preserve provider sequencing, and never perform
 operator callbacks on its poll path.
+
+## Scoped Kill Switches
+
+`KillSwitchRegistry` provides additive scoped controls beyond the existing
+route-level `RiskLimits::kill_switch` boolean. `KillSwitchScope` supports
+global, venue, route, account, strategy, symbol, order type, and adapter-session
+matching. `KillSwitchMode` supports reject-new, cancel-all, cancel-scope,
+reduce-only, pause-strategy, and hard-stop-adapter behavior.
+
+The registry has explicit `Uncertain` and `Confirmed` states. `new` defaults to
+`Uncertain`, and `evaluate_request` rejects new flow until state has been
+restored and confirmed. `confirmed_empty` is an explicit convenience for an
+authoritatively new session, not a recovery shortcut.
+
+Activation receives borrowed `KillSwitchOrderContext` values and writes
+matching cancellation targets into a bounded `KillSwitchAffectedOrderBuffer`.
+It emits a `KillSwitchEvent` containing the scope, source, reason, timestamp,
+WAL sequence, affected/captured/truncated counts, cancellation progress, state
+certainty, and forced-clear flag.
+
+`record_cancel_result` accepts each captured client-order id once. An unknown
+or repeated result is rejected. `clear` requires `NotRequired` or
+`AllSucceeded`; pending or failed cancellations require
+`KillSwitchClear::with_force(true)`, which remains visible in the clear event.
+
+`evaluate_new_order` and `evaluate_request` do not allocate. The latter builds
+the fixed-size context directly from `OrderRequest`, signed position, and
+adapter-session id. `KillSwitchDecision` tells the host whether to allow new
+flow or cancels, enforce reduce-only, pause strategy commands, or stop an
+adapter. The host remains responsible for authorization, WAL writes, actual
+cancel dispatch, adapter shutdown, and operator notification.
 
 ## Error Model
 

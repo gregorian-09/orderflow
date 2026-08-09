@@ -6,6 +6,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added scoped, fail-closed OMS kill switches for global, venue, route,
+  account, strategy, symbol, order-type, and adapter-session controls, with
+  bounded cancellation targets, reduce-only evaluation, typed actor/reason/WAL
+  audit events, idempotent cancel results, and explicit forced-clear evidence.
 - Added independent OMS drop-copy primitives with a separate adapter/session
   contract, canonical bounded report buffers, deterministic simulation source,
   source-scoped duplicate suppression, venue/client order correlation,

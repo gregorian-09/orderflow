@@ -2,8 +2,10 @@
 #![doc = include_str!("../README.md")]
 
 mod drop_copy;
+mod kill_switch;
 mod oms;
 pub use drop_copy::*;
+pub use kill_switch::*;
 pub use oms::*;
 
 use std::collections::HashMap;

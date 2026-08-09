@@ -75,6 +75,32 @@ Independent drop copy:
 - [`DropCopyMetricsSnapshot`]
 - [`DropCopyReconciler`]
 
+Scoped kill switches:
+
+- [`KillSwitchId`]
+- [`KillSwitchSessionId`]
+- [`KillSwitchActorId`]
+- [`KillSwitchSourceKind`]
+- [`KillSwitchSource`]
+- [`KillSwitchScope`]
+- [`KillSwitchMode`]
+- [`KillSwitchReasonCode`]
+- [`KillSwitchStateCertainty`]
+- [`KillSwitchActivation`]
+- [`KillSwitchCancelResult`]
+- [`KillSwitchClear`]
+- [`KillSwitchEventKind`]
+- [`KillSwitchCancelOutcome`]
+- [`KillSwitchEvent`]
+- [`KillSwitchOrderContext`]
+- [`KillSwitchAffectedOrder`]
+- [`KillSwitchAffectedOrderBuffer`]
+- [`ActiveKillSwitch`]
+- [`KillSwitchDecisionReason`]
+- [`KillSwitchDecision`]
+- [`KillSwitchRegistry`]
+- [`KillSwitchError`]
+
 Routing and risk:
 
 - [`RouteConfig`]
@@ -954,6 +980,100 @@ new snapshot exceeds the initial capacity. Size the reconciler from expected
 peak open-order cardinality, and alert on duplicate-window turnover,
 `venue_only_reports`, `mismatched_reports`, `late_reports`, source state, and
 drop-copy lag.
+
+### Scoped kill switches
+
+The existing `RiskLimits::kill_switch` route flag remains valid. The additive
+[`KillSwitchRegistry`] handles production workflows that need several active,
+independently auditable scopes at once:
+
+- global;
+- venue;
+- route;
+- account;
+- strategy;
+- symbol;
+- order type; and
+- adapter/session.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Uncertain
+    Uncertain --> Confirmed: restore and confirm state
+    Confirmed --> Active: activate switch
+    Active --> Cancelling: CancelAll / CancelScope / HardStopAdapter
+    Active --> Cleared: RejectNew / ReduceOnly / PauseStrategy clear
+    Cancelling --> Cleared: all cancels succeeded
+    Cancelling --> ForcedClear: explicit operator override
+    Active --> Uncertain: recovery evidence lost
+    Cancelling --> Uncertain: recovery evidence lost
+    Cleared --> Confirmed
+    ForcedClear --> Confirmed
+```
+
+[`KillSwitchRegistry::new`] starts in
+[`KillSwitchStateCertainty::Uncertain`], and all new orders fail closed until
+the host restores durable state and calls `confirm_state`. Use
+[`KillSwitchRegistry::confirmed_empty`] only when the host has authoritative
+evidence that a new session has no active switches. Mark state uncertain again
+whenever WAL, checkpoint, or operator-control recovery is incomplete.
+
+Evaluate a request before normal route risk and before provider I/O:
+
+```rust
+use of_execution::{KillSwitchRegistry, KillSwitchSessionId};
+use of_execution_core::OrderRequest;
+
+fn can_submit(
+    registry: &KillSwitchRegistry,
+    request: &OrderRequest,
+    signed_position: i64,
+) -> bool {
+    let session = KillSwitchSessionId::new("fix-order-entry-a").unwrap();
+    registry
+        .evaluate_request(request, signed_position, session)
+        .allow_new_order
+}
+```
+
+Modes have distinct operational meaning:
+
+- `RejectNew` blocks matching submissions but keeps cancels available;
+- `CancelAll` blocks every submission and selects every supplied open order,
+  regardless of the scope value;
+- `CancelScope` blocks and selects only matching orders;
+- `ReduceOnly` permits an order only when side and quantity strictly reduce the
+  supplied signed position without crossing through zero;
+- `PauseStrategy` blocks matching strategy commands while preserving cancels;
+- `HardStopAdapter` selects matching open orders, blocks submissions, marks
+  cancel flow unavailable after shutdown, and tells the host to stop the
+  adapter/session.
+
+Activation accepts current open-order contexts and writes cancellation targets
+to a caller-owned [`KillSwitchAffectedOrderBuffer`]. The returned
+[`KillSwitchEvent`] contains the full scope, mode, actor/system source, reason,
+timestamp, WAL sequence, affected/captured counts, truncation status, cancel
+counts, aggregate outcome, state certainty, and forced-clear status. Journal
+the event and each later cancel-progress/clear event before exposing them to
+operator tooling.
+
+Cancellation targets and results are bounded and preallocated. A result is
+accepted once, only for an order captured at activation. If target output or
+internal result capacity is too small, the activation event remains visibly
+truncated and cannot reach `AllSucceeded`; clearing then requires a deliberate
+forced override. This prevents a partial cancellation list from being mistaken
+for a clean kill.
+
+The registry does not call adapters, write a WAL, authenticate operators, or
+invent timestamps. Those actions belong to the host because venue APIs,
+permissions, durability policies, and adapter shutdown mechanics differ. The
+typed outputs make those actions explicit while the matching and decision path
+stays allocation-free after construction.
+
+Operational references:
+
+- [CME Globex Kill Switch](https://www.cmegroup.com/tools-information/webhelp/globex-credit-controls/Content/Kill-Switch.html)
+- [CFTC automated-trading risk-control discussion](https://www.cftc.gov/LawRegulation/FederalRegister/finalrules/2013-22185.html)
 
 ### Multi-account allocation
 
