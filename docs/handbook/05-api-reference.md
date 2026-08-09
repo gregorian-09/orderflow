@@ -597,6 +597,23 @@ Public production-risk types:
 - `InMemoryProductionRiskJournal`
 - `ProductionRiskEngine`
 
+Public order-intent and parent/child types:
+
+- `OrderIntentId`
+- `OmsParentOrderId`
+- `OmsChildOrderId`
+- `OrderIntentState`
+- `OmsChildOrderState`
+- `ExecutionInstruction`
+- `OrderIntent`
+- `OmsChildOrder`
+- `OrderIntentSnapshot`
+- `OrderIntentError`
+- `OmsChildCancelTarget`
+- `OmsChildCancelBuffer`
+- `OrderIntentRecoverySnapshot`
+- `OrderIntentLifecycle`
+
 Public OMS helper types:
 
 - `CommandId`

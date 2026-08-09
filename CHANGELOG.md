@@ -6,6 +6,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added an additive bounded OMS order-intent and native parent/child lifecycle
+  with constrained child allocation, canonical fill aggregation, pause/resume,
+  replace lineage, atomic cancel trees, late-fill handling, strict sequencing,
+  and independently validated recovery snapshots.
 - Added an authoritative, additive production position/PnL ledger with exact
   average-cost basis, long/short/reversal realization, marks, fees,
   commissions, cash and corporate-action adjustments, rational FX conversion,

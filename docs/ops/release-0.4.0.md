@@ -279,6 +279,10 @@ foundation:
   multiplier metadata, scoped fill/adjustment idempotency, strict WAL-aligned
   sequences, corporate-action/manual hooks, versioned atomic checkpoints, and
   bounded broker/clearing position reconciliation
+- additive `OrderIntentLifecycle` with immutable parent constraints, bounded
+  native child ownership, fill/leaves aggregation, pause/resume, confirmed
+  replacement lineage, deterministic cancel trees, late terminal-fill handling,
+  strict WAL-aligned sequences, and recomputed recovery snapshots
 - additive `AlgoCheckpoint` and `AlgoRecoveryPlan` primitives with
   schema-versioned parent/progress snapshots, replay cursors, decision sequence
   restoration, pause/resume/complete/escalate recovery actions, and explicit
