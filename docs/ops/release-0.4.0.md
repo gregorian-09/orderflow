@@ -274,6 +274,11 @@ foundation:
   explainable decisions; bounded order/cancel rates; position, gross/net
   exposure, PnL, drawdown, session, price, and fat-finger controls; fail-closed
   health gates; and replaceable decision journaling
+- additive `ProductionPositionLedger` with exact normalized open cost,
+  realized/unrealized PnL, commission/fee/cash accounting, currency and
+  multiplier metadata, scoped fill/adjustment idempotency, strict WAL-aligned
+  sequences, corporate-action/manual hooks, versioned atomic checkpoints, and
+  bounded broker/clearing position reconciliation
 - additive `AlgoCheckpoint` and `AlgoRecoveryPlan` primitives with
   schema-versioned parent/progress snapshots, replay cursors, decision sequence
   restoration, pause/resume/complete/escalate recovery actions, and explicit

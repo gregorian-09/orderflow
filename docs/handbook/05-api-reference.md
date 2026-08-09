@@ -626,6 +626,36 @@ Public OMS helper types:
 - `Position`
 - `PositionKey`
 - `PositionLedger`
+- `LedgerCurrency`
+- `LedgerAdjustmentId`
+- `ProductionPositionKey`
+- `LedgerExecutionIdentity`
+- `LedgerScopedAdjustmentId`
+- `LedgerFxRate`
+- `LedgerFill`
+- `LedgerFillAttribution`
+- `LedgerAdjustmentKind`
+- `LedgerAdjustment`
+- `LedgerMark`
+- `ProductionPosition`
+- `ProductionPositionLedgerConfig`
+- `LedgerApplyStatus`
+- `LedgerApplyResult`
+- `PositionLedgerError`
+- `ProductionPositionLedger`
+- `LedgerCheckpointIdentity`
+- `LedgerCheckpointPosition`
+- `PositionLedgerCheckpoint`
+- `PositionLedgerCheckpointConfig`
+- `PositionLedgerCheckpointManifest`
+- `PositionLedgerCheckpointStore` trait
+- `FilePositionLedgerCheckpointStore`
+- `ExternalPositionSnapshot`
+- `PositionReconciliationTolerance`
+- `PositionReconciliationIssueFlags`
+- `PositionReconciliationItem`
+- `PositionReconciliationBuffer`
+- `PositionReconciliationReport`
 - `VenueOrderCapabilities`
 - `NormalizedOrderType`
 - `ExecutionTelemetry`
@@ -647,6 +677,7 @@ Public helper functions:
 - `evaluate_reconciliation_policy(report, policy) -> ReconciliationPolicyDecision`
 - `normalize_order_type(order_type, tif, capabilities) -> NormalizedOrderType`
 - `replay_simulated_oms(routes, decisions) -> ExecutionResult<ReplayResult>`
+- `reconcile_production_positions(ledger, external, tolerance, out) -> Result<PositionReconciliationReport, PositionLedgerError>`
 
 For lifecycle, routing, concurrency, and OMS helper details, see
 [`of_execution` reference](./05h-of-execution-reference.md).

@@ -6,6 +6,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added an authoritative, additive production position/PnL ledger with exact
+  average-cost basis, long/short/reversal realization, marks, fees,
+  commissions, cash and corporate-action adjustments, rational FX conversion,
+  scoped fill attribution/deduplication, strict mutation sequencing,
+  checksummed atomic checkpoints, and bounded external reconciliation.
 - Added an additive scoped production risk engine with deterministic policy
   ordering, bounded independent order/cancel rate windows, projected position
   and exposure limits, PnL/session/price/fat-finger controls, fail-closed runtime
