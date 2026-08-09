@@ -146,6 +146,11 @@ connect sockets, or upgrade any built-in provider claim automatically.
   report buffering, source-scoped duplicate detection, venue/client order
   correlation, fill/state reconciliation, late-report handling, and
   allocation-free lag/health metrics
+- scoped fail-closed kill-switch primitives covering global, venue, route,
+  account, strategy, symbol, order-type, and adapter-session controls, with
+  bounded cancellation targets, reduce-only evaluation, complete actor/reason/
+  timestamp/WAL audit metadata, idempotent cancel outcomes, and explicit forced
+  clear evidence
 - lifecycle, fanout, command correlation, throttling, sharding, telemetry,
   position ledger, safety policy, and replay helpers
 

@@ -251,6 +251,44 @@ by the adapter or host, so the hot path does not read clocks. Policy decisions,
 WAL writes, alert delivery, JSON export, and operator actions remain outside the
 reconciler and can use the existing safety and recovery gates.
 
+## Scoped Kill-Switch Control Plane
+
+`KillSwitchRegistry` is a separate control-plane state machine. It complements
+the route-level risk flag without changing current `ExecutionEngine`
+construction or adapter trait requirements.
+
+```mermaid
+flowchart TD
+    Recovery[Restore WAL/checkpoint state] --> Certainty{State confirmed?}
+    Certainty -- No --> FailClosed[Reject new orders]
+    Certainty -- Yes --> Match[Match active scopes]
+    Request[OrderRequest + position + session] --> Match
+    Match --> Decision[KillSwitchDecision]
+    Decision --> Risk[Normal pre-trade risk]
+    Decision --> Pause[Pause strategy]
+    Decision --> Stop[Stop adapter/session]
+    Activation[KillSwitchActivation] --> Select[Select open orders]
+    Open[Open-order contexts] --> Select
+    Select --> Targets[Bounded affected-order buffer]
+    Targets --> Cancel[Host sends cancels]
+    Cancel --> Progress[Cancel result events]
+    Progress --> Clear{Clean completion?}
+    Clear -- Yes --> Cleared[Clear switch]
+    Clear -- No --> Override[Explicit forced clear or remain blocked]
+```
+
+The decision path is synchronous and allocation-free after registry
+construction. Scope matching uses fixed-size identifiers. Emergency actions do
+not invoke user callbacks or provider code while registry state is borrowed.
+The host journals each typed event, dispatches selected cancels, records unique
+results, and performs adapter shutdown outside the registry.
+
+Recovery is conservative. Unknown switch state blocks new orders while keeping
+cancel flow available. A switch requiring cancellation cannot be cleared
+normally until every captured affected order succeeds. Truncated target output,
+failed cancels, or incomplete attempts remain visible and require an explicit
+forced-clear event rather than silently reopening flow.
+
 ## Safety Policies
 
 `RouteSafetyPolicy` and `DisconnectPolicy` describe what should happen when
