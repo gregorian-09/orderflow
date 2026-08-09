@@ -13,13 +13,17 @@ The crate has two execution layers:
 The synchronous engine is the canonical state machine. The concurrent engine is
 an additive producer/worker wrapper.
 
-`ExecutionRunbookSnapshot` is a read-only operator summary for dashboards and
+`ExecutionRunbookSnapshot` is the factual operator summary for dashboards and
 runbooks. `ExecutionEngine::runbook_snapshot()` reports adapter connectivity,
-route counts, route-level kill switches, open/terminal local order counts,
-execution counters, whether all new submissions are blocked, and whether
-operator attention is required. It does not mutate state and does not execute
-operator actions; host applications still enforce permissions and decide
-whether to pause, reconcile, cancel, or recover.
+route availability/drain/degradation, global submission pause, route-level kill
+switches, open/terminal orders, execution counters, submission readiness, and
+whether operator attention is required.
+
+`ExecutionOperatorController` is the mutating control plane. It verifies a
+host-supplied permission, rejects id regression/collision, journals intent,
+dispatches one typed action, journals outcome, and retains an idempotent
+receipt. Authentication, role assignment, escalation, and dual-control policy
+remain host responsibilities.
 
 `ExecutionAuditBundleManifest` is the first audit-bundle export primitive.
 `ExecutionEngine::audit_bundle_manifest()` combines the runbook snapshot,
@@ -28,6 +32,72 @@ operators can attach to incident exports. The engine does not choose filesystem
 layout or copy WAL/checkpoint files; hosts own packaging and access control.
 Use `audit_bundle_manifest_at(generated_ns)` for deterministic tests and replay
 drills.
+
+## Operator Runbook API
+
+| Action | Native OMS behavior | Deployment-owned behavior |
+| --- | --- | --- |
+| Pause/resume submissions | Constant-time global gate; cancel/report flow remains active | Authentication and approval |
+| Drain/restore route | Constant-time route-key set; blocks only new flow | Decide when open orders are sufficiently drained |
+| Mark/restore degraded route | Constant-time route-key set and runbook visibility | Derive health and escalation policy |
+| Cancel all/by scope | Deterministic open-order selection and canonical adapter cancels | Venue mass-cancel may be used by a custom service in addition |
+| Recover open orders | Calls the existing adapter recovery contract | Verify completeness and sequence boundaries |
+| Inspect stuck orders | Bounded all-or-nothing output sorted by age/id | Select stale threshold and alert policy |
+| Reconcile | Typed service receives the mutable engine | Gather external evidence and enforce fresh verification |
+| Export audit bundle | Typed service receives the mutable engine | Choose destination, redaction, encryption, and access control |
+| Rotate WAL | Typed service can call `engine.journal_mut()` on a concrete segmented journal | Select segment policy and durability |
+| Force checkpoint | Typed service can snapshot engine/open orders and install through a concrete store | Assign checkpoint id/sequence and include external ledgers |
+| Clear kill switch | Typed service receives switch id, force flag, command actor/reason | Enforce cancellation completion, approvals, and registry WAL sequence |
+
+`ExecutionOperatorPermissions` is a fixed bitset. The controller does not trust
+command text to confer authority; the application supplies an authenticated
+`ExecutionOperatorAuthorization` for every invocation. A denied command still
+gets requested/denied audit records and consumes its command id, preventing a
+later identity from silently changing its meaning.
+
+`ExecutionOperatorAuditSink` reserves a complete two-record intent/outcome
+pair before dispatch. `InMemoryExecutionOperatorAudit` is bounded and
+preallocated. `FileExecutionOperatorAudit` uses append-only versioned binary
+frames, complete command/scope/actor/reason/outcome encoding, FNV checksum,
+optional `sync_data`, and strict contiguous audit sequence validation.
+
+```mermaid
+sequenceDiagram
+    participant Host as Authenticated host
+    participant Control as ExecutionOperatorController
+    participant Audit as Operator audit journal
+    participant OMS as ExecutionEngine
+    participant Service as Deployment service
+    Host->>Control: authorization + typed command
+    Control->>Control: validate id, capacity, permission
+    Control->>Audit: Requested (before effect)
+    alt engine-native action
+        Control->>OMS: pause/drain/cancel/recover/inspect
+    else deployment action
+        Control->>Service: reconcile/export/rotate/checkpoint/clear
+        Service->>OMS: typed engine/journal access
+    end
+    Control->>Audit: Succeeded / Failed / Denied
+    Control-->>Host: idempotent receipt
+```
+
+If intent persistence fails, no action runs. If terminal persistence fails
+after dispatch, the controller pauses submissions, retains the outcome, and
+rejects every different command with `AuditRepairRequired`. Retrying the exact
+same command writes the missing outcome without redispatching the side effect.
+
+On restart, validate/replay the file journal, call
+`ExecutionOperatorController::restore`, then call `restore_engine_controls`.
+Incomplete intent/outcome pairs fail closed because the process cannot infer
+whether an external cancel, checkpoint, or clear happened before failure.
+
+This design reflects exchange operational behavior: CME's Mass Order Cancel
+blocks order entry and cancels working orders while producing an audit trail,
+and FIX defines typed mass-cancel request/response messages. See
+[CME Order Functionalities](https://cmegroupclientsite.atlassian.net/wiki/display/EPICSANDBOX/Order+Functionalities)
+and the [FIX OrderMassCancelRequest](https://fiximate.fixtrading.org/en/FIX.Latest/msg40.html)
+reference. Deployment retention and field requirements remain subject to the
+applicable venue and jurisdiction.
 
 ## Core Traits
 

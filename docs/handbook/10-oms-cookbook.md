@@ -656,3 +656,62 @@ Views in the host to choose boundaries and attribute sets. See the official
 [OpenTelemetry Metrics SDK](https://opentelemetry.io/docs/specs/otel/metrics/sdk/),
 [Prometheus histogram practices](https://prometheus.io/docs/practices/histograms/),
 and [Google SRE SLO workbook](https://sre.google/workbook/implementing-slos/).
+
+## 17. Wire A Production Operator Command Service
+
+Use a dedicated control-plane thread or task. Authenticate the operator in the
+host, map its current role to `ExecutionOperatorPermissions`, and submit a
+strictly increasing command id with a non-empty reason. Never expose
+`ExecutionOperatorPermissions::all()` directly to an unauthenticated HTTP or
+dashboard route.
+
+Implement `ExecutionOperatorServices<A, R, J>` for deployment-owned actions.
+The service receives `&mut ExecutionEngine<A, R, J>`, so a concrete segmented
+WAL service can call `engine.journal_mut().rotate_segment()`, while a checkpoint
+service can combine `engine.open_order_states()` with its position ledger and
+store. Return a typed `ExecutionOperatorOutcome`; preserve detailed external
+diagnostics in the audit bundle rather than allocating strings in the command
+receipt.
+
+```mermaid
+sequenceDiagram
+    participant Operator
+    participant API as Authenticated operator API
+    participant Controller
+    participant Audit as FileExecutionOperatorAudit
+    participant Engine
+    Operator->>API: pause / cancel scope / reconcile
+    API->>API: authenticate, authorize, assign command id
+    API->>Controller: command + permissions
+    Controller->>Audit: sync Requested
+    Controller->>Engine: deterministic action
+    Controller->>Audit: sync terminal outcome
+    Controller-->>API: receipt
+    API-->>Operator: status and counters
+```
+
+Startup sequence:
+
+1. Open `FileExecutionOperatorAudit`; checksum and sequence validation happen
+   before append is enabled.
+2. Replay records and call `ExecutionOperatorController::restore` with enough
+   capacity for every retained command in the operator-control epoch.
+3. Call `restore_engine_controls` before adapter/strategy activation.
+4. Refuse startup on an unpaired requested record. Determine externally whether
+   the side effect occurred, repair evidence under incident procedure, and
+   only then establish a new clean control epoch.
+5. Reconcile venue orders, positions, WAL, checkpoint, and drop copy before
+   issuing `ResumeSubmissions`.
+
+For cancel-all, size `ExecutionEventBuffer` for the worst expected response
+burst. The result reports selected, attempted, succeeded, failed, and emitted
+event counts because a set of network cancellation requests cannot be rolled
+back atomically. Continue processing reports and reconcile even when some
+cancels fail.
+
+Keep audit journal retention aligned with the applicable venue and regulatory
+requirements. CME documents Mass Order Cancel as blocking order entry,
+cancelling working orders, and producing an audit trail; venue-specific audit
+rules may require operator identity, location, order fields, and multi-year
+retention. Orderflow provides the deterministic mechanism, not legal advice or
+a universal retention period.

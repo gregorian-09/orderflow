@@ -185,6 +185,17 @@ Engine and simulation:
 - [`ExecutionMetrics`]
 - [`ExecutionRunbookSnapshot`]
 - [`ExecutionAuditBundleManifest`]
+- [`ExecutionOperatorController`]
+- [`ExecutionOperatorCommand`]
+- [`ExecutionOperatorAction`]
+- [`ExecutionOperatorOrderScope`]
+- [`ExecutionOperatorAuthorization`]
+- [`ExecutionOperatorPermissions`]
+- [`ExecutionOperatorServices`]
+- [`ExecutionOperatorAuditSink`]
+- [`InMemoryExecutionOperatorAudit`]
+- [`FileExecutionOperatorAudit`]
+- [`ExecutionStuckOrderBuffer`]
 - [`SimExecutionAdapter`]
 - [`CertificationCommandKind`]
 - [`CertificationRaceOutcome`]
@@ -353,13 +364,95 @@ The synchronous [`ExecutionEngine`] is the canonical state owner. The
 [`ConcurrentExecutionEngine`] is a wrapper that lets many producer threads
 submit commands while one worker thread owns the synchronous engine.
 
-[`ExecutionEngine::runbook_snapshot`] returns a read-only
-[`ExecutionRunbookSnapshot`] for operator dashboards and incident checklists. It
-summarizes adapter connectivity, route enablement, route-level kill switches,
-open versus terminal local orders, core execution counters, whether every
-new-order route is blocked, and whether the engine deserves operator attention.
-The snapshot is factual only: hosts still own permissions, escalation, and
-operator command execution.
+[`ExecutionEngine::runbook_snapshot`] returns a factual
+[`ExecutionRunbookSnapshot`] for dashboards and incident checklists. It now
+includes global operator pause, route drain/degradation, and available-route
+counts in addition to adapter, risk, order, and execution state.
+
+[`ExecutionOperatorController`] executes authenticated, idempotent operational
+commands with an audit intent written before any effect and a terminal outcome
+written afterward. The host supplies [`ExecutionOperatorAuthorization`]; the
+crate does not authenticate users or infer roles. Built-in actions cover:
+
+- pause/resume global submissions;
+- drain/restore and degrade/restore one complete route key;
+- cancel all or cancel by route, account, strategy, symbol, or order;
+- recover provider open orders and inspect stale local orders;
+- reconcile, export an audit bundle, rotate WAL, force checkpoint, and clear a
+  kill switch through typed [`ExecutionOperatorServices`].
+
+The controller preallocates a bounded receipt horizon and rejects command-id
+regressions/collisions. Exact retries return the original receipt. If the
+outcome audit write fails after an effect, new submissions are paused and no
+later command runs until the same command repairs the missing record.
+
+[`FileExecutionOperatorAudit`] is a single-writer append-only journal with
+versioned, checksummed binary frames and contiguous sequence validation.
+`ExecutionOperatorController::restore` reconstructs idempotency receipts from
+complete intent/outcome pairs; an unpaired intent fails closed because restart
+cannot prove whether its side effect occurred. Call `restore_engine_controls`
+before strategy flow to reapply successful pause, drain, and degraded-route
+state without replaying external side effects.
+
+```rust
+use of_execution::{
+    simulated_engine_with_routes, ExecutionEventBuffer,
+    ExecutionOperatorAction, ExecutionOperatorAuthorization,
+    ExecutionOperatorCommand, ExecutionOperatorCommandId,
+    ExecutionOperatorController, ExecutionOperatorPermission,
+    ExecutionOperatorPermissions, ExecutionStuckOrderBuffer,
+    InMemoryExecutionOperatorAudit, NoExternalExecutionOperatorServices,
+    RouteConfig,
+};
+use of_execution_core::{
+    AccountId, ExecutionSymbol, RiskLimits, RouteId,
+};
+
+let route = RouteConfig {
+    route_id: RouteId::new("SIM")?,
+    account_id: AccountId::new("ACCOUNT-A")?,
+    symbol: ExecutionSymbol::new("XCME", "ESM6")?,
+    enabled: true,
+    risk_limits: RiskLimits { kill_switch: false, ..RiskLimits::default() },
+};
+let mut engine = simulated_engine_with_routes(vec![route]);
+engine.start()?;
+let mut controller = ExecutionOperatorController::with_capacity(64)?;
+let mut audit = InMemoryExecutionOperatorAudit::with_capacity(128)?;
+let mut services = NoExternalExecutionOperatorServices;
+let authorization = ExecutionOperatorAuthorization::from_actor(
+    "ops-user",
+    ExecutionOperatorPermissions::none()
+        .with(ExecutionOperatorPermission::PauseSubmissions),
+)?;
+let command = ExecutionOperatorCommand::from_reason(
+    ExecutionOperatorCommandId::new(1)?,
+    ExecutionOperatorAction::PauseSubmissions,
+    1_000,
+    "venue incident",
+)?;
+let mut events = ExecutionEventBuffer::with_capacity(64);
+let mut stuck = ExecutionStuckOrderBuffer::with_capacity(64)?;
+let receipt = controller.execute(
+    &mut engine,
+    &mut services,
+    &mut audit,
+    authorization,
+    command,
+    1_001,
+    &mut events,
+    &mut stuck,
+)?;
+assert!(receipt.outcome.is_success());
+assert!(engine.runbook_snapshot().submissions_paused);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Operator cancellation bypasses ordinary strategy risk callbacks so emergency
+cancel flow cannot be vetoed by a new-order policy. It still journals each
+canonical cancel, uses the normal adapter/state-machine path, and returns
+partial success/failure counters because external venue actions cannot be
+transactionally rolled back.
 
 [`ExecutionEngine::audit_bundle_manifest`] returns an
 [`ExecutionAuditBundleManifest`] for incident export workflows. It combines the
