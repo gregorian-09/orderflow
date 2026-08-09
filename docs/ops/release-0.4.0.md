@@ -269,6 +269,11 @@ foundation:
   operator pause outcomes, price collars, participation, notional, child
   quantity, open quantity, child-count, stale-data, route-degradation, and
   persistence-degradation checks
+- additive `ProductionRiskEngine` policies across global, account, strategy,
+  route, symbol, venue, and instrument-group scopes, with deterministic
+  explainable decisions; bounded order/cancel rates; position, gross/net
+  exposure, PnL, drawdown, session, price, and fat-finger controls; fail-closed
+  health gates; and replaceable decision journaling
 - additive `AlgoCheckpoint` and `AlgoRecoveryPlan` primitives with
   schema-versioned parent/progress snapshots, replay cursors, decision sequence
   restoration, pause/resume/complete/escalate recovery actions, and explicit

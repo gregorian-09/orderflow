@@ -6,6 +6,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added an additive scoped production risk engine with deterministic policy
+  ordering, bounded independent order/cancel rate windows, projected position
+  and exposure limits, PnL/session/price/fat-finger controls, fail-closed runtime
+  health gates, explainable decisions, and a replaceable decision journal.
 - Added scoped, fail-closed OMS kill switches for global, venue, route,
   account, strategy, symbol, order-type, and adapter-session controls, with
   bounded cancellation targets, reduce-only evaluation, typed actor/reason/WAL
