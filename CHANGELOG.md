@@ -6,6 +6,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added fixed-memory execution SLI collection and explicit SLO evaluation for
+  submit/send/ack/cancel/replace/fill/recovery/drop-copy latency distributions,
+  submit/cancel/replace reject rates, queue depth, WAL/checkpoint lag,
+  reconciliation mismatches, and route health, with atomic observation
+  validation and host-owned low-cardinality export.
 - Added a bounded deterministic OMS certification venue implementing the
   existing execution-adapter contract, with 18 scripted accept/fill/reject,
   cancel/replace race, duplicate/out-of-order/resend, sequence reset,

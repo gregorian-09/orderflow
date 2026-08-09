@@ -2028,6 +2028,70 @@ small so deployments can export metrics to Prometheus, statsd, OpenTelemetry,
 or internal systems without making this crate depend on any one telemetry
 stack.
 
+For production service-level indicators, [`ExecutionSloCollector`] adds a
+fixed-memory, single-owner collector. Its observation path performs no heap
+allocation, locking, clock reads, formatting, serialization, or exporter I/O.
+It tracks:
+
+- submit-to-send, send-to-ack, submit-to-ack, cancel-to-ack,
+  replace-to-ack, fill, recovery, and drop-copy latency;
+- submit, cancel, and replace reject rates in parts per million;
+- current/maximum adapter, command, and event queue depth;
+- current/maximum WAL sequence lag, durable-WAL age, checkpoint age, and
+  reconciliation mismatch count; and
+- route-health observations/transitions and operational sample count.
+
+Latency populations use [`ExecutionLatencyHistogram`], a 257-bucket
+logarithmic histogram with four sub-buckets per power-of-two range. Exact
+count, minimum, maximum, and integer mean accompany bounded p50, p95, and p99
+bucket-upper-bound estimates. The collector retains no individual samples.
+
+```rust
+use of_execution::{
+    ExecutionLatencyKind, ExecutionOperationalObservation, ExecutionQueueKind,
+    ExecutionRouteHealth, ExecutionSloCollector, ExecutionSloTargets,
+    ExecutionSubmitObservation, ExecutionSubmitOutcome,
+};
+
+let mut metrics = ExecutionSloCollector::new();
+metrics.observe_submit(
+    ExecutionSubmitObservation::new(1_000, 1_100, 1_500, ExecutionSubmitOutcome::Ack)
+        .with_fill_ns(2_000),
+)?;
+metrics.observe_operational(
+    ExecutionOperationalObservation::new(10_000)
+        .with_queue_depths(2, 1, 0)
+        .with_wal_progress(100, 100, Some(9_900))
+        .with_checkpoint_ns(9_000)
+        .with_reconciliation_mismatches(0)
+        .with_route_health(ExecutionRouteHealth::Healthy)
+        .with_drop_copy_lag_ns(50),
+)?;
+
+let snapshot = metrics.snapshot();
+let report = snapshot.evaluate(
+    ExecutionSloTargets::new()
+        .with_latency_p99_ns(ExecutionLatencyKind::SubmitToAck, 1_000)
+        .with_queue_depth(ExecutionQueueKind::Adapter, 16)
+        .with_reject_rate_ppm(10_000)
+        .with_healthy_route_required(true),
+);
+assert!(report.is_compliant());
+# Ok::<(), of_execution::ExecutionMetricsError>(())
+```
+
+All timestamps in a latency observation must share one host-monotonic clock
+domain. Do not subtract an exchange clock from a host clock directly; validate
+and attribute it with [`ExecutionTimestampTrace`] first. Build one collector
+per stable route/account scope, snapshot it off the command path, and map the
+typed values to a host exporter. This prevents unbounded route, symbol, client,
+or order identifiers from becoming high-cardinality metric labels.
+
+The design follows the separation between collection and export described by
+the [OpenTelemetry Metrics SDK](https://opentelemetry.io/docs/specs/otel/metrics/sdk/),
+the [Prometheus histogram guidance](https://prometheus.io/docs/practices/histograms/),
+and [Google SRE SLO guidance](https://sre.google/workbook/implementing-slos/).
+
 ### Clock and timestamp discipline
 
 [`ExecutionTimestampTrace`] is an optional, host-owned timestamp envelope for

@@ -600,3 +600,37 @@ Python and Java mirror this separation:
 - Java: `OrderflowExecutionEngine`, `ConcurrentOrderflowExecutionEngine`
 
 Existing synchronous APIs are not changed.
+
+## Metrics Ownership And Export Boundary
+
+The OMS records service-level indicators in the same single-owner thread that
+already establishes command/report ordering. `ExecutionSloCollector` performs
+bounded integer updates only. A control-plane task periodically copies an
+`ExecutionSloSnapshot`, evaluates deployment-specific targets, and exports the
+result.
+
+```mermaid
+sequenceDiagram
+    participant Host as Host monotonic clock
+    participant OMS as Execution owner
+    participant SLI as ExecutionSloCollector
+    participant Control as Control-plane sampler
+    participant Exporter as Metrics exporter
+    participant Safety as Safety policy
+    Host->>OMS: command/report timestamps
+    OMS->>SLI: validated typed observation
+    SLI->>SLI: fixed histogram/counter update
+    Control->>SLI: snapshot
+    SLI-->>Control: immutable bounded values
+    par observability
+        Control->>Exporter: stable low-cardinality series
+    and safety
+        Control->>Safety: evaluate SLO report
+    end
+```
+
+This boundary prevents network I/O, protobuf encoding, JSON, allocator
+contention, exporter locks, and dynamic labels from entering the order path.
+The host should aggregate stable route/account collectors rather than label
+individual order or client identifiers. Current gauge values drive objectives;
+retained maxima are diagnostic evidence for incident analysis.

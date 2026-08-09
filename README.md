@@ -46,7 +46,8 @@ Major additions:
   lifecycle, scoped kill switches, production risk, exact position/PnL ledger,
   command idempotency, execution-report deduplication, reconciliation, safety
   policies, generalized multi-source recovery reconciliation, a deterministic
-  18-scenario adapter/OMS certification venue, allocation, telemetry, sharding,
+  18-scenario adapter/OMS certification venue, fixed-memory percentile
+  execution SLIs and explicit SLO evaluation, allocation, telemetry, sharding,
   throttling, and replay simulation
 - FIX foundation: borrowed tag-value codec, `BodyLength(9)` and `CheckSum(10)`
   validation, common tag extraction, typed `FixVersion`/`FixMsgType` helpers,

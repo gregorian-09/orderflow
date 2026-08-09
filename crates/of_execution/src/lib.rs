@@ -3,6 +3,7 @@
 
 mod certification_venue;
 mod drop_copy;
+mod execution_slo;
 mod idempotency;
 mod kill_switch;
 mod oms;
@@ -12,6 +13,7 @@ mod production_risk;
 mod reconciliation;
 pub use certification_venue::*;
 pub use drop_copy::*;
+pub use execution_slo::*;
 pub use idempotency::*;
 pub use kill_switch::*;
 pub use oms::*;

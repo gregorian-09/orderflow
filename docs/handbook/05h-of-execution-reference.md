@@ -668,3 +668,60 @@ Use C/Python/Java concurrent bindings when:
 - host languages need non-blocking command queueing,
 - host code should poll command reports,
 - the native worker should preserve deterministic state internally.
+
+## Execution SLI And SLO API
+
+`ExecutionSloCollector` is the allocation-free metrics authority for one
+single-owner execution scope. Existing `ExecutionMetrics` and
+`ExecutionTelemetry` remain unchanged; the new collector is additive and is
+appropriate when an operator needs percentile distributions and explicit
+objectives.
+
+| API | Purpose |
+| --- | --- |
+| `observe_submit` | Atomically validate and record submit-to-send, send-to-ack, submit-to-ack, optional fill, and submit outcome |
+| `observe_cancel` | Record cancel acknowledgement latency and reject outcome |
+| `observe_replace` | Record replace acknowledgement latency and reject outcome |
+| `observe_fill` | Record later partial-fill latency without fabricating another acknowledgement |
+| `observe_operational` | Atomically sample queue depths, WAL/checkpoint state, recovery, reconciliation, route health, and drop-copy lag |
+| `record_latency` | Record a host-derived value for a typed latency population |
+| `snapshot` | Copy a compact immutable snapshot for off-path export/evaluation |
+| `clear` | Reset all fixed storage without reallocating |
+
+`ExecutionLatencyHistogram` has 257 fixed buckets. Values are grouped into
+four subdivisions of each power-of-two interval. `min_ns`, `max_ns`, count,
+and integer mean are exact unless counters saturate; p50/p95/p99 are the upper
+bounds of the selected buckets. This bounded approximation avoids retaining
+samples and keeps observation cost independent of history length.
+
+`ExecutionOperationalObservation` uses `Option<u64>` for timestamps and
+durations that may be unknown. Zero is therefore a valid measured duration,
+not a missing-value sentinel. Validation occurs before any metric mutation:
+regressing timestamps, zero required timestamps, durable WAL sequence beyond
+the head, and rejected submits carrying fills fail atomically.
+
+`ExecutionSloTargets` starts with all objectives disabled. Builder methods
+enable selected p99 latency, reject-rate, queue-depth, WAL, checkpoint,
+reconciliation, and route-health objectives. Each enabled objective increments
+`objectives_evaluated`; each failure increments `objectives_violated` even when
+several failures share the `InsufficientSamples` classification bit.
+
+```mermaid
+flowchart LR
+    Clock[Host monotonic clock] --> Obs[Typed observations]
+    OMS[Single-owner OMS] --> Obs
+    WAL[WAL/checkpoint state] --> Obs
+    Drop[Independent drop copy] --> Obs
+    Obs --> Collector[Fixed-memory ExecutionSloCollector]
+    Collector --> Snapshot[Immutable typed snapshot]
+    Snapshot --> Evaluate[SLO evaluation]
+    Snapshot --> Export[Host exporter]
+    Evaluate --> Policy[Alert / degrade / block policy]
+    Export --> OTel[OpenTelemetry / Prometheus / internal]
+```
+
+Use one monotonic clock domain for all local latency endpoints. Venue exchange
+timestamps are not interchangeable with local monotonic timestamps. Route
+them through timestamp-discipline/skew validation and export their lag as a
+separate observation. Keep exporter I/O, label generation, aggregation across
+routes, and alert delivery off the execution worker.
