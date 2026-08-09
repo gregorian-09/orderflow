@@ -601,6 +601,49 @@ Python and Java mirror this separation:
 
 Existing synchronous APIs are not changed.
 
+## Operator Control Plane
+
+Operator commands use the same single-owner engine boundary but are not part of
+the latency-sensitive strategy path. The controller owns bounded idempotency
+receipts; the audit sink owns durable intent/outcome order; the engine owns
+pause/drain/degradation and order-state mutation; deployment services own
+external evidence and filesystems.
+
+```mermaid
+flowchart TD
+    Identity[Host identity / RBAC / dual control] --> Auth[Operator authorization]
+    Command[Typed command id + action + time + reason] --> Controller
+    Auth --> Controller[Bounded idempotent controller]
+    Controller --> Intent[Durable requested record]
+    Intent --> Native[Native engine controls]
+    Intent --> Services[Deployment services]
+    Native --> Outcome[Typed outcome]
+    Services --> Outcome
+    Outcome --> Terminal[Durable terminal record]
+    Terminal --> Receipt[Idempotent receipt]
+    Terminal --> Bundle[Incident audit bundle]
+```
+
+Only global pause and route drain/degradation checks touch new-order admission;
+they are fixed hash-set lookups. Scope scans, sorting, generated operator cancel
+ids, filesystem sync, reconciliation, checkpointing, and export run on the
+control plane. Operator cancellation intentionally bypasses ordinary strategy
+risk hooks while preserving command/event journaling and canonical state
+application.
+
+Audit ordering is effect-aware:
+
+1. Reserve a complete pair.
+2. Persist requested intent.
+3. Execute at most once.
+4. Persist terminal outcome.
+5. Return/cache the receipt.
+
+A failure at step 2 has no side effect. A failure at step 4 may have an
+external side effect, so the engine pauses and the exact command must repair
+the terminal record before any later command. Restart accepts only complete
+pairs; it restores local controls but never replays external side effects.
+
 ## Metrics Ownership And Export Boundary
 
 The OMS records service-level indicators in the same single-owner thread that

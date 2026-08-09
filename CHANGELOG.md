@@ -6,6 +6,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added a complete additive OMS operator runbook controller for pause/resume,
+  route drain/degradation, cancel-all/scoped cancel, recovery, reconciliation,
+  audit export, stuck-order inspection, WAL rotation, checkpointing, and
+  kill-switch clear, with host-supplied permissions, idempotent receipts,
+  intent-before-effect journaling, checksummed file audit, and restart restore.
 - Added fixed-memory execution SLI collection and explicit SLO evaluation for
   submit/send/ack/cancel/replace/fill/recovery/drop-copy latency distributions,
   submit/cancel/replace reject rates, queue depth, WAL/checkpoint lag,

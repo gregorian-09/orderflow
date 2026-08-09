@@ -172,6 +172,18 @@ connect sockets, or upgrade any built-in provider claim automatically.
 - additive `ExecutionSloTargets` and machine-readable violation reports with
   explicit minimum-sample policy; exporter I/O and metric cardinality remain
   host-owned and outside the execution path
+- `ExecutionOperatorController` with all runbook commands, fixed host-supplied
+  permission bits, monotonic command identity, exact-retry idempotency,
+  bounded receipt retention, requested/terminal audit phases, and fail-closed
+  repair after post-effect audit failure
+- direct global pause, route drain/degradation, scoped cancel, provider
+  recovery, and bounded stuck-order inspection plus typed deployment services
+  for reconciliation, incident export, segmented-WAL rotation, checkpointing,
+  and kill-switch clear
+- append-only `FileExecutionOperatorAudit` with complete typed action/scope/
+  actor/reason/outcome frames, checksums, optional data sync, corruption and
+  sequence validation, controller restore, and non-replaying restoration of
+  local operator controls
 - lifecycle, fanout, command correlation, throttling, sharding, telemetry,
   position ledger, safety policy, and replay helpers
 

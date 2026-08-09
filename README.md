@@ -47,8 +47,9 @@ Major additions:
   command idempotency, execution-report deduplication, reconciliation, safety
   policies, generalized multi-source recovery reconciliation, a deterministic
   18-scenario adapter/OMS certification venue, fixed-memory percentile
-  execution SLIs and explicit SLO evaluation, allocation, telemetry, sharding,
-  throttling, and replay simulation
+  execution SLIs and explicit SLO evaluation, permission-ready idempotent
+  operator commands with durable intent/outcome audit, allocation, telemetry,
+  sharding, throttling, and replay simulation
 - FIX foundation: borrowed tag-value codec, `BodyLength(9)` and `CheckSum(10)`
   validation, common tag extraction, typed `FixVersion`/`FixMsgType` helpers,
   static dictionary/profile validation, deterministic session sequence

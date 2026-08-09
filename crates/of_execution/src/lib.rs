@@ -7,6 +7,7 @@ mod execution_slo;
 mod idempotency;
 mod kill_switch;
 mod oms;
+mod operator_control;
 mod order_intent;
 mod position_ledger;
 mod production_risk;
@@ -17,12 +18,13 @@ pub use execution_slo::*;
 pub use idempotency::*;
 pub use kill_switch::*;
 pub use oms::*;
+pub use operator_control::*;
 pub use order_intent::*;
 pub use position_ledger::*;
 pub use production_risk::*;
 pub use reconciliation::*;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -538,6 +540,14 @@ pub struct ExecutionRunbookSnapshot {
     pub adapter_errors: u64,
     /// Recovery event count.
     pub recovered: u64,
+    /// True when an operator has paused all new submissions.
+    pub submissions_paused: bool,
+    /// Number of configured routes currently draining.
+    pub draining_route_count: usize,
+    /// Number of configured routes marked degraded by operator control.
+    pub degraded_route_count: usize,
+    /// Enabled routes currently eligible for new submissions.
+    pub available_route_count: usize,
     /// True when new submissions are blocked for all configured routes.
     pub new_submissions_blocked: bool,
     /// True when an operator should inspect the route or adapter state.
@@ -1036,6 +1046,10 @@ pub struct ExecutionEngine<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJourna
     orders: HashMap<ClientOrderId, OrderStateMachine>,
     order_prices: HashMap<ClientOrderId, OrderPrice>,
     pending_amend_prices: HashMap<ClientOrderId, OrderPrice>,
+    order_strategies: HashMap<ClientOrderId, of_execution_core::StrategyId>,
+    operator_submissions_paused: bool,
+    operator_draining_routes: HashSet<RouteKey>,
+    operator_degraded_routes: HashSet<RouteKey>,
     metrics: ExecutionMetrics,
     scratch: ExecutionEventBuffer,
     started: bool,
@@ -1054,6 +1068,10 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
             orders: HashMap::new(),
             order_prices: HashMap::new(),
             pending_amend_prices: HashMap::new(),
+            order_strategies: HashMap::new(),
+            operator_submissions_paused: false,
+            operator_draining_routes: HashSet::new(),
+            operator_degraded_routes: HashSet::new(),
             metrics: ExecutionMetrics::default(),
             scratch: ExecutionEventBuffer::default(),
             started: false,
@@ -1082,6 +1100,24 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
         self.adapter.health()
     }
 
+    /// Returns the configured execution journal.
+    ///
+    /// This accessor is intended for control-plane integrity inspection and
+    /// operator services. Do not perform blocking journal work on an order
+    /// submission thread.
+    pub const fn journal(&self) -> &J {
+        &self.journal
+    }
+
+    /// Returns the configured execution journal mutably.
+    ///
+    /// This allows typed operator services to call concrete journal controls,
+    /// such as segmented-WAL rotation, without weakening the existing journal
+    /// trait or adding filesystem work to normal order processing.
+    pub const fn journal_mut(&mut self) -> &mut J {
+        &mut self.journal
+    }
+
     /// Returns a read-only operator runbook summary.
     pub fn runbook_snapshot(&self) -> ExecutionRunbookSnapshot {
         let health = self.adapter.health();
@@ -1091,21 +1127,35 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
             .iter()
             .filter(|route| route.enabled && route.risk_limits.kill_switch)
             .count();
+        let available_route_count = self
+            .routes
+            .iter()
+            .filter(|route| {
+                let key = RouteKey::new(route.route_id, route.account_id, route.symbol);
+                route.enabled
+                    && !route.risk_limits.kill_switch
+                    && !self.operator_draining_routes.contains(&key)
+                    && !self.operator_degraded_routes.contains(&key)
+            })
+            .count();
         let open_order_count = self
             .orders
             .values()
             .filter(|state| !state.state().status.is_terminal())
             .count();
         let terminal_order_count = self.orders.len().saturating_sub(open_order_count);
-        let new_submissions_blocked = !self.started
+        let new_submissions_blocked = self.operator_submissions_paused
+            || !self.started
             || !health.connected
-            || enabled_route_count == 0
-            || enabled_route_count == kill_switch_route_count;
+            || available_route_count == 0;
         let operator_attention_required = !self.started
             || !health.connected
             || health.degraded
             || enabled_route_count == 0
             || kill_switch_route_count > 0
+            || self.operator_submissions_paused
+            || !self.operator_draining_routes.is_empty()
+            || !self.operator_degraded_routes.is_empty()
             || self.metrics.adapter_errors > 0;
 
         ExecutionRunbookSnapshot {
@@ -1126,6 +1176,10 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
             risk_rejected: self.metrics.risk_rejected,
             adapter_errors: self.metrics.adapter_errors,
             recovered: self.metrics.recovered,
+            submissions_paused: self.operator_submissions_paused,
+            draining_route_count: self.operator_draining_routes.len(),
+            degraded_route_count: self.operator_degraded_routes.len(),
+            available_route_count,
             new_submissions_blocked,
             operator_attention_required,
         }
@@ -1238,6 +1292,21 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
         else {
             return Err(ExecutionError::RouteNotFound);
         };
+        let route_key = RouteKey::new(route.route_id, route.account_id, route.symbol);
+        if self.operator_submissions_paused
+            || self.operator_draining_routes.contains(&route_key)
+            || self.operator_degraded_routes.contains(&route_key)
+        {
+            self.metrics.risk_rejected = self.metrics.risk_rejected.saturating_add(1);
+            let event = ExecutionEvent::rejected(
+                &req,
+                RiskRejectReason::KillSwitch,
+                ExecutionText::new("operator submission control active")?,
+            );
+            self.journal.record_event(&event)?;
+            out.push(event)?;
+            return Err(ExecutionError::RiskRejected(RiskRejectReason::KillSwitch));
+        }
         let caps = self.adapter.capabilities();
         let ctx = self.risk_context(
             &req.client_order_id,
@@ -1269,6 +1338,8 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
         )?;
         self.orders
             .insert(req.client_order_id, OrderStateMachine::new(&req));
+        self.order_strategies
+            .insert(req.client_order_id, req.strategy_id);
         self.order_prices.insert(
             req.client_order_id,
             execution_price(req.limit_price, req.stop_price),
@@ -1610,6 +1681,10 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
                     .unwrap_or(event.average_price);
                 self.order_prices.remove(&key);
                 self.order_prices.insert(event.client_order_id, price);
+                if let Some(strategy_id) = self.order_strategies.remove(&key) {
+                    self.order_strategies
+                        .insert(event.client_order_id, strategy_id);
+                }
             }
         } else if matches!(event.exec_type, ExecutionType::Restated) {
             self.orders.insert(
@@ -1632,6 +1707,8 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
             );
             self.order_prices
                 .insert(event.client_order_id, event.average_price);
+            self.order_strategies
+                .insert(event.client_order_id, Default::default());
         }
         self.journal.record_event(&event)?;
         self.metrics.events_applied = self.metrics.events_applied.saturating_add(1);
