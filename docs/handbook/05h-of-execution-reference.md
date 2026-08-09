@@ -319,7 +319,7 @@ The `oms` module is re-exported from `of_execution`.
 | Allocation | `AllocationGroup`, `AllocationLeg`, `AllocationMethod`, `AllocationReport`, `allocate_block_fill`, `reconcile_allocations` |
 | Safety policies | `DisconnectPolicy`, `RouteSafetyPolicy`, `SafetyPolicy`, `SafetyContext`, `evaluate_safety_policy` |
 | Advanced risk | `AdvancedRiskLimits`, `AdvancedRiskGate` |
-| Ledger | `PositionLedger`, `Position`, `PositionKey` |
+| Ledger | `PositionLedger`, `ProductionPositionLedger`, `ProductionPosition`, `LedgerFill`, `LedgerAdjustment`, `PositionLedgerCheckpoint`, `reconcile_production_positions` |
 | Normalization | `VenueOrderCapabilities`, `normalize_order_type` |
 | Telemetry | `ExecutionTelemetry`, `ExecutionTimestampTrace`, `ExecutionLatencyAttribution`, `TimestampDisciplineConfig`, `TimestampDisciplineReport` |
 | Sharding | `ShardKey`, `ShardRouter` |
@@ -447,6 +447,57 @@ Installation rejects empty ids, negative signed limits, duplicate ids,
 capacity exhaustion, and unsafe rate-window sizes. Amend contexts must include
 the replaced order in current gross and net exposure so replacement deltas are
 projected correctly.
+
+## Authoritative Position And PnL Ledger
+
+The legacy `PositionLedger` remains a lightweight exposure helper with
+unchanged behavior. `ProductionPositionLedger` is an additive, bounded,
+single-owner ledger for risk and recovery.
+
+| State | Semantics |
+| --- | --- |
+| Key | Account, strategy, venue-native symbol, settlement currency |
+| Cost basis | Exact normalized `i128` open cost; derived display average |
+| PnL | Gross realized, marked unrealized, net realized, total local/base |
+| Costs | Commission and other fees tracked separately |
+| Cash | Dividend, funding, interest, settlement, or manual cash effects |
+| Attribution | Route, client id, venue order id, execution id, side, price, quantity |
+| Ordering | Strict caller/WAL global mutation sequence |
+| Idempotency | Route/account/symbol-scoped fills; position-scoped adjustments |
+
+`LedgerFill::from_execution_event` accepts canonical trade events and explicit
+strategy, side, currency, multiplier, commission, fees, and sequence. Exact
+open cost prevents rounded average prices from drifting final realized PnL.
+Closing and reversal logic works for long and short positions. Marks update
+unrealized PnL without changing cost basis.
+
+`LedgerAdjustment` provides typed opening-balance, correction,
+corporate-action, manual, and cash mutations. The host owns authorization and
+durable command audit. Validation is atomic; an error leaves positions,
+sequence, and dedup state unchanged. Adjustment quantities do not increment
+executed buy/sell totals.
+
+Mutation identities remain retained until ledger-session rollover. Identity
+capacity exhaustion rejects the mutation rather than evicting protection.
+Recent fill attribution has an independent rolling bound because it is
+diagnostic, not the authority for deduplication.
+
+`PositionLedgerCheckpoint` is schema-versioned and checksummed. It contains
+sorted positions, every retained mutation identity, recent attribution, and
+the last fully applied sequence. `FilePositionLedgerCheckpointStore` installs
+via temporary file and atomic rename, optionally syncs file/directory, refuses
+id overwrite, limits bytes, and prunes old ids. Restore validates all rows and
+capacities before returning a ledger.
+
+`reconcile_production_positions` compares an external broker/clearing/venue
+snapshot without mutating local state. Its bounded output distinguishes missing
+rows, duplicate external keys, quantity, average, multiplier, realized PnL,
+commission, and fee differences. Treat unresolved mismatches as a
+`PositionLedgerMismatch` safety condition.
+
+Fill, mark, and adjustment paths perform no I/O or clock reads. Configure and
+reserve capacities before the worker starts. Checkpoint creation, file writes,
+and reconciliation are explicit control-plane operations.
 
 ## Error Model
 

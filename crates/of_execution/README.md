@@ -232,6 +232,37 @@ OMS helpers:
 - [`Position`]
 - [`PositionKey`]
 - [`PositionLedger`]
+- [`LedgerCurrency`]
+- [`LedgerAdjustmentId`]
+- [`ProductionPositionKey`]
+- [`LedgerExecutionIdentity`]
+- [`LedgerScopedAdjustmentId`]
+- [`LedgerFxRate`]
+- [`LedgerFill`]
+- [`LedgerFillAttribution`]
+- [`LedgerAdjustmentKind`]
+- [`LedgerAdjustment`]
+- [`LedgerMark`]
+- [`ProductionPosition`]
+- [`ProductionPositionLedgerConfig`]
+- [`LedgerApplyStatus`]
+- [`LedgerApplyResult`]
+- [`PositionLedgerError`]
+- [`ProductionPositionLedger`]
+- [`LedgerCheckpointIdentity`]
+- [`LedgerCheckpointPosition`]
+- [`PositionLedgerCheckpoint`]
+- [`PositionLedgerCheckpointConfig`]
+- [`PositionLedgerCheckpointManifest`]
+- [`PositionLedgerCheckpointStore`]
+- [`FilePositionLedgerCheckpointStore`]
+- [`ExternalPositionSnapshot`]
+- [`PositionReconciliationTolerance`]
+- [`PositionReconciliationIssueFlags`]
+- [`PositionReconciliationItem`]
+- [`PositionReconciliationBuffer`]
+- [`PositionReconciliationReport`]
+- [`reconcile_production_positions`]
 - [`VenueOrderCapabilities`]
 - [`NormalizedOrderType`]
 - [`normalize_order_type`]
@@ -1278,7 +1309,132 @@ required, and whether the decision is degraded.
 [`PositionLedger`] folds trade execution events into [`Position`] values keyed
 by [`PositionKey`]. It tracks net quantity, buy quantity, sell quantity, gross
 notional, and average price. It is an OMS-side exposure helper, not a complete
-accounting system.
+accounting system. Its API and historical behavior remain unchanged.
+
+[`ProductionPositionLedger`] is the additive authoritative alternative for
+pre-trade risk, recovery, and broker/clearing reconciliation. A position is
+keyed by account, strategy, venue-native symbol, and settlement currency. It
+tracks exact normalized open cost, derived average price, signed quantity,
+buy/sell totals, gross realized and marked unrealized PnL, commissions, other
+fees, cash adjustments, gross traded notional, contract multiplier, sequence,
+and timestamp.
+
+```mermaid
+flowchart LR
+  Event[Canonical trade ExecutionEvent] --> Fill[Validated LedgerFill]
+  Fill --> Dedupe[Scoped identity + sequence gate]
+  Dedupe --> Cost[Exact average-cost fold]
+  Adjustment[Authorized adjustment] --> Dedupe
+  Mark[Mark price] --> Cost
+  Cost --> Position[ProductionPosition]
+  Position --> Risk[ProductionRiskContext]
+  Position --> Checkpoint[Versioned checkpoint]
+  External[Broker / clearing positions] --> Reconcile[Bounded reconciliation]
+  Position --> Reconcile
+```
+
+#### Fill and PnL flow
+
+Use [`LedgerFill::from_execution_event`] only for canonical
+[`ExecutionType::Trade`](of_execution_core::ExecutionType::Trade) events. The
+host supplies strategy, side, settlement currency, contract multiplier,
+commission, fees, and a globally monotonic mutation/WAL sequence.
+
+```rust
+use of_execution::{
+    LedgerCurrency, LedgerFill, LedgerFxRate,
+    ProductionPositionLedger, ProductionPositionLedgerConfig,
+};
+use of_execution_core::{ExecutionEvent, OrderSide, StrategyId};
+
+fn apply_trade(
+    ledger: &mut ProductionPositionLedger,
+    event: &ExecutionEvent,
+    sequence: u64,
+) -> Result<i128, Box<dyn std::error::Error>> {
+    let fill = LedgerFill::from_execution_event(
+        event,
+        sequence,
+        StrategyId::new("strategy-a")?,
+        OrderSide::Buy,
+        LedgerCurrency::new("USD")?,
+        50, // contract multiplier
+        125, // commission in normalized USD units
+        25, // clearing/exchange fees
+    )?;
+    let result = ledger.apply_fill(fill)?;
+    Ok(result.realized_pnl_delta)
+}
+
+let config = ProductionPositionLedgerConfig::new(4_096, 1_000_000, 16_384);
+let mut ledger = ProductionPositionLedger::new(config);
+// `apply_trade(&mut ledger, &trade_event, wal_sequence)?`;
+let usd_to_base = LedgerFxRate::new(1, 1)?;
+assert_eq!(usd_to_base.convert(10), 10);
+# let _ = &mut ledger;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Open cost is retained exactly as `i128`; `average_price` is derived and may be
+truncated only for display. Closing fills allocate exact retained cost, so
+fractional average-price remainder is not lost from eventual realized PnL.
+Long, short, partial close, flat, and reversal paths use one deterministic
+average-cost method. `net_realized_pnl` subtracts commissions and fees and adds
+cash adjustments; `total_pnl` also adds unrealized PnL. [`LedgerFxRate`] uses a
+positive rational instead of floating point for caller-selected base-currency
+conversion.
+
+Execution identity is scoped by route, account, symbol, and provider execution
+id. Adjustment identity is scoped by position key. These identities are never
+evicted during a ledger session: if configured identity capacity is exhausted,
+the mutation fails closed instead of weakening deduplication. Diagnostic fill
+attribution is separately bounded and may retain only the newest configured
+records.
+
+#### Adjustments and corporate actions
+
+[`LedgerAdjustment`] represents opening balances, trade corrections,
+corporate actions, manual changes, and cash effects. Builders make quantity,
+resulting average price, PnL, cost, cash, and multiplier changes explicit.
+The ledger does not authorize an adjustment: the host must authenticate the
+operator/system source and journal the command before application. A zero-to-
+open or cross-zero adjustment requires an average-price override, and failed
+validation leaves state unchanged. Quantity adjustments change position and
+cost basis but do not masquerade as executed `buy_qty` or `sell_qty` volume.
+
+#### Checkpoint and recovery
+
+[`PositionLedgerCheckpoint`] contains sorted positions, the complete retained
+deduplication set, recent attribution, last sequence, schema version, and
+checksum. [`ProductionPositionLedger::restore`] validates the complete payload
+and configured capacities before returning state.
+
+[`FilePositionLedgerCheckpointStore`] writes a temporary file, optionally
+syncs it, atomically renames it, optionally syncs the parent directory, and
+prunes by checkpoint id. Existing ids are not overwritten. Corrupt,
+unsupported, oversized, duplicate-key, inconsistent-cost, or sequence-invalid
+checkpoints fail closed. Replay only ledger mutations after the checkpoint's
+`last_sequence`.
+
+#### External reconciliation
+
+[`reconcile_production_positions`] compares local state with broker, clearing,
+venue, or independent drop-copy [`ExternalPositionSnapshot`] rows. It reports
+local-only, external-only, duplicate source keys, net quantity, average price,
+multiplier, realized PnL, commission, and fee differences under explicit
+absolute tolerances. The function never mutates the ledger and never silently
+truncates its caller-owned [`PositionReconciliationBuffer`].
+
+This API follows the separation in the FIX position-maintenance model: trade
+reports update local state, while independent position reports establish an
+external reconciliation boundary. Useful references are the
+[FIX Latest Position Report definition](https://fiximate.fixtrading.org/en/FIX.Latest/tag35.html)
+and [IBKR realized/unrealized cost-basis guidance](https://guides.interactivebrokers.com/rg/reportguide/realized&unrealizedperformancesummary_default.htm).
+
+All fill, mark, and adjustment operations are single-owner and perform no file
+I/O, clock reads, serialization, logging, or callbacks. Pre-size position,
+identity, and attribution capacities before starting the execution worker.
+Checkpointing and reconciliation are control-plane operations and may allocate.
 
 ### Normalization
 

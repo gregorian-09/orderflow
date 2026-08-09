@@ -365,6 +365,41 @@ The ledger is not a complete accounting system. It is the OMS-side building
 block for exposure checks, strategy attribution, and reconciliation with broker
 positions.
 
+For production risk and recovery, use the additive
+`ProductionPositionLedger`. It preserves exact normalized open cost and keeps
+settlement currency, contract multiplier, realized/unrealized PnL, commissions,
+fees, cash effects, mutation sequence, and fill attribution explicit.
+
+```mermaid
+sequenceDiagram
+    participant WAL as OMS WAL sequence
+    participant Ledger as ProductionPositionLedger
+    participant Risk as ProductionRiskEngine
+    participant Store as Checkpoint store
+    participant External as Broker / clearing report
+    participant Reconcile as Reconciliation control plane
+    WAL->>Ledger: Scoped fill or authorized adjustment
+    Ledger->>Ledger: Deduplicate and fold exact cost
+    Ledger-->>Risk: Position, exposure, PnL context
+    Ledger->>Store: Versioned checksummed checkpoint
+    Store-->>Ledger: Validate and restore
+    External->>Reconcile: Position snapshots
+    Ledger->>Reconcile: Local snapshots
+    Reconcile-->>Risk: Match or fail-closed mismatch condition
+```
+
+The mutation sequence must share an ordering authority with the execution WAL.
+A checkpoint covers every mutation through `last_sequence`; recovery restores
+it and replays only later records. The checkpoint also carries the complete
+retained identity set so replay and reconnect retries cannot double-count a
+fill.
+
+Broker/clearing snapshots are evidence, not direct mutations. Reconciliation
+first reports differences under explicit tolerances. Host policy then chooses
+whether to block, investigate, apply an authorized correction, or accept a new
+opening balance. This keeps external surprises from silently rewriting risk
+state.
+
 ## Sharding
 
 `ShardRouter` maps route/account/symbol keys to shard indexes. A sharded OMS can
