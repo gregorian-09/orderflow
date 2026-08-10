@@ -198,6 +198,22 @@ public final class OrderflowExecutionEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Reconstructs OMS state from an existing WAL and a required checkpoint.
+     *
+     * @param nativePath native library path, or null/blank for the default
+     * @param walRoot existing segmented execution WAL root
+     * @param checkpointRoot existing checkpoint root
+     * @return bounded recovery summary; venue reconciliation remains required
+     */
+    public static ExecutionRecoveryReport inspectRecovery(
+        String nativePath,
+        String walRoot,
+        String checkpointRoot
+    ) {
+        return inspectRecovery(nativePath, walRoot, checkpointRoot, true);
+    }
+
     /** Starts execution adapter/session. */
     public void start() {
         requireEngine();

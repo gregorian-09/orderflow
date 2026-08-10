@@ -30,24 +30,24 @@ public final class ExecutionRecoveryReport {
     public final String rawJson;
 
     private ExecutionRecoveryReport(String json) {
-        this.schemaVersion = NativeSignalJson.intValue(json, "schema_version");
-        this.checkpointId = NativeSignalJson.nullableLong(json, "checkpoint_id");
-        this.routeConfigHash = NativeSignalJson.longValue(json, "route_config_hash");
-        this.killSwitch = NativeSignalJson.booleanValue(json, "kill_switch");
-        this.orders = NativeSignalJson.longValue(json, "orders");
-        this.openOrders = NativeSignalJson.longValue(json, "open_orders");
-        this.positions = NativeSignalJson.longValue(json, "positions");
-        this.commandsSeen = NativeSignalJson.longValue(json, "commands_seen");
-        this.eventsApplied = NativeSignalJson.longValue(json, "events_applied");
+        this.schemaVersion = NativeJson.intValue(json, "schema_version");
+        this.checkpointId = NativeJson.nullableLong(json, "checkpoint_id");
+        this.routeConfigHash = NativeJson.longValue(json, "route_config_hash");
+        this.killSwitch = NativeJson.booleanValue(json, "kill_switch");
+        this.orders = NativeJson.longValue(json, "orders");
+        this.openOrders = NativeJson.longValue(json, "open_orders");
+        this.positions = NativeJson.longValue(json, "positions");
+        this.commandsSeen = NativeJson.longValue(json, "commands_seen");
+        this.eventsApplied = NativeJson.longValue(json, "events_applied");
         this.replay = new ExecutionRecoveryReplay(
-            NativeSignalJson.longValue(json, "records"),
-            NativeSignalJson.longValue(json, "bytes"),
-            NativeSignalJson.nullableLong(json, "first_sequence"),
-            NativeSignalJson.nullableLong(json, "last_sequence")
+            NativeJson.longValue(json, "records"),
+            NativeJson.longValue(json, "bytes"),
+            NativeJson.nullableLong(json, "first_sequence"),
+            NativeJson.nullableLong(json, "last_sequence")
         );
         this.venueReconciliationRequired =
-            NativeSignalJson.booleanValue(json, "venue_reconciliation_required");
-        this.submissionsEnabled = NativeSignalJson.booleanValue(json, "submissions_enabled");
+            NativeJson.booleanValue(json, "venue_reconciliation_required");
+        this.submissionsEnabled = NativeJson.booleanValue(json, "submissions_enabled");
         this.rawJson = json;
     }
 
