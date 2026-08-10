@@ -19,8 +19,10 @@ The machine-readable ABI inventory lives in `bindings/api_manifest.toml`.
 Maintainers should update it whenever they add a C ABI symbol. The manifest is
 validated against `include/orderflow.h` by `tools/check_api_manifest.py`, and
 `tools/check_ffi_exports.sh` reads the same manifest when checking the compiled
-shared library. This keeps the header, exported symbols, and future generated
-binding declarations from drifting.
+shared library. `tools/generate_binding_signatures.py` then emits exact Python
+`ctypes` and Java JNA declarations in manifest order from the validated header.
+CI runs it with `--check`, so the header, inventory, exports, and generated
+declarations cannot drift silently.
 
 ## New In 0.4.0
 
@@ -50,6 +52,8 @@ New execution ABI concepts:
   caller-owned event buffer
 - `bindings/api_manifest.toml`: the first machine-readable C ABI manifest for
   export validation and binding parity checks
+- generated Python and Java low-level signatures, with manual ergonomic
+  wrappers retained above the mechanical FFI layer
 - `of_get_signal_descriptors_json`: allocated JSON inventory for built-in
   signal descriptors, requirements, parameters, and output semantics
 - `of_get_signal_explanation_json`: allocated JSON explanation for the latest

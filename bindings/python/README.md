@@ -46,8 +46,8 @@ Highlights:
   audit and dashboard diagnostics
 - signal metrics through `Engine.signal_metrics()` for state counts,
   confidence, quality, and explanation coverage diagnostics
-- native C ABI inventory validation through `bindings/api_manifest.toml` so
-  future low-level `ctypes` declarations can be checked against `orderflow.h`
+- manifest/header-driven low-level `ctypes` signature generation with CI drift
+  checks, while typed high-level wrappers remain manually designed
 - analytics-to-execution examples in this README and the handbook
 - continued PEP 561 `py.typed` support and bundled native library lookup
 
@@ -95,11 +95,28 @@ blocking.
 ### Binding manifest policy
 
 Low-level native symbols are tracked in `bindings/api_manifest.toml`. The
-manifest validates the stable C ABI boundary and powers export checks; it does
-not replace the hand-written `Engine`, `ExecutionEngine`, and
-`ConcurrentExecutionEngine` wrappers. New public Python conveniences should
-remain ergonomic and typed, while repetitive native declarations can move toward
-manifest-backed generation.
+manifest controls membership, ordering, ownership metadata, and exposure. The
+validated `orderflow.h` supplies exact parameter and return types to
+`tools/generate_binding_signatures.py`, which commits
+`orderflow/_generated_signatures.py`. `orderflow/_ffi.py` defines structure
+layouts and library loading, then delegates function registration to that
+generated private module. CI runs the generator with `--check` and compiles the
+result.
+
+Do not edit `_generated_signatures.py` directly. After an additive C ABI change,
+update the header and manifest, run:
+
+```bash
+python3 tools/check_api_manifest.py
+python3 tools/generate_binding_signatures.py
+python3 tools/test_generate_binding_signatures.py
+python3 tools/check_binding_parity.py
+```
+
+Generation does not replace the hand-written `Engine`, `ExecutionEngine`, and
+`ConcurrentExecutionEngine` wrappers. Context managers, dataclasses, typed
+requests/events, automatic buffers, exceptions, and Python naming remain manual
+because they express user-facing ownership and ergonomics rather than C types.
 
 ### Signal descriptor discovery
 

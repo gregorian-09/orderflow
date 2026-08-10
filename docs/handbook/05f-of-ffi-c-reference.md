@@ -8,8 +8,12 @@ binding, and the Java JNA binding.
 The machine-readable C ABI inventory is `bindings/api_manifest.toml`. It is
 validated against this header by `tools/check_api_manifest.py`, and the native
 export check reads the same manifest through `tools/check_ffi_exports.sh`.
+`tools/generate_binding_signatures.py` emits exact Python ctypes and Java JNA
+declarations from the validated header in manifest order; CI `--check` rejects
+stale generated files and unit tests cover pointer depth and contextual JNA
+array/buffer mappings.
 When adding a new exported C symbol, update the manifest in the same commit as
-the header, Rust export, binding declaration, tests, and docs.
+the header, Rust export, regenerated declarations, tests, and docs.
 
 | Item | Kind | Purpose |
 | --- | --- | --- |

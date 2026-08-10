@@ -53,8 +53,8 @@ Highlights:
   audit and dashboard diagnostics
 - signal metrics through `engine.signalMetrics()` for state counts,
   confidence, quality, and explanation coverage diagnostics
-- native C ABI inventory validation through `bindings/api_manifest.toml` so
-  future JNA declarations can be checked against `orderflow.h`
+- manifest/header-driven JNA declaration generation with CI drift checks,
+  while typed high-level wrappers and lifecycle ownership remain manual
 - analytics-to-execution examples in this README and the handbook
 - existing native resolution behavior remains available: explicit path,
   `ORDERFLOW_LIBRARY_PATH`, then local debug library
@@ -102,11 +102,28 @@ blocking.
 ### Binding manifest policy
 
 Low-level native symbols are tracked in `bindings/api_manifest.toml`. The
-manifest validates the stable C ABI boundary and powers export checks; it does
-not replace the hand-written Java classes, `AutoCloseable` lifecycle, typed
-request/event objects, or JNA ownership rules. New public Java conveniences
-should remain idiomatic, while repetitive native declarations can move toward
-manifest-backed generation.
+manifest controls membership, ordering, ownership metadata, and exposure. The
+validated `orderflow.h` supplies exact parameter and return types to
+`tools/generate_binding_signatures.py`, which commits the generated
+`OrderflowNative.java` interface. Context-sensitive mappings preserve JNA
+arrays, `Memory`, opaque `Pointer` handles, pointer references, callbacks, and
+integer-width reference types. CI runs the generator with `--check`, unit-tests
+the mappings, and compiles the Java binding.
+
+Do not edit `OrderflowNative.java` directly. After an additive C ABI change,
+update the header and manifest, run:
+
+```bash
+python3 tools/check_api_manifest.py
+python3 tools/generate_binding_signatures.py
+python3 tools/test_generate_binding_signatures.py
+python3 tools/check_binding_parity.py
+```
+
+Generation does not replace hand-written `AutoCloseable` lifecycle, typed
+request/event classes, exception translation, buffer growth, or Java naming.
+Those high-level contracts remain manual because they define user-facing
+ownership and ergonomics rather than native function types.
 
 ### Signal descriptor discovery
 
