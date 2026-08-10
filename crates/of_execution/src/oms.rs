@@ -1,6 +1,7 @@
 //! Additive OMS building blocks for execution integrations.
 
 use std::collections::{HashMap, VecDeque};
+use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
@@ -1111,11 +1112,11 @@ impl SegmentedWalExecutionJournal {
                 if record.header.sequence < sequence {
                     continue;
                 }
+                result.first_sequence.get_or_insert(record.header.sequence);
+                result.last_sequence = Some(record.header.sequence);
                 if let Some(journal_record) = decode_wal_payload(&record)? {
                     out.push(journal_record);
                     result.records = out.len().saturating_sub(start);
-                    result.first_sequence.get_or_insert(record.header.sequence);
-                    result.last_sequence = Some(record.header.sequence);
                 }
             }
         }
@@ -1531,11 +1532,11 @@ fn replay_wal_bytes(
         if from_sequence.is_some_and(|sequence| record.header.sequence < sequence) {
             continue;
         }
+        result.first_sequence.get_or_insert(record.header.sequence);
+        result.last_sequence = Some(record.header.sequence);
         if let Some(journal_record) = decode_wal_payload(&record)? {
             out.push(journal_record);
             result.records = out.len().saturating_sub(start);
-            result.first_sequence.get_or_insert(record.header.sequence);
-            result.last_sequence = Some(record.header.sequence);
         }
     }
 
@@ -1564,11 +1565,11 @@ fn replay_segmented_recovery_records<'a>(
             if record.header.sequence < from_sequence {
                 continue;
             }
+            result.first_sequence.get_or_insert(record.header.sequence);
+            result.last_sequence = Some(record.header.sequence);
             if let Some(recovery_record) = decode_recovery_wal_payload(&record)? {
                 out.push(recovery_record);
                 result.records = out.len().saturating_sub(start);
-                result.first_sequence.get_or_insert(record.header.sequence);
-                result.last_sequence = Some(record.header.sequence);
             }
         }
     }
@@ -2350,6 +2351,31 @@ impl FileExecutionCheckpointStore {
     pub fn inspect_root(root: impl AsRef<Path>) -> ExecutionResult<CheckpointStoreIntegrityReport> {
         inspect_checkpoint_store_root(root.as_ref())
     }
+
+    /// Loads the latest valid checkpoint from an existing root without
+    /// creating or modifying the directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an execution journal error when the root is missing, cannot be
+    /// listed, or any discovered checkpoint fails decoding or checksum
+    /// validation.
+    pub fn load_latest_from_root(
+        root: impl AsRef<Path>,
+    ) -> ExecutionResult<Option<ExecutionCheckpoint>> {
+        let root = root.as_ref();
+        if !root.exists() {
+            return Err(ExecutionError::Journal(format!(
+                "checkpoint root does not exist: {}",
+                root.display()
+            )));
+        }
+        let manifests = list_checkpoint_manifests(root)?;
+        manifests
+            .last()
+            .map(|manifest| load_checkpoint_file(&manifest.path))
+            .transpose()
+    }
 }
 
 impl ExecutionCheckpointStore for FileExecutionCheckpointStore {
@@ -2404,37 +2430,10 @@ impl ExecutionCheckpointStore for FileExecutionCheckpointStore {
     }
 
     fn list_checkpoints(&self) -> ExecutionResult<Vec<CheckpointManifest>> {
-        let mut manifests = Vec::new();
         if !self.config.root().exists() {
-            return Ok(manifests);
+            return Ok(Vec::new());
         }
-
-        for entry in fs::read_dir(self.config.root())
-            .map_err(|err| ExecutionError::Journal(err.to_string()))?
-        {
-            let entry = entry.map_err(|err| ExecutionError::Journal(err.to_string()))?;
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some(CHECKPOINT_EXT) {
-                continue;
-            }
-            let metadata = entry
-                .metadata()
-                .map_err(|err| ExecutionError::Journal(err.to_string()))?;
-            let checkpoint = load_checkpoint_file(&path)?;
-            manifests.push(CheckpointManifest::from_checkpoint(
-                path,
-                metadata.len(),
-                &checkpoint,
-            ));
-        }
-        manifests.sort_by_key(|manifest| {
-            (
-                manifest.last_applied_sequence,
-                manifest.created_ns,
-                manifest.checkpoint_id,
-            )
-        });
-        Ok(manifests)
+        list_checkpoint_manifests(self.config.root())
     }
 
     fn validate_checkpoint(&self, checkpoint: &ExecutionCheckpoint) -> ExecutionResult<bool> {
@@ -2627,6 +2626,14 @@ impl RecoveredOmsState {
             .collect()
     }
 
+    /// Returns the number of recovered non-terminal orders without allocating.
+    pub fn open_order_count(&self) -> usize {
+        self.orders
+            .iter()
+            .filter(|state| !state.status.is_terminal())
+            .count()
+    }
+
     /// Returns recovered checkpoint positions.
     pub fn positions(&self) -> &[CheckpointPosition] {
         &self.positions
@@ -2651,6 +2658,56 @@ pub struct RecoveryResult {
     pub venue_reconciliation_required: bool,
     /// True when strategy submissions may resume after recovery.
     pub submissions_enabled: bool,
+}
+
+impl RecoveryResult {
+    /// Serializes a bounded operational recovery summary as schema-versioned
+    /// JSON.
+    ///
+    /// The summary intentionally excludes individual order/account/symbol
+    /// identifiers. Rust callers can inspect [`RecoveryResult::state`] when
+    /// full reconciliation detail is required.
+    pub fn json_report(&self) -> String {
+        let mut out = String::with_capacity(384);
+        out.push_str("{\"schema_version\":1,\"checkpoint_id\":");
+        write_optional_json_u64(&mut out, self.state.checkpoint_id());
+        let _ = write!(
+            out,
+            ",\"route_config_hash\":{},\"kill_switch\":{},\"orders\":{},\"open_orders\":{},\"positions\":{},\"commands_seen\":{},\"events_applied\":{},\"replay\":{{\"records\":{},\"bytes\":{},\"first_sequence\":",
+            self.state.route_config_hash(),
+            self.state.kill_switch(),
+            self.state.orders().len(),
+            self.state.open_order_count(),
+            self.state.positions().len(),
+            self.commands_seen,
+            self.events_applied,
+            self.replay.records,
+            self.replay.bytes,
+        );
+        write_optional_json_u64(
+            &mut out,
+            self.replay.first_sequence.map(|sequence| sequence.0),
+        );
+        out.push_str(",\"last_sequence\":");
+        write_optional_json_u64(
+            &mut out,
+            self.replay.last_sequence.map(|sequence| sequence.0),
+        );
+        let _ = write!(
+            out,
+            "}},\"venue_reconciliation_required\":{},\"submissions_enabled\":{}}}",
+            self.venue_reconciliation_required, self.submissions_enabled
+        );
+        out
+    }
+}
+
+fn write_optional_json_u64(out: &mut String, value: Option<u64>) {
+    if let Some(value) = value {
+        let _ = write!(out, "{value}");
+    } else {
+        out.push_str("null");
+    }
 }
 
 /// Fail-closed reason emitted by recovery-readiness evaluation.
@@ -3002,6 +3059,48 @@ pub fn recover_oms_state_from_segmented_wal(
 ) -> ExecutionResult<RecoveryResult> {
     let mut records = Vec::new();
     let replay = journal.replay_recovery_from(plan.replay_from(), &mut records)?;
+    finish_decoded_recovery(plan, checkpoint, records, replay)
+}
+
+/// Recovers OMS state from an existing segmented WAL root without creating an
+/// append handle or modifying files.
+///
+/// # Errors
+///
+/// Returns an execution journal error when the root is missing, WAL replay or
+/// state reconstruction fails, or the optional expected latest sequence is not
+/// reached.
+pub fn recover_oms_state_from_segmented_wal_root(
+    plan: RecoveryPlan,
+    checkpoint: Option<&ExecutionCheckpoint>,
+    root: impl AsRef<Path>,
+) -> ExecutionResult<RecoveryResult> {
+    let root = root.as_ref();
+    if !root.exists() {
+        return Err(ExecutionError::Journal(format!(
+            "segmented WAL root does not exist: {}",
+            root.display()
+        )));
+    }
+    let paths = list_segment_ids(root)?
+        .into_iter()
+        .map(|segment_id| segment_path(root, segment_id))
+        .collect::<Vec<_>>();
+    let mut records = Vec::new();
+    let replay = replay_segmented_recovery_records(
+        paths.iter().map(PathBuf::as_path),
+        plan.replay_from(),
+        &mut records,
+    )?;
+    finish_decoded_recovery(plan, checkpoint, records, replay)
+}
+
+fn finish_decoded_recovery(
+    plan: RecoveryPlan,
+    checkpoint: Option<&ExecutionCheckpoint>,
+    records: Vec<DecodedRecoveryRecord>,
+    replay: WalReplayResult,
+) -> ExecutionResult<RecoveryResult> {
     let mut result = recover_oms_state_from_decoded_records(plan, checkpoint, &records)?;
     if let Some(expected) = result.plan.expected_latest_sequence() {
         let actual = replay
@@ -3085,7 +3184,13 @@ fn apply_recovered_command(
     command: DecodedWalCommand,
 ) -> ExecutionResult<()> {
     match command {
-        DecodedWalCommand::Legacy { .. } => Ok(()),
+        DecodedWalCommand::Legacy {
+            kind,
+            client_order_id,
+            ..
+        } => Err(ExecutionError::Journal(format!(
+            "legacy {kind:?} command {client_order_id} lacks the full payload required for recovery"
+        ))),
         DecodedWalCommand::Submit(request) => {
             if orders
                 .iter()
@@ -3159,6 +3264,48 @@ where
         .map(RecoveryPlan::from_checkpoint)
         .unwrap_or_default();
     recover_oms_state_from_segmented_wal(plan, checkpoint.as_ref(), journal)
+}
+
+/// Loads an optional latest checkpoint and recovers an existing segmented WAL
+/// root without creating or modifying either root.
+///
+/// Set `require_checkpoint` for production policies that prohibit replay from
+/// WAL sequence one. A supplied checkpoint root is validated strictly: any
+/// corrupt checkpoint aborts recovery rather than silently selecting another
+/// file.
+///
+/// # Errors
+///
+/// Returns an execution journal error when a required checkpoint is absent,
+/// either root is missing or corrupt, WAL replay fails, or reconstruction does
+/// not reach the latest validated WAL sequence.
+pub fn recover_latest_checkpoint_from_segmented_wal_roots(
+    wal_root: impl AsRef<Path>,
+    checkpoint_root: Option<&Path>,
+    require_checkpoint: bool,
+) -> ExecutionResult<RecoveryResult> {
+    let wal_root = wal_root.as_ref();
+    let wal = SegmentedWalExecutionJournal::inspect_root(wal_root)?;
+    if !wal.valid || wal.checksum_failures > 0 || wal.sequence_failures > 0 {
+        return Err(ExecutionError::Journal(
+            "segmented WAL integrity validation failed".to_string(),
+        ));
+    }
+    let checkpoint = checkpoint_root
+        .map(FileExecutionCheckpointStore::load_latest_from_root)
+        .transpose()?
+        .flatten();
+    if require_checkpoint && checkpoint.is_none() {
+        return Err(ExecutionError::Journal(
+            "recovery requires a valid checkpoint".to_string(),
+        ));
+    }
+    let plan = checkpoint
+        .as_ref()
+        .map(RecoveryPlan::from_checkpoint)
+        .unwrap_or_default()
+        .with_expected_latest_sequence(wal.last_sequence);
+    recover_oms_state_from_segmented_wal_root(plan, checkpoint.as_ref(), wal_root)
 }
 
 fn apply_recovered_event(
@@ -3342,6 +3489,34 @@ fn decode_checkpoint(bytes: &[u8]) -> ExecutionResult<ExecutionCheckpoint> {
 fn load_checkpoint_file(path: &Path) -> ExecutionResult<ExecutionCheckpoint> {
     let bytes = fs::read(path).map_err(|err| ExecutionError::Journal(err.to_string()))?;
     decode_checkpoint(&bytes)
+}
+
+fn list_checkpoint_manifests(root: &Path) -> ExecutionResult<Vec<CheckpointManifest>> {
+    let mut manifests = Vec::new();
+    for entry in fs::read_dir(root).map_err(|err| ExecutionError::Journal(err.to_string()))? {
+        let entry = entry.map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some(CHECKPOINT_EXT) {
+            continue;
+        }
+        let metadata = entry
+            .metadata()
+            .map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        let checkpoint = load_checkpoint_file(&path)?;
+        manifests.push(CheckpointManifest::from_checkpoint(
+            path,
+            metadata.len(),
+            &checkpoint,
+        ));
+    }
+    manifests.sort_by_key(|manifest| {
+        (
+            manifest.last_applied_sequence,
+            manifest.created_ns,
+            manifest.checkpoint_id,
+        )
+    });
+    Ok(manifests)
 }
 
 fn inspect_checkpoint_store_root(root: &Path) -> ExecutionResult<CheckpointStoreIntegrityReport> {
@@ -6320,6 +6495,10 @@ mod tests {
         assert_eq!(report.latest_checkpoint_id, Some(2));
         assert_eq!(report.latest_last_applied_sequence, Some(WalSequence(20)));
         assert_eq!(report.latest_created_ns, Some(200));
+        let latest = FileExecutionCheckpointStore::load_latest_from_root(&root)
+            .unwrap()
+            .unwrap();
+        assert_eq!(latest.checkpoint_id, 2);
 
         let mut bytes = std::fs::read(&manifest.path).unwrap();
         let last = bytes.last_mut().unwrap();
@@ -6466,6 +6645,96 @@ mod tests {
         assert_eq!(result.state.orders()[0].order_qty, request.quantity);
         assert_eq!(result.state.orders()[0].status, OrderStatus::New);
         assert_eq!(result.state.orders()[0].venue_order_id, id("VENUE2"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn root_recovery_is_read_only_and_reports_marker_sequence() {
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-read-only-root-recovery-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let request = order("ROOT1");
+        {
+            let mut journal = SegmentedWalExecutionJournal::open(
+                WalSegmentConfig::new(&root).with_sync_policy(WalSyncPolicy::Never),
+            )
+            .unwrap();
+            journal.record_submit(&request).unwrap();
+            journal
+                .record_event(&ExecutionEvent::accepted(&request, id("ROOT-V")))
+                .unwrap();
+            journal.rotate_segment().unwrap();
+        }
+        let mut before = fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        before.sort();
+
+        let result =
+            recover_latest_checkpoint_from_segmented_wal_roots(&root, None, false).unwrap();
+        assert_eq!(result.replay.last_sequence, Some(WalSequence(3)));
+        assert_eq!(result.replay.records, 2);
+        assert_eq!(result.state.orders().len(), 1);
+        assert_eq!(result.state.open_order_count(), 1);
+        assert_eq!(
+            result.json_report(),
+            "{\"schema_version\":1,\"checkpoint_id\":null,\"route_config_hash\":0,\"kill_switch\":false,\"orders\":1,\"open_orders\":1,\"positions\":0,\"commands_seen\":1,\"events_applied\":1,\"replay\":{\"records\":2,\"bytes\":1450,\"first_sequence\":1,\"last_sequence\":3},\"venue_reconciliation_required\":true,\"submissions_enabled\":false}"
+        );
+
+        let mut after = fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        after.sort();
+        assert_eq!(before, after);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn root_recovery_requires_checkpoint_when_configured() {
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-required-checkpoint-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let journal = SegmentedWalExecutionJournal::open(
+            WalSegmentConfig::new(&root).with_sync_policy(WalSyncPolicy::Never),
+        )
+        .unwrap();
+        drop(journal);
+        let error =
+            recover_latest_checkpoint_from_segmented_wal_roots(&root, None, true).unwrap_err();
+        assert!(error.to_string().contains("requires a valid checkpoint"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn root_recovery_rejects_legacy_command_only_frames() {
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-legacy-root-recovery-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let request = order("LEGACY1");
+        let mut journal = SegmentedWalExecutionJournal::open(
+            WalSegmentConfig::new(&root).with_sync_policy(WalSyncPolicy::Never),
+        )
+        .unwrap();
+        journal
+            .record_command(
+                JournalCommandKind::Submit,
+                request.client_order_id,
+                request.ts_recv_ns,
+            )
+            .unwrap();
+        drop(journal);
+
+        let error =
+            recover_latest_checkpoint_from_segmented_wal_roots(&root, None, false).unwrap_err();
+        assert!(error.to_string().contains("lacks the full payload"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
