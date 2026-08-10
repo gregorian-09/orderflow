@@ -370,6 +370,69 @@ class OfExecutionCommandReport(ctypes.Structure):
     ]
 
 
+class OfExecutionTwapConfig(ctypes.Structure):
+    """ctypes mirror of ``of_execution_twap_config_t``."""
+
+    _fields_ = [
+        ("parent_order_id", ctypes.c_char_p),
+        ("account_id", ctypes.c_char_p),
+        ("route_id", ctypes.c_char_p),
+        ("strategy_id", ctypes.c_char_p),
+        ("venue", ctypes.c_char_p),
+        ("instrument", ctypes.c_char_p),
+        ("side", ctypes.c_uint32),
+        ("order_type", ctypes.c_uint32),
+        ("time_in_force", ctypes.c_uint32),
+        ("total_qty", ctypes.c_int64),
+        ("limit_price", ctypes.c_int64),
+        ("stop_price", ctypes.c_int64),
+        ("start_ns", ctypes.c_uint64),
+        ("end_ns", ctypes.c_uint64),
+        ("min_clip", ctypes.c_int64),
+        ("max_clip", ctypes.c_int64),
+        ("participation_cap_bps", ctypes.c_uint16),
+        ("slice_interval_ns", ctypes.c_uint64),
+    ]
+
+
+class OfExecutionAlgoChildPlan(ctypes.Structure):
+    """ctypes mirror of ``of_execution_algo_child_plan_t``."""
+
+    _fields_ = [
+        ("child_order_id", ctypes.c_char * 41),
+        ("parent_order_id", ctypes.c_char * 41),
+        ("client_order_id", ctypes.c_char * 41),
+        ("account_id", ctypes.c_char * 33),
+        ("route_id", ctypes.c_char * 33),
+        ("strategy_id", ctypes.c_char * 33),
+        ("venue", ctypes.c_char * 17),
+        ("instrument", ctypes.c_char * 33),
+        ("side", ctypes.c_uint32),
+        ("order_type", ctypes.c_uint32),
+        ("time_in_force", ctypes.c_uint32),
+        ("quantity", ctypes.c_int64),
+        ("limit_price", ctypes.c_int64),
+        ("stop_price", ctypes.c_int64),
+        ("due_ns", ctypes.c_uint64),
+        ("ts_recv_ns", ctypes.c_uint64),
+        ("has_plan", ctypes.c_uint8),
+    ]
+
+
+class OfExecutionAlgoProgress(ctypes.Structure):
+    """ctypes mirror of ``of_execution_algo_progress_t``."""
+
+    _fields_ = [
+        ("target_qty", ctypes.c_int64),
+        ("released_qty", ctypes.c_int64),
+        ("completed_qty", ctypes.c_int64),
+        ("open_qty", ctypes.c_int64),
+        ("rejected_children", ctypes.c_uint64),
+        ("terminal_children", ctypes.c_uint64),
+        ("has_pending_plan", ctypes.c_uint8),
+    ]
+
+
 def _library_filename() -> str:
     if sys.platform == "win32":
         return "of_ffi_c.dll"

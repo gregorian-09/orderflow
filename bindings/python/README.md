@@ -83,6 +83,29 @@ with ExecutionEngine(routes) as execution:
     ))
 ```
 
+Deterministic TWAP planning remains separate from OMS submission:
+
+```python
+from orderflow import TwapConfig, TwapExecutionAlgo
+
+config = TwapConfig(
+    "parent-1", "ACC", "SIM", "TWAP", "SIM", "ES",
+    ExecutionSide.BUY, ExecutionOrderType.LIMIT, ExecutionTimeInForce.DAY,
+    100, 5000, 1_000, 11_000, 10, 25, 2_000,
+)
+with ExecutionEngine(routes) as execution, TwapExecutionAlgo(config) as twap:
+    child = twap.plan(1_000, "child-1", "order-1", 1_001)
+    if child is not None:
+        events = execution.submit_order(child.request)
+        twap.commit_pending()
+        for event in events:
+            twap.record_execution(event.last_qty, event.leaves_qty, event.order_status)
+```
+
+`plan()` is retry-stable while a child is pending. Call `commit_pending()`
+only after OMS submission succeeds, or `discard_pending()` when submission did
+not occur. The planner itself cannot bypass OMS risk, journaling, or adapters.
+
 `ExecutionEngine(route)` remains supported for single-symbol integrations. When
 you pass a route list, native risk accounting is scoped per
 route/account/symbol.
@@ -488,6 +511,21 @@ analytics runtime.
 | `ExecutionCheckpointStoreIntegrityReport` | Offline checkpoint store scan summary |
 | `ConcurrentExecutionConfig` | Command/report/event-buffer capacities |
 | `ExecutionCommandReport` | Concurrent command result, sequence, result code, and events |
+| `TwapConfig` | Parent ticket, clip bounds, schedule, and slice interval |
+| `AlgoChildPlan` | Owned child id, parent id, due time, and canonical `OrderRequest` |
+| `AlgoProgress` | Target/released/completed/open quantities and child counters |
+
+#### `TwapExecutionAlgo`
+
+| Signature | Description |
+|---|---|
+| `TwapExecutionAlgo(config, library_path=None)` | Creates a validated native parent handle |
+| `plan(now_ns, child_order_id, client_order_id, ts_recv_ns)` | Returns `AlgoChildPlan` or `None` without advancing progress |
+| `commit_pending()` | Advances released/open quantity after successful OMS submission |
+| `discard_pending()` | Clears an unsubmitted child plan |
+| `record_execution(last_qty, leaves_qty, order_status)` | Folds canonical child execution progress |
+| `progress()` | Returns `AlgoProgress` |
+| `close()` | Destroys the native handle |
 
 #### `ExecutionEngine`
 

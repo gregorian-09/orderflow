@@ -68,8 +68,9 @@ Major additions:
   market-quality/TCA and liquidity/depth primitives plus feature profiles for
   future impact, toxicity, volatility, regime, pattern, derivatives,
   institutional, and ML-feature modules
-- bindings: additive C ABI, Python, and Java execution APIs that do not change
-  existing analytics APIs
+- bindings: additive C ABI, Python, and Java execution APIs, including a
+  deterministic TWAP parent handle with explicit plan/commit/event-folding
+  semantics, without changing existing analytics APIs
 - documentation: end-to-end strategy workflow, OMS architecture, OMS cookbook,
   low-latency design, provider adapter authoring, recovery operations, and
   exhaustive binding READMEs
@@ -119,9 +120,9 @@ Start here:
 | Rust engine | `of_execution` adapter trait, bounded event buffer, simulator, journal/recovery, operator controls, and verifiable incident bundles |
 | Adapter scaffold | `of_execution_adapters::fix` execution-report mapper and FIX capabilities |
 | Execution algos | `of_execution_algos` parent/child substrate and deterministic TWAP planner |
-| C ABI | `of_execution_engine_t`, submit/cancel/amend/poll/state/health/metrics |
-| Python | `ExecutionEngine`, `OrderRequest`, `CancelRequest`, `AmendRequest` |
-| Java | `OrderflowExecutionEngine`, `OrderRequest`, `CancelRequest`, `AmendRequest` |
+| C ABI | `of_execution_engine_t`, `of_execution_twap_algo_t`, submit/cancel/amend/poll/state/progress |
+| Python | `ExecutionEngine`, `TwapExecutionAlgo`, typed requests/plans/progress |
+| Java | `OrderflowExecutionEngine`, `TwapExecutionAlgo`, typed requests/plans/progress |
 
 Low-latency-sensitive paths use typed structs and caller-owned event buffers,
 not JSON payloads. JSON remains for analytics snapshots and diagnostics.

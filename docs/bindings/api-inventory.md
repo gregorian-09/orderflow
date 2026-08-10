@@ -9,8 +9,8 @@ wrappers remain documented in their binding-specific README files.
 
 ## Summary
 
-- Exported symbols: `87`
-- Families: `5`
+- Exported symbols: `94`
+- Families: `6`
 
 ## Binding Compatibility Matrix
 
@@ -47,6 +47,13 @@ interface declaration.
 | `of_execution_concurrent_try_recv_report` | `execution` | yes | yes | yes | `LowLevelGenerated` |
 | `of_execution_engine_destroy` | `execution` | yes | yes | yes | `LowLevelGenerated` |
 | `of_execution_concurrent_engine_destroy` | `execution` | yes | yes | yes | `LowLevelGenerated` |
+| `of_execution_twap_algo_create` | `execution_algorithms` | yes | yes | yes | `HandleFacade` |
+| `of_execution_twap_algo_plan` | `execution_algorithms` | yes | yes | yes | `HandleFacade` |
+| `of_execution_twap_algo_commit_pending` | `execution_algorithms` | yes | yes | yes | `HandleFacade` |
+| `of_execution_twap_algo_discard_pending` | `execution_algorithms` | yes | yes | yes | `HandleFacade` |
+| `of_execution_twap_algo_record_execution` | `execution_algorithms` | yes | yes | yes | `HandleFacade` |
+| `of_execution_twap_algo_progress` | `execution_algorithms` | yes | yes | yes | `HandleFacade` |
+| `of_execution_twap_algo_destroy` | `execution_algorithms` | yes | yes | yes | `HandleFacade` |
 | `of_engine_create` | `runtime` | yes | yes | yes | `LowLevelGenerated` |
 | `of_engine_start` | `runtime` | yes | yes | yes | `LowLevelGenerated` |
 | `of_engine_stop` | `runtime` | yes | yes | yes | `LowLevelGenerated` |
@@ -194,6 +201,20 @@ Symbols: `24`
 | `of_execution_concurrent_try_recv_report` | `int32_t` | `caller_owned_output` | `pre-manifest` | `LowLevelGenerated` |
 | `of_execution_engine_destroy` | `void` | `releases_handle` | `pre-manifest` | `LowLevelGenerated` |
 | `of_execution_concurrent_engine_destroy` | `void` | `releases_handle` | `pre-manifest` | `LowLevelGenerated` |
+
+## Execution_Algorithms
+
+Symbols: `7`
+
+| Function | Return | Ownership | Introduced | Binding Exposure |
+| --- | --- | --- | --- | --- |
+| `of_execution_twap_algo_create` | `int32_t` | `caller_owned_output` | `0.4.0` | `HandleFacade` |
+| `of_execution_twap_algo_plan` | `int32_t` | `caller_owned_output` | `0.4.0` | `HandleFacade` |
+| `of_execution_twap_algo_commit_pending` | `int32_t` | `caller_owned_output` | `0.4.0` | `HandleFacade` |
+| `of_execution_twap_algo_discard_pending` | `int32_t` | `caller_owned_output` | `0.4.0` | `HandleFacade` |
+| `of_execution_twap_algo_record_execution` | `int32_t` | `caller_owned_output` | `0.4.0` | `HandleFacade` |
+| `of_execution_twap_algo_progress` | `int32_t` | `caller_owned_output` | `0.4.0` | `HandleFacade` |
+| `of_execution_twap_algo_destroy` | `void` | `releases_handle` | `0.4.0` | `HandleFacade` |
 
 ## Runtime
 

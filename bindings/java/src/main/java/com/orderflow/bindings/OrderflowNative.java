@@ -98,6 +98,27 @@ public interface OrderflowNative extends Library {
     /** Destroys a concurrent execution engine. */
     void of_execution_concurrent_engine_destroy(Pointer engine);
 
+    /** Creates a deterministic TWAP parent algorithm. */
+    int of_execution_twap_algo_create(OfExecutionTwapConfig config, PointerByReference out_algo);
+
+    /** Plans the next due TWAP child without advancing parent progress. */
+    int of_execution_twap_algo_plan(Pointer algo, long now_ns, String child_order_id, String client_order_id, long ts_recv_ns, OfExecutionAlgoChildPlan out_plan);
+
+    /** Commits the currently pending child plan after accepted OMS submission. */
+    int of_execution_twap_algo_commit_pending(Pointer algo);
+
+    /** Discards the currently pending child plan after failed/abandoned submission. */
+    int of_execution_twap_algo_discard_pending(Pointer algo);
+
+    /** Records child execution progress using canonical order-status values. */
+    int of_execution_twap_algo_record_execution(Pointer algo, long last_qty, long leaves_qty, int order_status);
+
+    /** Returns the current parent execution progress. */
+    int of_execution_twap_algo_progress(Pointer algo, OfExecutionAlgoProgress out_progress);
+
+    /** Destroys a deterministic TWAP algorithm handle. */
+    void of_execution_twap_algo_destroy(Pointer algo);
+
     /** Creates a runtime engine instance. */
     int of_engine_create(OfEngineConfig cfg, PointerByReference out_engine);
 

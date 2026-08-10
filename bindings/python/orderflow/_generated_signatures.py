@@ -171,6 +171,51 @@ def _bind_symbols(lib: Any, namespace: dict[str, Any]) -> None:
     ]
     lib.of_execution_concurrent_engine_destroy.restype = None
 
+    lib.of_execution_twap_algo_create.argtypes = [
+        ctypes.POINTER(namespace["OfExecutionTwapConfig"]),
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    lib.of_execution_twap_algo_create.restype = ctypes.c_int32
+
+    lib.of_execution_twap_algo_plan.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint64,
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_uint64,
+        ctypes.POINTER(namespace["OfExecutionAlgoChildPlan"]),
+    ]
+    lib.of_execution_twap_algo_plan.restype = ctypes.c_int32
+
+    lib.of_execution_twap_algo_commit_pending.argtypes = [
+        ctypes.c_void_p,
+    ]
+    lib.of_execution_twap_algo_commit_pending.restype = ctypes.c_int32
+
+    lib.of_execution_twap_algo_discard_pending.argtypes = [
+        ctypes.c_void_p,
+    ]
+    lib.of_execution_twap_algo_discard_pending.restype = ctypes.c_int32
+
+    lib.of_execution_twap_algo_record_execution.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int64,
+        ctypes.c_int64,
+        ctypes.c_uint32,
+    ]
+    lib.of_execution_twap_algo_record_execution.restype = ctypes.c_int32
+
+    lib.of_execution_twap_algo_progress.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(namespace["OfExecutionAlgoProgress"]),
+    ]
+    lib.of_execution_twap_algo_progress.restype = ctypes.c_int32
+
+    lib.of_execution_twap_algo_destroy.argtypes = [
+        ctypes.c_void_p,
+    ]
+    lib.of_execution_twap_algo_destroy.restype = None
+
     lib.of_engine_create.argtypes = [
         ctypes.POINTER(namespace["OfEngineConfig"]),
         ctypes.POINTER(ctypes.c_void_p),

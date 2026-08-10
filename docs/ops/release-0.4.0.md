@@ -383,12 +383,19 @@ through additive handles/classes:
 - low-level plumbing: all manifest-exposed C functions now generate exact
   Python ctypes and Java JNA declarations from validated `orderflow.h` types in
   `bindings/api_manifest.toml` order
+- deterministic TWAP bridge: C `of_execution_twap_algo_*`, Python
+  `TwapExecutionAlgo`, and Java `TwapExecutionAlgo` expose owned child plans,
+  explicit submit commit/discard, and execution progress without exposing Rust
+  generic or borrowed planner internals
 
 Existing analytics handles and classes remain separate and unchanged.
 High-level Python context managers/dataclasses and Java `AutoCloseable`/typed
 wrappers remain manual. CI checks deterministic generated output, exact pointer
 depth, callbacks, caller-owned buffers, output handles, JNA arrays, and
 allocated-string mappings without changing any existing binding method.
+The TWAP bridge does not submit directly: every child remains a canonical OMS
+request and therefore still traverses configured risk, journaling, adapter,
+kill-switch, and reconciliation paths.
 
 ### 8. Documentation expansion
 

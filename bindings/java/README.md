@@ -90,6 +90,31 @@ try (OrderflowExecutionEngine execution = new OrderflowExecutionEngine(null, rou
 }
 ```
 
+Deterministic TWAP planning remains separate from OMS submission:
+
+```java
+TwapConfig config = new TwapConfig(
+    "parent-1", "ACC", "SIM", "TWAP", "SIM", "ES",
+    ExecutionSide.BUY, ExecutionOrderType.LIMIT, ExecutionTimeInForce.DAY,
+    100, 5000, 0, 1_000, 11_000, 10, 25, 0, 2_000
+);
+try (OrderflowExecutionEngine execution = new OrderflowExecutionEngine(null, routes);
+     TwapExecutionAlgo twap = new TwapExecutionAlgo(null, config)) {
+    execution.start();
+    twap.plan(1_000, "child-1", "order-1", 1_001).ifPresent(child -> {
+        List<ExecutionEvent> events = execution.submitOrder(child.request);
+        twap.commitPending();
+        events.forEach(event ->
+            twap.recordExecution(event.lastQty, event.leavesQty, event.orderStatus));
+    });
+}
+```
+
+`plan()` is retry-stable while a child is pending. Commit only after OMS
+submission succeeds; discard an abandoned plan so the same quantity can be
+planned again. The planner itself cannot bypass OMS risk, journaling, or
+adapters.
+
 `new OrderflowExecutionEngine(path, route)` remains supported for single-symbol
 integrations. The `List<RouteConfig>` constructor configures one engine for
 multi-symbol routing with native route/account/symbol-scoped risk checks.
@@ -492,6 +517,21 @@ analytics runtime.
 | `ExecutionCheckpointStoreIntegrityReport` | Offline checkpoint store scan summary |
 | `ConcurrentExecutionConfig` | Command/report/event-buffer capacities |
 | `ExecutionCommandReport` | Concurrent command result, sequence, result code, and events |
+| `TwapConfig` | Parent ticket, clip bounds, schedule, and slice interval |
+| `AlgoChildPlan` | Owned child id, parent id, due time, and canonical `OrderRequest` |
+| `AlgoProgress` | Target/released/completed/open quantities and child counters |
+
+#### `TwapExecutionAlgo`
+
+| Signature | Description |
+|---|---|
+| `TwapExecutionAlgo(String nativePath, TwapConfig config)` | Creates a validated native parent handle |
+| `Optional<AlgoChildPlan> plan(...)` | Plans without advancing released quantity |
+| `void commitPending()` | Commits a successfully submitted child |
+| `void discardPending()` | Clears an unsubmitted child plan |
+| `void recordExecution(...)` | Folds canonical fill/status progress |
+| `AlgoProgress progress()` | Returns current progress |
+| `void close()` | Destroys the native handle |
 
 #### `OrderflowExecutionEngine`
 

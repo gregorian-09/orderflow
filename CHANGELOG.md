@@ -6,6 +6,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added an additive deterministic TWAP binding facade across C, Python, and
+  Java with an opaque native parent handle, allocation-free plan calls, owned
+  child requests, retry-stable pending plans, explicit commit/discard after OMS
+  submission, execution-event progress folding, and typed progress snapshots.
+  Existing OMS/risk/journal and analytics APIs are unchanged.
 - Added deterministic manifest/header-driven generation for all 87 low-level
   Python ctypes and Java JNA function signatures, including exact pointer
   depth, callbacks, output handles, caller buffers, JNA arrays, and allocated

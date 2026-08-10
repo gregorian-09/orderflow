@@ -12,6 +12,9 @@ Latest release: `0.4.0`.
   publish as `0.4.0`.
 - Binding README files include end-to-end examples that combine market data,
   analytics, signal gating, simulated execution, and order reports.
+- C, Python, and Java expose a deterministic TWAP parent facade whose owned
+  child request must still be submitted through the OMS before release progress
+  is committed.
 - `bindings/api_manifest.toml` is checked against the C header, exported native
   symbols, Python ctypes registrations, and Java JNA declarations so low-level
   binding plumbing cannot silently drift from the ABI inventory.

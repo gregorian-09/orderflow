@@ -26,6 +26,8 @@ If the native shared library is not in the default location, set
 from ._ffi import OfAnalyticsConfig
 from .api import (
     AmendRequest,
+    AlgoChildPlan,
+    AlgoProgress,
     BookAction,
     CancelRequest,
     ConcurrentExecutionConfig,
@@ -56,6 +58,8 @@ from .api import (
     Side,
     StreamKind,
     Symbol,
+    TwapConfig,
+    TwapExecutionAlgo,
     adapter_inventory,
     available_adapters,
     inspect_execution_checkpoint_store,
@@ -66,6 +70,8 @@ from .api import (
 
 __all__ = [
     "AmendRequest",
+    "AlgoChildPlan",
+    "AlgoProgress",
     "BookAction",
     "CancelRequest",
     "ConcurrentExecutionConfig",
@@ -97,6 +103,8 @@ __all__ = [
     "Side",
     "StreamKind",
     "Symbol",
+    "TwapConfig",
+    "TwapExecutionAlgo",
     "adapter_inventory",
     "available_adapters",
     "inspect_execution_checkpoint_store",

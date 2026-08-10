@@ -12,6 +12,8 @@ import com.orderflow.bindings.RouteConfig;
 import com.orderflow.bindings.Side;
 import com.orderflow.bindings.StreamKind;
 import com.orderflow.bindings.Symbol;
+import com.orderflow.bindings.TwapConfig;
+import com.orderflow.bindings.TwapExecutionAlgo;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -62,6 +64,23 @@ public final class BindingSmokeExample {
                 "SMOKE-1".equals(execution.orderState("SMOKE-1").clientOrderId),
                 "execution binding order-state mismatch"
             );
+
+            TwapConfig twapConfig = new TwapConfig(
+                "TWAP-PARENT", "ACC", "SIM", "TWAP", "SIM", "ES",
+                ExecutionSide.BUY, ExecutionOrderType.LIMIT, ExecutionTimeInForce.DAY,
+                100L, 5_000L, 0L, 1_000L, 11_000L, 10L, 25L, 0, 2_000L
+            );
+            try (TwapExecutionAlgo twap = new TwapExecutionAlgo(nativePath, twapConfig)) {
+                var child = twap.plan(1_000L, "TWAP-CHILD-1", "TWAP-ORDER-1", 1_001L)
+                    .orElseThrow(() -> new IllegalStateException("TWAP binding returned no due child"));
+                var childEvents = execution.submitOrder(child.request);
+                twap.commitPending();
+                childEvents.forEach(event ->
+                    twap.recordExecution(event.lastQty, event.leavesQty, event.orderStatus)
+                );
+                require(twap.progress().releasedQty == 20L, "TWAP released quantity mismatch");
+                require(twap.progress().completedQty == 20L, "TWAP completed quantity mismatch");
+            }
             execution.stop();
         }
 

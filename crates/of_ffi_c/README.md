@@ -290,6 +290,23 @@ Execution recovery diagnostics:
   counts, total checkpoint bytes, and the latest valid checkpoint id, covered
   WAL sequence, and creation timestamp when one exists.
 
+Execution-algorithm facade:
+
+- `of_execution_twap_algo_create` validates and owns one parent schedule.
+- `of_execution_twap_algo_plan` performs allocation-free integer planning and
+  returns an owned `of_execution_algo_child_plan_t`; `has_plan = 0` is a
+  successful no-op when no quantity is due.
+- Planning does not advance progress. Submit through the OMS, then call
+  `of_execution_twap_algo_commit_pending`; call
+  `of_execution_twap_algo_discard_pending` if submission did not occur.
+- Repeating `plan` with the same identifiers returns the same pending plan.
+  Different identifiers while pending fail with `OF_ERR_STATE`.
+- `of_execution_twap_algo_record_execution` folds canonical child status/fill
+  values into progress; `of_execution_twap_algo_progress` returns a
+  caller-owned snapshot.
+- The handle is single-owner and externally synchronized. Planning never
+  submits directly, bypasses risk, reads a clock, performs I/O, or allocates.
+
 ## Safety Contract
 
 Callers must:
@@ -304,7 +321,8 @@ Additional ownership rules:
 - snapshot getters that write into caller buffers do not allocate for the caller
 - functions returning owned `char*` require `of_string_free`
 - callback payload pointers are only valid for the duration of the callback
-- opaque `of_engine_t*` and `of_subscription_t*` handles must be destroyed/unsubscribed only through exported API calls
+- opaque engine, subscription, and TWAP handles must be destroyed/unsubscribed
+  only through their exported API calls
 
 ## Minimal C Example
 

@@ -2323,4 +2323,158 @@ mod tests {
         );
         of_execution_concurrent_engine_destroy(engine);
     }
+
+    #[test]
+    fn execution_twap_algo_abi_plans_commits_and_tracks_progress() {
+        let _guard = test_guard();
+        let parent_id = CString::new("PARENT-1").expect("cstring");
+        let account = CString::new("ACC").expect("cstring");
+        let route = CString::new("SIM").expect("cstring");
+        let strategy = CString::new("TWAP").expect("cstring");
+        let venue = CString::new("SIM").expect("cstring");
+        let instrument = CString::new("ES").expect("cstring");
+        let config = of_execution_twap_config_t {
+            parent_order_id: parent_id.as_ptr(),
+            account_id: account.as_ptr(),
+            route_id: route.as_ptr(),
+            strategy_id: strategy.as_ptr(),
+            venue: venue.as_ptr(),
+            instrument: instrument.as_ptr(),
+            side: 1,
+            order_type: 2,
+            time_in_force: 1,
+            total_qty: 100,
+            limit_price: 5_000,
+            stop_price: 0,
+            start_ns: 1_000,
+            end_ns: 11_000,
+            min_clip: 10,
+            max_clip: 25,
+            participation_cap_bps: 0,
+            slice_interval_ns: 2_000,
+        };
+        let mut algo = ptr::null_mut();
+        assert_eq!(
+            of_execution_twap_algo_create(&config, &mut algo),
+            of_error_t::OF_OK as i32
+        );
+        assert!(!algo.is_null());
+
+        let child = CString::new("CHILD-1").expect("cstring");
+        let client = CString::new("CLIENT-1").expect("cstring");
+        let mut plan = child_plan_to_ffi(None);
+        assert_eq!(
+            of_execution_twap_algo_plan(
+                algo,
+                1_000,
+                child.as_ptr(),
+                client.as_ptr(),
+                1_001,
+                &mut plan,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(plan.has_plan, 1);
+        assert_eq!(plan.quantity, 20);
+        assert_eq!(plan.limit_price, 5_000);
+
+        let mut retry = child_plan_to_ffi(None);
+        assert_eq!(
+            of_execution_twap_algo_plan(
+                algo,
+                2_000,
+                child.as_ptr(),
+                client.as_ptr(),
+                2_001,
+                &mut retry,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(retry.quantity, plan.quantity);
+        assert_eq!(retry.due_ns, plan.due_ns);
+
+        assert_eq!(
+            of_execution_twap_algo_commit_pending(algo),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(
+            of_execution_twap_algo_record_execution(algo, 5, 15, 3),
+            of_error_t::OF_OK as i32
+        );
+        let mut progress = of_execution_algo_progress_t {
+            target_qty: 0,
+            released_qty: 0,
+            completed_qty: 0,
+            open_qty: 0,
+            rejected_children: 0,
+            terminal_children: 0,
+            has_pending_plan: 0,
+        };
+        assert_eq!(
+            of_execution_twap_algo_progress(algo, &mut progress),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(progress.target_qty, 100);
+        assert_eq!(progress.released_qty, 20);
+        assert_eq!(progress.completed_qty, 5);
+        assert_eq!(progress.open_qty, 15);
+        assert_eq!(progress.has_pending_plan, 0);
+
+        let child2 = CString::new("CHILD-2").expect("cstring");
+        let client2 = CString::new("CLIENT-2").expect("cstring");
+        assert_eq!(
+            of_execution_twap_algo_plan(
+                algo,
+                3_000,
+                child2.as_ptr(),
+                client2.as_ptr(),
+                3_001,
+                &mut plan,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(plan.has_plan, 1);
+        assert_eq!(plan.quantity, 20);
+        assert_eq!(
+            of_execution_twap_algo_discard_pending(algo),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(
+            of_execution_twap_algo_commit_pending(algo),
+            of_error_t::OF_ERR_STATE as i32
+        );
+        of_execution_twap_algo_destroy(algo);
+    }
+
+    #[test]
+    fn execution_twap_algo_abi_rejects_invalid_config() {
+        let _guard = test_guard();
+        let value = CString::new("X").expect("cstring");
+        let config = of_execution_twap_config_t {
+            parent_order_id: value.as_ptr(),
+            account_id: value.as_ptr(),
+            route_id: value.as_ptr(),
+            strategy_id: value.as_ptr(),
+            venue: value.as_ptr(),
+            instrument: value.as_ptr(),
+            side: 1,
+            order_type: 2,
+            time_in_force: 1,
+            total_qty: 10,
+            limit_price: 100,
+            stop_price: 0,
+            start_ns: 1,
+            end_ns: 2,
+            min_clip: 1,
+            max_clip: 10,
+            participation_cap_bps: 0,
+            slice_interval_ns: 0,
+        };
+        let mut algo = ptr::null_mut();
+        assert_eq!(
+            of_execution_twap_algo_create(&config, &mut algo),
+            of_error_t::OF_ERR_INVALID_ARG as i32
+        );
+        assert!(algo.is_null());
+    }
 }
