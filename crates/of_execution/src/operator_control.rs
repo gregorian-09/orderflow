@@ -1426,11 +1426,7 @@ where
         request: CancelRequest,
         out: &mut ExecutionEventBuffer,
     ) -> ExecutionResult<()> {
-        self.journal.record_command(
-            crate::JournalCommandKind::Cancel,
-            request.client_order_id,
-            request.ts_recv_ns,
-        )?;
+        self.journal.record_cancel(&request)?;
         self.scratch.clear();
         self.adapter.cancel(&request, &mut self.scratch)?;
         self.metrics.cancelled = self.metrics.cancelled.saturating_add(1);
