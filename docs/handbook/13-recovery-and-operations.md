@@ -91,6 +91,15 @@ option. It validates existing frames before accepting new writes, owns
 monotonic WAL sequence assignment, detects checksum failures, and replays into
 the same `JournalRecord` model as the text journal.
 
+The engine calls the additive request-aware journal hooks `record_submit`,
+`record_cancel`, and `record_amend`. Binary WAL implementations encode complete
+typed request payloads, while the default hook implementations preserve the
+original `record_command(kind, id, timestamp)` contract for external journal
+implementors. Full command payloads let recovery create pending-new state before
+execution reports are applied and retain uncertain cancel/replace intent across
+a crash. Legacy payload-version-1 frames remain readable; they are projected to
+the unchanged public `JournalRecord::Command` shape.
+
 WAL sync policy is explicit:
 
 - `WalSyncPolicy::EveryRecord`: safest and highest latency.
@@ -136,6 +145,10 @@ Recovery rules:
 - validate monotonic WAL sequence continuity;
 - rebuild the manifest from segment bytes;
 - fail closed on corrupt frames, checksum mismatches, or sequence gaps.
+- restore full submit requests as `PendingNew` before applying later reports;
+- restore unacknowledged cancel/amend requests as `PendingCancel` or
+  `PendingReplace` and require venue reconciliation;
+- never invent missing fields for legacy command-only records.
 
 The `manifest` file is an operator inventory. It is not trusted as the source
 of truth during recovery because the active segment can be newer than the last

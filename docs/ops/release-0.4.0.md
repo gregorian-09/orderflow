@@ -156,6 +156,10 @@ payload and require no ABI or method-signature change.
   injection, cancel/replace race handling, recovery restatement, degraded
   malformed-input behavior, transcript evidence, and completion coverage
 - in-memory and file-backed execution journal helpers
+- binary single-file and segmented WAL journals with versioned full submit,
+  cancel, and amend payloads, backward-compatible legacy replay, deterministic
+  no-checkpoint order reconstruction, and explicit pending cancel/replace
+  recovery states
 - recovery and open-order reconciliation primitives
 - generalized recovery reconciliation across local OMS, WAL, checkpoint,
   adapter recovery, independent drop copy, broker positions, and position

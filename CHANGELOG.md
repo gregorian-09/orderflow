@@ -6,6 +6,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added backward-compatible full-payload OMS WAL command frames and
+  request-aware `ExecutionJournal` hooks. Binary journals now retain complete
+  submit, cancel, and amend requests, recovery can reconstruct orders without a
+  checkpoint, and crash-boundary cancel/replace intent remains explicitly
+  pending until venue reconciliation. Legacy command frames and the public
+  `JournalRecord` replay shape remain supported unchanged.
 - Added config-driven signal validation across Rust, C, Python, and Java:
   `SignalValidationReport::json_report`, registry validation diagnostics,
   `of_validate_signal_config_json`, `of_validate_signal_replay_json`, Python
