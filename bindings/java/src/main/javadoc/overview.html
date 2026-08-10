@@ -38,6 +38,7 @@
       <li><code>Symbol</code>: venue + instrument + depth descriptor.</li>
       <li><code>OrderflowEvent</code>: callback envelope.</li>
       <li><code>EventListener</code>: callback interface.</li>
+      <li><code>SignalConfig</code> and <code>SignalValidationReport</code>: offline registry and replay validation.</li>
       <li>constants: <code>StreamKind</code>, <code>Side</code>, <code>BookAction</code>, <code>DataQualityFlags</code>.</li>
     </ul>
 
@@ -55,6 +56,15 @@
       through <code>ingestTrade(...)</code> and <code>ingestBook(...)</code>.
       Health state can be updated via <code>setExternalReconnecting(...)</code>
       and <code>externalHealthTick()</code>.
+    </p>
+
+    <h2>Offline Signal Validation</h2>
+    <p>
+      <code>OrderflowEngine.validateSignalConfig(...)</code> checks descriptor
+      parameters, and <code>validateSignalReplay(...)</code> constructs the
+      selected built-in over ordered analytics observations. The parsed report
+      retains complete versioned JSON for samples and timestamp warnings. These
+      static calls do not create a live engine or send orders.
     </p>
 
     <h2>Native Library Resolution</h2>

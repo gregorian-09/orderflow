@@ -53,6 +53,9 @@ Highlights:
   audit and dashboard diagnostics
 - signal metrics through `engine.signalMetrics()` for state counts,
   confidence, quality, and explanation coverage diagnostics
+- offline config-driven signal validation through `SignalConfig`,
+  `OrderflowEngine.validateSignalConfig`, and
+  `OrderflowEngine.validateSignalReplay`
 - manifest/header-driven JNA declaration generation with CI drift checks,
   while typed high-level wrappers and lifecycle ownership remain manual
 - analytics-to-execution examples in this README and the handbook
@@ -169,6 +172,52 @@ submission decisions should still flow through explicit strategy/risk/OMS code.
 `engine.signalMetrics()` returns a compact runtime summary of the current
 signal cache: state counts, directional count, average confidence, quality
 flagged signals, and explanation coverage.
+
+### Config-driven replay validation
+
+The static validation facade does not require a live `OrderflowEngine`. It
+validates descriptor parameters, constructs the selected built-in natively,
+evaluates ordered observations, and parses the operational report summary.
+
+```java
+import com.orderflow.bindings.OrderflowEngine;
+import com.orderflow.bindings.SignalConfig;
+import com.orderflow.bindings.SignalConfigParameter;
+import com.orderflow.bindings.SignalValidationConfig;
+import com.orderflow.bindings.SignalValidationEvent;
+import java.util.List;
+
+SignalConfig signal = new SignalConfig(
+    "delta_momentum_v1",
+    List.of(SignalConfigParameter.integer("threshold", 10L))
+);
+
+var configResult = OrderflowEngine.validateSignalConfig(signal, null);
+if (!configResult.valid) {
+    throw new IllegalArgumentException(configResult.error);
+}
+
+var report = OrderflowEngine.validateSignalReplay(
+    signal,
+    List.of(
+        new SignalValidationEvent(20, 20, 20, 0, 100, 100, 99, 101, 1L),
+        new SignalValidationEvent(-20, 0, 20, 20, 90, 95, 89, 101, 2L),
+        new SignalValidationEvent(-20, -20, 20, 40, 80, 90, 79, 101, 3L)
+    ),
+    new SignalValidationConfig(1, 0, 0, true, true),
+    null
+);
+
+System.out.println(report.directionalAccuracyBps);
+System.out.println(report.labelCoverageBps);
+System.out.println(report.rawJson); // config, samples, and structured warnings
+```
+
+`SignalValidationReport` parses fixed operational counters and retains the
+complete versioned JSON in `rawJson`. Invalid registry construction throws
+`OrderflowArgException`; call `validateSignalConfig` first for a non-throwing
+configuration result. Replay validation is a research/CI path and does not
+mutate live engine state or submit OMS orders.
 
 ## Java Version
 

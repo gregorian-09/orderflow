@@ -9,7 +9,7 @@ wrappers remain documented in their binding-specific README files.
 
 ## Summary
 
-- Exported symbols: `94`
+- Exported symbols: `96`
 - Families: `6`
 
 ## Binding Compatibility Matrix
@@ -114,6 +114,8 @@ interface declaration.
 | `of_get_signal_descriptors_json` | `signals` | yes | yes | yes | `JsonFacade` |
 | `of_get_signal_explanation_json` | `signals` | yes | yes | yes | `JsonFacade` |
 | `of_get_signal_metrics_json` | `signals` | yes | yes | yes | `JsonFacade` |
+| `of_validate_signal_config_json` | `signals` | yes | yes | yes | `JsonFacade` |
+| `of_validate_signal_replay_json` | `signals` | yes | yes | yes | `JsonFacade` |
 | `of_string_free` | `runtime` | yes | yes | yes | `LowLevelGenerated` |
 
 ## Adapters
@@ -244,10 +246,12 @@ Symbols: `19`
 
 ## Signals
 
-Symbols: `3`
+Symbols: `5`
 
 | Function | Return | Ownership | Introduced | Binding Exposure |
 | --- | --- | --- | --- | --- |
 | `of_get_signal_descriptors_json` | `int32_t` | `library_allocated_string` | `0.4.0` | `JsonFacade` |
 | `of_get_signal_explanation_json` | `int32_t` | `library_allocated_string` | `0.4.0` | `JsonFacade` |
 | `of_get_signal_metrics_json` | `int32_t` | `library_allocated_string` | `0.4.0` | `JsonFacade` |
+| `of_validate_signal_config_json` | `int32_t` | `library_allocated_string` | `0.4.0` | `JsonFacade` |
+| `of_validate_signal_replay_json` | `int32_t` | `library_allocated_string` | `0.4.0` | `JsonFacade` |

@@ -21,10 +21,16 @@ from orderflow import (  # noqa: E402
     RiskLimits,
     RouteConfig,
     Side,
+    SignalConfig,
+    SignalConfigParameter,
+    SignalValidationConfig,
+    SignalValidationEvent,
     StreamKind,
     Symbol,
     TwapConfig,
     TwapExecutionAlgo,
+    validate_signal_config,
+    validate_signal_replay,
 )
 
 
@@ -141,6 +147,26 @@ def main() -> int:
             progress = twap.progress()
             require(progress.released_qty == 20, "TWAP released quantity mismatch")
             require(progress.completed_qty == 20, "TWAP completed quantity mismatch")
+
+    signal_config = SignalConfig(
+        "delta_momentum_v1",
+        (SignalConfigParameter("threshold", 10),),
+    )
+    config_result = validate_signal_config(signal_config, library_path=str(lib_path))
+    require(config_result.get("valid") is True, "signal config validation failed")
+    validation_report = validate_signal_replay(
+        signal_config,
+        (
+            SignalValidationEvent(delta=20, last_price=100, ts_exchange_ns=1),
+            SignalValidationEvent(delta=-20, last_price=90, ts_exchange_ns=2),
+            SignalValidationEvent(delta=-20, last_price=80, ts_exchange_ns=3),
+        ),
+        SignalValidationConfig(store_samples=True),
+        library_path=str(lib_path),
+    )
+    require(validation_report.evaluated_events == 3, "signal validation event count mismatch")
+    require(validation_report.directional_accuracy_bps == 5_000, "signal accuracy mismatch")
+    require(len(validation_report.samples) == 2, "signal validation sample count mismatch")
 
     print("python binding smoke: PASS")
     return 0

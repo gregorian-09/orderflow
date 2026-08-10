@@ -15,6 +15,9 @@ Latest release: `0.4.0`.
 - C, Python, and Java expose a deterministic TWAP parent facade whose owned
   child request must still be submitted through the OMS before release progress
   is committed.
+- C, Python, and Java expose an offline signal validation facade for
+  descriptor-checked built-in construction, ordered analytics replay, and
+  versioned markout reports without mutating live engine state.
 - `bindings/api_manifest.toml` is checked against the C header, exported native
   symbols, Python ctypes registrations, and Java JNA declarations so low-level
   binding plumbing cannot silently drift from the ABI inventory.

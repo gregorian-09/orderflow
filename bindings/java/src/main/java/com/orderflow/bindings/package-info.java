@@ -14,6 +14,9 @@
  * <ul>
  *   <li>{@link com.orderflow.bindings.Symbol} identifies venue + instrument + depth intent.</li>
  *   <li>{@link com.orderflow.bindings.EngineConfig} controls runtime behavior.</li>
+ *   <li>{@link com.orderflow.bindings.SignalConfig} and
+ *       {@link com.orderflow.bindings.SignalValidationReport} support offline,
+ *       config-driven built-in signal replay validation.</li>
  *   <li>Constants classes ({@link com.orderflow.bindings.StreamKind},
  *       {@link com.orderflow.bindings.Side}, {@link com.orderflow.bindings.BookAction},
  *       {@link com.orderflow.bindings.DataQualityFlags}) provide stable numeric mappings.</li>
@@ -29,6 +32,11 @@
  * <h2>Threading/Callbacks</h2>
  * <p>Event callbacks are delivered during {@code pollOnce(...)} and during external ingest calls.
  * Keep callback handlers fast and non-blocking.
+ *
+ * <h2>Offline Signal Validation</h2>
+ * <p>{@link com.orderflow.bindings.OrderflowEngine#validateSignalReplay} is a
+ * static research/CI facade. It does not create a live engine, mutate runtime
+ * signal state, or submit orders.</p>
  *
  * <h2>Project Docs</h2>
  * <ul>

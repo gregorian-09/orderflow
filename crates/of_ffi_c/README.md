@@ -60,6 +60,11 @@ New execution ABI concepts:
   signal emitted for one symbol
 - `of_get_signal_metrics_json`: allocated JSON summary of signal state counts,
   confidence, quality flags, and explanation coverage
+- `of_validate_signal_config_json`: descriptor-checked built-in signal config
+  validation with structured diagnostics
+- `of_validate_signal_replay_json`: config-driven built-in construction and
+  ordered replay validation with markout metrics, optional samples, and
+  timestamp-order warnings
 
 The execution ABI is additive and intentionally separate from the market-data
 engine ABI. That separation lets C, Python, Java, and other FFI users adopt OMS
@@ -115,8 +120,61 @@ Exported C functions:
 - `of_get_signal_descriptors_json`
 - `of_get_signal_explanation_json`
 - `of_get_signal_metrics_json`
+- `of_validate_signal_config_json`
+- `of_validate_signal_replay_json`
 - `of_string_free`
 - `of_engine_poll_once`
+
+## Offline Signal Validation
+
+Signal validation is independent of `of_engine_t`. The caller owns descriptor
+parameters and replay-event arrays for the duration of the synchronous call;
+the library owns the returned JSON until `of_string_free`.
+
+```c
+of_signal_config_parameter_t threshold = {
+  .name = "threshold",
+  .kind = OF_SIGNAL_PARAMETER_INTEGER,
+  .integer_value = 10,
+};
+of_signal_validation_event_t events[] = {
+  {.delta = 20, .last_price = 100, .ts_exchange_ns = 1, .has_ts_exchange_ns = 1},
+  {.delta = -20, .last_price = 90, .ts_exchange_ns = 2, .has_ts_exchange_ns = 1},
+  {.delta = -20, .last_price = 80, .ts_exchange_ns = 3, .has_ts_exchange_ns = 1},
+};
+of_signal_validation_config_t policy = {
+  .markout_horizon_events = 1,
+  .flat_price_threshold = 0,
+  .min_confidence_bps = 0,
+  .store_samples = 1,
+  .check_monotonic_timestamps = 1,
+};
+const char* report = NULL;
+uint32_t report_len = 0;
+int32_t rc = of_validate_signal_replay_json(
+  "delta_momentum_v1",
+  &threshold,
+  1,
+  events,
+  3,
+  &policy,
+  &report,
+  &report_len
+);
+if (rc == OF_OK) {
+  /* Parse exactly report_len bytes; inspect valid/error before report fields. */
+  of_string_free(report);
+}
+```
+
+`of_validate_signal_config_json` returns `OF_OK` for a well-formed call even
+when descriptor validation rejects the configuration; inspect `valid` and
+`error`. `of_validate_signal_replay_json` uses the same diagnostic envelope for
+unknown ids or invalid parameters. Successful reports have `schema_version: 1`
+and include config, summary counters, optional samples, and structured
+warnings. A zero event horizon is normalized to one by the Rust harness and
+reported as a warning. This is a research/replay API, not a live trading or OMS
+submission path.
 
 `of_get_book_snapshot` returns a materialized JSON snapshot with:
 

@@ -433,6 +433,48 @@ class OfExecutionAlgoProgress(ctypes.Structure):
     ]
 
 
+class OfSignalConfigParameter(ctypes.Structure):
+    """ctypes mirror of ``of_signal_config_parameter_t``."""
+
+    _fields_ = [
+        ("name", ctypes.c_char_p),
+        ("kind", ctypes.c_uint32),
+        ("integer_value", ctypes.c_int64),
+        ("float_value", ctypes.c_double),
+        ("boolean_value", ctypes.c_uint8),
+        ("text_value", ctypes.c_char_p),
+    ]
+
+
+class OfSignalValidationConfig(ctypes.Structure):
+    """ctypes mirror of ``of_signal_validation_config_t``."""
+
+    _fields_ = [
+        ("markout_horizon_events", ctypes.c_uint32),
+        ("flat_price_threshold", ctypes.c_int64),
+        ("min_confidence_bps", ctypes.c_uint16),
+        ("store_samples", ctypes.c_uint8),
+        ("check_monotonic_timestamps", ctypes.c_uint8),
+    ]
+
+
+class OfSignalValidationEvent(ctypes.Structure):
+    """ctypes mirror of ``of_signal_validation_event_t``."""
+
+    _fields_ = [
+        ("delta", ctypes.c_int64),
+        ("cumulative_delta", ctypes.c_int64),
+        ("buy_volume", ctypes.c_int64),
+        ("sell_volume", ctypes.c_int64),
+        ("last_price", ctypes.c_int64),
+        ("point_of_control", ctypes.c_int64),
+        ("value_area_low", ctypes.c_int64),
+        ("value_area_high", ctypes.c_int64),
+        ("ts_exchange_ns", ctypes.c_uint64),
+        ("has_ts_exchange_ns", ctypes.c_uint8),
+    ]
+
+
 def _library_filename() -> str:
     if sys.platform == "win32":
         return "of_ffi_c.dll"

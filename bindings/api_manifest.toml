@@ -198,6 +198,8 @@ functions = [
   "of_get_signal_descriptors_json",
   "of_get_signal_explanation_json",
   "of_get_signal_metrics_json",
+  "of_validate_signal_config_json",
+  "of_validate_signal_replay_json",
 ]
 
 [[function_groups]]

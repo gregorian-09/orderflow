@@ -42,6 +42,8 @@ Native lookup order:
 - execution: `OrderflowExecutionEngine`,
   `ConcurrentOrderflowExecutionEngine`, `TwapExecutionAlgo`, `TwapConfig`,
   `AlgoChildPlan`, `AlgoProgress`
+- signal research: `SignalConfig`, `SignalConfigParameter`,
+  `SignalValidationConfig`, `SignalValidationEvent`, `SignalValidationReport`
 
 ### Engine API
 
@@ -112,6 +114,20 @@ The Java binding retries with a larger native buffer automatically when snapshot
 - call `commitPending()` only after submission succeeds, otherwise
   `discardPending()`
 - fold child events with `recordExecution(...)` and inspect `progress()`
+
+### Offline signal validation
+
+- discover descriptor ids and parameter constraints with
+  `OrderflowEngine.signalDescriptors(...)`
+- create typed parameters with `SignalConfigParameter.integer`, `floating`,
+  `bool`, or `text`
+- call `OrderflowEngine.validateSignalConfig(...)` for a non-throwing config
+  result
+- call `OrderflowEngine.validateSignalReplay(...)` with ordered observations
+- use parsed operational fields and retain `rawJson` for samples/warnings
+
+These static methods do not create or mutate a live engine. Native registry
+construction failures become `OrderflowArgException` during replay validation.
 
 ## Distribution and Quality Controls
 
