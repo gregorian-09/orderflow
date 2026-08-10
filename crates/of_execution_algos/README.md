@@ -1164,9 +1164,8 @@ assert_eq!(plan.request().quantity, OrderQty(25));
 
 ## Compatibility
 
-This crate is additive. It does not change existing `of_execution`,
-`of_execution_core`, C ABI, Python, or Java APIs. The intended integration path
-is:
+This crate is additive. It does not change existing `of_execution` or
+`of_execution_core` APIs. The intended integration path is:
 
 1. build a parent order in `of_execution_algos`,
 2. ask an algorithm planner for child-order decisions,
@@ -1175,3 +1174,12 @@ is:
 
 Future execution helpers should build on this substrate instead of bypassing
 it.
+
+`of_ffi_c`, Python, and Java expose the stable TWAP subset through a separate
+opaque handle without exposing these Rust layouts. Planning creates an owned
+canonical child request, but released quantity advances only after the host
+submits through `ExecutionEngine` and explicitly commits the pending plan.
+Failed submissions are discarded, and fills/statuses are folded back into
+progress. Borrowed VWAP curves and caller-owned SOR/liquidity/basket candidate
+arrays remain native Rust APIs so portable wrappers do not hide allocation and
+lifetime costs.

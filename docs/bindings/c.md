@@ -132,3 +132,14 @@ python3 tools/release/sync_binding_versions.py --check
 - `docs/handbook/05-api-reference.md`
 - `docs/api/README.md`
 - `examples/c/basic.c`
+
+## TWAP Algorithm Handle
+
+`of_execution_twap_algo_t` is an additive, single-owner planner handle.
+`of_execution_twap_algo_plan` returns a fixed-layout child request without
+advancing progress. Submit that request through the execution engine, then call
+`of_execution_twap_algo_commit_pending`; call
+`of_execution_twap_algo_discard_pending` if no submit occurred. Fold child
+fills/statuses with `of_execution_twap_algo_record_execution` and inspect
+`of_execution_algo_progress_t` at any time. Planning performs no JSON, I/O,
+clock reads, or heap allocation.

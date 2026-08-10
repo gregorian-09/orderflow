@@ -1622,5 +1622,34 @@ This crate is additive:
 - it does not add C/Python/Java APIs yet,
 - it does not force algorithm support on direct OMS users.
 
-Bindings can expose algorithmic execution later through additive handles or
-high-level wrappers after the Rust surface has stabilized.
+## Portable TWAP Binding Facade
+
+`of_ffi_c`, Python, and Java expose the stable TWAP subset through an additive
+opaque handle. Its lifecycle is transactional:
+
+```mermaid
+sequenceDiagram
+    participant Host
+    participant Algo as TWAP handle
+    participant OMS as ExecutionEngine
+    Host->>Algo: plan(now, child id, client id)
+    Algo-->>Host: owned child plan (progress unchanged)
+    Host->>OMS: submit canonical OrderRequest
+    alt submission succeeds
+        Host->>Algo: commit pending
+        Host->>Algo: record execution events
+    else submission fails or is abandoned
+        Host->>Algo: discard pending
+    end
+```
+
+This prevents retries from double-counting released quantity and keeps risk,
+journaling, adapter dispatch, kill switches, and reconciliation inside the OMS.
+Planning uses fixed layouts and integer arithmetic with no JSON, I/O, clock
+reads, or heap allocation. The handle is single-owner; applications sharing it
+across threads must serialize access.
+
+Rust retains the complete typed planner family. Borrowed VWAP curves and
+caller-owned SOR/liquidity/basket candidate arrays remain native-only because
+copying them into general-purpose language wrappers would hide allocation and
+lifetime costs.

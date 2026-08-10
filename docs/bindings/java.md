@@ -39,6 +39,9 @@ Native lookup order:
 - `Symbol`
 - `OrderflowEvent`
 - `EventListener`
+- execution: `OrderflowExecutionEngine`,
+  `ConcurrentOrderflowExecutionEngine`, `TwapExecutionAlgo`, `TwapConfig`,
+  `AlgoChildPlan`, `AlgoProgress`
 
 ### Engine API
 
@@ -100,6 +103,15 @@ The Java binding retries with a larger native buffer automatically when snapshot
 - configure policy with `configureExternalFeed(staleAfterMs, enforceSequence)`
 - map broker payloads into `ingestTrade` / `ingestBook`
 - set reconnect state explicitly during broker reconnect windows
+
+### TWAP to OMS
+
+- call `TwapExecutionAlgo.plan(...)` for an owned canonical child request
+- submit through `OrderflowExecutionEngine.submitOrder` so risk, journal, and
+  adapter paths remain authoritative
+- call `commitPending()` only after submission succeeds, otherwise
+  `discardPending()`
+- fold child events with `recordExecution(...)` and inspect `progress()`
 
 ## Distribution and Quality Controls
 

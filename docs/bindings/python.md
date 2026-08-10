@@ -39,6 +39,8 @@ Native lookup order:
 - `Symbol(venue, symbol, depth_levels=10)`
 - `EngineConfig(...)`
 - `ExternalFeedPolicy(stale_after_ms=15000, enforce_sequence=True)`
+- execution: `ExecutionEngine`, `ConcurrentExecutionEngine`,
+  `TwapExecutionAlgo`, `TwapConfig`, `AlgoChildPlan`, `AlgoProgress`
 
 ### Engine
 
@@ -97,6 +99,17 @@ The Python binding automatically retries with a larger native buffer when a snap
 - configure policy with `configure_external_feed(...)`
 - inject events with `ingest_trade` / `ingest_book`
 - use `set_external_reconnecting` and `external_health_tick` for feed-state signaling
+
+### TWAP to OMS
+
+- call `TwapExecutionAlgo.plan(...)` to obtain an owned canonical child
+  `OrderRequest`
+- submit through `ExecutionEngine.submit_order` so risk, journal, and adapter
+  paths remain authoritative
+- call `commit_pending()` only after submission succeeds, otherwise
+  `discard_pending()`
+- fold returned child events with `record_execution(...)` and inspect
+  `progress()`
 
 ## Distribution and Quality Controls
 
