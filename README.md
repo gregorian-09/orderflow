@@ -58,6 +58,9 @@ Major additions:
   buffers, and debug rendering outside the hot path
 - adapter scaffolding: FIX execution-report mapping and fail-closed adapter shell
   for provider adapter authors
+- market-data operations: additive typed active-adapter mode/session status,
+  subscription inventory, queue/loss/freshness/raw-capture diagnostics, and
+  endpoint redaction that never returns userinfo, paths, queries, or fragments
 - execution algorithms: additive parent/child order primitives, fixed-capacity
   decision buffers, OMS execution-event progress folding, and deterministic
   TWAP slice planning in `of_execution_algos`

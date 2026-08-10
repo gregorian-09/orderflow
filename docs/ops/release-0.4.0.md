@@ -110,10 +110,23 @@ adding adapter-authoring and operator discovery helpers:
   `AdapterConformanceReport`
 - `adapter_quality_requirements(...)`,
   `evaluate_adapter_conformance(...)`, and `adapter_conformance_report(...)`
+- additive `AdapterOperationalStatus`, `AdapterRuntimeMode`, and
+  `AdapterConnectionState` types plus a defaulted
+  `MarketDataAdapter::operational_status()` method
+- typed mode/session, reconnect, subscription, queue, loss, freshness, raw
+  capture, and activity-age fields in active runtime status and metrics JSON
+- centralized endpoint redaction that exposes scheme plus authority only and
+  removes user information, paths, queries, and fragments
 
 The conformance helpers are conservative. They report missing capability flags
 or evidence for a requested quality target and do not construct adapters,
 connect sockets, or upgrade any built-in provider claim automatically.
+
+The operational-status method is defaulted, so existing third-party adapters
+continue to compile. Status construction is queried explicitly and does not add
+symbol sorting or string allocation to adapter polling. Existing C, Python, and
+Java status functions receive the new fields through their existing JSON
+payload and require no ABI or method-signature change.
 
 ### 2. Execution core
 

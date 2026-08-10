@@ -6,6 +6,15 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added typed market-data adapter operational status for transport mode,
+  connection state, redacted endpoint, application name, reconnect attempts,
+  sorted subscriptions, queue utilization, drop/gap counters, stale state,
+  raw-capture utilization, and activity ages. The adapter trait method is
+  defaulted for source compatibility, status work stays off the event hot path,
+  and existing runtime/C/Python/Java status JSON gains fields additively.
+- Hardened built-in adapter diagnostics so endpoint user information, path,
+  query, and fragment components cannot enter status output; this also closes
+  the previous Rithmic `protocol_info` endpoint disclosure.
 - Added production OMS incident bundle export with a fail-closed 12-class
   evidence profile, explicit custom profile, bounded streaming collection,
   portable path and symlink defenses, SHA-256 payload/manifest inventory,

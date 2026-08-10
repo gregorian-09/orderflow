@@ -10,7 +10,7 @@ signals, book state, persistence, health reporting, and external ingest flows.
 | `EngineConfig` | struct | Runtime control-plane configuration |
 | `RuntimeError` | enum | Runtime error contract |
 | `ExternalFeedPolicy` | struct | External ingest supervision rules |
-| `RuntimeAdapterStatus` | struct | Active adapter descriptor plus health snapshot |
+| `RuntimeAdapterStatus` | struct | Descriptor, compatibility health, and typed operational status |
 | `Engine<A, S>` | struct | Generic runtime |
 | `DefaultEngine` | type alias | Runtime with boxed adapter and default signal |
 | `ConfigCompatibilityMode` | enum | Config loader compatibility state |
@@ -191,7 +191,8 @@ Important rules:
 - `adapter_inventory_json()` is the build/provider catalog used by dashboards,
   bindings, and CLIs before attempting provider-specific configuration.
 - `active_adapter_status_json()` combines static descriptor fields with current
-  adapter health, `health_seq`, and circuit-breaker state.
+  adapter health, typed operational status, `health_seq`, and circuit-breaker
+  state.
 - `signal_descriptor_inventory_json()` is the built-in signal catalog used by
   dashboards, config tools, and binding discovery helpers.
 - `signal_explanation_json(symbol)` is the latest per-symbol signal
@@ -206,6 +207,33 @@ Important rules:
 - Circuit-breaker state is exposed as additive `circuit_breaker_*` fields.
 - `max_events_per_poll` and `backpressure_dropped_events` are included when
   inspecting runtime health/metrics payloads.
+
+### Active adapter operational fields
+
+The status object and each `metrics_json().adapters[]` entry retain the original
+descriptor/health fields and add this stable structured surface:
+
+| Field | Meaning |
+| --- | --- |
+| `mode` | `mock`, `live`, `replay`, `bridge`, or `unknown` |
+| `connection_state` | Disconnected/connecting/streaming/reconnecting/backoff/replay state |
+| `endpoint_redacted` | Scheme and authority only, or `null` |
+| `app_name` | Non-secret provider application name, or `null` |
+| `reconnect_attempt` | Current consecutive reconnect attempt |
+| `subscription_count` | Unique active symbol count |
+| `subscribed_symbols` | Sorted `{venue, symbol}` records |
+| `queue_depth`, `queue_capacity` | Adapter-side buffering utilization |
+| `dropped_events`, `gap_count` | Loss/integrity counters |
+| `stale` | Provider-specific freshness failure |
+| `raw_capture_enabled`, `raw_capture_depth`, `raw_capture_capacity` | Bounded raw-message capture state |
+| `last_message_age_ms`, `last_market_data_age_ms` | Optional freshness ages |
+
+Status collection is a control-plane operation. It may clone and sort symbol
+ids, but it is never executed by the event hot path. Endpoint values remove
+userinfo, path, query, and fragment components to avoid exposing provider
+credentials, listen keys, and private stream identifiers. Unknown fields remain
+zero or `null`; hosts should use adapter descriptors to distinguish unsupported
+capabilities from observed zero activity.
 
 ## Backpressure Rules
 
