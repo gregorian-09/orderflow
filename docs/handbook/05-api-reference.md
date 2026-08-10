@@ -991,6 +991,14 @@ Public FIX codec types:
 - `FixDecoder`
 - `FixEncoder`
 - `FixSessionState`
+- `FixSessionEngineConfig`
+- `FixSessionConfigError`
+- `FixSessionEngine`
+- `FixSessionAction`
+- `FixSessionSendKind`
+- `FixSessionDisconnectReason`
+- `FixSessionMetrics`
+- `FixSessionError`
 - `FixSequenceTracker`
 - `FixSequenceAction`
 - `FixSequenceError`

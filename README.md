@@ -119,7 +119,7 @@ Start here:
 | Layer | Additive API |
 |------|--------------|
 | Rust core | `of_execution_core` order IDs, requests, events, state machine, risk |
-| FIX codec | `of_fix` borrowed tag-value parser, validator, profile rules, and encoder |
+| FIX protocol | `of_fix` borrowed tag-value codec, profile rules, durable sequence/resend primitives, and transport-independent session engine |
 | Rust engine | `of_execution` adapter trait, bounded event buffer, simulator, journal/recovery, operator controls, and verifiable incident bundles |
 | Adapter scaffold | `of_execution_adapters::fix` execution-report mapper and FIX capabilities |
 | Execution algos | `of_execution_algos` parent/child substrate and deterministic TWAP planner |
