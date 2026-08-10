@@ -9,7 +9,7 @@ wrappers remain documented in their binding-specific README files.
 
 ## Summary
 
-- Exported symbols: `96`
+- Exported symbols: `97`
 - Families: `6`
 
 ## Binding Compatibility Matrix
@@ -45,6 +45,7 @@ interface declaration.
 | `of_execution_concurrent_amend_order` | `execution` | yes | yes | yes | `LowLevelGenerated` |
 | `of_execution_concurrent_poll` | `execution` | yes | yes | yes | `LowLevelGenerated` |
 | `of_execution_concurrent_try_recv_report` | `execution` | yes | yes | yes | `LowLevelGenerated` |
+| `of_execution_recovery_report_json` | `execution` | yes | yes | yes | `JsonFacade` |
 | `of_execution_engine_destroy` | `execution` | yes | yes | yes | `LowLevelGenerated` |
 | `of_execution_concurrent_engine_destroy` | `execution` | yes | yes | yes | `LowLevelGenerated` |
 | `of_execution_twap_algo_create` | `execution_algorithms` | yes | yes | yes | `HandleFacade` |
@@ -175,7 +176,7 @@ Symbols: `39`
 
 ## Execution
 
-Symbols: `24`
+Symbols: `25`
 
 | Function | Return | Ownership | Introduced | Binding Exposure |
 | --- | --- | --- | --- | --- |
@@ -201,6 +202,7 @@ Symbols: `24`
 | `of_execution_concurrent_amend_order` | `int32_t` | `caller_owned_output` | `pre-manifest` | `LowLevelGenerated` |
 | `of_execution_concurrent_poll` | `int32_t` | `caller_owned_output` | `pre-manifest` | `LowLevelGenerated` |
 | `of_execution_concurrent_try_recv_report` | `int32_t` | `caller_owned_output` | `pre-manifest` | `LowLevelGenerated` |
+| `of_execution_recovery_report_json` | `int32_t` | `library_allocated_string` | `0.4.0` | `JsonFacade` |
 | `of_execution_engine_destroy` | `void` | `releases_handle` | `pre-manifest` | `LowLevelGenerated` |
 | `of_execution_concurrent_engine_destroy` | `void` | `releases_handle` | `pre-manifest` | `LowLevelGenerated` |
 

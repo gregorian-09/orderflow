@@ -61,6 +61,16 @@ functions = [
 
 [[function_groups]]
 family = "execution"
+returns = "int32_t"
+ownership = "library_allocated_string"
+introduced = "0.4.0"
+binding_exposure = "JsonFacade"
+functions = [
+  "of_execution_recovery_report_json",
+]
+
+[[function_groups]]
+family = "execution"
 returns = "void"
 ownership = "releases_handle"
 functions = [

@@ -349,6 +349,16 @@ class OfExecutionCheckpointStoreIntegrityReport(ctypes.Structure):
     ]
 
 
+class OfExecutionRecoveryConfig(ctypes.Structure):
+    """ctypes mirror of `of_execution_recovery_config_t`."""
+
+    _fields_ = [
+        ("wal_root", c_char_p),
+        ("checkpoint_root", c_char_p),
+        ("require_checkpoint", c_uint8),
+    ]
+
+
 class OfExecutionConcurrentConfig(ctypes.Structure):
     """ctypes mirror of `of_execution_concurrent_config_t`."""
 

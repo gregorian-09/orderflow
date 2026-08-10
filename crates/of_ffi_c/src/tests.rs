@@ -2223,6 +2223,94 @@ mod tests {
     }
 
     #[test]
+    fn execution_recovery_report_json_recovers_full_payload_wal() {
+        let _guard = test_guard();
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-ffi-recovery-report-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let request = of_execution_core::OrderRequest {
+            client_order_id: of_execution_core::ClientOrderId::new("FFI-RECOVERY")
+                .expect("client id"),
+            account_id: of_execution_core::AccountId::new("ACC").expect("account"),
+            route_id: of_execution_core::RouteId::new("SIM").expect("route"),
+            strategy_id: of_execution_core::StrategyId::new("TEST").expect("strategy"),
+            symbol: of_execution_core::ExecutionSymbol::new("SIM", "ES").expect("symbol"),
+            side: of_execution_core::OrderSide::Buy,
+            order_type: of_execution_core::OrderType::Limit,
+            time_in_force: of_execution_core::TimeInForce::Day,
+            quantity: of_execution_core::OrderQty(10),
+            limit_price: of_execution_core::OrderPrice(5_000),
+            stop_price: of_execution_core::OrderPrice(0),
+            ts_exchange_ns: 1,
+            ts_recv_ns: 2,
+        };
+        {
+            let mut journal = of_execution::SegmentedWalExecutionJournal::open(
+                of_execution::WalSegmentConfig::new(&root)
+                    .with_sync_policy(of_execution_core::WalSyncPolicy::Never),
+            )
+            .expect("segmented wal");
+            of_execution::ExecutionJournal::record_submit(&mut journal, &request)
+                .expect("record submit");
+            of_execution::ExecutionJournal::record_event(
+                &mut journal,
+                &of_execution_core::ExecutionEvent::accepted(
+                    &request,
+                    of_execution_core::VenueOrderId::new("V1").expect("venue order"),
+                ),
+            )
+            .expect("record event");
+        }
+
+        let root_c = CString::new(root.to_string_lossy().as_bytes()).expect("cstring");
+        let config = of_execution_recovery_config_t {
+            wal_root: root_c.as_ptr(),
+            checkpoint_root: ptr::null(),
+            require_checkpoint: 0,
+        };
+        let mut out: *const c_char = ptr::null();
+        let mut out_len = 0_u32;
+        assert_eq!(
+            of_execution_recovery_report_json(&config, &mut out, &mut out_len),
+            of_error_t::OF_OK as i32
+        );
+        let json = unsafe {
+            String::from_utf8_lossy(std::slice::from_raw_parts(
+                out.cast::<u8>(),
+                out_len as usize,
+            ))
+            .to_string()
+        };
+        assert!(json.contains("\"schema_version\":1"));
+        assert!(json.contains("\"orders\":1"));
+        assert!(json.contains("\"commands_seen\":1"));
+        assert!(json.contains("\"events_applied\":1"));
+        assert!(json.contains("\"venue_reconciliation_required\":true"));
+        assert!(json.contains("\"submissions_enabled\":false"));
+        of_string_free(out);
+
+        let invalid = of_execution_recovery_config_t {
+            require_checkpoint: 2,
+            ..config
+        };
+        assert_eq!(
+            of_execution_recovery_report_json(&invalid, &mut out, &mut out_len),
+            of_error_t::OF_ERR_INVALID_ARG as i32
+        );
+        let required = of_execution_recovery_config_t {
+            require_checkpoint: 1,
+            ..config
+        };
+        assert_eq!(
+            of_execution_recovery_report_json(&required, &mut out, &mut out_len),
+            of_error_t::OF_ERR_INVALID_ARG as i32
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn execution_abi_create_multi_routes_submits_multiple_symbols() {
         let _guard = test_guard();
         let route = CString::new("SIM").expect("cstring");

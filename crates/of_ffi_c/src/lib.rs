@@ -16,11 +16,12 @@ use of_core::{
     TradePrint,
 };
 use of_execution::{
-    simulated_engine_with_routes, AllowAllRiskGate, CheckpointStoreIntegrityReport,
-    ConcurrentExecutionConfig, ConcurrentExecutionEngine, ConcurrentExecutionError,
-    ExecutionCommand, ExecutionCommandKind, ExecutionCommandReport, ExecutionEngine,
-    ExecutionError, ExecutionEventBuffer, FileExecutionCheckpointStore, InMemoryJournal,
-    RouteConfig, SegmentedWalExecutionJournal, SimExecutionAdapter, WalSegmentIntegrityReport,
+    recover_latest_checkpoint_from_segmented_wal_roots, simulated_engine_with_routes,
+    AllowAllRiskGate, CheckpointStoreIntegrityReport, ConcurrentExecutionConfig,
+    ConcurrentExecutionEngine, ConcurrentExecutionError, ExecutionCommand, ExecutionCommandKind,
+    ExecutionCommandReport, ExecutionEngine, ExecutionError, ExecutionEventBuffer,
+    FileExecutionCheckpointStore, InMemoryJournal, RouteConfig, SegmentedWalExecutionJournal,
+    SimExecutionAdapter, WalSegmentIntegrityReport,
 };
 use of_execution_algos::{AlgoProgress, ChildOrderPlan, ParentOrder, TwapSlicePlanner};
 use of_execution_core::{
@@ -539,6 +540,19 @@ pub struct of_execution_checkpoint_store_integrity_report_t {
     pub valid: u8,
 }
 
+/// Read-only execution recovery report configuration.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct of_execution_recovery_config_t {
+    /// Existing segmented execution WAL root.
+    pub wal_root: *const c_char,
+    /// Existing checkpoint root, or null/empty when checkpoint-free replay is
+    /// allowed.
+    pub checkpoint_root: *const c_char,
+    /// Non-zero requires a valid checkpoint before replay.
+    pub require_checkpoint: u8,
+}
+
 /// Concurrent execution worker configuration.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -874,6 +888,44 @@ pub extern "C" fn of_execution_checkpoint_store_integrity_report(
         *out_report = checkpoint_store_integrity_report_to_ffi(report);
     }
     of_error_t::OF_OK as i32
+}
+
+/// Recovers existing checkpoint/WAL roots read-only and allocates a bounded
+/// operational JSON report.
+///
+/// The caller owns the returned string and must release it with
+/// [`of_string_free`]. This function never creates roots, opens a WAL append
+/// handle, mutates recovered state, reconciles with a venue, or enables order
+/// submissions.
+#[no_mangle]
+pub extern "C" fn of_execution_recovery_report_json(
+    config: *const of_execution_recovery_config_t,
+    out_json: *mut *const c_char,
+    out_len: *mut u32,
+) -> i32 {
+    if config.is_null() || out_json.is_null() || out_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let config = unsafe { &*config };
+    if config.require_checkpoint > 1 {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let Some(wal_root) = non_empty_string(config.wal_root) else {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    };
+    let checkpoint_root = non_empty_string(config.checkpoint_root);
+    if config.require_checkpoint != 0 && checkpoint_root.is_none() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let result = match recover_latest_checkpoint_from_segmented_wal_roots(
+        wal_root,
+        checkpoint_root.as_deref().map(std::path::Path::new),
+        config.require_checkpoint != 0,
+    ) {
+        Ok(result) => result,
+        Err(error) => return map_execution_error(&error),
+    };
+    allocate_json_string(result.json_report(), out_json, out_len)
 }
 
 /// Creates a simulated execution engine and stores it in `out_engine`.
