@@ -40,7 +40,8 @@ Native lookup order:
 - `EngineConfig(...)`
 - `ExternalFeedPolicy(stale_after_ms=15000, enforce_sequence=True)`
 - execution: `ExecutionEngine`, `ConcurrentExecutionEngine`,
-  `TwapExecutionAlgo`, `TwapConfig`, `AlgoChildPlan`, `AlgoProgress`
+  `TwapExecutionAlgo`, `TwapConfig`, `AlgoChildPlan`, `AlgoProgress`,
+  `ExecutionRecoveryReplay`, `ExecutionRecoveryReport`
 - signal research: `SignalConfig`, `SignalConfigParameter`,
   `SignalValidationConfig`, `SignalValidationEvent`, `SignalValidationReport`
 
@@ -108,6 +109,16 @@ The Python binding automatically retries with a larger native buffer when a snap
   `OrderRequest`
 - submit through `ExecutionEngine.submit_order` so risk, journal, and adapter
   paths remain authoritative
+
+### Read-only OMS restart validation
+
+Use `inspect_execution_checkpoint_store()` and
+`inspect_execution_segmented_wal()` for independent integrity evidence, then
+call `inspect_execution_recovery(wal_root, checkpoint_root)` to reconstruct a
+bounded state summary. The helper requires a checkpoint by default, performs no
+writes or venue calls, and always leaves submissions disabled pending external
+venue/drop-copy reconciliation. Set `require_checkpoint=False` only for an
+explicit full-WAL recovery drill.
 - call `commit_pending()` only after submission succeeds, otherwise
   `discard_pending()`
 - fold returned child events with `record_execution(...)` and inspect

@@ -167,6 +167,9 @@ payload and require no ABI or method-signature change.
   deterministic mismatch classification, and explicit host policy actions
 - recovery-readiness evaluation that gates resume decisions on WAL integrity,
   checkpoint integrity, recovery output, and reconciliation policy
+- read-only OMS state reconstruction across Rust, C, Python, and Java with
+  checkpoint-required defaults, bounded identifier-free reports, strict legacy
+  frame rejection, and submission/venue-reconciliation gates
 - independent drop-copy adapter/session primitives with bounded canonical
   report buffering, source-scoped duplicate detection, venue/client order
   correlation, fill/state reconciliation, late-report handling, and

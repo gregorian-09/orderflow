@@ -41,7 +41,8 @@ Native lookup order:
 - `EventListener`
 - execution: `OrderflowExecutionEngine`,
   `ConcurrentOrderflowExecutionEngine`, `TwapExecutionAlgo`, `TwapConfig`,
-  `AlgoChildPlan`, `AlgoProgress`
+  `AlgoChildPlan`, `AlgoProgress`, `ExecutionRecoveryReplay`,
+  `ExecutionRecoveryReport`
 - signal research: `SignalConfig`, `SignalConfigParameter`,
   `SignalValidationConfig`, `SignalValidationEvent`, `SignalValidationReport`
 
@@ -113,6 +114,15 @@ The Java binding retries with a larger native buffer automatically when snapshot
   adapter paths remain authoritative
 - call `commitPending()` only after submission succeeds, otherwise
   `discardPending()`
+
+### Read-only OMS restart validation
+
+Use `inspectCheckpointStore()` and `inspectSegmentedWal()` for independent
+integrity evidence, then call `OrderflowExecutionEngine.inspectRecovery(...)`.
+The three-argument overload requires a checkpoint, mutates neither root, calls
+no venue, and always leaves submissions disabled pending external venue/drop-
+copy reconciliation. Use the boolean overload with `false` only for an explicit
+full-WAL recovery drill.
 - fold child events with `recordExecution(...)` and inspect `progress()`
 
 ### Offline signal validation

@@ -238,20 +238,39 @@ start a background writer.
 
 ## Checkpoint Plus WAL Recovery
 
-The first OMS recovery helper is
-`recover_latest_checkpoint_from_segmented_wal(store, journal)`.
+OMS recovery supports both host-owned stores and a read-only root facade:
+
+- `recover_latest_checkpoint_from_segmented_wal(store, journal)` uses already
+  opened store/journal implementations;
+- `recover_latest_checkpoint_from_segmented_wal_roots(wal_root,
+  checkpoint_root, require_checkpoint)` opens existing roots read-only for
+  operator tools and bindings;
+- `recover_oms_state_from_segmented_wal_root(wal_root, checkpoint, plan)` uses
+  an explicit checkpoint and replay plan without opening an append handle.
 
 Startup flow:
 
-1. open `FileExecutionCheckpointStore`;
-2. open `SegmentedWalExecutionJournal`;
-3. load the latest valid checkpoint;
-4. build `RecoveryPlan::from_checkpoint(&checkpoint)`;
-5. replay WAL records from `last_applied_sequence + 1`;
-6. apply execution events to checkpoint order states;
-7. return `RecoveryResult` with `RecoveredOmsState`;
-8. keep submissions disabled unless the host deliberately enables them;
-9. run venue reconciliation before live strategy flow resumes.
+```mermaid
+sequenceDiagram
+    participant Host as Startup host
+    participant Inspect as Integrity inspectors
+    participant Recover as Read-only recovery
+    participant Venue as Venue/drop copy
+    participant OMS as Live OMS
+    Host->>Inspect: Inspect checkpoint and segmented WAL roots
+    Inspect-->>Host: Integrity reports and sequence bounds
+    Host->>Recover: Require checkpoint and reconstruct state
+    Recover-->>Host: Bounded report, submissions disabled
+    Host->>Venue: Reconcile every recovered open order/position
+    Venue-->>Host: Authoritative reconciliation evidence
+    Host->>OMS: Restore reviewed state and explicitly enable flow
+```
+
+The recovery function loads the latest valid checkpoint, builds
+`RecoveryPlan::from_checkpoint`, replays records strictly after
+`last_applied_sequence`, applies full command intent and execution events, and
+returns `RecoveryResult`. Root-based inspection does not create directories,
+open append handles, call a venue, or enable submissions.
 
 `RecoveryPlan` defaults are conservative:
 
@@ -259,12 +278,12 @@ Startup flow:
 - `RecoveryVenuePolicy::RequireReconciliation`;
 - submissions disabled after recovery.
 
-The helper intentionally rejects a WAL tail event for an order that is not
-present in the checkpoint. Current command WAL records contain command kind,
-client order id, and timestamp, not the full order request. Without side,
-strategy id, price, and quantity, safe recovery cannot recreate a new order
-that arrived after the checkpoint. In that case recovery fails closed and the
-host should reconcile with venue state.
+Current version-2 command frames retain full submit, cancel, and amend requests.
+Recovery therefore recreates post-checkpoint orders as `PendingNew`, and
+restores unanswered crash-boundary cancel/replace intent as `PendingCancel` or
+`PendingReplace`. Version-1 command frames remain readable for compatibility,
+but state reconstruction fails closed if one is required to recreate an absent
+order because the legacy frame lacks side, strategy, price, and quantity.
 
 This keeps the first recovery layer deterministic:
 
@@ -272,6 +291,19 @@ This keeps the first recovery layer deterministic:
 - corrupt WAL frames are rejected by segmented WAL replay before state rebuild;
 - invalid order transitions return errors instead of best-effort state;
 - venue reconciliation is explicit, not silently bypassed.
+
+`RecoveryResult::json_report()` and the C/Python/Java recovery facades expose a
+bounded schema-versioned summary: checkpoint id, route hash, kill-switch state,
+order/position counts, command/event counts, and replay sequence bounds. They
+intentionally omit identifiers. This report is restart evidence only; it always
+preserves the reconciliation and submission gates.
+
+| Layer | Read-only entry point |
+| --- | --- |
+| Rust | `recover_latest_checkpoint_from_segmented_wal_roots(...)` |
+| C | `of_execution_recovery_report_json(...)` |
+| Python | `inspect_execution_recovery(...)` |
+| Java | `OrderflowExecutionEngine.inspectRecovery(...)` |
 
 ## Metrics To Export
 

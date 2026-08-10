@@ -325,6 +325,7 @@ Metadata and ownership helpers:
 - `of_execution_wal_integrity_report`
 - `of_execution_segmented_wal_integrity_report`
 - `of_execution_checkpoint_store_integrity_report`
+- `of_execution_recovery_report_json`
 - `of_get_metrics_json`
 - `of_string_free`
 
@@ -347,6 +348,30 @@ Execution recovery diagnostics:
 - Checkpoint diagnostics report discovered, valid, and invalid checkpoint file
   counts, total checkpoint bytes, and the latest valid checkpoint id, covered
   WAL sequence, and creation timestamp when one exists.
+- `of_execution_recovery_report_json(config, out_json, out_len)` reconstructs
+  OMS state from existing segmented-WAL and optional checkpoint roots without
+  mutating them. `require_checkpoint = 1` is the production-safe default; set it
+  to `0` only for an intentional full-WAL recovery drill.
+- Recovery returns bounded, schema-versioned, identifier-free JSON. The caller
+  owns the returned string and must release it with `of_string_free`.
+- The report never enables submissions or replaces venue reconciliation. A
+  successful report has `submissions_enabled = false` and
+  `venue_reconciliation_required = true`.
+
+```c
+of_execution_recovery_config_t config = {
+    .wal_root = "execution-wal",
+    .checkpoint_root = "execution-checkpoints",
+    .require_checkpoint = 1,
+};
+const char* json = NULL;
+uint32_t json_len = 0;
+int32_t rc = of_execution_recovery_report_json(&config, &json, &json_len);
+if (rc == OF_OK) {
+  /* Consume exactly json_len UTF-8 bytes before freeing the allocation. */
+  of_string_free(json);
+}
+```
 
 Execution-algorithm facade:
 

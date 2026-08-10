@@ -523,7 +523,9 @@ Public journal types:
 - `evaluate_recovery_readiness`
 - `recover_oms_state_from_records`
 - `recover_oms_state_from_segmented_wal`
+- `recover_oms_state_from_segmented_wal_root`
 - `recover_latest_checkpoint_from_segmented_wal`
+- `recover_latest_checkpoint_from_segmented_wal_roots`
 
 Public concurrent execution types:
 
