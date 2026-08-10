@@ -886,8 +886,16 @@ transport, and official venue test environment.
 [`ExecutionJournal`] records commands and events:
 
 - `record_command`
+- `record_submit`
+- `record_cancel`
+- `record_amend`
 - `record_event`
 - `replay`
+
+The request-aware methods have default implementations that delegate to
+`record_command`. Existing third-party journals therefore keep compiling and
+retain their original behavior. Binary WAL journals override the methods to
+persist complete typed request payloads for deterministic crash recovery.
 
 [`InMemoryJournal`] is useful for tests and embedded simulation.
 [`FileExecutionJournal`] is an append-only durable implementation in the OMS
@@ -905,8 +913,6 @@ Command kinds use [`JournalCommandKind`]:
 - `Submit`
 - `Cancel`
 - `Amend`
-- `Poll`
-- `RecoverOpenOrders`
 
 Production deployments can replace the journal with a WAL, mmap-backed writer,
 database, or replicated log by implementing [`ExecutionJournal`].
@@ -916,24 +922,43 @@ database, or replicated log by implementing [`ExecutionJournal`].
 [`WalExecutionJournal`] records the same [`JournalRecord`] model as
 [`FileExecutionJournal`], but avoids text formatting on the journal path. It
 owns WAL sequence assignment, validates existing bytes before accepting new
-records, and replays into the existing journal output type.
+records, and replays into the existing journal output type. New engine writes
+use versioned full-payload submit, cancel, and amend frames. Public replay still
+projects those commands into the unchanged `JournalRecord::Command` shape.
+Readers remain backward compatible with legacy command-only payload version 1.
 
 ```rust
-use of_execution::{
-    ExecutionJournal, JournalCommandKind, WalExecutionJournal, WalJournalConfig,
+use of_execution::{ExecutionJournal, WalExecutionJournal, WalJournalConfig};
+use of_execution_core::{
+    AccountId, ClientOrderId, ExecutionSymbol, FixedAscii, OrderPrice, OrderQty,
+    OrderRequest, OrderSide, OrderType, RouteId, StrategyId, TimeInForce,
+    VenueId, InstrumentId, WalSequence, WalSyncPolicy,
 };
-use of_execution_core::{ClientOrderId, WalSequence, WalSyncPolicy};
 
 let path = std::env::temp_dir().join("orders.ofwal");
 let mut journal = WalExecutionJournal::open(
     WalJournalConfig::new(&path).with_sync_policy(WalSyncPolicy::EveryNRecords(32)),
 )?;
 
-journal.record_command(
-    JournalCommandKind::Submit,
-    ClientOrderId::new("C1")?,
-    1_000,
-)?;
+let request = OrderRequest {
+    client_order_id: ClientOrderId::new("C1")?,
+    account_id: AccountId::new("ACC")?,
+    route_id: RouteId::new("SIM")?,
+    strategy_id: StrategyId::new("TWAP")?,
+    symbol: ExecutionSymbol {
+        venue: VenueId::new("SIM")?,
+        instrument: InstrumentId::new("ES")?,
+    },
+    side: OrderSide::Buy,
+    order_type: OrderType::Limit,
+    time_in_force: TimeInForce::Day,
+    quantity: OrderQty(10),
+    limit_price: OrderPrice(5_000),
+    stop_price: OrderPrice(0),
+    ts_exchange_ns: 900,
+    ts_recv_ns: 1_000,
+};
+journal.record_submit(&request)?;
 journal.sync()?;
 
 let report = journal.integrity_report()?;
@@ -1130,13 +1155,14 @@ assert!(result.venue_reconciliation_required);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Recovery intentionally fails closed when the WAL tail contains an execution
-event for an order that was not present in the selected checkpoint. The current
-command WAL payload records command kind, id, and timestamp, not the full
-`OrderRequest`, so the recovery layer refuses to invent side, strategy, price,
-or quantity. Production hosts should checkpoint frequently, require venue
-reconciliation, and add full command-payload journaling before relying on
-checkpoint-only recovery for long uncheckpointed windows.
+Recovery reconstructs pending-new orders from full submit payloads before
+applying later execution events. A durable cancel or amend with no subsequent
+venue response restores the original order as `PendingCancel` or
+`PendingReplace`, making the crash-boundary uncertainty explicit. Legacy
+version-1 command records remain readable but cannot reconstruct an absent
+order; a later event for such an order still fails closed. Production hosts
+should checkpoint frequently and must reconcile recovered open orders against
+venue truth before submissions resume.
 
 ### Recovery readiness gate
 

@@ -818,6 +818,24 @@ impl ExecutionJournal for WalExecutionJournal {
         self.append_record(command_wal_kind(kind), ts_ns)
     }
 
+    fn record_submit(&mut self, request: &OrderRequest) -> ExecutionResult<()> {
+        self.scratch.clear();
+        encode_submit_payload(request, &mut self.scratch);
+        self.append_record(WalRecordKind::CommandSubmit, request.ts_recv_ns)
+    }
+
+    fn record_cancel(&mut self, request: &CancelRequest) -> ExecutionResult<()> {
+        self.scratch.clear();
+        encode_cancel_payload(request, &mut self.scratch);
+        self.append_record(WalRecordKind::CommandCancel, request.ts_recv_ns)
+    }
+
+    fn record_amend(&mut self, request: &AmendRequest) -> ExecutionResult<()> {
+        self.scratch.clear();
+        encode_amend_payload(request, &mut self.scratch);
+        self.append_record(WalRecordKind::CommandAmend, request.ts_recv_ns)
+    }
+
     fn record_event(&mut self, event: &ExecutionEvent) -> ExecutionResult<()> {
         self.scratch.clear();
         encode_event_payload(event, &mut self.scratch);
@@ -1104,6 +1122,21 @@ impl SegmentedWalExecutionJournal {
         Ok(result)
     }
 
+    fn replay_recovery_from(
+        &self,
+        sequence: WalSequence,
+        out: &mut Vec<DecodedRecoveryRecord>,
+    ) -> ExecutionResult<WalReplayResult> {
+        replay_segmented_recovery_records(
+            self.manifest
+                .segments
+                .iter()
+                .map(|segment| segment.path.as_path()),
+            sequence,
+            out,
+        )
+    }
+
     fn append_record(&mut self, kind: WalRecordKind, timestamp_ns: u64) -> ExecutionResult<()> {
         let encoded_len = {
             let payload = &self.scratch;
@@ -1219,6 +1252,24 @@ impl ExecutionJournal for SegmentedWalExecutionJournal {
         self.append_record(command_wal_kind(kind), ts_ns)
     }
 
+    fn record_submit(&mut self, request: &OrderRequest) -> ExecutionResult<()> {
+        self.scratch.clear();
+        encode_submit_payload(request, &mut self.scratch);
+        self.append_record(WalRecordKind::CommandSubmit, request.ts_recv_ns)
+    }
+
+    fn record_cancel(&mut self, request: &CancelRequest) -> ExecutionResult<()> {
+        self.scratch.clear();
+        encode_cancel_payload(request, &mut self.scratch);
+        self.append_record(WalRecordKind::CommandCancel, request.ts_recv_ns)
+    }
+
+    fn record_amend(&mut self, request: &AmendRequest) -> ExecutionResult<()> {
+        self.scratch.clear();
+        encode_amend_payload(request, &mut self.scratch);
+        self.append_record(WalRecordKind::CommandAmend, request.ts_recv_ns)
+    }
+
     fn record_event(&mut self, event: &ExecutionEvent) -> ExecutionResult<()> {
         self.scratch.clear();
         encode_event_payload(event, &mut self.scratch);
@@ -1233,6 +1284,7 @@ impl ExecutionJournal for SegmentedWalExecutionJournal {
 }
 
 const WAL_PAYLOAD_VERSION: u16 = 1;
+const WAL_COMMAND_PAYLOAD_VERSION: u16 = 2;
 
 fn scan_wal_file(path: &Path) -> ExecutionResult<(WalSequence, u64)> {
     let bytes = match std::fs::read(path) {
@@ -1490,6 +1542,39 @@ fn replay_wal_bytes(
     Ok(result)
 }
 
+fn replay_segmented_recovery_records<'a>(
+    paths: impl IntoIterator<Item = &'a Path>,
+    from_sequence: WalSequence,
+    out: &mut Vec<DecodedRecoveryRecord>,
+) -> ExecutionResult<WalReplayResult> {
+    let start = out.len();
+    let mut result = WalReplayResult::default();
+    let mut previous_checksum = 0;
+    let mut expected_sequence = WalSequence(1);
+
+    for path in paths {
+        let bytes = fs::read(path).map_err(|err| ExecutionError::Journal(err.to_string()))?;
+        let mut cursor = WalReplayCursor::new(&bytes).with_strict_sequence(false);
+        while let Some(record) = cursor.next_record().map_err(wal_error)? {
+            validate_wal_sequence(record.header.sequence, expected_sequence)?;
+            validate_wal_link(&record, previous_checksum)?;
+            previous_checksum = record.header.header_checksum;
+            expected_sequence = record.header.sequence.next();
+            result.bytes = result.bytes.saturating_add(record.encoded_len() as u64);
+            if record.header.sequence < from_sequence {
+                continue;
+            }
+            if let Some(recovery_record) = decode_recovery_wal_payload(&record)? {
+                out.push(recovery_record);
+                result.records = out.len().saturating_sub(start);
+                result.first_sequence.get_or_insert(record.header.sequence);
+                result.last_sequence = Some(record.header.sequence);
+            }
+        }
+    }
+    Ok(result)
+}
+
 fn validate_wal_link(record: &WalRecordView<'_>, previous_checksum: u64) -> ExecutionResult<()> {
     if record.header.previous_checksum == previous_checksum {
         Ok(())
@@ -1514,20 +1599,187 @@ fn encode_command_payload(
     put_payload_u64(out, ts_ns);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DecodedWalCommand {
+    Legacy {
+        kind: JournalCommandKind,
+        client_order_id: ClientOrderId,
+        ts_ns: u64,
+    },
+    Submit(OrderRequest),
+    Cancel(CancelRequest),
+    Amend(AmendRequest),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DecodedRecoveryRecord {
+    Command(Box<DecodedWalCommand>),
+    Event(Box<ExecutionEvent>),
+}
+
+impl DecodedWalCommand {
+    const fn kind(self) -> JournalCommandKind {
+        match self {
+            Self::Legacy { kind, .. } => kind,
+            Self::Submit(_) => JournalCommandKind::Submit,
+            Self::Cancel(_) => JournalCommandKind::Cancel,
+            Self::Amend(_) => JournalCommandKind::Amend,
+        }
+    }
+
+    const fn client_order_id(self) -> ClientOrderId {
+        match self {
+            Self::Legacy {
+                client_order_id, ..
+            } => client_order_id,
+            Self::Submit(request) => request.client_order_id,
+            Self::Cancel(request) => request.client_order_id,
+            Self::Amend(request) => request.client_order_id,
+        }
+    }
+
+    const fn timestamp_ns(self) -> u64 {
+        match self {
+            Self::Legacy { ts_ns, .. } => ts_ns,
+            Self::Submit(request) => request.ts_recv_ns,
+            Self::Cancel(request) => request.ts_recv_ns,
+            Self::Amend(request) => request.ts_recv_ns,
+        }
+    }
+
+    const fn legacy_record(self) -> JournalRecord {
+        JournalRecord::Command {
+            kind: self.kind(),
+            client_order_id: self.client_order_id(),
+            ts_ns: self.timestamp_ns(),
+        }
+    }
+}
+
+fn encode_submit_payload(request: &OrderRequest, out: &mut Vec<u8>) {
+    put_payload_u16(out, WAL_COMMAND_PAYLOAD_VERSION);
+    put_payload_u8(out, command_kind_u8(JournalCommandKind::Submit));
+    put_payload_u8(out, 0);
+    put_fixed(out, &request.client_order_id);
+    put_fixed(out, &request.account_id);
+    put_fixed(out, &request.route_id);
+    put_fixed(out, &request.strategy_id);
+    put_fixed(out, &request.symbol.venue);
+    put_fixed(out, &request.symbol.instrument);
+    put_payload_u8(out, request.side as u8);
+    put_payload_u8(out, request.order_type as u8);
+    put_payload_u8(out, request.time_in_force as u8);
+    put_payload_u8(out, 0);
+    put_payload_i64(out, request.quantity.0);
+    put_payload_i64(out, request.limit_price.0);
+    put_payload_i64(out, request.stop_price.0);
+    put_payload_u64(out, request.ts_exchange_ns);
+    put_payload_u64(out, request.ts_recv_ns);
+}
+
+fn encode_cancel_payload(request: &CancelRequest, out: &mut Vec<u8>) {
+    put_payload_u16(out, WAL_COMMAND_PAYLOAD_VERSION);
+    put_payload_u8(out, command_kind_u8(JournalCommandKind::Cancel));
+    put_payload_u8(out, 0);
+    put_fixed(out, &request.client_order_id);
+    put_fixed(out, &request.orig_client_order_id);
+    put_fixed(out, &request.venue_order_id);
+    put_fixed(out, &request.account_id);
+    put_fixed(out, &request.route_id);
+    put_fixed(out, &request.symbol.venue);
+    put_fixed(out, &request.symbol.instrument);
+    put_payload_u64(out, request.ts_recv_ns);
+}
+
+fn encode_amend_payload(request: &AmendRequest, out: &mut Vec<u8>) {
+    put_payload_u16(out, WAL_COMMAND_PAYLOAD_VERSION);
+    put_payload_u8(out, command_kind_u8(JournalCommandKind::Amend));
+    put_payload_u8(out, 0);
+    put_fixed(out, &request.client_order_id);
+    put_fixed(out, &request.orig_client_order_id);
+    put_fixed(out, &request.venue_order_id);
+    put_fixed(out, &request.account_id);
+    put_fixed(out, &request.route_id);
+    put_fixed(out, &request.symbol.venue);
+    put_fixed(out, &request.symbol.instrument);
+    put_payload_i64(out, request.quantity.0);
+    put_payload_i64(out, request.limit_price.0);
+    put_payload_u64(out, request.ts_recv_ns);
+}
+
 fn decode_command_payload(payload: &[u8]) -> ExecutionResult<JournalRecord> {
+    Ok(decode_wal_command(payload)?.legacy_record())
+}
+
+fn decode_wal_command(payload: &[u8]) -> ExecutionResult<DecodedWalCommand> {
     let mut reader = PayloadReader::new(payload);
-    reader.read_version()?;
+    let version = reader.read_u16()?;
     let kind = command_kind_from_u8(reader.read_u8()?)
         .ok_or_else(|| ExecutionError::Journal("invalid WAL command kind".to_string()))?;
     let _reserved = reader.read_u8()?;
-    let client_order_id = reader.read_fixed::<40>()?;
-    let ts_ns = reader.read_u64()?;
+    let command = match version {
+        WAL_PAYLOAD_VERSION => DecodedWalCommand::Legacy {
+            kind,
+            client_order_id: reader.read_fixed::<40>()?,
+            ts_ns: reader.read_u64()?,
+        },
+        WAL_COMMAND_PAYLOAD_VERSION => match kind {
+            JournalCommandKind::Submit => DecodedWalCommand::Submit(OrderRequest {
+                client_order_id: reader.read_fixed::<40>()?,
+                account_id: reader.read_fixed::<32>()?,
+                route_id: reader.read_fixed::<32>()?,
+                strategy_id: reader.read_fixed::<32>()?,
+                symbol: ExecutionSymbol {
+                    venue: reader.read_fixed::<16>()?,
+                    instrument: reader.read_fixed::<32>()?,
+                },
+                side: order_side_from_u8(reader.read_u8()?)?,
+                order_type: order_type_from_u8(reader.read_u8()?)?,
+                time_in_force: time_in_force_from_u8(reader.read_u8()?)?,
+                quantity: {
+                    let _reserved = reader.read_u8()?;
+                    OrderQty(reader.read_i64()?)
+                },
+                limit_price: OrderPrice(reader.read_i64()?),
+                stop_price: OrderPrice(reader.read_i64()?),
+                ts_exchange_ns: reader.read_u64()?,
+                ts_recv_ns: reader.read_u64()?,
+            }),
+            JournalCommandKind::Cancel => DecodedWalCommand::Cancel(CancelRequest {
+                client_order_id: reader.read_fixed::<40>()?,
+                orig_client_order_id: reader.read_fixed::<40>()?,
+                venue_order_id: reader.read_fixed::<48>()?,
+                account_id: reader.read_fixed::<32>()?,
+                route_id: reader.read_fixed::<32>()?,
+                symbol: ExecutionSymbol {
+                    venue: reader.read_fixed::<16>()?,
+                    instrument: reader.read_fixed::<32>()?,
+                },
+                ts_recv_ns: reader.read_u64()?,
+            }),
+            JournalCommandKind::Amend => DecodedWalCommand::Amend(AmendRequest {
+                client_order_id: reader.read_fixed::<40>()?,
+                orig_client_order_id: reader.read_fixed::<40>()?,
+                venue_order_id: reader.read_fixed::<48>()?,
+                account_id: reader.read_fixed::<32>()?,
+                route_id: reader.read_fixed::<32>()?,
+                symbol: ExecutionSymbol {
+                    venue: reader.read_fixed::<16>()?,
+                    instrument: reader.read_fixed::<32>()?,
+                },
+                quantity: OrderQty(reader.read_i64()?),
+                limit_price: OrderPrice(reader.read_i64()?),
+                ts_recv_ns: reader.read_u64()?,
+            }),
+        },
+        _ => {
+            return Err(ExecutionError::Journal(format!(
+                "unsupported WAL command payload version {version}"
+            )))
+        }
+    };
     reader.finish()?;
-    Ok(JournalRecord::Command {
-        kind,
-        client_order_id,
-        ts_ns,
-    })
+    Ok(command)
 }
 
 fn encode_event_payload(event: &ExecutionEvent, out: &mut Vec<u8>) {
@@ -1606,6 +1858,27 @@ fn decode_wal_payload(record: &WalRecordView<'_>) -> ExecutionResult<Option<Jour
         WalRecordKind::ExecutionEvent
         | WalRecordKind::RiskReject
         | WalRecordKind::RecoveryEvent => Ok(Some(JournalRecord::Event(Box::new(
+            decode_event_payload(record.payload)?,
+        )))),
+        WalRecordKind::CheckpointMarker | WalRecordKind::SegmentSeal | WalRecordKind::Heartbeat => {
+            Ok(None)
+        }
+        _ => Ok(None),
+    }
+}
+
+fn decode_recovery_wal_payload(
+    record: &WalRecordView<'_>,
+) -> ExecutionResult<Option<DecodedRecoveryRecord>> {
+    match record.header.kind {
+        WalRecordKind::CommandSubmit
+        | WalRecordKind::CommandCancel
+        | WalRecordKind::CommandAmend => Ok(Some(DecodedRecoveryRecord::Command(Box::new(
+            decode_wal_command(record.payload)?,
+        )))),
+        WalRecordKind::ExecutionEvent
+        | WalRecordKind::RiskReject
+        | WalRecordKind::RecoveryEvent => Ok(Some(DecodedRecoveryRecord::Event(Box::new(
             decode_event_payload(record.payload)?,
         )))),
         WalRecordKind::CheckpointMarker | WalRecordKind::SegmentSeal | WalRecordKind::Heartbeat => {
@@ -2728,8 +3001,8 @@ pub fn recover_oms_state_from_segmented_wal(
     journal: &SegmentedWalExecutionJournal,
 ) -> ExecutionResult<RecoveryResult> {
     let mut records = Vec::new();
-    let replay = journal.replay_from(plan.replay_from(), &mut records)?;
-    let mut result = recover_oms_state_from_records(plan, checkpoint, &records)?;
+    let replay = journal.replay_recovery_from(plan.replay_from(), &mut records)?;
+    let mut result = recover_oms_state_from_decoded_records(plan, checkpoint, &records)?;
     if let Some(expected) = result.plan.expected_latest_sequence() {
         let actual = replay
             .last_sequence
@@ -2744,6 +3017,127 @@ pub fn recover_oms_state_from_segmented_wal(
     }
     result.replay = replay;
     Ok(result)
+}
+
+fn recover_oms_state_from_decoded_records(
+    plan: RecoveryPlan,
+    checkpoint: Option<&ExecutionCheckpoint>,
+    records: &[DecodedRecoveryRecord],
+) -> ExecutionResult<RecoveryResult> {
+    let mut state = checkpoint
+        .map(RecoveredOmsState::from_checkpoint)
+        .unwrap_or_default();
+    let mut commands_seen = 0_usize;
+    let mut events_applied = 0_usize;
+
+    for record in records {
+        match record {
+            DecodedRecoveryRecord::Command(command) => {
+                apply_recovered_command(&mut state.orders, **command)?;
+                commands_seen = commands_seen.saturating_add(1);
+            }
+            DecodedRecoveryRecord::Event(event) => {
+                apply_recovered_event(&mut state.orders, event)?;
+                events_applied = events_applied.saturating_add(1);
+            }
+        }
+    }
+
+    Ok(recovery_result(
+        plan,
+        state,
+        records.len(),
+        commands_seen,
+        events_applied,
+    ))
+}
+
+fn recovery_result(
+    plan: RecoveryPlan,
+    state: RecoveredOmsState,
+    records: usize,
+    commands_seen: usize,
+    events_applied: usize,
+) -> RecoveryResult {
+    let venue_reconciliation_required =
+        plan.venue_policy() == RecoveryVenuePolicy::RequireReconciliation;
+    let submissions_enabled =
+        !plan.submissions_disabled() && plan.venue_policy() == RecoveryVenuePolicy::HostControlled;
+
+    RecoveryResult {
+        plan,
+        state,
+        replay: WalReplayResult {
+            records,
+            bytes: 0,
+            first_sequence: None,
+            last_sequence: None,
+        },
+        commands_seen,
+        events_applied,
+        venue_reconciliation_required,
+        submissions_enabled,
+    }
+}
+
+fn apply_recovered_command(
+    orders: &mut Vec<OrderState>,
+    command: DecodedWalCommand,
+) -> ExecutionResult<()> {
+    match command {
+        DecodedWalCommand::Legacy { .. } => Ok(()),
+        DecodedWalCommand::Submit(request) => {
+            if orders
+                .iter()
+                .any(|state| state.client_order_id == request.client_order_id)
+            {
+                return Err(ExecutionError::Journal(format!(
+                    "duplicate recovered submit command {}",
+                    request.client_order_id
+                )));
+            }
+            orders.push(OrderState::pending_new(&request));
+            Ok(())
+        }
+        DecodedWalCommand::Cancel(request) => {
+            let state = recovered_order_mut(orders, request.orig_client_order_id)?;
+            if state.status.is_terminal() {
+                return Err(ExecutionError::Journal(format!(
+                    "recovered cancel command references terminal order {}",
+                    request.orig_client_order_id
+                )));
+            }
+            state.status = OrderStatus::PendingCancel;
+            state.updated_ns = request.ts_recv_ns;
+            Ok(())
+        }
+        DecodedWalCommand::Amend(request) => {
+            let state = recovered_order_mut(orders, request.orig_client_order_id)?;
+            if state.status.is_terminal() {
+                return Err(ExecutionError::Journal(format!(
+                    "recovered amend command references terminal order {}",
+                    request.orig_client_order_id
+                )));
+            }
+            state.status = OrderStatus::PendingReplace;
+            state.updated_ns = request.ts_recv_ns;
+            Ok(())
+        }
+    }
+}
+
+fn recovered_order_mut(
+    orders: &mut [OrderState],
+    client_order_id: ClientOrderId,
+) -> ExecutionResult<&mut OrderState> {
+    orders
+        .iter_mut()
+        .find(|state| state.client_order_id == client_order_id)
+        .ok_or_else(|| {
+            ExecutionError::Journal(format!(
+                "recovered command references unknown order {client_order_id}"
+            ))
+        })
 }
 
 /// Loads the latest checkpoint and recovers state from a segmented WAL.
@@ -3106,6 +3500,27 @@ fn order_side_from_u8(value: u8) -> ExecutionResult<OrderSide> {
         1 => Ok(OrderSide::Buy),
         2 => Ok(OrderSide::Sell),
         _ => Err(ExecutionError::Journal("invalid order side".to_string())),
+    }
+}
+
+fn order_type_from_u8(value: u8) -> ExecutionResult<OrderType> {
+    match value {
+        1 => Ok(OrderType::Market),
+        2 => Ok(OrderType::Limit),
+        3 => Ok(OrderType::Stop),
+        4 => Ok(OrderType::StopLimit),
+        _ => Err(ExecutionError::Journal("invalid order type".to_string())),
+    }
+}
+
+fn time_in_force_from_u8(value: u8) -> ExecutionResult<TimeInForce> {
+    match value {
+        1 => Ok(TimeInForce::Day),
+        2 => Ok(TimeInForce::Gtc),
+        3 => Ok(TimeInForce::Ioc),
+        4 => Ok(TimeInForce::Fok),
+        5 => Ok(TimeInForce::Gtd),
+        _ => Err(ExecutionError::Journal("invalid time in force".to_string())),
     }
 }
 
@@ -5982,6 +6397,171 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&checkpoint_root);
+    }
+
+    #[test]
+    fn full_command_payload_round_trips_without_changing_legacy_replay() {
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-full-command-roundtrip-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let request = order("FULL1");
+        let mut journal = SegmentedWalExecutionJournal::open(
+            WalSegmentConfig::new(&root).with_sync_policy(WalSyncPolicy::Never),
+        )
+        .unwrap();
+        journal.record_submit(&request).unwrap();
+
+        let mut recovery_records = Vec::new();
+        journal
+            .replay_recovery_from(WalSequence(1), &mut recovery_records)
+            .unwrap();
+        assert_eq!(
+            recovery_records,
+            vec![DecodedRecoveryRecord::Command(Box::new(
+                DecodedWalCommand::Submit(request)
+            ))]
+        );
+
+        let mut legacy_records = Vec::new();
+        journal.replay(&mut legacy_records).unwrap();
+        assert_eq!(
+            legacy_records,
+            vec![JournalRecord::Command {
+                kind: JournalCommandKind::Submit,
+                client_order_id: request.client_order_id,
+                ts_ns: request.ts_recv_ns,
+            }]
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn full_command_payload_recovers_without_checkpoint() {
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-full-command-recovery-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let request = order("FULL2");
+        let mut journal = SegmentedWalExecutionJournal::open(
+            WalSegmentConfig::new(&root).with_sync_policy(WalSyncPolicy::Never),
+        )
+        .unwrap();
+        journal.record_submit(&request).unwrap();
+        journal
+            .record_event(&ExecutionEvent::accepted(&request, id("VENUE2")))
+            .unwrap();
+
+        let result =
+            recover_oms_state_from_segmented_wal(RecoveryPlan::default(), None, &journal).unwrap();
+        assert_eq!(result.commands_seen, 1);
+        assert_eq!(result.events_applied, 1);
+        assert_eq!(result.state.orders().len(), 1);
+        assert_eq!(
+            result.state.orders()[0].client_order_id,
+            request.client_order_id
+        );
+        assert_eq!(result.state.orders()[0].order_qty, request.quantity);
+        assert_eq!(result.state.orders()[0].status, OrderStatus::New);
+        assert_eq!(result.state.orders()[0].venue_order_id, id("VENUE2"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn execution_engine_uses_full_payload_journal_hook() {
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-engine-full-command-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let journal = SegmentedWalExecutionJournal::open(
+            WalSegmentConfig::new(&root).with_sync_policy(WalSyncPolicy::Never),
+        )
+        .unwrap();
+        let mut engine = ExecutionEngine::new(
+            SimExecutionAdapter::default(),
+            AllowAllRiskGate,
+            journal,
+            vec![route()],
+        );
+        engine.start().unwrap();
+        let request = order("ENGINE-FULL");
+        let mut events = ExecutionEventBuffer::with_capacity(4);
+        engine.submit(request, &mut events).unwrap();
+        drop(engine);
+
+        let journal = SegmentedWalExecutionJournal::open(
+            WalSegmentConfig::new(&root).with_sync_policy(WalSyncPolicy::Never),
+        )
+        .unwrap();
+        let recovered =
+            recover_oms_state_from_segmented_wal(RecoveryPlan::default(), None, &journal).unwrap();
+        assert_eq!(recovered.commands_seen, 1);
+        assert_eq!(recovered.events_applied, events.len());
+        assert_eq!(recovered.state.orders().len(), 1);
+        assert_eq!(recovered.state.orders()[0].status, OrderStatus::Filled);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn full_cancel_and_amend_payloads_recover_uncertain_pending_states() {
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-full-command-pending-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let cancel_order = order("CANCEL-BASE");
+        let amend_order = order("AMEND-BASE");
+        let mut journal = SegmentedWalExecutionJournal::open(
+            WalSegmentConfig::new(&root).with_sync_policy(WalSyncPolicy::Never),
+        )
+        .unwrap();
+        journal.record_submit(&cancel_order).unwrap();
+        journal
+            .record_event(&ExecutionEvent::accepted(&cancel_order, id("VC")))
+            .unwrap();
+        journal
+            .record_cancel(&CancelRequest {
+                client_order_id: id("CANCEL-REQ"),
+                orig_client_order_id: cancel_order.client_order_id,
+                venue_order_id: id("VC"),
+                account_id: cancel_order.account_id,
+                route_id: cancel_order.route_id,
+                symbol: cancel_order.symbol,
+                ts_recv_ns: 10,
+            })
+            .unwrap();
+        journal.record_submit(&amend_order).unwrap();
+        journal
+            .record_event(&ExecutionEvent::accepted(&amend_order, id("VA")))
+            .unwrap();
+        journal
+            .record_amend(&AmendRequest {
+                client_order_id: id("AMEND-REQ"),
+                orig_client_order_id: amend_order.client_order_id,
+                venue_order_id: id("VA"),
+                account_id: amend_order.account_id,
+                route_id: amend_order.route_id,
+                symbol: amend_order.symbol,
+                quantity: OrderQty(8),
+                limit_price: OrderPrice(4999),
+                ts_recv_ns: 11,
+            })
+            .unwrap();
+
+        let result =
+            recover_oms_state_from_segmented_wal(RecoveryPlan::default(), None, &journal).unwrap();
+        assert_eq!(result.commands_seen, 4);
+        assert_eq!(result.events_applied, 2);
+        assert_eq!(result.state.orders()[0].status, OrderStatus::PendingCancel);
+        assert_eq!(result.state.orders()[0].updated_ns, 10);
+        assert_eq!(result.state.orders()[1].status, OrderStatus::PendingReplace);
+        assert_eq!(result.state.orders()[1].updated_ns, 11);
+        assert!(result.venue_reconciliation_required);
+        assert!(!result.submissions_enabled);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

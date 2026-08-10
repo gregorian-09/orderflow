@@ -438,6 +438,38 @@ pub trait ExecutionJournal: Send {
         id: ClientOrderId,
         ts_ns: u64,
     ) -> ExecutionResult<()>;
+    /// Records a new-order request with its recovery payload.
+    ///
+    /// The default preserves the original command-only journal contract so
+    /// existing third-party journal implementations continue to compile.
+    /// Durable journals may override this hook to retain the full request.
+    fn record_submit(&mut self, request: &OrderRequest) -> ExecutionResult<()> {
+        self.record_command(
+            JournalCommandKind::Submit,
+            request.client_order_id,
+            request.ts_recv_ns,
+        )
+    }
+    /// Records a cancel request with its recovery payload.
+    ///
+    /// The default delegates to [`ExecutionJournal::record_command`].
+    fn record_cancel(&mut self, request: &CancelRequest) -> ExecutionResult<()> {
+        self.record_command(
+            JournalCommandKind::Cancel,
+            request.client_order_id,
+            request.ts_recv_ns,
+        )
+    }
+    /// Records an amend request with its recovery payload.
+    ///
+    /// The default delegates to [`ExecutionJournal::record_command`].
+    fn record_amend(&mut self, request: &AmendRequest) -> ExecutionResult<()> {
+        self.record_command(
+            JournalCommandKind::Amend,
+            request.client_order_id,
+            request.ts_recv_ns,
+        )
+    }
     /// Records an execution event.
     fn record_event(&mut self, event: &ExecutionEvent) -> ExecutionResult<()>;
     /// Replays known records into `out`.
@@ -1333,11 +1365,7 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
             return Err(ExecutionError::RiskRejected(decision.reason));
         }
 
-        self.journal.record_command(
-            JournalCommandKind::Submit,
-            req.client_order_id,
-            req.ts_recv_ns,
-        )?;
+        self.journal.record_submit(&req)?;
         self.orders
             .insert(req.client_order_id, OrderStateMachine::new(&req));
         self.order_strategies
@@ -1377,11 +1405,7 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
             self.metrics.risk_rejected = self.metrics.risk_rejected.saturating_add(1);
             return Err(ExecutionError::RiskRejected(decision.reason));
         }
-        self.journal.record_command(
-            JournalCommandKind::Cancel,
-            req.client_order_id,
-            req.ts_recv_ns,
-        )?;
+        self.journal.record_cancel(&req)?;
         self.scratch.clear();
         self.adapter.cancel(&req, &mut self.scratch)?;
         self.metrics.cancelled = self.metrics.cancelled.saturating_add(1);
@@ -1421,11 +1445,7 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
             self.metrics.risk_rejected = self.metrics.risk_rejected.saturating_add(1);
             return Err(ExecutionError::RiskRejected(decision.reason));
         }
-        self.journal.record_command(
-            JournalCommandKind::Amend,
-            req.client_order_id,
-            req.ts_recv_ns,
-        )?;
+        self.journal.record_amend(&req)?;
         self.pending_amend_prices
             .insert(req.client_order_id, req.limit_price);
         self.scratch.clear();

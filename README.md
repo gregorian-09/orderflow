@@ -42,7 +42,8 @@ Major additions:
 - concurrent OMS worker: bounded command/report queues for many producers while
   one native worker owns order state deterministically
 - OMS helpers: command correlation, event fanout, lifecycle snapshots, durable
-  file/WAL journals, checkpoint recovery, native order-intent and parent/child
+  file/WAL journals with full request-payload crash recovery, checkpoint
+  recovery, native order-intent and parent/child
   lifecycle, scoped kill switches, production risk, exact position/PnL ledger,
   command idempotency, execution-report deduplication, reconciliation, safety
   policies, generalized multi-source recovery reconciliation, a deterministic
