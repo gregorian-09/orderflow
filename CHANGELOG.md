@@ -461,6 +461,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   quality-flagged signal counts, and explanation coverage diagnostics.
 
 ### Fixed
+- Fixed release version synchronization for mixed-version workspace crates.
+  Internal path dependencies are now checked against the effective version of
+  their target crate manifest, so established `0.4.0` crates and new `0.1.0`
+  analytics/execution/FIX crates can advance independently without hard-coded
+  override drift.
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the
   shared FFI test lock and cascade misleading `PoisonError` failures through
   unrelated tests.

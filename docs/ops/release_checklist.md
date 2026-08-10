@@ -8,6 +8,18 @@ This checklist covers repeatable release tasks for package/version publishing.
 python3 tools/release/sync_binding_versions.py
 ```
 
+Validation-only mode:
+
+```bash
+python3 tools/release/sync_binding_versions.py --check
+python3 tools/release/test_sync_binding_versions.py
+```
+
+The tool reads each internal path dependency's target crate manifest. Crates
+using `version.workspace = true` follow the established binding/native release
+line, while explicitly versioned new crates retain their independent release
+line. Do not add per-crate hard-coded overrides when a new crate is introduced.
+
 ## 2) Sync vcpkg Git registry baseline
 
 After pushing updates to `gregorian-09/orderflow-vcpkg-registry`, update local

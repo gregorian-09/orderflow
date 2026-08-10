@@ -16,12 +16,6 @@ PYPROJECT_PATH = ROOT / "bindings" / "python" / "pyproject.toml"
 JAVA_POM_PATH = ROOT / "bindings" / "java" / "pom.xml"
 CARGO_WORKSPACE_PATH = ROOT / "Cargo.toml"
 CRATES_DIR = ROOT / "crates"
-EXECUTION_CRATE_VERSION = "0.1.0"
-RUST_INTERNAL_DEP_VERSION_OVERRIDES = {
-    "of_execution": EXECUTION_CRATE_VERSION,
-    "of_execution_adapters": EXECUTION_CRATE_VERSION,
-    "of_execution_core": EXECUTION_CRATE_VERSION,
-}
 
 
 def read_versions() -> dict[str, str]:
@@ -92,10 +86,31 @@ def sync_rust_workspace(version: str, check: bool) -> bool:
     return True
 
 
+def rust_crate_versions(workspace_version: str) -> dict[str, str]:
+    """Returns each crate directory's effective package version."""
+    versions: dict[str, str] = {}
+    for cargo_toml in sorted(CRATES_DIR.glob("*/Cargo.toml")):
+        with cargo_toml.open("rb") as file:
+            package = tomllib.load(file).get("package", {})
+        name = package.get("name")
+        declared = package.get("version")
+        if not isinstance(name, str):
+            raise ValueError(f"missing package.name in {cargo_toml.relative_to(ROOT)}")
+        if isinstance(declared, str):
+            effective = declared
+        elif isinstance(declared, dict) and declared.get("workspace") is True:
+            effective = workspace_version
+        else:
+            raise ValueError(f"missing package.version in {cargo_toml.relative_to(ROOT)}")
+        versions[cargo_toml.parent.name] = effective
+    return versions
+
+
 def sync_rust_internal_dependency_versions(version: str, check: bool) -> int:
     crate_files = sorted(CRATES_DIR.glob("*/Cargo.toml"))
+    crate_versions = rust_crate_versions(version)
     dep_pattern = re.compile(
-        r'(?m)^(\s*(of_[a-z_]+)\s*=\s*\{[^\n]*\bpath\s*=\s*"\.\./of_[^"\n]+"[^\n]*\bversion\s*=\s*")([^"\n]+)(")'
+        r'(?m)^(\s*(of_[a-z_]+)\s*=\s*\{[^\n]*\bpath\s*=\s*"\.\./(of_[^"/\n]+)"[^\n]*\bversion\s*=\s*")([^"\n]+)(")'
     )
     changed_files = 0
     mismatches: list[str] = []
@@ -105,14 +120,19 @@ def sync_rust_internal_dependency_versions(version: str, check: bool) -> int:
 
         def replace_dep(match: re.Match[str]) -> str:
             dep_name = match.group(2)
-            expected = RUST_INTERNAL_DEP_VERSION_OVERRIDES.get(dep_name, version)
-            current = match.group(3)
+            target_crate = match.group(3)
+            expected = crate_versions.get(target_crate)
+            if expected is None:
+                raise ValueError(
+                    f"unknown internal path dependency target: {target_crate}"
+                )
+            current = match.group(4)
             if current == expected:
                 return match.group(0)
             mismatches.append(
                 f"{cargo_toml.relative_to(ROOT)}:{dep_name}={current}, expected={expected}"
             )
-            return f"{match.group(1)}{expected}{match.group(4)}"
+            return f"{match.group(1)}{expected}{match.group(5)}"
 
         updated, subs = dep_pattern.subn(replace_dep, text)
         if subs > 0 and updated != text:
