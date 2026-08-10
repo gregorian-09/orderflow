@@ -667,6 +667,27 @@ def _bind_symbols(lib: Any, namespace: dict[str, Any]) -> None:
     ]
     lib.of_get_signal_metrics_json.restype = ctypes.c_int32
 
+    lib.of_validate_signal_config_json.argtypes = [
+        ctypes.c_char_p,
+        ctypes.POINTER(namespace["OfSignalConfigParameter"]),
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_char_p),
+        ctypes.POINTER(ctypes.c_uint32),
+    ]
+    lib.of_validate_signal_config_json.restype = ctypes.c_int32
+
+    lib.of_validate_signal_replay_json.argtypes = [
+        ctypes.c_char_p,
+        ctypes.POINTER(namespace["OfSignalConfigParameter"]),
+        ctypes.c_uint32,
+        ctypes.POINTER(namespace["OfSignalValidationEvent"]),
+        ctypes.c_uint32,
+        ctypes.POINTER(namespace["OfSignalValidationConfig"]),
+        ctypes.POINTER(ctypes.c_char_p),
+        ctypes.POINTER(ctypes.c_uint32),
+    ]
+    lib.of_validate_signal_replay_json.restype = ctypes.c_int32
+
     lib.of_string_free.argtypes = [
         ctypes.c_char_p,
     ]

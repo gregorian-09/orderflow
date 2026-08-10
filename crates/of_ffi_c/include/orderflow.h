@@ -491,6 +491,72 @@ typedef struct {
   uint8_t has_pending_plan;
 } of_execution_algo_progress_t;
 
+/** Signal configuration parameter value kind. */
+typedef enum {
+  /** Signed 64-bit integer value. */
+  OF_SIGNAL_PARAMETER_INTEGER = 1,
+  /** IEEE-754 double value. */
+  OF_SIGNAL_PARAMETER_FLOAT = 2,
+  /** Boolean value encoded as zero or one. */
+  OF_SIGNAL_PARAMETER_BOOLEAN = 3,
+  /** Null-terminated UTF-8 text value. */
+  OF_SIGNAL_PARAMETER_TEXT = 4,
+} of_signal_parameter_kind_t;
+
+/** Tagged signal configuration parameter for registry-based construction. */
+typedef struct {
+  /** Parameter name from the selected signal descriptor. */
+  const char* name;
+  /** Value kind from `of_signal_parameter_kind_t`. */
+  uint32_t kind;
+  /** Integer payload when kind is `OF_SIGNAL_PARAMETER_INTEGER`. */
+  int64_t integer_value;
+  /** Floating-point payload when kind is `OF_SIGNAL_PARAMETER_FLOAT`. */
+  double float_value;
+  /** Boolean payload when kind is `OF_SIGNAL_PARAMETER_BOOLEAN`. */
+  uint8_t boolean_value;
+  /** Text payload when kind is `OF_SIGNAL_PARAMETER_TEXT`. */
+  const char* text_value;
+} of_signal_config_parameter_t;
+
+/** Replay-validation policy for a constructed signal. */
+typedef struct {
+  /** Number of future events used for each markout label. */
+  uint32_t markout_horizon_events;
+  /** Absolute price change at or below which a markout is flat. */
+  int64_t flat_price_threshold;
+  /** Minimum directional confidence in basis points. */
+  uint16_t min_confidence_bps;
+  /** Non-zero retains per-event samples in the returned JSON. */
+  uint8_t store_samples;
+  /** Non-zero checks exchange timestamps for monotonic ordering. */
+  uint8_t check_monotonic_timestamps;
+} of_signal_validation_config_t;
+
+/** One analytics observation consumed by signal replay validation. */
+typedef struct {
+  /** Session delta. */
+  int64_t delta;
+  /** Cumulative session delta. */
+  int64_t cumulative_delta;
+  /** Total buy-side volume. */
+  int64_t buy_volume;
+  /** Total sell-side volume. */
+  int64_t sell_volume;
+  /** Last traded price. */
+  int64_t last_price;
+  /** Session point of control. */
+  int64_t point_of_control;
+  /** Session value-area low. */
+  int64_t value_area_low;
+  /** Session value-area high. */
+  int64_t value_area_high;
+  /** Exchange timestamp in nanoseconds. */
+  uint64_t ts_exchange_ns;
+  /** Non-zero when `ts_exchange_ns` is present. */
+  uint8_t has_ts_exchange_ns;
+} of_signal_validation_event_t;
+
 /** Returns ABI version number. */
 uint32_t of_api_version(void);
 /** Returns static build info string. */
@@ -782,6 +848,10 @@ int32_t of_get_signal_descriptors_json(const char** out_json, uint32_t* out_len)
 int32_t of_get_signal_explanation_json(of_engine_t* engine, const of_symbol_t* symbol, const char** out_json, uint32_t* out_len);
 /** Returns signal metrics JSON allocated by the library. */
 int32_t of_get_signal_metrics_json(of_engine_t* engine, const char** out_json, uint32_t* out_len);
+/** Validates built-in signal configuration and returns library-allocated JSON. */
+int32_t of_validate_signal_config_json(const char* signal_id, const of_signal_config_parameter_t* parameters, uint32_t parameter_count, const char** out_json, uint32_t* out_len);
+/** Constructs a built-in signal, validates ordered replay events, and returns library-allocated JSON. */
+int32_t of_validate_signal_replay_json(const char* signal_id, const of_signal_config_parameter_t* parameters, uint32_t parameter_count, const of_signal_validation_event_t* events, uint32_t event_count, const of_signal_validation_config_t* validation_config, const char** out_json, uint32_t* out_len);
 /** Releases strings allocated by JSON-returning helper functions. */
 void of_string_free(const char* p);
 

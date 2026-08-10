@@ -11,7 +11,10 @@ use std::sync::{
 };
 
 use of_adapters::{AdapterConfig, ProviderKind};
-use of_core::{AnalyticsConfig, BookUpdate, DataQualityFlags, SignalState, SymbolId, TradePrint};
+use of_core::{
+    AnalyticsConfig, AnalyticsSnapshot, BookUpdate, DataQualityFlags, SignalState, SymbolId,
+    TradePrint,
+};
 use of_execution::{
     simulated_engine_with_routes, AllowAllRiskGate, CheckpointStoreIntegrityReport,
     ConcurrentExecutionConfig, ConcurrentExecutionEngine, ConcurrentExecutionError,
@@ -30,10 +33,14 @@ use of_runtime::{
     load_engine_config_from_path, signal_descriptor_inventory_json, DefaultEngine, EngineConfig,
     ExternalFeedPolicy, RuntimeError,
 };
+use of_signals::{
+    validate_signal_replay_events, SignalConfig, SignalConfigParameter, SignalConfigValue,
+    SignalRegistry, SignalReplayEvent, SignalValidationConfig,
+};
 #[cfg(feature = "tickbar")]
 use support::format_bar_series;
 use support::{
-    action_from_ffi, dispatch_callbacks, dispatch_health_callbacks, escape_json,
+    action_from_ffi, cstr_to_string, dispatch_callbacks, dispatch_health_callbacks, escape_json,
     format_acd_snapshot, format_agent_type_snapshot, format_almgren_chriss_snapshot,
     format_amihud_snapshot, format_analytics_snapshot, format_book_analytics_snapshot,
     format_book_event_analytics_snapshot, format_book_snapshot, format_cvd_enhancement_snapshot,
@@ -658,6 +665,66 @@ pub struct of_execution_algo_progress_t {
     pub terminal_children: u64,
     /// Non-zero when a planned child awaits commit/discard.
     pub has_pending_plan: u8,
+}
+
+/// Tagged signal configuration parameter used by registry-based binding calls.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct of_signal_config_parameter_t {
+    /// Parameter name from the selected signal descriptor.
+    pub name: *const c_char,
+    /// Value kind: 1 integer, 2 floating point, 3 boolean, or 4 text.
+    pub kind: u32,
+    /// Integer payload when `kind` is 1.
+    pub integer_value: i64,
+    /// Floating-point payload when `kind` is 2.
+    pub float_value: f64,
+    /// Boolean payload when `kind` is 3; zero is false and one is true.
+    pub boolean_value: u8,
+    /// UTF-8 text payload when `kind` is 4.
+    pub text_value: *const c_char,
+}
+
+/// Replay-validation policy passed to the signal validation facade.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct of_signal_validation_config_t {
+    /// Number of future events used for each markout label.
+    pub markout_horizon_events: u32,
+    /// Absolute price change at or below which a markout is flat.
+    pub flat_price_threshold: i64,
+    /// Minimum directional confidence in basis points.
+    pub min_confidence_bps: u16,
+    /// Non-zero retains per-event samples in the returned JSON.
+    pub store_samples: u8,
+    /// Non-zero checks exchange timestamps for monotonic ordering.
+    pub check_monotonic_timestamps: u8,
+}
+
+/// One analytics observation consumed by the signal replay validator.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct of_signal_validation_event_t {
+    /// Session delta.
+    pub delta: i64,
+    /// Cumulative session delta.
+    pub cumulative_delta: i64,
+    /// Total buy-side volume.
+    pub buy_volume: i64,
+    /// Total sell-side volume.
+    pub sell_volume: i64,
+    /// Last traded price.
+    pub last_price: i64,
+    /// Session point of control.
+    pub point_of_control: i64,
+    /// Session value-area low.
+    pub value_area_low: i64,
+    /// Session value-area high.
+    pub value_area_high: i64,
+    /// Exchange timestamp in nanoseconds.
+    pub ts_exchange_ns: u64,
+    /// Non-zero when `ts_exchange_ns` is present.
+    pub has_ts_exchange_ns: u8,
 }
 
 /// Opaque engine handle.
@@ -2617,6 +2684,200 @@ pub extern "C" fn of_get_signal_metrics_json(
 
     let engine = unsafe { &mut *engine };
     allocate_json_string(engine.inner.signal_metrics_json(), out_json, out_len)
+}
+
+/// Validates a built-in signal configuration and returns a JSON result.
+///
+/// A syntactically valid call returns `OF_OK` even when the configuration is
+/// rejected; inspect the returned document's `valid` and `error` fields.
+#[no_mangle]
+pub extern "C" fn of_validate_signal_config_json(
+    signal_id: *const c_char,
+    parameters: *const of_signal_config_parameter_t,
+    parameter_count: u32,
+    out_json: *mut *const c_char,
+    out_len: *mut u32,
+) -> i32 {
+    if out_json.is_null() || out_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let Some(signal_id) = cstr_to_string(signal_id) else {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    };
+    let owned_parameters = match signal_parameters_from_ffi(parameters, parameter_count) {
+        Ok(parameters) => parameters,
+        Err(()) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let borrowed_parameters = borrow_signal_parameters(&owned_parameters);
+    let config = SignalConfig::with_parameters(&signal_id, &borrowed_parameters);
+    allocate_json_string(
+        SignalRegistry::with_built_ins().validate_config_json(&config),
+        out_json,
+        out_len,
+    )
+}
+
+/// Constructs a built-in signal and validates it over ordered analytics events.
+///
+/// The returned library-owned JSON includes configuration, summary metrics,
+/// optional retained samples, and structured timestamp/markout warnings. Free
+/// it with [`of_string_free`]. Registry construction failures are represented
+/// as `valid: false` JSON documents and still return `OF_OK`.
+#[no_mangle]
+pub extern "C" fn of_validate_signal_replay_json(
+    signal_id: *const c_char,
+    parameters: *const of_signal_config_parameter_t,
+    parameter_count: u32,
+    events: *const of_signal_validation_event_t,
+    event_count: u32,
+    validation_config: *const of_signal_validation_config_t,
+    out_json: *mut *const c_char,
+    out_len: *mut u32,
+) -> i32 {
+    if validation_config.is_null() || out_json.is_null() || out_len.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let Some(signal_id) = cstr_to_string(signal_id) else {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    };
+    let owned_parameters = match signal_parameters_from_ffi(parameters, parameter_count) {
+        Ok(parameters) => parameters,
+        Err(()) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let ffi_events = match ffi_slice(events, event_count) {
+        Ok(events) => events,
+        Err(()) => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    let borrowed_parameters = borrow_signal_parameters(&owned_parameters);
+    let signal_config = SignalConfig::with_parameters(&signal_id, &borrowed_parameters);
+    let registry = SignalRegistry::with_built_ins();
+    if let Err(error) = registry.validate_config(&signal_config) {
+        return allocate_json_string(
+            signal_registry_error_json(&signal_id, &error.to_string()),
+            out_json,
+            out_len,
+        );
+    }
+    let mut signal = match registry.create_signal(&signal_config) {
+        Ok(signal) => signal,
+        Err(error) => {
+            return allocate_json_string(
+                signal_registry_error_json(&signal_id, &error.to_string()),
+                out_json,
+                out_len,
+            );
+        }
+    };
+
+    let analytics = ffi_events
+        .iter()
+        .map(|event| AnalyticsSnapshot {
+            delta: event.delta,
+            cumulative_delta: event.cumulative_delta,
+            buy_volume: event.buy_volume,
+            sell_volume: event.sell_volume,
+            last_price: event.last_price,
+            point_of_control: event.point_of_control,
+            value_area_low: event.value_area_low,
+            value_area_high: event.value_area_high,
+        })
+        .collect::<Vec<_>>();
+    let replay_events = analytics
+        .iter()
+        .zip(ffi_events)
+        .map(|(analytics, event)| {
+            if event.has_ts_exchange_ns == 0 {
+                SignalReplayEvent::new(analytics)
+            } else {
+                SignalReplayEvent::with_ts_exchange_ns(analytics, event.ts_exchange_ns)
+            }
+        })
+        .collect::<Vec<_>>();
+    let validation_config = unsafe { *validation_config };
+    let report = validate_signal_replay_events(
+        &mut signal,
+        &replay_events,
+        SignalValidationConfig::new(validation_config.markout_horizon_events as usize)
+            .with_flat_price_threshold(validation_config.flat_price_threshold)
+            .with_min_confidence_bps(validation_config.min_confidence_bps)
+            .with_store_samples(validation_config.store_samples != 0)
+            .with_check_monotonic_timestamps(validation_config.check_monotonic_timestamps != 0),
+    );
+    allocate_json_string(report.json_report(), out_json, out_len)
+}
+
+#[derive(Debug)]
+enum OwnedSignalConfigValue {
+    Integer(i64),
+    Float(f64),
+    Boolean(bool),
+    Text(String),
+}
+
+#[derive(Debug)]
+struct OwnedSignalConfigParameter {
+    name: String,
+    value: OwnedSignalConfigValue,
+}
+
+fn signal_parameters_from_ffi(
+    parameters: *const of_signal_config_parameter_t,
+    parameter_count: u32,
+) -> Result<Vec<OwnedSignalConfigParameter>, ()> {
+    let parameters = ffi_slice(parameters, parameter_count)?;
+    parameters
+        .iter()
+        .map(|parameter| {
+            let name = cstr_to_string(parameter.name).ok_or(())?;
+            let value = match parameter.kind {
+                1 => OwnedSignalConfigValue::Integer(parameter.integer_value),
+                2 if parameter.float_value.is_finite() => {
+                    OwnedSignalConfigValue::Float(parameter.float_value)
+                }
+                3 if parameter.boolean_value <= 1 => {
+                    OwnedSignalConfigValue::Boolean(parameter.boolean_value != 0)
+                }
+                4 => OwnedSignalConfigValue::Text(cstr_to_string(parameter.text_value).ok_or(())?),
+                _ => return Err(()),
+            };
+            Ok(OwnedSignalConfigParameter { name, value })
+        })
+        .collect()
+}
+
+fn borrow_signal_parameters(
+    parameters: &[OwnedSignalConfigParameter],
+) -> Vec<SignalConfigParameter<'_>> {
+    parameters
+        .iter()
+        .map(|parameter| {
+            let value = match &parameter.value {
+                OwnedSignalConfigValue::Integer(value) => SignalConfigValue::Integer(*value),
+                OwnedSignalConfigValue::Float(value) => SignalConfigValue::Float(*value),
+                OwnedSignalConfigValue::Boolean(value) => SignalConfigValue::Boolean(*value),
+                OwnedSignalConfigValue::Text(value) => SignalConfigValue::Text(value),
+            };
+            SignalConfigParameter::new(&parameter.name, value)
+        })
+        .collect()
+}
+
+fn ffi_slice<'a, T>(ptr: *const T, len: u32) -> Result<&'a [T], ()> {
+    if len == 0 {
+        return Ok(&[]);
+    }
+    if ptr.is_null() {
+        return Err(());
+    }
+    Ok(unsafe { std::slice::from_raw_parts(ptr, len as usize) })
+}
+
+fn signal_registry_error_json(signal_id: &str, error: &str) -> String {
+    format!(
+        "{{\"schema_version\":1,\"signal_id\":\"{}\",\"valid\":false,\"error\":\"{}\"}}",
+        escape_json(signal_id),
+        escape_json(error)
+    )
 }
 
 fn allocate_json_string(payload: String, out_json: *mut *const c_char, out_len: *mut u32) -> i32 {

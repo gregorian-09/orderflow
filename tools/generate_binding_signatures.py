@@ -96,6 +96,9 @@ JAVA_STRUCT_TYPES = {
     "of_execution_twap_config_t": "OfExecutionTwapConfig",
     "of_execution_algo_child_plan_t": "OfExecutionAlgoChildPlan",
     "of_execution_algo_progress_t": "OfExecutionAlgoProgress",
+    "of_signal_config_parameter_t": "OfSignalConfigParameter",
+    "of_signal_validation_config_t": "OfSignalValidationConfig",
+    "of_signal_validation_event_t": "OfSignalValidationEvent",
 }
 
 JAVA_ARRAY_PARAMETERS = {
@@ -106,6 +109,9 @@ JAVA_ARRAY_PARAMETERS = {
     ("of_execution_amend_order", "out_events"),
     ("of_execution_poll", "out_events"),
     ("of_execution_concurrent_try_recv_report", "out_events"),
+    ("of_validate_signal_config_json", "parameters"),
+    ("of_validate_signal_replay_json", "parameters"),
+    ("of_validate_signal_replay_json", "events"),
 }
 
 

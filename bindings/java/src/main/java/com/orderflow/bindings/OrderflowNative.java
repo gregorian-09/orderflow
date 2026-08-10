@@ -299,6 +299,12 @@ public interface OrderflowNative extends Library {
     /** Returns signal metrics JSON allocated by the library. */
     int of_get_signal_metrics_json(Pointer engine, PointerByReference out_json, IntByReference out_len);
 
+    /** Validates built-in signal configuration and returns library-allocated JSON. */
+    int of_validate_signal_config_json(String signal_id, OfSignalConfigParameter[] parameters, int parameter_count, PointerByReference out_json, IntByReference out_len);
+
+    /** Constructs a built-in signal, validates ordered replay events, and returns library-allocated JSON. */
+    int of_validate_signal_replay_json(String signal_id, OfSignalConfigParameter[] parameters, int parameter_count, OfSignalValidationEvent[] events, int event_count, OfSignalValidationConfig validation_config, PointerByReference out_json, IntByReference out_len);
+
     /** Releases strings allocated by JSON-returning helper functions. */
     void of_string_free(Pointer p);
 }

@@ -1201,6 +1201,157 @@ mod tests {
     }
 
     #[test]
+    fn signal_registry_and_replay_validation_are_binding_safe() {
+        let _guard = test_guard();
+        let signal_id = CString::new("delta_momentum_v1").expect("signal id");
+        let threshold_name = CString::new("threshold").expect("parameter name");
+        let parameter = of_signal_config_parameter_t {
+            name: threshold_name.as_ptr(),
+            kind: 1,
+            integer_value: 10,
+            float_value: 0.0,
+            boolean_value: 0,
+            text_value: ptr::null(),
+        };
+
+        let mut config_out: *const c_char = ptr::null();
+        let mut config_len = 0u32;
+        assert_eq!(
+            of_validate_signal_config_json(
+                signal_id.as_ptr(),
+                &parameter,
+                1,
+                &mut config_out,
+                &mut config_len,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        let config_json = unsafe {
+            String::from_utf8_lossy(std::slice::from_raw_parts(
+                config_out.cast::<u8>(),
+                config_len as usize,
+            ))
+            .to_string()
+        };
+        assert!(config_json.contains("\"valid\":true"));
+        of_string_free(config_out);
+
+        let events = [
+            of_signal_validation_event_t {
+                delta: 20,
+                cumulative_delta: 20,
+                buy_volume: 20,
+                sell_volume: 0,
+                last_price: 100,
+                point_of_control: 100,
+                value_area_low: 99,
+                value_area_high: 101,
+                ts_exchange_ns: 2,
+                has_ts_exchange_ns: 1,
+            },
+            of_signal_validation_event_t {
+                delta: -20,
+                cumulative_delta: 0,
+                buy_volume: 20,
+                sell_volume: 20,
+                last_price: 90,
+                point_of_control: 95,
+                value_area_low: 89,
+                value_area_high: 101,
+                ts_exchange_ns: 1,
+                has_ts_exchange_ns: 1,
+            },
+            of_signal_validation_event_t {
+                delta: -20,
+                cumulative_delta: -20,
+                buy_volume: 20,
+                sell_volume: 40,
+                last_price: 80,
+                point_of_control: 90,
+                value_area_low: 79,
+                value_area_high: 101,
+                ts_exchange_ns: 3,
+                has_ts_exchange_ns: 1,
+            },
+        ];
+        let validation_config = of_signal_validation_config_t {
+            markout_horizon_events: 1,
+            flat_price_threshold: 0,
+            min_confidence_bps: 0,
+            store_samples: 1,
+            check_monotonic_timestamps: 1,
+        };
+        let mut report_out: *const c_char = ptr::null();
+        let mut report_len = 0u32;
+        assert_eq!(
+            of_validate_signal_replay_json(
+                signal_id.as_ptr(),
+                &parameter,
+                1,
+                events.as_ptr(),
+                events.len() as u32,
+                &validation_config,
+                &mut report_out,
+                &mut report_len,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        let report_json = unsafe {
+            String::from_utf8_lossy(std::slice::from_raw_parts(
+                report_out.cast::<u8>(),
+                report_len as usize,
+            ))
+            .to_string()
+        };
+        assert!(report_json.contains("\"valid\":true"));
+        assert!(report_json.contains("\"evaluated_events\":3"));
+        assert!(report_json.contains("\"directional_accuracy_bps\":5000"));
+        assert!(report_json.contains("\"code\":\"non_monotonic_timestamp\""));
+        assert!(report_json.contains("\"samples\":[{"));
+        of_string_free(report_out);
+
+        let invalid_parameter = of_signal_config_parameter_t {
+            integer_value: -1,
+            ..parameter
+        };
+        let mut invalid_out: *const c_char = ptr::null();
+        let mut invalid_len = 0u32;
+        assert_eq!(
+            of_validate_signal_config_json(
+                signal_id.as_ptr(),
+                &invalid_parameter,
+                1,
+                &mut invalid_out,
+                &mut invalid_len,
+            ),
+            of_error_t::OF_OK as i32
+        );
+        let invalid_json = unsafe {
+            String::from_utf8_lossy(std::slice::from_raw_parts(
+                invalid_out.cast::<u8>(),
+                invalid_len as usize,
+            ))
+            .to_string()
+        };
+        assert!(invalid_json.contains("\"valid\":false"));
+        of_string_free(invalid_out);
+
+        assert_eq!(
+            of_validate_signal_replay_json(
+                signal_id.as_ptr(),
+                ptr::null(),
+                1,
+                events.as_ptr(),
+                events.len() as u32,
+                &validation_config,
+                &mut report_out,
+                &mut report_len,
+            ),
+            of_error_t::OF_ERR_INVALID_ARG as i32
+        );
+    }
+
+    #[test]
     fn ingest_book_rejects_invalid_side() {
         let _guard = test_guard();
 
