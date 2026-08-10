@@ -69,6 +69,11 @@ final class NativeSignalJson {
         return Long.parseLong(rawValue(json, name));
     }
 
+    static Long nullableLong(String json, String name) {
+        String value = rawValue(json, name);
+        return "null".equals(value) ? null : Long.valueOf(value);
+    }
+
     static String nullableString(String json, String name) {
         String value = rawValue(json, name);
         if ("null".equals(value)) {

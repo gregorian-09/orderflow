@@ -113,6 +113,34 @@ public final class BindingSmokeExample {
             "signal validation accuracy mismatch"
         );
 
+        Path recoveryRoot;
+        try {
+            recoveryRoot = Files.createTempDirectory("orderflow-recovery-smoke-");
+        } catch (java.io.IOException error) {
+            throw new IllegalStateException("failed to create recovery smoke root", error);
+        }
+        try {
+            var recovery = OrderflowExecutionEngine.inspectRecovery(
+                nativePath,
+                recoveryRoot.toString(),
+                null,
+                false
+            );
+            require(recovery.schemaVersion == 1, "recovery report schema mismatch");
+            require(recovery.orders == 0L, "empty recovery root returned orders");
+            require(
+                recovery.venueReconciliationRequired,
+                "recovery report did not preserve reconciliation gate"
+            );
+            require(!recovery.submissionsEnabled, "recovery report enabled submissions");
+        } finally {
+            try {
+                Files.deleteIfExists(recoveryRoot);
+            } catch (java.io.IOException error) {
+                throw new IllegalStateException("failed to remove recovery smoke root", error);
+            }
+        }
+
         System.out.println("java binding smoke: PASS");
     }
 

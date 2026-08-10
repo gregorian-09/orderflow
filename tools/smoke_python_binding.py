@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -29,6 +30,7 @@ from orderflow import (  # noqa: E402
     Symbol,
     TwapConfig,
     TwapExecutionAlgo,
+    inspect_execution_recovery,
     validate_signal_config,
     validate_signal_replay,
 )
@@ -167,6 +169,20 @@ def main() -> int:
     require(validation_report.evaluated_events == 3, "signal validation event count mismatch")
     require(validation_report.directional_accuracy_bps == 5_000, "signal accuracy mismatch")
     require(len(validation_report.samples) == 2, "signal validation sample count mismatch")
+
+    with tempfile.TemporaryDirectory(prefix="orderflow-recovery-smoke-") as wal_root:
+        recovery = inspect_execution_recovery(
+            wal_root,
+            require_checkpoint=False,
+            library_path=str(lib_path),
+        )
+        require(recovery.schema_version == 1, "recovery report schema mismatch")
+        require(recovery.orders == 0, "empty recovery root returned orders")
+        require(
+            recovery.venue_reconciliation_required,
+            "recovery report did not preserve reconciliation gate",
+        )
+        require(not recovery.submissions_enabled, "recovery report enabled submissions")
 
     print("python binding smoke: PASS")
     return 0

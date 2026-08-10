@@ -1,5 +1,6 @@
 package com.orderflow.bindings;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -144,6 +145,57 @@ public final class OrderflowExecutionEngine implements AutoCloseable {
             report.has_latest != 0 ? report.latest_created_ns : null,
             report.valid != 0
         );
+    }
+
+    /**
+     * Reconstructs OMS state from existing roots without modifying them.
+     *
+     * @param nativePath native library path, or null/blank for the default
+     * @param walRoot existing segmented execution WAL root
+     * @param checkpointRoot existing checkpoint root, or null only when
+     *     checkpoint-free replay is allowed
+     * @param requireCheckpoint whether a valid checkpoint is mandatory
+     * @return bounded recovery summary; venue reconciliation remains required
+     */
+    public static ExecutionRecoveryReport inspectRecovery(
+        String nativePath,
+        String walRoot,
+        String checkpointRoot,
+        boolean requireCheckpoint
+    ) {
+        if (requireCheckpoint && (checkpointRoot == null || checkpointRoot.isBlank())) {
+            throw new OrderflowArgException(
+                "checkpointRoot is required when requireCheckpoint is true"
+            );
+        }
+        String libPath = nativePath == null || nativePath.isBlank() ? defaultLibraryPath() : nativePath;
+        OrderflowNative nativeLib = OrderflowNative.load(libPath);
+        OfExecutionRecoveryConfig config = new OfExecutionRecoveryConfig();
+        config.wal_root = walRoot;
+        config.checkpoint_root = checkpointRoot;
+        config.require_checkpoint = (byte) (requireCheckpoint ? 1 : 0);
+        config.write();
+        PointerByReference out = new PointerByReference();
+        IntByReference outLen = new IntByReference(0);
+        check(
+            nativeLib.of_execution_recovery_report_json(config, out, outLen),
+            "of_execution_recovery_report_json",
+            List.of()
+        );
+        Pointer pointer = out.getValue();
+        if (pointer == null) {
+            throw new OrderflowException("native recovery report returned a null string");
+        }
+        try {
+            int length = outLen.getValue();
+            if (length < 0) {
+                throw new OrderflowException("native recovery report length overflow");
+            }
+            byte[] bytes = pointer.getByteArray(0, length);
+            return ExecutionRecoveryReport.parse(new String(bytes, StandardCharsets.UTF_8));
+        } finally {
+            nativeLib.of_string_free(pointer);
+        }
     }
 
     /** Starts execution adapter/session. */
