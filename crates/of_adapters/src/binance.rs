@@ -9,7 +9,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use of_core::{BookAction, BookUpdate, Side, SymbolId, TradePrint};
 
 use crate::{
-    AdapterConfig, AdapterError, AdapterHealth, AdapterResult, MarketDataAdapter, RawEvent,
+    redact_adapter_endpoint, AdapterConfig, AdapterConnectionState, AdapterError, AdapterHealth,
+    AdapterOperationalStatus, AdapterResult, AdapterRuntimeMode, MarketDataAdapter, RawEvent,
     SubscribeReq,
 };
 
@@ -894,7 +895,8 @@ impl MarketDataAdapter for BinanceAdapter {
             .unwrap_or(0);
         let queue_depth = self.queue.len();
         let raw_capture_depth = self.raw_capture.len();
-        let endpoint = redact_endpoint(&self.cfg.endpoint);
+        let endpoint =
+            redact_adapter_endpoint(&self.cfg.endpoint).unwrap_or_else(|| "<redacted>".to_string());
         let depth_update_ids = format_depth_update_ids(&self.depth_state);
         let parse_latency_avg_ns =
             average_ns(self.parse_latency_total_ns, self.parse_latency_samples);
@@ -933,6 +935,53 @@ impl MarketDataAdapter for BinanceAdapter {
                 self.max_queue_depth
             )),
         }
+    }
+
+    fn operational_status(&self) -> AdapterOperationalStatus {
+        let connected = self.connected
+            && match &self.transport {
+                BinanceTransport::Mock => true,
+                BinanceTransport::Live(ws) => ws.is_connected(),
+            };
+        let state = if connected && !self.degraded {
+            AdapterConnectionState::Streaming
+        } else if connected {
+            AdapterConnectionState::Reconnecting
+        } else if self.next_reconnect_at.is_some() {
+            AdapterConnectionState::Backoff
+        } else {
+            AdapterConnectionState::Disconnected
+        };
+        let mode = if self.is_mock_mode() {
+            AdapterRuntimeMode::Mock
+        } else {
+            AdapterRuntimeMode::Live
+        };
+        let last_message_age_ms = self
+            .last_message_at
+            .map(|at| at.elapsed().as_millis() as u64);
+        let last_market_data_age_ms = self
+            .last_market_data_at
+            .map(|at| at.elapsed().as_millis() as u64);
+        let stale = !self.is_mock_mode()
+            && connected
+            && !self.subscribed.is_empty()
+            && last_market_data_age_ms
+                .or(last_message_age_ms)
+                .is_some_and(|age| age > 15_000);
+
+        AdapterOperationalStatus::new(mode, state)
+            .with_endpoint(Some(&self.cfg.endpoint))
+            .with_reconnect_attempt(self.reconnect_attempt)
+            .with_subscribed_symbols(self.subscribed.keys().cloned())
+            .with_queue(
+                self.queue.len(),
+                (self.max_queue_depth > 0).then_some(self.max_queue_depth),
+            )
+            .with_loss_counters(self.dropped_events, self.gap_count)
+            .with_stale(stale)
+            .with_raw_capture(self.raw_capture.len(), self.raw_capture_capacity)
+            .with_activity_ages(last_message_age_ms, last_market_data_age_ms)
     }
 }
 
@@ -1322,20 +1371,6 @@ fn reconnect_delay_ms(attempt: u32, salt: u64) -> u64 {
     backoff_ms.saturating_add(jitter_ms).min(MAX_MS)
 }
 
-fn redact_endpoint(endpoint: &str) -> String {
-    let Some((scheme, rest)) = endpoint.split_once("://") else {
-        return "<redacted>".to_string();
-    };
-    let authority_and_path = rest.split_once('?').map_or(rest, |(before, _)| before);
-    let authority_and_path = authority_and_path
-        .split_once('#')
-        .map_or(authority_and_path, |(before, _)| before);
-    let without_userinfo = authority_and_path
-        .rsplit_once('@')
-        .map_or(authority_and_path, |(_, after)| after);
-    format!("{scheme}://{without_userinfo}")
-}
-
 fn format_depth_update_ids(depth_state: &HashMap<SymbolId, BinanceDepthState>) -> String {
     if depth_state.is_empty() {
         return "-".to_string();
@@ -1421,14 +1456,42 @@ mod tests {
 
         let protocol = adapter.health().protocol_info.unwrap_or_default();
 
-        assert!(protocol.contains("endpoint=wss://test.live/ws"));
+        assert!(protocol.contains("endpoint=wss://test.live"));
         assert!(!protocol.contains("secret-token"));
         assert!(!protocol.contains("listenKey"));
         assert!(!protocol.contains("super-secret"));
         assert_eq!(
-            redact_endpoint("wss://user:secret-token@test.live/ws?listenKey=super-secret#frag"),
-            "wss://test.live/ws"
+            redact_adapter_endpoint(
+                "wss://user:secret-token@test.live/ws?listenKey=super-secret#frag"
+            ),
+            Some("wss://test.live".to_string())
         );
+    }
+
+    #[test]
+    fn operational_status_reports_bounded_adapter_state() {
+        let mut adapter = BinanceAdapter::from_config(&cfg("mock://binance/private")).expect("cfg");
+        adapter.set_max_queue_depth(8);
+        adapter.set_raw_capture_capacity(4);
+        adapter.connect().expect("connect");
+        adapter
+            .subscribe(SubscribeReq {
+                symbol: SymbolId {
+                    venue: "BINANCE".to_string(),
+                    symbol: "BTCUSDT".to_string(),
+                },
+                depth_levels: 20,
+            })
+            .expect("subscribe");
+
+        let status = adapter.operational_status();
+        assert_eq!(status.mode, AdapterRuntimeMode::Mock);
+        assert_eq!(status.connection_state, AdapterConnectionState::Streaming);
+        assert_eq!(status.endpoint_redacted.as_deref(), Some("mock://binance"));
+        assert_eq!(status.subscription_count, 1);
+        assert_eq!(status.queue_capacity, Some(8));
+        assert!(status.raw_capture_enabled);
+        assert_eq!(status.raw_capture_capacity, 4);
     }
 
     #[test]

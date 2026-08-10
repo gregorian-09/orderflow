@@ -6,8 +6,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use of_adapters::{
-    adapter_descriptors, create_adapter, describe_adapter, AdapterConfig, AdapterDescriptor,
-    AdapterHealth, MarketDataAdapter, ProviderKind, RawEvent, SubscribeReq,
+    adapter_descriptors, create_adapter, describe_adapter, AdapterConfig, AdapterConnectionState,
+    AdapterDescriptor, AdapterHealth, AdapterOperationalStatus, AdapterRuntimeMode,
+    MarketDataAdapter, ProviderKind, RawEvent, SubscribeReq,
 };
 #[cfg(feature = "tickbar")]
 use of_core::CompletedBar;
@@ -147,6 +148,8 @@ pub struct RuntimeAdapterStatus {
     pub descriptor: AdapterDescriptor,
     /// Latest health snapshot returned by the adapter.
     pub health: AdapterHealth,
+    /// Typed provider operational state returned by the adapter.
+    pub operational: AdapterOperationalStatus,
     /// Runtime health sequence at the time this status was read.
     pub health_seq: u64,
     /// True when the runtime has been started.
@@ -1261,13 +1264,54 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
 
     /// Returns latest active-adapter status.
     pub fn adapter_status(&self) -> RuntimeAdapterStatus {
+        let health = self.adapter.health();
         RuntimeAdapterStatus {
             descriptor: self.adapter_descriptor(),
-            health: self.adapter.health(),
+            operational: self.resolved_adapter_operational_status(&health),
+            health,
             health_seq: self.health_seq,
             started: self.started,
             circuit_breaker_open: self.circuit_breaker.is_open_at(unix_ts_nanos()),
         }
+    }
+
+    fn resolved_adapter_operational_status(
+        &self,
+        health: &AdapterHealth,
+    ) -> AdapterOperationalStatus {
+        let mut operational = self.adapter.operational_status();
+        if operational.mode == AdapterRuntimeMode::Unknown {
+            operational.mode = if self.cfg.adapter.provider == ProviderKind::Mock
+                || self
+                    .cfg
+                    .adapter
+                    .endpoint
+                    .as_deref()
+                    .is_some_and(|endpoint| endpoint.starts_with("mock://"))
+            {
+                AdapterRuntimeMode::Mock
+            } else if self.cfg.adapter.endpoint.is_some() {
+                AdapterRuntimeMode::Live
+            } else {
+                AdapterRuntimeMode::Unknown
+            };
+        }
+        if operational.connection_state == AdapterConnectionState::Unknown {
+            operational.connection_state = if health.connected && !health.degraded {
+                AdapterConnectionState::Streaming
+            } else if health.connected {
+                AdapterConnectionState::Reconnecting
+            } else {
+                AdapterConnectionState::Disconnected
+            };
+        }
+        if operational.endpoint_redacted.is_none() {
+            operational = operational.with_endpoint(self.cfg.adapter.endpoint.as_deref());
+        }
+        if operational.app_name.is_none() {
+            operational = operational.with_app_name(self.cfg.adapter.app_name.as_deref());
+        }
+        operational
     }
 
     /// Returns adapter inventory as compact JSON.
@@ -1351,6 +1395,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             self.started && adapter_health.connected && !adapter_health.degraded && !circuit_open;
         let adapter_status_json = format_adapter_status_json(&RuntimeAdapterStatus {
             descriptor: self.adapter_descriptor(),
+            operational: self.resolved_adapter_operational_status(&adapter_health),
             health: adapter_health.clone(),
             health_seq: self.health_seq,
             started: self.started,
@@ -2041,8 +2086,21 @@ fn format_adapter_status_json(status: &RuntimeAdapterStatus) -> String {
         && status.health.connected
         && !status.health.degraded
         && !status.circuit_breaker_open;
+    let subscribed_symbols_json = status
+        .operational
+        .subscribed_symbols
+        .iter()
+        .map(|symbol| {
+            format!(
+                "{{\"venue\":\"{}\",\"symbol\":\"{}\"}}",
+                escape_json(&symbol.venue),
+                escape_json(&symbol.symbol)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     format!(
-        "{{\"schema_version\":1,\"provider\":\"{}\",\"provider_id\":\"{}\",\"display_name\":\"{}\",\"feature\":{},\"compiled\":{},\"quality\":\"{}\",\"started\":{},\"connected\":{},\"degraded\":{},\"healthy\":{},\"last_error\":{},\"protocol_info\":{},\"health_seq\":{},\"circuit_breaker_open\":{},\"capabilities\":{}}}",
+        "{{\"schema_version\":1,\"provider\":\"{}\",\"provider_id\":\"{}\",\"display_name\":\"{}\",\"feature\":{},\"compiled\":{},\"quality\":\"{}\",\"started\":{},\"connected\":{},\"degraded\":{},\"healthy\":{},\"last_error\":{},\"protocol_info\":{},\"health_seq\":{},\"circuit_breaker_open\":{},\"mode\":\"{}\",\"connection_state\":\"{}\",\"endpoint_redacted\":{},\"app_name\":{},\"reconnect_attempt\":{},\"subscription_count\":{},\"subscribed_symbols\":[{}],\"queue_depth\":{},\"queue_capacity\":{},\"dropped_events\":{},\"gap_count\":{},\"stale\":{},\"raw_capture_enabled\":{},\"raw_capture_depth\":{},\"raw_capture_capacity\":{},\"last_message_age_ms\":{},\"last_market_data_age_ms\":{},\"capabilities\":{}}}",
         escape_json(status.descriptor.provider.id()),
         escape_json(status.descriptor.provider_id),
         escape_json(status.descriptor.display_name),
@@ -2057,6 +2115,23 @@ fn format_adapter_status_json(status: &RuntimeAdapterStatus) -> String {
         protocol_info_json,
         status.health_seq,
         status.circuit_breaker_open,
+        status.operational.mode.id(),
+        status.operational.connection_state.id(),
+        optional_str_json(status.operational.endpoint_redacted.as_deref()),
+        optional_str_json(status.operational.app_name.as_deref()),
+        status.operational.reconnect_attempt,
+        status.operational.subscription_count,
+        subscribed_symbols_json,
+        status.operational.queue_depth,
+        optional_usize_json(status.operational.queue_capacity),
+        status.operational.dropped_events,
+        status.operational.gap_count,
+        status.operational.stale,
+        status.operational.raw_capture_enabled,
+        status.operational.raw_capture_depth,
+        status.operational.raw_capture_capacity,
+        optional_u64_json(status.operational.last_message_age_ms),
+        optional_u64_json(status.operational.last_market_data_age_ms),
         format_adapter_descriptor_json(&status.descriptor, Some(&status.descriptor.provider))
     )
 }

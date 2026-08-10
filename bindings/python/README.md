@@ -370,6 +370,14 @@ flags such as `supports_backpressure`, `supports_raw_capture`,
 `supports_fixture_replay`, `supports_stale_detection`, and
 `supports_latency_metrics` when exposed by the native runtime.
 
+`engine.adapter_status()` also returns additive operational fields: `mode`,
+`connection_state`, `endpoint_redacted`, `app_name`, `reconnect_attempt`,
+`subscription_count`, sorted `subscribed_symbols`, queue depth/capacity,
+drop/gap counters, stale state, raw-capture utilization, and optional activity
+ages. Endpoint output contains only scheme and authority; user information,
+paths, queries, and fragments are omitted. Consumers should tolerate future
+additive keys and treat `null` as unavailable rather than zero.
+
 #### External feed supervision
 
 | Signature | Description |

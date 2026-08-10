@@ -25,6 +25,9 @@ What changes for runtime users:
   metrics APIs remain stable;
 - adapter inventory and active-status diagnostics are now exposed as additive
   JSON helpers for dashboards and bindings;
+- active status now includes typed transport/session state, redacted endpoint,
+  subscriptions, queue utilization, loss counters, freshness, and raw-capture
+  utilization while preserving every existing JSON field;
 - strategies can pair `of_runtime` snapshots with `of_execution` order routing
   in the host application;
 - the recommended live architecture is now two explicit planes: market-data
@@ -48,7 +51,8 @@ Version policy:
 - [`DefaultEngine`] - boxed adapter + default delta signal.
 - [`RuntimeError`] - lifecycle/config/adapter/io errors.
 - [`ExternalFeedPolicy`] - stale and sequence policy for non-adapter ingest mode.
-- [`RuntimeAdapterStatus`] - active adapter descriptor plus health snapshot.
+- [`RuntimeAdapterStatus`] - active adapter descriptor, compatibility health,
+  and typed operational snapshot.
 - Snapshot accessors:
   - [`Engine::book_snapshot`]
   - [`Engine::analytics_snapshot`]
@@ -194,7 +198,11 @@ Return behavior:
 - [`Engine::adapter_inventory_json`] returns the same descriptor inventory with
   the configured provider marked active.
 - [`Engine::active_adapter_status_json`] returns the configured adapter
-  descriptor, current health, health sequence, and circuit-breaker state.
+  descriptor, current health, typed operational state, health sequence, and
+  circuit-breaker state. Operational fields are `mode`, `connection_state`,
+  `endpoint_redacted`, `app_name`, `reconnect_attempt`, subscription inventory,
+  queue depth/capacity, drop/gap counters, stale state, raw-capture utilization,
+  and optional message/market-data ages.
 - [`signal_descriptor_inventory_json`] and
   [`Engine::signal_descriptor_inventory_json`] expose built-in signal metadata
   as read-only JSON for dashboards, config tools, and bindings.
@@ -214,6 +222,15 @@ Compatibility rule:
 
 - field names in JSON payloads are treated as stable once published
 - new metrics/health fields are added additively rather than replacing old fields
+- endpoint diagnostics never contain user information, paths, queries, or
+  fragments; malformed configured endpoints serialize as `null`
+
+The runtime asks the adapter for operational status only when
+`adapter_status()`, `active_adapter_status_json()`, or `metrics_json()` is
+called. Polling and event processing do not allocate or sort status symbols.
+For third-party adapters that rely on the trait default, the runtime derives a
+conservative mode and connection state from existing config and health while
+leaving unsupported counters at zero or `null`.
 
 ## Config Loading and Validation Reference
 

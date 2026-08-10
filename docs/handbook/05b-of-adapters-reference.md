@@ -10,6 +10,9 @@ normalized `BookUpdate` and `TradePrint` events.
 | --- | --- | --- |
 | `SubscribeReq` | struct | Subscription request forwarded to an adapter |
 | `AdapterHealth` | struct | Adapter transport/supervision health snapshot |
+| `AdapterOperationalStatus` | struct | Typed active-adapter operational snapshot |
+| `AdapterRuntimeMode` | enum | Mock/live/replay/bridge transport mode |
+| `AdapterConnectionState` | enum | Provider connection/session state |
 | `RawEvent` | enum | Normalized output stream from adapters |
 | `AdapterError` | enum | Adapter-layer failure contract |
 | `AdapterResult<T>` | type alias | `Result<T, AdapterError>` |
@@ -31,6 +34,7 @@ normalized `BookUpdate` and `TradePrint` events.
 | `adapter_quality_requirements` | fn | Returns target quality checklist |
 | `evaluate_adapter_conformance` | fn | Checks one descriptor against a target level |
 | `adapter_conformance_report` | fn | Checks one known provider against a target level |
+| `redact_adapter_endpoint` | fn | Removes credential-bearing endpoint components |
 
 ## Core Types
 
@@ -52,6 +56,41 @@ providers may provide a fixed depth.
 | `degraded` | `bool` | Feed is reconnecting, stale, or otherwise unhealthy |
 | `last_error` | `Option<String>` | Latest human-readable failure, if known |
 | `protocol_info` | `Option<String>` | Provider-specific diagnostic text |
+
+### `AdapterOperationalStatus`
+
+This additive snapshot provides machine-readable operational state without
+requiring a host to parse `protocol_info`.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `mode` | `AdapterRuntimeMode` | `Mock`, `Live`, `Replay`, `Bridge`, or `Unknown` |
+| `connection_state` | `AdapterConnectionState` | Disconnected, connecting, streaming, reconnecting, backoff, replay, or unknown |
+| `endpoint_redacted` | `Option<String>` | Scheme and authority only |
+| `app_name` | `Option<String>` | Non-secret provider client/application name |
+| `reconnect_attempt` | `u32` | Current consecutive reconnect attempt |
+| `subscription_count` | `usize` | Number of unique active symbols |
+| `subscribed_symbols` | `Vec<SymbolId>` | Deterministically sorted unique symbols |
+| `queue_depth` | `usize` | Provider events waiting for polling |
+| `queue_capacity` | `Option<usize>` | Explicit queue bound when known |
+| `dropped_events` | `u64` | Events discarded by bounded buffering |
+| `gap_count` | `u64` | Detected provider sequence gaps |
+| `stale` | `bool` | Adapter freshness policy currently failed |
+| `raw_capture_enabled` | `bool` | Bounded provider-message capture is active |
+| `raw_capture_depth` | `usize` | Retained raw message count |
+| `raw_capture_capacity` | `usize` | Raw capture bound |
+| `last_message_age_ms` | `Option<u64>` | Age of last provider message |
+| `last_market_data_age_ms` | `Option<u64>` | Age of last normalized market event |
+
+The trait default returns unknown/default values, preserving source
+compatibility for existing adapter implementations. Built-in adapters override
+the method. Snapshot creation may allocate and sort symbols, but only when
+queried; it does not add work to `poll()`.
+
+`redact_adapter_endpoint()` removes user information, path, query, and fragment
+components. Hosts must not reconstruct or log the original endpoint from
+configuration because providers may place credentials or private stream ids in
+those components.
 
 ### `RawEvent`
 
@@ -183,6 +222,7 @@ These fields hold environment variable names, not raw secret values.
 | `unsubscribe(symbol)` | `AdapterResult<()>` | Stops symbol delivery |
 | `poll(out)` | `AdapterResult<usize>` | Appends ready events into caller-owned buffer |
 | `health()` | `AdapterHealth` | Returns current supervision snapshot |
+| `operational_status()` | `AdapterOperationalStatus` | Returns typed control-plane status |
 
 ### Behavioral Rules
 
@@ -193,6 +233,7 @@ These fields hold environment variable names, not raw secret values.
 - `subscribe()` should behave as update-or-refresh for repeated calls on the
   same symbol.
 - `health()` must not mutate adapter state.
+- `operational_status()` must not mutate state or perform provider I/O.
 
 ## Factory Function
 

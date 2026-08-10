@@ -9,7 +9,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use of_core::{BookAction, BookUpdate, Side, SymbolId, TradePrint};
 
 use crate::{
-    AdapterConfig, AdapterError, AdapterHealth, AdapterResult, MarketDataAdapter, RawEvent,
+    redact_adapter_endpoint, AdapterConfig, AdapterConnectionState, AdapterError, AdapterHealth,
+    AdapterOperationalStatus, AdapterResult, AdapterRuntimeMode, MarketDataAdapter, RawEvent,
     SubscribeReq,
 };
 
@@ -728,18 +729,63 @@ impl MarketDataAdapter for RithmicAdapter {
             .last_heartbeat_at
             .map(|t| t.elapsed().as_millis() as u64)
             .unwrap_or(0);
+        let endpoint =
+            redact_adapter_endpoint(&self.cfg.endpoint).unwrap_or_else(|| "<redacted>".to_string());
         AdapterHealth {
             connected,
             degraded: self.degraded,
             last_error: self.last_error.clone(),
             protocol_info: Some(format!(
                 "provider=rithmic;wire=ws_probe_v1;mode={mode};endpoint={};app_name={};uptime_ms={uptime_ms};reconnect_attempt={};subscribed={};last_message_age_ms={last_message_age_ms};last_heartbeat_age_ms={last_heartbeat_age_ms}",
-                self.cfg.endpoint,
+                endpoint,
                 self.cfg.app_name,
                 self.reconnect_attempt,
                 self.requested_depth.len()
             )),
         }
+    }
+
+    fn operational_status(&self) -> AdapterOperationalStatus {
+        let connected = self.connected
+            && match &self.transport {
+                RithmicTransport::Mock => true,
+                RithmicTransport::Live(ws) => ws.is_connected(),
+            };
+        let state = if connected && !self.degraded {
+            AdapterConnectionState::Streaming
+        } else if connected {
+            AdapterConnectionState::Reconnecting
+        } else if self.next_reconnect_at.is_some() {
+            AdapterConnectionState::Backoff
+        } else {
+            AdapterConnectionState::Disconnected
+        };
+        let mode = if self.is_mock_mode() {
+            AdapterRuntimeMode::Mock
+        } else {
+            AdapterRuntimeMode::Live
+        };
+        let last_message_age_ms = self
+            .last_message_at
+            .map(|at| at.elapsed().as_millis() as u64);
+        let last_heartbeat_age_ms = self
+            .last_heartbeat_at
+            .map(|at| at.elapsed().as_millis() as u64);
+        let stale = !self.is_mock_mode()
+            && connected
+            && !self.requested_depth.is_empty()
+            && last_heartbeat_age_ms
+                .or(last_message_age_ms)
+                .is_some_and(|age| age > 15_000);
+
+        AdapterOperationalStatus::new(mode, state)
+            .with_endpoint(Some(&self.cfg.endpoint))
+            .with_app_name(Some(&self.cfg.app_name))
+            .with_reconnect_attempt(self.reconnect_attempt)
+            .with_subscribed_symbols(self.requested_depth.keys().cloned())
+            .with_queue(self.queue.len(), None)
+            .with_stale(stale)
+            .with_activity_ages(last_message_age_ms, last_heartbeat_age_ms)
     }
 }
 
@@ -1085,6 +1131,24 @@ mod tests {
         assert!(protocol_info.contains("provider=rithmic"));
         assert!(protocol_info.contains("mode=mock"));
         assert!(protocol_info.contains("endpoint=mock://rithmic"));
+    }
+
+    #[test]
+    fn health_and_operational_status_redact_endpoint_secrets() {
+        let endpoint = "wss://user:password@example.test/private/path?token=secret";
+        let adapter = RithmicAdapter::from_config(&cfg(endpoint)).expect("cfg");
+        let health = adapter.health().protocol_info.expect("protocol info");
+        let status = adapter.operational_status();
+
+        assert!(health.contains("endpoint=wss://example.test"));
+        assert!(!health.contains("password"));
+        assert!(!health.contains("token"));
+        assert_eq!(
+            status.endpoint_redacted.as_deref(),
+            Some("wss://example.test")
+        );
+        assert_eq!(status.mode, AdapterRuntimeMode::Live);
+        assert_eq!(status.app_name.as_deref(), Some("orderflow-tests"));
     }
 
     #[test]

@@ -21,8 +21,8 @@ use session::{CqgSession, CqgSessionState};
 use transport::{CqgTransport, MockTransport, WsProtobufTransport};
 
 use crate::{
-    AdapterConfig, AdapterError, AdapterHealth, AdapterResult, MarketDataAdapter, RawEvent,
-    SubscribeReq,
+    AdapterConfig, AdapterConnectionState, AdapterError, AdapterHealth, AdapterOperationalStatus,
+    AdapterResult, AdapterRuntimeMode, MarketDataAdapter, RawEvent, SubscribeReq,
 };
 
 /// CQG adapter implementation with session/reconnect/heartbeat supervision.
@@ -558,6 +558,42 @@ impl MarketDataAdapter for CqgAdapter {
             )),
         }
     }
+
+    fn operational_status(&self) -> AdapterOperationalStatus {
+        let state = match self.session.state() {
+            CqgSessionState::Disconnected => AdapterConnectionState::Disconnected,
+            CqgSessionState::Connecting
+            | CqgSessionState::LogonPending
+            | CqgSessionState::ResolvingSymbols
+            | CqgSessionState::Subscribing => AdapterConnectionState::Connecting,
+            CqgSessionState::Streaming => AdapterConnectionState::Streaming,
+            CqgSessionState::Degraded => AdapterConnectionState::Reconnecting,
+            CqgSessionState::BackoffWait => AdapterConnectionState::Backoff,
+        };
+        let mode = if self.is_mock_mode() {
+            AdapterRuntimeMode::Mock
+        } else {
+            AdapterRuntimeMode::Live
+        };
+        let last_heartbeat_age_ms = self
+            .last_heartbeat_at
+            .map(|at| at.elapsed().as_millis() as u64);
+        let stale = !self.is_mock_mode()
+            && self.session.state() == CqgSessionState::Streaming
+            && !self.session.requested_depth.is_empty()
+            && last_heartbeat_age_ms
+                .is_some_and(|age| age > self.cfg.heartbeat_timeout_secs.saturating_mul(1_000));
+
+        AdapterOperationalStatus::new(mode, state)
+            .with_endpoint(Some(&self.cfg.endpoint))
+            .with_app_name(Some(&self.cfg.client_id))
+            .with_reconnect_attempt(self.reconnect_attempt)
+            .with_subscribed_symbols(self.session.requested_depth.keys().cloned())
+            .with_queue(self.queue.len(), None)
+            .with_loss_counters(0, self.metrics.sequence_gaps)
+            .with_stale(stale)
+            .with_activity_ages(last_heartbeat_age_ms, last_heartbeat_age_ms)
+    }
 }
 
 #[cfg(test)]
@@ -669,6 +705,28 @@ mod tests {
             .expect("protocol info should be set");
         assert!(info.contains("provider=cqg"));
         assert!(info.contains("cqg_pb_schema_version="));
+    }
+
+    #[test]
+    fn operational_status_exposes_session_without_endpoint_secrets() {
+        let mut adapter = CqgAdapter::from_config(&cfg(
+            "wss://user:password@demoapi.cqg.test:443/private?token=secret",
+        ))
+        .expect("cfg valid");
+        adapter.connect().expect("connect");
+
+        let status = adapter.operational_status();
+        assert_eq!(status.mode, AdapterRuntimeMode::Live);
+        assert_eq!(status.connection_state, AdapterConnectionState::Connecting);
+        assert_eq!(
+            status.endpoint_redacted.as_deref(),
+            Some("wss://demoapi.cqg.test:443")
+        );
+        assert_eq!(status.app_name.as_deref(), Some("orderflow-tests"));
+        assert!(!status
+            .endpoint_redacted
+            .unwrap_or_default()
+            .contains("password"));
     }
 
     #[test]

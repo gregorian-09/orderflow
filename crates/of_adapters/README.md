@@ -9,7 +9,8 @@ It standardizes lifecycle, subscription, polling, and health reporting while kee
 - Factory: [`create_adapter`]
 - Events: [`RawEvent`] (`Book`, `Trade`)
 - Config: [`AdapterConfig`], [`ProviderKind`], [`CredentialsRef`]
-- Health: [`AdapterHealth`]
+- Health: [`AdapterHealth`], [`AdapterOperationalStatus`],
+  [`AdapterRuntimeMode`], [`AdapterConnectionState`]
 - Discovery: [`AdapterDescriptor`], [`AdapterQualityLevel`],
   [`adapter_descriptors`], [`compiled_adapter_descriptors`],
   [`describe_adapter`], [`adapter_feature_enabled`]
@@ -32,6 +33,9 @@ What changes for adapter authors:
   the previous release remain visible through runtime metrics;
 - adapter discovery now exposes static provider descriptors, feature gates,
   quality levels, and capability flags without constructing an adapter;
+- active adapters can expose typed operational status without parsing
+  provider-specific diagnostic strings, and configured endpoints are reduced
+  to scheme plus authority before they enter diagnostics;
 - the handbook now separates market-data provider authoring from execution
   adapter authoring so developers can build the right integration boundary.
 
@@ -48,6 +52,9 @@ Public types:
 
 - [`SubscribeReq`]
 - [`AdapterHealth`]
+- [`AdapterOperationalStatus`]
+- [`AdapterRuntimeMode`]
+- [`AdapterConnectionState`]
 - [`RawEvent`]
 - [`AdapterError`]
 - [`AdapterResult<T>`]
@@ -65,6 +72,7 @@ Public functions and methods:
 - [`compiled_adapter_descriptors`]
 - [`describe_adapter`]
 - [`adapter_feature_enabled`]
+- [`redact_adapter_endpoint`]
 - [`MockAdapter::push_event`]
 
 [`MarketDataAdapter`] trait methods:
@@ -74,6 +82,59 @@ Public functions and methods:
 - `unsubscribe(SymbolId)`
 - `poll(&mut Vec<RawEvent>)`
 - `health() -> AdapterHealth`
+- `operational_status() -> AdapterOperationalStatus`
+
+## Typed Operational Status
+
+[`AdapterHealth`] remains the small compatibility surface for connected,
+degraded, error, and provider diagnostic text. [`AdapterOperationalStatus`] is
+the additive structured control-plane snapshot for code that must inspect
+adapter state without parsing `protocol_info`.
+
+The snapshot reports:
+
+| Group | Fields |
+| --- | --- |
+| Lifecycle | `mode`, `connection_state`, `reconnect_attempt`, `stale` |
+| Identity | `endpoint_redacted`, `app_name` |
+| Subscriptions | `subscription_count`, sorted `subscribed_symbols` |
+| Backpressure | `queue_depth`, optional `queue_capacity`, `dropped_events` |
+| Integrity | `gap_count` |
+| Raw capture | `raw_capture_enabled`, `raw_capture_depth`, `raw_capture_capacity` |
+| Freshness | optional `last_message_age_ms`, `last_market_data_age_ms` |
+
+`MarketDataAdapter::operational_status()` has a default implementation that
+returns unknown/default values. Existing third-party adapter implementations
+therefore continue to compile unchanged. Implementations should override it
+when they can provide authoritative state.
+
+Status construction is intentionally off the event hot path. The built-in
+adapters sort cloned symbol identifiers and allocate redacted strings only when
+the method is queried; `poll()` and event normalization retain their existing
+cost model.
+
+[`redact_adapter_endpoint`] accepts URI-like endpoints and returns only the
+lowercase scheme and authority. It removes user information, path, query, and
+fragment components because access tokens, listen keys, and private stream ids
+can appear in any of them. Malformed values produce `None`; credentials are
+never returned as a fallback.
+
+```rust
+use of_adapters::{
+    redact_adapter_endpoint, AdapterConnectionState, AdapterRuntimeMode,
+    MarketDataAdapter, MockAdapter,
+};
+
+assert_eq!(
+    redact_adapter_endpoint("wss://user:secret@feed.example/ws?token=private"),
+    Some("wss://feed.example".to_string())
+);
+
+let adapter = MockAdapter::default();
+let status = adapter.operational_status();
+assert_eq!(status.mode, AdapterRuntimeMode::Mock);
+assert_eq!(status.connection_state, AdapterConnectionState::Disconnected);
+```
 
 ## Provider Strategy
 
@@ -218,6 +279,8 @@ Current provider notes:
 - `unsubscribe(SymbolId)` stops delivery for that symbol.
 - `poll(&mut Vec<RawEvent>)` appends zero or more normalized events into the caller-owned buffer and returns the number appended.
 - `health()` returns the latest transport/supervision state without mutating adapter state.
+- `operational_status()` returns a typed point-in-time diagnostic snapshot and
+  must not mutate adapter state or perform network I/O.
 
 Normalization rules:
 

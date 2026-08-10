@@ -4,8 +4,9 @@ mod tests {
     use std::path::PathBuf;
 
     use of_adapters::{
-        AdapterConfig, AdapterError, AdapterHealth, AdapterResult, CredentialsRef,
-        MarketDataAdapter, MockAdapter, ProviderKind, RawEvent, SubscribeReq,
+        AdapterConfig, AdapterConnectionState, AdapterError, AdapterHealth, AdapterResult,
+        AdapterRuntimeMode, CredentialsRef, MarketDataAdapter, MockAdapter, ProviderKind, RawEvent,
+        SubscribeReq,
     };
     use of_core::{BookAction, BookUpdate, DataQualityFlags, Side, SignalState, SymbolId, TradePrint};
     use of_persist::{RollingStore, StoredEvent};
@@ -507,7 +508,17 @@ mod tests {
 
     #[test]
     fn adapter_inventory_and_status_expose_active_provider() {
-        let mut engine = build_default_engine(EngineConfig::default()).expect("build should work");
+        let mut engine = build_default_engine(EngineConfig {
+            adapter: AdapterConfig {
+                endpoint: Some(
+                    "mock://user:secret@local-adapter/private?token=hidden".to_string(),
+                ),
+                app_name: Some("status-test".to_string()),
+                ..AdapterConfig::default()
+            },
+            ..EngineConfig::default()
+        })
+        .expect("build should work");
         let inventory = engine.adapter_inventory_json();
         assert!(inventory.contains("\"schema_version\":1"));
         assert!(inventory.contains("\"provider_id\":\"mock\""));
@@ -523,6 +534,15 @@ mod tests {
         assert_eq!(status.descriptor.provider, ProviderKind::Mock);
         assert!(!status.started);
         assert!(!status.health.connected);
+        assert_eq!(status.operational.mode, AdapterRuntimeMode::Mock);
+        assert_eq!(
+            status.operational.connection_state,
+            AdapterConnectionState::Disconnected
+        );
+        assert_eq!(
+            status.operational.endpoint_redacted.as_deref(),
+            Some("mock://local-adapter")
+        );
 
         engine.start().expect("start should work");
         let active = engine.active_adapter_status_json();
@@ -530,6 +550,14 @@ mod tests {
         assert!(active.contains("\"started\":true"));
         assert!(active.contains("\"connected\":true"));
         assert!(active.contains("\"healthy\":true"));
+        assert!(active.contains("\"mode\":\"mock\""));
+        assert!(active.contains("\"connection_state\":\"streaming\""));
+        assert!(active.contains("\"endpoint_redacted\":\"mock://local-adapter\""));
+        assert!(active.contains("\"app_name\":\"status-test\""));
+        assert!(active.contains("\"subscribed_symbols\":[]"));
+        assert!(!active.contains("secret"));
+        assert!(!active.contains("token"));
+        assert!(!active.contains("private"));
         assert!(active.contains("\"capabilities\":{"));
         assert!(active.contains("\"supports_backpressure\":"));
         assert!(active.contains("\"supports_raw_capture\":"));
