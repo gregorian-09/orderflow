@@ -6,6 +6,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added production OMS incident bundle export with a fail-closed 12-class
+  evidence profile, explicit custom profile, bounded streaming collection,
+  portable path and symlink defenses, SHA-256 payload/manifest inventory,
+  staged self-verification, unlisted-file detection, atomic publication,
+  immutable destinations, and independent post-transfer verification while
+  keeping redaction, signing, encryption, retention, and custody host-owned.
 - Added a complete additive OMS operator runbook controller for pause/resume,
   route drain/degradation, cancel-all/scoped cancel, recovery, reconciliation,
   audit export, stuck-order inspection, WAL rotation, checkpointing, and
@@ -131,10 +137,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
   additive `adapters` array while preserving existing flat metrics fields.
 - Added `ExecutionRunbookSnapshot` and `ExecutionEngine::runbook_snapshot()` for
   read-only OMS operator dashboards and incident runbooks.
-- Added `ExecutionAuditBundleManifest` plus
-  `ExecutionEngine::audit_bundle_manifest()` and
-  `ExecutionEngine::audit_bundle_manifest_at(...)` for read-only OMS incident
-  export inventories.
+- Added `ExecutionAuditBundleManifest` plus deterministic engine manifest
+  capture as the state input to production incident bundle export.
 - Added optional multi-account allocation primitives with proportional and
   priority average-price allocation reports plus allocation reconciliation.
 - Added optional execution timestamp discipline helpers for source-tagged

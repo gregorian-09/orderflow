@@ -621,7 +621,10 @@ flowchart TD
     Services --> Outcome
     Outcome --> Terminal[Durable terminal record]
     Terminal --> Receipt[Idempotent receipt]
-    Terminal --> Bundle[Incident audit bundle]
+    Terminal --> BundleRequest[Typed incident evidence request]
+    BundleRequest --> Exporter[Bounded audit bundle exporter]
+    Exporter --> Verify[SHA-256 / schema / coverage verification]
+    Verify --> Bundle[Atomically published incident bundle]
 ```
 
 Only global pause and route drain/degradation checks touch new-order admission;
@@ -630,6 +633,22 @@ ids, filesystem sync, reconciliation, checkpointing, and export run on the
 control plane. Operator cancellation intentionally bypasses ordinary strategy
 risk hooks while preserving command/event journaling and canonical state
 application.
+
+Audit-bundle construction remains beyond the latency-sensitive owner loop.
+`ExecutionAuditBundleExporter` streams closed evidence into a private sibling
+directory, enforces count and byte ceilings, emits a versioned manifest, checks
+all payload and manifest SHA-256 values, rejects unlisted files, and publishes
+with one same-filesystem rename. The production profile requires all 12
+execution, recovery, config, health, metrics, market-data, intent, drop-copy,
+and build evidence classes. A custom profile is explicit and does not weaken
+the production label.
+
+The export root, redaction rules, source quiescence, signing/encryption keys,
+retention, and custody transfer stay with deployment infrastructure. This
+keeps file discovery, JSON, hashing, synchronization, compression, network
+upload, and key-service calls outside submit/report processing. The returned
+manifest digest is suitable input to a host attestation system; by itself it
+detects mutation but does not identify the collector.
 
 Audit ordering is effect-aware:
 

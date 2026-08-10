@@ -48,8 +48,9 @@ Major additions:
   policies, generalized multi-source recovery reconciliation, a deterministic
   18-scenario adapter/OMS certification venue, fixed-memory percentile
   execution SLIs and explicit SLO evaluation, permission-ready idempotent
-  operator commands with durable intent/outcome audit, allocation, telemetry,
-  sharding, throttling, and replay simulation
+  operator commands with durable intent/outcome audit, bounded production
+  incident bundles with SHA-256 inventory and atomic publication, allocation,
+  telemetry, sharding, throttling, and replay simulation
 - FIX foundation: borrowed tag-value codec, `BodyLength(9)` and `CheckSum(10)`
   validation, common tag extraction, typed `FixVersion`/`FixMsgType` helpers,
   static dictionary/profile validation, deterministic session sequence
@@ -112,7 +113,7 @@ Start here:
 |------|--------------|
 | Rust core | `of_execution_core` order IDs, requests, events, state machine, risk |
 | FIX codec | `of_fix` borrowed tag-value parser, validator, profile rules, and encoder |
-| Rust engine | `of_execution` adapter trait, bounded event buffer, simulator, journal hooks |
+| Rust engine | `of_execution` adapter trait, bounded event buffer, simulator, journal/recovery, operator controls, and verifiable incident bundles |
 | Adapter scaffold | `of_execution_adapters::fix` execution-report mapper and FIX capabilities |
 | Execution algos | `of_execution_algos` parent/child substrate and deterministic TWAP planner |
 | C ABI | `of_execution_engine_t`, submit/cancel/amend/poll/state/health/metrics |

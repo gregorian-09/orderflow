@@ -1,6 +1,7 @@
 //! Execution routing and adapter contracts for Orderflow.
 #![doc = include_str!("../README.md")]
 
+mod audit_bundle;
 mod certification_venue;
 mod drop_copy;
 mod execution_slo;
@@ -12,6 +13,7 @@ mod order_intent;
 mod position_ledger;
 mod production_risk;
 mod reconciliation;
+pub use audit_bundle::*;
 pub use certification_venue::*;
 pub use drop_copy::*;
 pub use execution_slo::*;

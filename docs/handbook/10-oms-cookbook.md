@@ -715,3 +715,165 @@ cancelling working orders, and producing an audit trail; venue-specific audit
 rules may require operator identity, location, order fields, and multi-year
 retention. Orderflow provides the deterministic mechanism, not legal advice or
 a universal retention period.
+
+## 18. Export And Verify A Production Incident Bundle
+
+Capture a coherent evidence boundary before export. Pause or drain new flow as
+the incident permits, continue consuming execution reports, rotate the
+execution and market-data WALs, force a checkpoint, complete a fresh venue and
+drop-copy reconciliation cycle, and freeze the redacted config/build snapshots.
+Do not point the exporter at actively appended files when an exact end boundary
+is required.
+
+```mermaid
+flowchart LR
+    Detect[Incident detected] --> Control[Pause or drain new flow]
+    Control --> Settle[Continue report and drop-copy processing]
+    Settle --> Rotate[Rotate execution and market-data WAL]
+    Rotate --> Checkpoint[Force checkpoint]
+    Checkpoint --> Reconcile[Run fresh reconciliation]
+    Reconcile --> Inventory[Build typed 12-class inventory]
+    Inventory --> Export[Bounded export to staging]
+    Export --> Verify[Independent SHA-256 and coverage verify]
+    Verify --> Attest[Host signature / encryption / custody record]
+    Attest --> Preserve[Immutable retention or legal hold]
+```
+
+The following function is complete at the crate boundary. Its caller gathers
+the deployment-specific paths after rotating stores and serializes reports and
+configs before invoking it.
+
+```rust,no_run
+use std::path::{Path, PathBuf};
+use of_execution::{
+    ExecutionAuditArtifact, ExecutionAuditArtifactKind as Kind,
+    ExecutionAuditBundleConfig, ExecutionAuditBundleExporter,
+    ExecutionAuditBundleManifest, ExecutionAuditBundleRequest,
+    ExecutionAuditBundleVerification, ExecutionAuditTimeRange,
+};
+
+struct IncidentSources {
+    execution_wal: PathBuf,
+    execution_checkpoint: PathBuf,
+    recovery_report: PathBuf,
+    reconciliation_report: PathBuf,
+    redacted_routes: PathBuf,
+    redacted_risk: PathBuf,
+    adapter_health: PathBuf,
+    execution_metrics: PathBuf,
+    market_data_wal: PathBuf,
+    strategy_intents: PathBuf,
+    drop_copy: PathBuf,
+    operator_audit: Option<PathBuf>,
+    build_metadata: Vec<u8>,
+}
+
+fn export_incident(
+    bundle_root: &Path,
+    incident_id: &str,
+    generated_ns: u64,
+    start_ns: u64,
+    end_ns: u64,
+    engine_manifest: ExecutionAuditBundleManifest,
+    sources: IncidentSources,
+) -> Result<ExecutionAuditBundleVerification, Box<dyn std::error::Error>> {
+    let mut request = ExecutionAuditBundleRequest::new(
+        incident_id,
+        generated_ns,
+        ExecutionAuditTimeRange::new(start_ns, end_ns),
+    )
+    .with_execution_manifest(engine_manifest);
+
+    let files = [
+        (Kind::ExecutionWal, sources.execution_wal, "execution/wal.ofwal"),
+        (Kind::ExecutionCheckpoint, sources.execution_checkpoint, "execution/latest.ofcp"),
+        (Kind::RecoveryReport, sources.recovery_report, "reports/recovery.json"),
+        (Kind::ReconciliationReport, sources.reconciliation_report, "reports/reconciliation.json"),
+        (Kind::RouteConfig, sources.redacted_routes, "config/routes.redacted.json"),
+        (Kind::RiskConfig, sources.redacted_risk, "config/risk.redacted.json"),
+        (Kind::AdapterHealth, sources.adapter_health, "health/adapters.json"),
+        (Kind::ExecutionMetrics, sources.execution_metrics, "metrics/execution.json"),
+        (Kind::MarketDataWal, sources.market_data_wal, "market-data/range.ofmdwal"),
+        (Kind::StrategyIntent, sources.strategy_intents, "strategy/intents.log"),
+        (Kind::DropCopy, sources.drop_copy, "drop-copy/reports.log"),
+    ];
+    for (kind, source, destination) in files {
+        request.push_artifact(
+            ExecutionAuditArtifact::from_file(kind, source, destination)
+                .with_source_label(kind.as_str()),
+        );
+    }
+    request.push_artifact(
+        ExecutionAuditArtifact::from_bytes(
+            Kind::BuildMetadata,
+            sources.build_metadata,
+            "metadata/build.json",
+        )
+        .with_source_label("release-provenance"),
+    );
+    if let Some(path) = sources.operator_audit {
+        request.push_artifact(
+            ExecutionAuditArtifact::from_file(
+                Kind::OperatorAudit,
+                path,
+                "operator/commands.ofaudit",
+            )
+            .with_source_label("operator-command-audit"),
+        );
+    }
+
+    let policy = ExecutionAuditBundleConfig::new(bundle_root)
+        .with_limits(128, 8 * 1024 * 1024 * 1024, 64 * 1024 * 1024 * 1024)
+        .with_max_manifest_bytes(2 * 1024 * 1024)
+        .with_copy_buffer_bytes(256 * 1024)
+        .with_sync_on_write(true);
+    let exporter = ExecutionAuditBundleExporter::new(policy);
+    let report = exporter.export(&request)?;
+
+    // This second pass is intentionally explicit. It is the same operation an
+    // investigator can run after transfer using the configured hard bounds.
+    let verification = exporter.verify(report.bundle_path())?;
+    assert_eq!(verification.incident_id(), incident_id);
+    assert_eq!(verification.artifact_count(), report.artifact_count());
+    assert_eq!(verification.total_artifact_bytes(), report.total_artifact_bytes());
+    assert_eq!(verification.manifest_sha256(), report.manifest_sha256());
+    Ok(verification)
+}
+```
+
+Wire this function into
+`ExecutionOperatorServices::export_audit_bundle`. The service receives the
+concrete mutable engine and command, so it can capture
+`engine.audit_bundle_manifest_at(generated_ns)`, identify the operator command
+id and incident range, rotate the concrete journal, force the concrete
+checkpoint store, and fetch the latest reconciliation products. Return success
+only after `export` has staged, verified, renamed, and synchronized the bundle.
+The operator controller then writes the terminal command outcome to its own
+audit sink.
+
+Operational failure handling:
+
+| Failure | Required response |
+| --- | --- |
+| Missing production evidence class | Keep command failed; collect or explicitly escalate, never downgrade the same incident to `Custom` silently |
+| Required file missing or source is a symlink | Treat source inventory as untrusted/stale; rebuild it from the authoritative store |
+| Count or byte ceiling exceeded | Split the time range or increase a reviewed deployment limit; do not disable bounds globally |
+| Artifact or manifest digest mismatch | Quarantine the package and original evidence; investigate mutation before retry |
+| Unlisted file | Reject the directory; a completed bundle is a closed inventory |
+| Destination exists | Use the idempotent command receipt or a new incident/export id; completed evidence is never overwritten |
+| Sync or rename failure | No final package is reported; inspect storage health and rerun from authoritative inputs |
+
+The exporter validates integrity, not authenticity or confidentiality. After it
+returns, submit `manifest_sha256()` and incident metadata to the deployment's
+approved signing/attestation service, encrypt according to data classification,
+record collector and transfer identities/timestamps/purpose, and apply the
+retention or legal-hold policy. Keep signatures and custody records in a
+separately governed system or teach that system to permit its own expected
+attestation files; adding an arbitrary signature file inside a completed bundle
+correctly makes Orderflow verification fail as an unlisted entry.
+
+The design follows NIST's guidance that logs must be generated, protected,
+retained, and available for incident analysis, FIPS 180-4's SHA-256 change
+detection purpose, and CISA's requirement to track who handled evidence, when,
+and why. These references guide mechanism; venue, jurisdiction, broker, and
+firm policy determine the actual fields and retention period.

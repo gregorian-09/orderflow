@@ -25,13 +25,89 @@ dispatches one typed action, journals outcome, and retains an idempotent
 receipt. Authentication, role assignment, escalation, and dual-control policy
 remain host responsibilities.
 
-`ExecutionAuditBundleManifest` is the first audit-bundle export primitive.
+`ExecutionAuditBundleManifest` is the engine-state input to the audit exporter.
 `ExecutionEngine::audit_bundle_manifest()` combines the runbook snapshot,
 execution metrics, and journal command/event counts into a small manifest that
-operators can attach to incident exports. The engine does not choose filesystem
-layout or copy WAL/checkpoint files; hosts own packaging and access control.
-Use `audit_bundle_manifest_at(generated_ns)` for deterministic tests and replay
-drills.
+operators can attach to incident exports. Use
+`audit_bundle_manifest_at(generated_ns)` for deterministic tests and replay
+drills. `ExecutionAuditBundleExporter` then performs bounded file collection,
+SHA-256 inventory generation, staged verification, and atomic directory
+publication without adding any work to the engine hot path.
+
+## Audit Bundle API
+
+| Type | Contract |
+| --- | --- |
+| `ExecutionAuditArtifactKind` | Stable evidence taxonomy; `PRODUCTION_REQUIRED` contains the 12 roadmap classes |
+| `ExecutionAuditArtifact` | File or small in-memory source, portable bundle path, non-sensitive label, required/optional policy |
+| `ExecutionAuditTimeRange` | Inclusive Unix-nanosecond evidence boundary |
+| `ExecutionAuditBundleProfile` | Fail-closed production coverage or explicit custom coverage |
+| `ExecutionAuditBundleRequest` | Incident id, generation time, range, optional engine manifest, ordered artifacts |
+| `ExecutionAuditBundleConfig` | Root, count/byte/manifest/buffer ceilings, and durability sync policy |
+| `ExecutionAuditBundleExporter` | `export` and independent `verify` operations |
+| `ExecutionAuditBundleReport` | Installed paths, counts, aggregate bytes, and exact manifest SHA-256 |
+| `ExecutionAuditBundleVerification` | Independently recomputed package facts |
+| `ExecutionAuditBundleError` | Typed validation, capacity, I/O, schema, and integrity failures |
+
+The default production profile requires present execution WAL, execution
+checkpoint, recovery report, reconciliation report, redacted route config,
+redacted risk config, adapter health, execution metrics, market-data WAL,
+strategy intent, drop-copy, and build metadata artifacts. Multiple WAL segments
+may share one kind. `OperatorAudit` and deployment-specific `Other` evidence are
+supported in addition to that required set.
+
+```mermaid
+sequenceDiagram
+    participant Ops as Operator service
+    participant Engine as ExecutionEngine
+    participant Stores as WAL/checkpoint/drop-copy/config stores
+    participant Exporter as AuditBundleExporter
+    participant Stage as Private staging directory
+    participant Final as Immutable final directory
+    Ops->>Engine: pause/drain and audit_bundle_manifest_at(T)
+    Ops->>Stores: rotate WAL, checkpoint, reconcile, select [start,end]
+    Stores-->>Ops: bounded source inventory
+    Ops->>Exporter: production request + inventory
+    Exporter->>Stage: stream copy + SHA-256 + manifest
+    Exporter->>Stage: verify schema, coverage, digests, paths, listed files
+    alt complete and valid
+        Exporter->>Final: atomic rename + directory sync
+        Exporter-->>Ops: report + manifest digest
+    else any failure
+        Exporter->>Stage: remove private staging directory
+        Exporter-->>Ops: typed error; no final bundle
+    end
+```
+
+Validation is fail closed:
+
+- incident ids are bounded filename-safe ASCII;
+- ranges must be ordered;
+- paths must be relative, UTF-8, traversal-free, and portable across Unix and
+  Windows separators;
+- reserved manifest names and ASCII-case collisions are rejected;
+- sources and package entries must be regular non-symlink files;
+- entry count, per-artifact bytes, aggregate bytes, manifest bytes, and scan
+  entries are bounded;
+- each present artifact and the exact JSON manifest bytes carry SHA-256;
+- independent verification rejects payload changes, manifest changes, absent
+  required evidence, unexpected optional evidence, and unlisted files;
+- an existing destination is immutable and is never overwritten.
+
+The manifest intentionally omits source filesystem paths. The host supplies
+already-redacted content and a non-sensitive source label. Capture from closed
+or rotated files when a point-in-time boundary matters; hashing a file that is
+still being appended produces a self-consistent copy, but not necessarily the
+intended incident cut.
+
+SHA-256 is an integrity primitive, not producer authentication. NIST FIPS 180-4
+defines SHA-256 digests for detecting changed messages, while CISA's chain-of-
+custody guidance calls for identity, collection/transfer time, purpose, and
+handling records. Keep the destination access-controlled and add the
+organization's encryption, signature/attestation, custody log, retention, and
+legal-hold policy after export. See [NIST FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final),
+[NIST SP 800-92](https://nvlpubs.nist.gov/nistpubs/legacy/SP/nistspecialpublication800-92.pdf),
+and [CISA Chain of Custody](https://www.cisa.gov/sites/default/files/2023-12/Chain%20of%20Custody_2023.8.14_508.pdf).
 
 ## Operator Runbook API
 
@@ -44,7 +120,7 @@ drills.
 | Recover open orders | Calls the existing adapter recovery contract | Verify completeness and sequence boundaries |
 | Inspect stuck orders | Bounded all-or-nothing output sorted by age/id | Select stale threshold and alert policy |
 | Reconcile | Typed service receives the mutable engine | Gather external evidence and enforce fresh verification |
-| Export audit bundle | Typed service receives the mutable engine | Choose destination, redaction, encryption, and access control |
+| Export audit bundle | Typed service receives the mutable engine and can invoke bounded `ExecutionAuditBundleExporter` | Select a quiescent evidence range; own redaction, encryption, signature, retention, and access control |
 | Rotate WAL | Typed service can call `engine.journal_mut()` on a concrete segmented journal | Select segment policy and durability |
 | Force checkpoint | Typed service can snapshot engine/open orders and install through a concrete store | Assign checkpoint id/sequence and include external ledgers |
 | Clear kill switch | Typed service receives switch id, force flag, command actor/reason | Enforce cancellation completion, approvals, and registry WAL sequence |
@@ -331,8 +407,9 @@ Important behaviors:
 3. Call `submit`, `cancel`, `amend`, `poll`, or `recover_open_orders`.
 4. Read `order_state`, `metrics`, `health`, `runbook_snapshot`, or
    `replay_journal`.
-5. For incident response, call `audit_bundle_manifest` before packaging local
-   WAL, checkpoint, config, reconciliation, and adapter-health artifacts.
+5. For incident response, call `audit_bundle_manifest_at`, build a typed
+   production-profile request, and invoke `ExecutionAuditBundleExporter` from
+   the operator control plane.
 
 ### Submit Path
 
