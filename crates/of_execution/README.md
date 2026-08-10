@@ -41,6 +41,7 @@ Versioning rules:
 - Keep adapter contracts provider-neutral.
 - Provide a concurrent worker without forcing a Tokio/async runtime.
 - Make journaling, recovery, and reconciliation additive and replaceable.
+- Keep incident evidence collection bounded, verifiable, and outside hot paths.
 
 ## Public API Inventory
 
@@ -185,6 +186,16 @@ Engine and simulation:
 - [`ExecutionMetrics`]
 - [`ExecutionRunbookSnapshot`]
 - [`ExecutionAuditBundleManifest`]
+- [`ExecutionAuditArtifactKind`]
+- [`ExecutionAuditArtifact`]
+- [`ExecutionAuditTimeRange`]
+- [`ExecutionAuditBundleProfile`]
+- [`ExecutionAuditBundleRequest`]
+- [`ExecutionAuditBundleConfig`]
+- [`ExecutionAuditBundleExporter`]
+- [`ExecutionAuditBundleReport`]
+- [`ExecutionAuditBundleVerification`]
+- [`ExecutionAuditBundleError`]
 - [`ExecutionOperatorController`]
 - [`ExecutionOperatorCommand`]
 - [`ExecutionOperatorAction`]
@@ -456,11 +467,121 @@ transactionally rolled back.
 
 [`ExecutionEngine::audit_bundle_manifest`] returns an
 [`ExecutionAuditBundleManifest`] for incident export workflows. It combines the
-runbook snapshot with journal command/event counts and execution metrics, so a
-host can package WAL segments, checkpoints, configs, reconciliation reports, and
-adapter health consistently without adding export work to the order path. Use
+runbook snapshot with journal command/event counts and execution metrics. Use
 [`ExecutionEngine::audit_bundle_manifest_at`] in deterministic replay tests when
 the bundle timestamp must be fixed.
+
+## Incident Audit Bundle Export
+
+[`ExecutionAuditBundleExporter`] turns the engine manifest and deployment-owned
+evidence into one bounded, independently verifiable directory. Export is a
+control-plane operation: it streams regular files through one reusable buffer,
+hashes them with SHA-256, writes a versioned JSON manifest and manifest digest,
+verifies the staged directory, and atomically renames it into place. It never
+runs implicitly from submit, cancel, amend, report, or market-data paths.
+
+The default [`ExecutionAuditBundleProfile::ProductionIncident`] fails closed
+unless at least one present artifact covers every class in
+[`ExecutionAuditArtifactKind::PRODUCTION_REQUIRED`]:
+
+| Evidence class | Typical source |
+| --- | --- |
+| Execution WAL | Closed/rotated `SegmentedWalExecutionJournal` segment range |
+| Execution checkpoint | Latest checkpoint at or before the incident boundary |
+| Recovery report | Recovery plan, result, and integrity/readiness decision |
+| Reconciliation report | OMS/venue/drop-copy/position reconciliation cycle |
+| Route config | Already-redacted route and capability snapshot |
+| Risk config | Already-redacted limits, policy version, and kill-switch state |
+| Adapter health | Health transitions, sequence, queue, and reconnect state |
+| Execution metrics | SLI/SLO snapshot and bounded operational counters |
+| Market-data WAL | Relevant normalized/raw capture range and integrity report |
+| Strategy intent | Parent/child lineage, decisions, and intent records |
+| Drop copy | Independent report range and reconciliation watermark |
+| Build metadata | Crate/binary versions, commit, target, config schema, deployment id |
+
+[`ExecutionAuditBundleProfile::Custom`] is explicit and requires only artifacts
+whose [`ExecutionAuditArtifact::is_required`] flag is true. Use it for tests or
+deployment-specific evidence, not to label an incomplete package as a
+production incident bundle. Optional missing files remain visible in the
+manifest; they are not silently omitted.
+
+```rust,no_run
+use std::path::{Path, PathBuf};
+use of_execution::{
+    ExecutionAuditArtifact, ExecutionAuditArtifactKind as Kind,
+    ExecutionAuditBundleConfig, ExecutionAuditBundleExporter,
+    ExecutionAuditBundleManifest, ExecutionAuditBundleRequest,
+    ExecutionAuditTimeRange,
+};
+
+fn export_incident(
+    engine_manifest: ExecutionAuditBundleManifest,
+    evidence: &Path,
+    destination: &Path,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    // Rotate/close WAL inputs, force a checkpoint, and finish one fresh
+    // reconciliation cycle before constructing this source inventory.
+    let files = [
+        (Kind::ExecutionWal, "execution/wal.ofwal", "execution/wal.ofwal"),
+        (Kind::ExecutionCheckpoint, "execution/latest.ofcp", "execution/latest.ofcp"),
+        (Kind::RecoveryReport, "reports/recovery.json", "reports/recovery.json"),
+        (Kind::ReconciliationReport, "reports/reconciliation.json", "reports/reconciliation.json"),
+        (Kind::RouteConfig, "config/routes.redacted.json", "config/routes.redacted.json"),
+        (Kind::RiskConfig, "config/risk.redacted.json", "config/risk.redacted.json"),
+        (Kind::AdapterHealth, "health/adapters.json", "health/adapters.json"),
+        (Kind::ExecutionMetrics, "metrics/execution.json", "metrics/execution.json"),
+        (Kind::MarketDataWal, "market-data/range.ofmdwal", "market-data/range.ofmdwal"),
+        (Kind::StrategyIntent, "strategy/intents.log", "strategy/intents.log"),
+        (Kind::DropCopy, "drop-copy/reports.log", "drop-copy/reports.log"),
+    ];
+
+    let mut request = ExecutionAuditBundleRequest::new(
+        "INC_2026_0042",
+        1_785_000_000_000_000_000,
+        ExecutionAuditTimeRange::new(
+            1_784_999_900_000_000_000,
+            1_785_000_000_000_000_000,
+        ),
+    )
+    .with_execution_manifest(engine_manifest);
+    for (kind, source, bundle_path) in files {
+        request.push_artifact(
+            ExecutionAuditArtifact::from_file(kind, evidence.join(source), bundle_path)
+                .with_source_label(kind.as_str()),
+        );
+    }
+    request.push_artifact(ExecutionAuditArtifact::from_bytes(
+        Kind::BuildMetadata,
+        format!("of_execution={}\n", env!("CARGO_PKG_VERSION")).into_bytes(),
+        "metadata/build.txt",
+    ));
+
+    let exporter = ExecutionAuditBundleExporter::new(
+        ExecutionAuditBundleConfig::new(destination),
+    );
+    let installed = exporter.export(&request)?;
+    let verified = exporter.verify(installed.bundle_path())?;
+    assert_eq!(verified.manifest_sha256(), installed.manifest_sha256());
+    Ok(installed.bundle_path().to_path_buf())
+}
+```
+
+Capacity is explicit: the policy bounds manifest entries, each payload,
+aggregate payload bytes, encoded manifest bytes, and copy-buffer size. Export
+rejects absolute/traversing/non-portable paths, reserved or case-colliding
+names, source and bundle symlinks, non-regular files, existing destinations,
+digest mismatches, and unlisted files. A failed export removes only its private
+staging directory; it never overwrites a completed bundle.
+
+The manifest records logical source labels but never source filesystem paths.
+Provide already-redacted route/risk configs and place the destination root on
+trusted storage. SHA-256 proves that bytes differ from the recorded package; an
+unkeyed digest does not authenticate the collector. Encryption, detached
+signature/attestation, identity, legal hold, retention, and chain-of-custody
+transfer remain deployment responsibilities. Sign the returned manifest digest
+or the immutable package with the organization's approved key service after
+export, and keep that attestation outside or in a separately governed evidence
+system.
 
 ## Adapter Contract
 

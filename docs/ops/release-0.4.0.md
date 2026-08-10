@@ -184,6 +184,16 @@ connect sockets, or upgrade any built-in provider claim automatically.
   actor/reason/outcome frames, checksums, optional data sync, corruption and
   sequence validation, controller restore, and non-replaying restoration of
   local operator controls
+- production `ExecutionAuditBundleExporter` with a fail-closed 12-class
+  incident evidence profile, explicit custom bundles, bounded streamed file or
+  in-memory artifacts, portable path and symlink validation, SHA-256 payload
+  and manifest inventory, staged verification, unlisted-file rejection,
+  immutable destinations, same-filesystem atomic publication, and independent
+  post-export verification
+- clear audit trust boundaries: source quiescence, redaction, destination
+  permissions, signing/attestation, encryption, retention, legal hold, and
+  chain-of-custody transfer remain deployment responsibilities and execute
+  outside order/report paths
 - lifecycle, fanout, command correlation, throttling, sharding, telemetry,
   position ledger, safety policy, and replay helpers
 
