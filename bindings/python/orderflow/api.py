@@ -33,6 +33,8 @@ from ._ffi import (
     OfEvent,
     OfEventCallback,
     OfExecutionAmendRequest,
+    OfExecutionAlgoChildPlan,
+    OfExecutionAlgoProgress,
     OfExecutionCancelRequest,
     OfExecutionCheckpointStoreIntegrityReport,
     OfExecutionCommandReport,
@@ -44,6 +46,7 @@ from ._ffi import (
     OfExecutionOrderState,
     OfExecutionRouteConfig,
     OfExecutionSegmentedWalIntegrityReport,
+    OfExecutionTwapConfig,
     OfExecutionWalIntegrityReport,
     OfExternalFeedPolicy,
     OfSymbol,
@@ -441,6 +444,53 @@ class ExecutionCommandReport:
     events: list[ExecutionEvent]
 
 
+@dataclass(frozen=True)
+class TwapConfig:
+    """Validated parent-order and schedule inputs for native TWAP planning."""
+
+    parent_order_id: str
+    account_id: str
+    route_id: str
+    strategy_id: str
+    venue: str
+    instrument: str
+    side: int
+    order_type: int
+    time_in_force: int
+    total_qty: int
+    limit_price: int
+    start_ns: int
+    end_ns: int
+    min_clip: int
+    max_clip: int
+    slice_interval_ns: int
+    stop_price: int = 0
+    participation_cap_bps: int = 0
+
+
+@dataclass(frozen=True)
+class AlgoChildPlan:
+    """Owned child plan ready for submission through :class:`ExecutionEngine`."""
+
+    child_order_id: str
+    parent_order_id: str
+    due_ns: int
+    request: OrderRequest
+
+
+@dataclass(frozen=True)
+class AlgoProgress:
+    """Aggregate execution-algorithm progress snapshot."""
+
+    target_qty: int
+    released_qty: int
+    completed_qty: int
+    open_qty: int
+    rejected_children: int
+    terminal_children: int
+    has_pending_plan: bool
+
+
 def inspect_execution_wal(
     path: str,
     library_path: Optional[str] = None,
@@ -544,6 +594,175 @@ def inspect_execution_checkpoint_store(
         latest_created_ns=int(report.latest_created_ns) if report.has_latest else None,
         valid=bool(report.valid),
     )
+
+
+class TwapExecutionAlgo:
+    """Deterministic native TWAP planner with explicit release accounting.
+
+    ``plan`` never advances released quantity. Call ``commit_pending`` only
+    after the child request has passed through the OMS submission path, or
+    ``discard_pending`` when submission did not occur.
+    """
+
+    def __init__(
+        self,
+        config: TwapConfig,
+        library_path: Optional[str] = None,
+    ) -> None:
+        """Creates a validated native TWAP parent handle."""
+        self._ffi = OrderflowLib(library_path=library_path)
+        self._algo = ctypes.c_void_p()
+        native = OfExecutionTwapConfig(
+            parent_order_id=self._encode(config.parent_order_id),
+            account_id=self._encode(config.account_id),
+            route_id=self._encode(config.route_id),
+            strategy_id=self._encode(config.strategy_id),
+            venue=self._encode(config.venue),
+            instrument=self._encode(config.instrument),
+            side=ctypes.c_uint32(config.side),
+            order_type=ctypes.c_uint32(config.order_type),
+            time_in_force=ctypes.c_uint32(config.time_in_force),
+            total_qty=ctypes.c_int64(config.total_qty),
+            limit_price=ctypes.c_int64(config.limit_price),
+            stop_price=ctypes.c_int64(config.stop_price),
+            start_ns=ctypes.c_uint64(config.start_ns),
+            end_ns=ctypes.c_uint64(config.end_ns),
+            min_clip=ctypes.c_int64(config.min_clip),
+            max_clip=ctypes.c_int64(config.max_clip),
+            participation_cap_bps=ctypes.c_uint16(config.participation_cap_bps),
+            slice_interval_ns=ctypes.c_uint64(config.slice_interval_ns),
+        )
+        rc = self._ffi.lib.of_execution_twap_algo_create(
+            ctypes.byref(native), ctypes.byref(self._algo)
+        )
+        self._check(rc, "of_execution_twap_algo_create")
+
+    def __enter__(self) -> "TwapExecutionAlgo":
+        """Returns this open planner."""
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        """Closes the native planner."""
+        self.close()
+
+    def close(self) -> None:
+        """Destroys the native algorithm handle."""
+        if self._algo:
+            self._ffi.lib.of_execution_twap_algo_destroy(self._algo)
+            self._algo = ctypes.c_void_p()
+
+    def plan(
+        self,
+        now_ns: int,
+        child_order_id: str,
+        client_order_id: str,
+        ts_recv_ns: int,
+    ) -> Optional[AlgoChildPlan]:
+        """Plans one due child, returning ``None`` when nothing is due."""
+        self._require_handle()
+        native = OfExecutionAlgoChildPlan()
+        rc = self._ffi.lib.of_execution_twap_algo_plan(
+            self._algo,
+            ctypes.c_uint64(now_ns),
+            self._encode(child_order_id),
+            self._encode(client_order_id),
+            ctypes.c_uint64(ts_recv_ns),
+            ctypes.byref(native),
+        )
+        self._check(rc, "of_execution_twap_algo_plan")
+        if not native.has_plan:
+            return None
+        request = OrderRequest(
+            client_order_id=self._decode(native.client_order_id),
+            account_id=self._decode(native.account_id),
+            route_id=self._decode(native.route_id),
+            strategy_id=self._decode(native.strategy_id),
+            venue=self._decode(native.venue),
+            instrument=self._decode(native.instrument),
+            side=int(native.side),
+            order_type=int(native.order_type),
+            time_in_force=int(native.time_in_force),
+            quantity=int(native.quantity),
+            limit_price=int(native.limit_price),
+            stop_price=int(native.stop_price),
+            ts_recv_ns=int(native.ts_recv_ns),
+        )
+        return AlgoChildPlan(
+            child_order_id=self._decode(native.child_order_id),
+            parent_order_id=self._decode(native.parent_order_id),
+            due_ns=int(native.due_ns),
+            request=request,
+        )
+
+    def commit_pending(self) -> None:
+        """Commits the pending child after successful OMS submission."""
+        self._require_handle()
+        self._check(
+            self._ffi.lib.of_execution_twap_algo_commit_pending(self._algo),
+            "of_execution_twap_algo_commit_pending",
+        )
+
+    def discard_pending(self) -> None:
+        """Discards the pending child when OMS submission did not occur."""
+        self._require_handle()
+        self._check(
+            self._ffi.lib.of_execution_twap_algo_discard_pending(self._algo),
+            "of_execution_twap_algo_discard_pending",
+        )
+
+    def record_execution(
+        self, last_qty: int, leaves_qty: int, order_status: int
+    ) -> None:
+        """Folds a child fill/status update into aggregate parent progress."""
+        self._require_handle()
+        self._check(
+            self._ffi.lib.of_execution_twap_algo_record_execution(
+                self._algo,
+                ctypes.c_int64(last_qty),
+                ctypes.c_int64(leaves_qty),
+                ctypes.c_uint32(order_status),
+            ),
+            "of_execution_twap_algo_record_execution",
+        )
+
+    def progress(self) -> AlgoProgress:
+        """Returns current parent progress without mutating planner state."""
+        self._require_handle()
+        native = OfExecutionAlgoProgress()
+        self._check(
+            self._ffi.lib.of_execution_twap_algo_progress(
+                self._algo, ctypes.byref(native)
+            ),
+            "of_execution_twap_algo_progress",
+        )
+        return AlgoProgress(
+            target_qty=int(native.target_qty),
+            released_qty=int(native.released_qty),
+            completed_qty=int(native.completed_qty),
+            open_qty=int(native.open_qty),
+            rejected_children=int(native.rejected_children),
+            terminal_children=int(native.terminal_children),
+            has_pending_plan=bool(native.has_pending_plan),
+        )
+
+    @staticmethod
+    def _encode(value: str) -> bytes:
+        return value.encode("ascii") if value else b""
+
+    @staticmethod
+    def _decode(value) -> str:
+        return bytes(value).split(b"\0", 1)[0].decode("ascii")
+
+    @staticmethod
+    def _check(rc: int, fn_name: str) -> None:
+        if int(rc) == 0:
+            return
+        exc = _ERROR_MAP.get(int(rc), OrderflowError)
+        raise exc(f"{fn_name} failed with code {rc}")
+
+    def _require_handle(self) -> None:
+        if not self._algo:
+            raise OrderflowStateError("TWAP algorithm is closed")
 
 
 class ExecutionEngine:

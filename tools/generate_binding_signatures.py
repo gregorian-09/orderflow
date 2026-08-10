@@ -48,6 +48,7 @@ OPAQUE_TYPES = {
     "of_engine_t",
     "of_execution_engine_t",
     "of_execution_concurrent_engine_t",
+    "of_execution_twap_algo_t",
     "of_subscription_t",
 }
 
@@ -92,6 +93,9 @@ JAVA_STRUCT_TYPES = {
     ),
     "of_execution_concurrent_config_t": "OfExecutionConcurrentConfig",
     "of_execution_command_report_t": "OfExecutionCommandReport",
+    "of_execution_twap_config_t": "OfExecutionTwapConfig",
+    "of_execution_algo_child_plan_t": "OfExecutionAlgoChildPlan",
+    "of_execution_algo_progress_t": "OfExecutionAlgoProgress",
 }
 
 JAVA_ARRAY_PARAMETERS = {

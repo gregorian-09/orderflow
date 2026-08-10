@@ -23,6 +23,8 @@ from orderflow import (  # noqa: E402
     Side,
     StreamKind,
     Symbol,
+    TwapConfig,
+    TwapExecutionAlgo,
 )
 
 
@@ -106,6 +108,39 @@ def main() -> int:
             execution.order_state("SMOKE-1").client_order_id == "SMOKE-1",
             "execution binding order-state mismatch",
         )
+
+        with TwapExecutionAlgo(
+            TwapConfig(
+                "TWAP-PARENT",
+                "ACC",
+                "SIM",
+                "TWAP",
+                "SIM",
+                "ES",
+                ExecutionSide.BUY,
+                ExecutionOrderType.LIMIT,
+                ExecutionTimeInForce.DAY,
+                100,
+                5_000,
+                1_000,
+                11_000,
+                10,
+                25,
+                2_000,
+            ),
+            library_path=str(lib_path),
+        ) as twap:
+            child = twap.plan(1_000, "TWAP-CHILD-1", "TWAP-ORDER-1", 1_001)
+            require(child is not None, "TWAP binding returned no due child")
+            child_events = execution.submit_order(child.request)
+            twap.commit_pending()
+            for event in child_events:
+                twap.record_execution(
+                    event.last_qty, event.leaves_qty, event.order_status
+                )
+            progress = twap.progress()
+            require(progress.released_qty == 20, "TWAP released quantity mismatch")
+            require(progress.completed_qty == 20, "TWAP completed quantity mismatch")
 
     print("python binding smoke: PASS")
     return 0

@@ -69,6 +69,31 @@ functions = [
 ]
 
 [[function_groups]]
+family = "execution_algorithms"
+returns = "int32_t"
+ownership = "caller_owned_output"
+introduced = "0.4.0"
+binding_exposure = "HandleFacade"
+functions = [
+  "of_execution_twap_algo_create",
+  "of_execution_twap_algo_plan",
+  "of_execution_twap_algo_commit_pending",
+  "of_execution_twap_algo_discard_pending",
+  "of_execution_twap_algo_record_execution",
+  "of_execution_twap_algo_progress",
+]
+
+[[function_groups]]
+family = "execution_algorithms"
+returns = "void"
+ownership = "releases_handle"
+introduced = "0.4.0"
+binding_exposure = "HandleFacade"
+functions = [
+  "of_execution_twap_algo_destroy",
+]
+
+[[function_groups]]
 family = "runtime"
 returns = "int32_t"
 ownership = "caller_owned_output"

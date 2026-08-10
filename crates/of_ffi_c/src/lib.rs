@@ -19,10 +19,11 @@ use of_execution::{
     ExecutionError, ExecutionEventBuffer, FileExecutionCheckpointStore, InMemoryJournal,
     RouteConfig, SegmentedWalExecutionJournal, SimExecutionAdapter, WalSegmentIntegrityReport,
 };
+use of_execution_algos::{AlgoProgress, ChildOrderPlan, ParentOrder, TwapSlicePlanner};
 use of_execution_core::{
-    AmendRequest, CancelRequest, ExecutionEvent, ExecutionSymbol, FixedAscii, OrderPrice, OrderQty,
-    OrderRequest, OrderSide, OrderState, OrderType, RiskLimits, StrategyId, TimeInForce,
-    VenueOrderId, WalIntegrityReport,
+    AmendRequest, CancelRequest, ExecutionEvent, ExecutionSymbol, ExecutionText, ExecutionType,
+    FixedAscii, OrderPrice, OrderQty, OrderRequest, OrderSide, OrderState, OrderStatus, OrderType,
+    RiskLimits, RiskRejectReason, StrategyId, TimeInForce, VenueOrderId, WalIntegrityReport,
 };
 use of_runtime::{
     adapter_inventory_json as runtime_adapter_inventory_json, build_default_engine,
@@ -557,6 +558,108 @@ pub struct of_execution_command_report_t {
     pub event_count: u32,
 }
 
+/// Parent-order configuration for a deterministic TWAP algorithm.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct of_execution_twap_config_t {
+    /// Parent order identifier.
+    pub parent_order_id: *const c_char,
+    /// Trading account identifier.
+    pub account_id: *const c_char,
+    /// Default execution route identifier.
+    pub route_id: *const c_char,
+    /// Strategy attribution identifier.
+    pub strategy_id: *const c_char,
+    /// Venue identifier.
+    pub venue: *const c_char,
+    /// Instrument identifier.
+    pub instrument: *const c_char,
+    /// Canonical execution side.
+    pub side: u32,
+    /// Canonical order type.
+    pub order_type: u32,
+    /// Canonical time in force.
+    pub time_in_force: u32,
+    /// Total parent quantity.
+    pub total_qty: i64,
+    /// Child limit price, or zero where not applicable.
+    pub limit_price: i64,
+    /// Child stop price, or zero where not applicable.
+    pub stop_price: i64,
+    /// Parent schedule start in nanoseconds.
+    pub start_ns: u64,
+    /// Parent schedule end in nanoseconds.
+    pub end_ns: u64,
+    /// Minimum child clip.
+    pub min_clip: i64,
+    /// Maximum child clip.
+    pub max_clip: i64,
+    /// Optional participation cap in basis points.
+    pub participation_cap_bps: u16,
+    /// TWAP slice interval in nanoseconds.
+    pub slice_interval_ns: u64,
+}
+
+/// Owned child-order plan produced by a deterministic execution algorithm.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct of_execution_algo_child_plan_t {
+    /// Child algorithm identifier.
+    pub child_order_id: [c_char; 41],
+    /// Parent algorithm identifier.
+    pub parent_order_id: [c_char; 41],
+    /// Canonical OMS client order identifier.
+    pub client_order_id: [c_char; 41],
+    /// Trading account identifier.
+    pub account_id: [c_char; 33],
+    /// Execution route identifier.
+    pub route_id: [c_char; 33],
+    /// Strategy attribution identifier.
+    pub strategy_id: [c_char; 33],
+    /// Venue identifier.
+    pub venue: [c_char; 17],
+    /// Instrument identifier.
+    pub instrument: [c_char; 33],
+    /// Canonical execution side.
+    pub side: u32,
+    /// Canonical order type.
+    pub order_type: u32,
+    /// Canonical time in force.
+    pub time_in_force: u32,
+    /// Planned child quantity.
+    pub quantity: i64,
+    /// Planned child limit price.
+    pub limit_price: i64,
+    /// Planned child stop price.
+    pub stop_price: i64,
+    /// Planned release timestamp.
+    pub due_ns: u64,
+    /// OMS receive/create timestamp.
+    pub ts_recv_ns: u64,
+    /// Non-zero when a child is due; zero represents a successful no-op.
+    pub has_plan: u8,
+}
+
+/// Aggregate progress snapshot for an execution algorithm.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct of_execution_algo_progress_t {
+    /// Parent target quantity.
+    pub target_qty: i64,
+    /// Quantity committed as submitted child orders.
+    pub released_qty: i64,
+    /// Quantity filled by child orders.
+    pub completed_qty: i64,
+    /// Estimated currently open child quantity.
+    pub open_qty: i64,
+    /// Rejected terminal child count.
+    pub rejected_children: u64,
+    /// All terminal child count.
+    pub terminal_children: u64,
+    /// Non-zero when a planned child awaits commit/discard.
+    pub has_pending_plan: u8,
+}
+
 /// Opaque engine handle.
 pub struct of_engine {
     inner: DefaultEngine,
@@ -571,6 +674,14 @@ pub struct of_execution_engine {
 /// Opaque concurrent execution engine handle.
 pub struct of_execution_concurrent_engine {
     inner: ConcurrentExecutionEngine,
+}
+
+/// Opaque deterministic TWAP algorithm handle.
+pub struct of_execution_twap_algo {
+    parent: ParentOrder,
+    progress: AlgoProgress,
+    planner: TwapSlicePlanner,
+    pending: Option<ChildOrderPlan>,
 }
 
 /// Opaque subscription token.
@@ -918,6 +1029,181 @@ pub extern "C" fn of_execution_engine_destroy(engine: *mut of_execution_engine) 
     }
     unsafe {
         let _ = Box::from_raw(engine);
+    }
+}
+
+/// Creates a deterministic TWAP parent algorithm.
+#[no_mangle]
+pub extern "C" fn of_execution_twap_algo_create(
+    config: *const of_execution_twap_config_t,
+    out_algo: *mut *mut of_execution_twap_algo,
+) -> i32 {
+    if config.is_null() || out_algo.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    unsafe {
+        *out_algo = std::ptr::null_mut();
+    }
+    let config = unsafe { &*config };
+    let Ok((parent, planner)) = twap_config_from_ffi(config) else {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    };
+    let algo = of_execution_twap_algo {
+        progress: AlgoProgress::new(parent.id(), parent.total_qty()),
+        parent,
+        planner,
+        pending: None,
+    };
+    unsafe {
+        *out_algo = Box::into_raw(Box::new(algo));
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Plans the next due TWAP child without advancing parent progress.
+#[no_mangle]
+pub extern "C" fn of_execution_twap_algo_plan(
+    algo: *mut of_execution_twap_algo,
+    now_ns: u64,
+    child_order_id: *const c_char,
+    client_order_id: *const c_char,
+    ts_recv_ns: u64,
+    out_plan: *mut of_execution_algo_child_plan_t,
+) -> i32 {
+    if algo.is_null() || out_plan.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let Ok(child_order_id) = fixed_from_ptr::<40>(child_order_id) else {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    };
+    let Ok(client_order_id) = fixed_from_ptr::<40>(client_order_id) else {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    };
+    let algo = unsafe { &mut *algo };
+    if let Some(pending) = algo.pending {
+        if pending.child_id() != child_order_id
+            || pending.request().client_order_id != client_order_id
+        {
+            return of_error_t::OF_ERR_STATE as i32;
+        }
+        unsafe {
+            *out_plan = child_plan_to_ffi(Some(&pending));
+        }
+        return of_error_t::OF_OK as i32;
+    }
+    match algo.planner.plan_due_slice(
+        &algo.parent,
+        algo.progress,
+        now_ns,
+        child_order_id,
+        client_order_id,
+        ts_recv_ns,
+    ) {
+        Ok(plan) => {
+            algo.pending = plan;
+            unsafe {
+                *out_plan = child_plan_to_ffi(algo.pending.as_ref());
+            }
+            of_error_t::OF_OK as i32
+        }
+        Err(_) => of_error_t::OF_ERR_INVALID_ARG as i32,
+    }
+}
+
+/// Commits a pending child after successful OMS submission.
+#[no_mangle]
+pub extern "C" fn of_execution_twap_algo_commit_pending(algo: *mut of_execution_twap_algo) -> i32 {
+    if algo.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let algo = unsafe { &mut *algo };
+    let Some(plan) = algo.pending else {
+        return of_error_t::OF_ERR_STATE as i32;
+    };
+    if algo.progress.on_child_released(&plan).is_err() {
+        return of_error_t::OF_ERR_STATE as i32;
+    }
+    algo.pending = None;
+    of_error_t::OF_OK as i32
+}
+
+/// Discards a pending child after failed or abandoned OMS submission.
+#[no_mangle]
+pub extern "C" fn of_execution_twap_algo_discard_pending(algo: *mut of_execution_twap_algo) -> i32 {
+    if algo.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let algo = unsafe { &mut *algo };
+    if algo.pending.take().is_none() {
+        return of_error_t::OF_ERR_STATE as i32;
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Records child execution progress using canonical order-status values.
+#[no_mangle]
+pub extern "C" fn of_execution_twap_algo_record_execution(
+    algo: *mut of_execution_twap_algo,
+    last_qty: i64,
+    leaves_qty: i64,
+    order_status: u32,
+) -> i32 {
+    if algo.is_null() || last_qty < 0 || leaves_qty < 0 {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let Ok(order_status) = order_status_from_ffi(order_status) else {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    };
+    let event = ExecutionEvent {
+        exec_type: ExecutionType::Status,
+        order_status,
+        client_order_id: FixedAscii::empty(),
+        orig_client_order_id: FixedAscii::empty(),
+        venue_order_id: FixedAscii::empty(),
+        execution_id: FixedAscii::empty(),
+        account_id: FixedAscii::empty(),
+        route_id: FixedAscii::empty(),
+        symbol: ExecutionSymbol {
+            venue: FixedAscii::empty(),
+            instrument: FixedAscii::empty(),
+        },
+        last_qty: OrderQty(last_qty),
+        last_price: OrderPrice(0),
+        cumulative_qty: OrderQty(0),
+        leaves_qty: OrderQty(leaves_qty),
+        average_price: OrderPrice(0),
+        ts_exchange_ns: 0,
+        ts_recv_ns: 0,
+        reason: RiskRejectReason::None,
+        text: ExecutionText::empty(),
+    };
+    unsafe { &mut *algo }.progress.on_execution_event(&event);
+    of_error_t::OF_OK as i32
+}
+
+/// Returns current aggregate parent progress.
+#[no_mangle]
+pub extern "C" fn of_execution_twap_algo_progress(
+    algo: *const of_execution_twap_algo,
+    out_progress: *mut of_execution_algo_progress_t,
+) -> i32 {
+    if algo.is_null() || out_progress.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let algo = unsafe { &*algo };
+    unsafe {
+        *out_progress = algo_progress_to_ffi(algo.progress, algo.pending.is_some());
+    }
+    of_error_t::OF_OK as i32
+}
+
+/// Destroys a deterministic TWAP algorithm handle.
+#[no_mangle]
+pub extern "C" fn of_execution_twap_algo_destroy(algo: *mut of_execution_twap_algo) {
+    if !algo.is_null() {
+        unsafe {
+            drop(Box::from_raw(algo));
+        }
     }
 }
 
@@ -2587,6 +2873,94 @@ fn fixed_from_ptr<const N: usize>(ptr: *const c_char) -> Result<FixedAscii<N>, (
     FixedAscii::new(&value).map_err(|_| ())
 }
 
+fn twap_config_from_ffi(
+    config: &of_execution_twap_config_t,
+) -> Result<(ParentOrder, TwapSlicePlanner), ()> {
+    let parent = ParentOrder::new(
+        fixed_from_ptr::<40>(config.parent_order_id)?,
+        fixed_from_ptr::<32>(config.account_id)?,
+        fixed_from_ptr::<32>(config.route_id)?,
+        fixed_from_ptr::<32>(config.strategy_id).unwrap_or_else(|_| StrategyId::empty()),
+        ExecutionSymbol {
+            venue: fixed_from_ptr::<16>(config.venue)?,
+            instrument: fixed_from_ptr::<32>(config.instrument)?,
+        },
+        side_from_execution_ffi(config.side)?,
+        order_type_from_ffi(config.order_type)?,
+        tif_from_ffi(config.time_in_force)?,
+        OrderQty(config.total_qty),
+        OrderPrice(config.limit_price),
+        OrderPrice(config.stop_price),
+        config.start_ns,
+        config.end_ns,
+        OrderQty(config.min_clip),
+        OrderQty(config.max_clip),
+        config.participation_cap_bps,
+    )
+    .map_err(|_| ())?;
+    let planner = TwapSlicePlanner::try_new(config.slice_interval_ns).map_err(|_| ())?;
+    Ok((parent, planner))
+}
+
+fn child_plan_to_ffi(plan: Option<&ChildOrderPlan>) -> of_execution_algo_child_plan_t {
+    let Some(plan) = plan else {
+        return of_execution_algo_child_plan_t {
+            child_order_id: [0; 41],
+            parent_order_id: [0; 41],
+            client_order_id: [0; 41],
+            account_id: [0; 33],
+            route_id: [0; 33],
+            strategy_id: [0; 33],
+            venue: [0; 17],
+            instrument: [0; 33],
+            side: 0,
+            order_type: 0,
+            time_in_force: 0,
+            quantity: 0,
+            limit_price: 0,
+            stop_price: 0,
+            due_ns: 0,
+            ts_recv_ns: 0,
+            has_plan: 0,
+        };
+    };
+    let request = plan.request();
+    of_execution_algo_child_plan_t {
+        child_order_id: cstr_array(plan.child_id().as_str()),
+        parent_order_id: cstr_array(plan.parent_id().as_str()),
+        client_order_id: cstr_array(request.client_order_id.as_str()),
+        account_id: cstr_array(request.account_id.as_str()),
+        route_id: cstr_array(request.route_id.as_str()),
+        strategy_id: cstr_array(request.strategy_id.as_str()),
+        venue: cstr_array(request.symbol.venue.as_str()),
+        instrument: cstr_array(request.symbol.instrument.as_str()),
+        side: request.side as u32,
+        order_type: request.order_type as u32,
+        time_in_force: request.time_in_force as u32,
+        quantity: request.quantity.0,
+        limit_price: request.limit_price.0,
+        stop_price: request.stop_price.0,
+        due_ns: plan.due_ns(),
+        ts_recv_ns: request.ts_recv_ns,
+        has_plan: 1,
+    }
+}
+
+const fn algo_progress_to_ffi(
+    progress: AlgoProgress,
+    has_pending_plan: bool,
+) -> of_execution_algo_progress_t {
+    of_execution_algo_progress_t {
+        target_qty: progress.target_qty().0,
+        released_qty: progress.released_qty().0,
+        completed_qty: progress.completed_qty().0,
+        open_qty: progress.open_qty().0,
+        rejected_children: progress.rejected_children(),
+        terminal_children: progress.terminal_children(),
+        has_pending_plan: has_pending_plan as u8,
+    }
+}
+
 fn route_config_from_ffi(cfg: &of_execution_route_config_t) -> Result<RouteConfig, ()> {
     Ok(RouteConfig {
         route_id: fixed_from_ptr::<32>(cfg.route_id)?,
@@ -2687,6 +3061,24 @@ fn tif_from_ffi(value: u32) -> Result<TimeInForce, ()> {
         3 => Ok(TimeInForce::Ioc),
         4 => Ok(TimeInForce::Fok),
         5 => Ok(TimeInForce::Gtd),
+        _ => Err(()),
+    }
+}
+
+fn order_status_from_ffi(value: u32) -> Result<OrderStatus, ()> {
+    match value {
+        1 => Ok(OrderStatus::PendingNew),
+        2 => Ok(OrderStatus::New),
+        3 => Ok(OrderStatus::PartiallyFilled),
+        4 => Ok(OrderStatus::Filled),
+        5 => Ok(OrderStatus::PendingCancel),
+        6 => Ok(OrderStatus::Cancelled),
+        7 => Ok(OrderStatus::PendingReplace),
+        8 => Ok(OrderStatus::Replaced),
+        9 => Ok(OrderStatus::Rejected),
+        10 => Ok(OrderStatus::Expired),
+        11 => Ok(OrderStatus::Suspended),
+        12 => Ok(OrderStatus::Unknown),
         _ => Err(()),
     }
 }

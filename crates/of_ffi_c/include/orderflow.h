@@ -13,6 +13,8 @@ typedef struct of_engine of_engine_t;
 typedef struct of_execution_engine of_execution_engine_t;
 /** Opaque concurrent execution engine handle. */
 typedef struct of_execution_concurrent_engine of_execution_concurrent_engine_t;
+/** Opaque deterministic TWAP algorithm handle. */
+typedef struct of_execution_twap_algo of_execution_twap_algo_t;
 /** Analytics configuration struct — mirrors of_core::AnalyticsConfig. */
 typedef struct {
   double agent_small_trade_threshold;
@@ -435,6 +437,60 @@ typedef struct {
   uint32_t event_count;
 } of_execution_command_report_t;
 
+/** Parent-order configuration for a deterministic TWAP algorithm. */
+typedef struct {
+  const char* parent_order_id;
+  const char* account_id;
+  const char* route_id;
+  const char* strategy_id;
+  const char* venue;
+  const char* instrument;
+  uint32_t side;
+  uint32_t order_type;
+  uint32_t time_in_force;
+  int64_t total_qty;
+  int64_t limit_price;
+  int64_t stop_price;
+  uint64_t start_ns;
+  uint64_t end_ns;
+  int64_t min_clip;
+  int64_t max_clip;
+  uint16_t participation_cap_bps;
+  uint64_t slice_interval_ns;
+} of_execution_twap_config_t;
+
+/** Owned child-order plan produced by a deterministic TWAP algorithm. */
+typedef struct {
+  char child_order_id[41];
+  char parent_order_id[41];
+  char client_order_id[41];
+  char account_id[33];
+  char route_id[33];
+  char strategy_id[33];
+  char venue[17];
+  char instrument[33];
+  uint32_t side;
+  uint32_t order_type;
+  uint32_t time_in_force;
+  int64_t quantity;
+  int64_t limit_price;
+  int64_t stop_price;
+  uint64_t due_ns;
+  uint64_t ts_recv_ns;
+  uint8_t has_plan;
+} of_execution_algo_child_plan_t;
+
+/** Current aggregate progress of a deterministic execution algorithm. */
+typedef struct {
+  int64_t target_qty;
+  int64_t released_qty;
+  int64_t completed_qty;
+  int64_t open_qty;
+  uint64_t rejected_children;
+  uint64_t terminal_children;
+  uint8_t has_pending_plan;
+} of_execution_algo_progress_t;
+
 /** Returns ABI version number. */
 uint32_t of_api_version(void);
 /** Returns static build info string. */
@@ -488,6 +544,21 @@ int32_t of_execution_concurrent_amend_order(of_execution_concurrent_engine_t* en
 int32_t of_execution_concurrent_poll(of_execution_concurrent_engine_t* engine, uint64_t* out_sequence);
 /** Attempts to receive one concurrent command report without blocking. */
 int32_t of_execution_concurrent_try_recv_report(of_execution_concurrent_engine_t* engine, of_execution_command_report_t* out_report, of_execution_event_t* out_events, uint32_t* inout_len);
+
+/** Creates a deterministic TWAP parent algorithm. */
+int32_t of_execution_twap_algo_create(const of_execution_twap_config_t* config, of_execution_twap_algo_t** out_algo);
+/** Plans the next due TWAP child without advancing parent progress. */
+int32_t of_execution_twap_algo_plan(of_execution_twap_algo_t* algo, uint64_t now_ns, const char* child_order_id, const char* client_order_id, uint64_t ts_recv_ns, of_execution_algo_child_plan_t* out_plan);
+/** Commits the currently pending child plan after accepted OMS submission. */
+int32_t of_execution_twap_algo_commit_pending(of_execution_twap_algo_t* algo);
+/** Discards the currently pending child plan after failed/abandoned submission. */
+int32_t of_execution_twap_algo_discard_pending(of_execution_twap_algo_t* algo);
+/** Records child execution progress using canonical order-status values. */
+int32_t of_execution_twap_algo_record_execution(of_execution_twap_algo_t* algo, int64_t last_qty, int64_t leaves_qty, uint32_t order_status);
+/** Returns the current parent execution progress. */
+int32_t of_execution_twap_algo_progress(const of_execution_twap_algo_t* algo, of_execution_algo_progress_t* out_progress);
+/** Destroys a deterministic TWAP algorithm handle. */
+void of_execution_twap_algo_destroy(of_execution_twap_algo_t* algo);
 
 /** Creates a runtime engine instance. */
 int32_t of_engine_create(const of_engine_config_t* cfg, of_engine_t** out_engine);
