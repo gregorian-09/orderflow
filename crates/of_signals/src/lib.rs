@@ -33,6 +33,24 @@ pub trait SignalModule: Send + Sync {
     }
 }
 
+impl<T: SignalModule + ?Sized> SignalModule for Box<T> {
+    fn on_analytics(&mut self, ev: &AnalyticsSnapshot) {
+        (**self).on_analytics(ev);
+    }
+
+    fn snapshot(&self) -> SignalSnapshot {
+        (**self).snapshot()
+    }
+
+    fn quality_gate(&self, q: DataQualityFlags) -> SignalGateDecision {
+        (**self).quality_gate(q)
+    }
+
+    fn latest_explanation(&self) -> Option<SignalExplanation> {
+        (**self).latest_explanation()
+    }
+}
+
 /// Context passed to contextual signal modules.
 ///
 /// This type is intentionally borrowed so hosts can compose analytics, book,
@@ -1673,6 +1691,26 @@ impl SignalRegistry {
         validate_signal_config(descriptor, config)
     }
 
+    /// Validates a configuration and returns a stable JSON result for bindings.
+    ///
+    /// Registry validation failures are represented by `valid: false` in the
+    /// returned document. The method itself does not panic or discard the
+    /// diagnostic message.
+    pub fn validate_config_json(&self, config: &SignalConfig<'_>) -> String {
+        let result = self.validate_config(config);
+        let mut out = String::from("{\"schema_version\":1,\"signal_id\":");
+        push_json_string(&mut out, config.id);
+        out.push_str(",\"valid\":");
+        out.push_str(if result.is_ok() { "true" } else { "false" });
+        out.push_str(",\"error\":");
+        match result {
+            Ok(()) => out.push_str("null"),
+            Err(error) => push_json_string(&mut out, &error.to_string()),
+        }
+        out.push('}');
+        out
+    }
+
     /// Constructs a signal module from configuration.
     pub fn create_signal(
         &self,
@@ -2008,6 +2046,104 @@ impl SignalValidationReport {
         out.push_str("\"warnings\":");
         out.push_str(&self.warnings.len().to_string());
         out.push('}');
+        out
+    }
+
+    /// Exports the complete replay-validation report as dependency-free JSON.
+    ///
+    /// This schema is intended for C, Python, Java, notebooks, and dashboards.
+    /// It is separate from [`Self::json_summary`] so existing compact-summary
+    /// consumers retain their exact serialized shape.
+    pub fn json_report(&self) -> String {
+        let mut out = String::from("{\"schema_version\":1,\"valid\":true,\"module_id\":");
+        match self.module_id {
+            Some(module_id) => push_json_string(&mut out, module_id),
+            None => out.push_str("null"),
+        }
+        out.push_str(",\"config\":{");
+        push_json_usize_field(
+            &mut out,
+            "markout_horizon_events",
+            self.config.markout_horizon_events,
+        );
+        out.push(',');
+        push_json_i64_field(
+            &mut out,
+            "flat_price_threshold",
+            self.config.flat_price_threshold,
+        );
+        out.push(',');
+        push_json_u16_field(
+            &mut out,
+            "min_confidence_bps",
+            self.config.min_confidence_bps,
+        );
+        out.push(',');
+        push_json_bool_field(&mut out, "store_samples", self.config.store_samples);
+        out.push(',');
+        push_json_bool_field(
+            &mut out,
+            "check_monotonic_timestamps",
+            self.config.check_monotonic_timestamps,
+        );
+        out.push('}');
+        out.push(',');
+        push_json_usize_field(&mut out, "evaluated_events", self.evaluated_events);
+        out.push(',');
+        push_json_usize_field(&mut out, "labeled_events", self.labeled_events);
+        out.push(',');
+        push_json_usize_field(&mut out, "missing_markouts", self.missing_markouts);
+        out.push(',');
+        push_json_usize_field(
+            &mut out,
+            "directional_predictions",
+            self.directional_predictions,
+        );
+        out.push(',');
+        push_json_usize_field(&mut out, "long_predictions", self.long_predictions);
+        out.push(',');
+        push_json_usize_field(&mut out, "short_predictions", self.short_predictions);
+        out.push(',');
+        push_json_usize_field(&mut out, "neutral_predictions", self.neutral_predictions);
+        out.push(',');
+        push_json_usize_field(&mut out, "blocked_predictions", self.blocked_predictions);
+        out.push(',');
+        push_json_usize_field(&mut out, "correct_directional", self.correct_directional);
+        out.push(',');
+        push_json_usize_field(
+            &mut out,
+            "incorrect_directional",
+            self.incorrect_directional,
+        );
+        out.push(',');
+        push_json_usize_field(&mut out, "flat_markouts", self.flat_markouts);
+        out.push(',');
+        push_json_u16_field(
+            &mut out,
+            "average_confidence_bps",
+            self.average_confidence_bps,
+        );
+        out.push_str(",\"directional_accuracy_bps\":");
+        push_optional_u16_json(&mut out, self.directional_accuracy_bps());
+        out.push_str(",\"label_coverage_bps\":");
+        push_optional_u16_json(&mut out, self.label_coverage_bps());
+        out.push(',');
+        push_json_usize_field(&mut out, "warning_count", self.warnings.len());
+        out.push_str(",\"samples\":[");
+        for (index, sample) in self.samples.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            push_validation_sample_json(&mut out, sample);
+        }
+        out.push_str("],\"warnings\":[");
+        for (index, warning) in self.warnings.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            push_validation_warning_json(&mut out, warning);
+        }
+        out.push_str("]}");
         out
     }
 }
@@ -6367,6 +6503,103 @@ fn push_json_field(out: &mut String, name: &str, value: &str) {
     push_json_string(out, value);
 }
 
+fn push_json_usize_field(out: &mut String, name: &str, value: usize) {
+    push_json_string(out, name);
+    out.push(':');
+    out.push_str(&value.to_string());
+}
+
+fn push_json_i64_field(out: &mut String, name: &str, value: i64) {
+    push_json_string(out, name);
+    out.push(':');
+    out.push_str(&value.to_string());
+}
+
+fn push_json_u16_field(out: &mut String, name: &str, value: u16) {
+    push_json_string(out, name);
+    out.push(':');
+    out.push_str(&value.to_string());
+}
+
+fn push_json_bool_field(out: &mut String, name: &str, value: bool) {
+    push_json_string(out, name);
+    out.push(':');
+    out.push_str(if value { "true" } else { "false" });
+}
+
+fn push_validation_sample_json(out: &mut String, sample: &SignalValidationSample) {
+    out.push('{');
+    push_json_usize_field(out, "event_index", sample.event_index);
+    out.push(',');
+    push_json_usize_field(out, "markout_event_index", sample.markout_event_index);
+    out.push_str(",\"snapshot\":{");
+    push_json_field(out, "module_id", sample.snapshot.module_id);
+    out.push(',');
+    push_json_field(out, "state", signal_state_name(sample.snapshot.state));
+    out.push(',');
+    push_json_u16_field(out, "confidence_bps", sample.snapshot.confidence_bps);
+    out.push_str(",\"quality_flags\":");
+    out.push_str(&sample.snapshot.quality_flags.to_string());
+    out.push(',');
+    push_json_field(out, "reason", &sample.snapshot.reason);
+    out.push('}');
+    out.push(',');
+    push_json_i64_field(out, "entry_price", sample.entry_price);
+    out.push(',');
+    push_json_i64_field(out, "markout_price", sample.markout_price);
+    out.push(',');
+    push_json_i64_field(out, "price_change", sample.price_change);
+    out.push(',');
+    push_json_field(out, "markout_direction", sample.markout_direction.as_str());
+    out.push_str(",\"predicted_direction\":");
+    match sample.predicted_direction {
+        Some(direction) => push_json_string(out, direction.as_str()),
+        None => out.push_str("null"),
+    }
+    out.push_str(",\"correct\":");
+    match sample.correct {
+        Some(value) => out.push_str(if value { "true" } else { "false" }),
+        None => out.push_str("null"),
+    }
+    out.push('}');
+}
+
+fn push_validation_warning_json(out: &mut String, warning: &SignalValidationWarning) {
+    out.push('{');
+    match warning {
+        SignalValidationWarning::EmptyInput => {
+            push_json_field(out, "code", "empty_input");
+        }
+        SignalValidationWarning::ZeroMarkoutHorizon => {
+            push_json_field(out, "code", "zero_markout_horizon");
+        }
+        SignalValidationWarning::MissingMarkout {
+            event_index,
+            requested_horizon_events,
+        } => {
+            push_json_field(out, "code", "missing_markout");
+            out.push(',');
+            push_json_usize_field(out, "event_index", *event_index);
+            out.push(',');
+            push_json_usize_field(out, "requested_horizon_events", *requested_horizon_events);
+        }
+        SignalValidationWarning::NonMonotonicTimestamp {
+            event_index,
+            previous_ts_exchange_ns,
+            current_ts_exchange_ns,
+        } => {
+            push_json_field(out, "code", "non_monotonic_timestamp");
+            out.push(',');
+            push_json_usize_field(out, "event_index", *event_index);
+            out.push_str(",\"previous_ts_exchange_ns\":");
+            out.push_str(&previous_ts_exchange_ns.to_string());
+            out.push_str(",\"current_ts_exchange_ns\":");
+            out.push_str(&current_ts_exchange_ns.to_string());
+        }
+    }
+    out.push('}');
+}
+
 fn push_json_string(out: &mut String, value: &str) {
     out.push('"');
     for ch in value.chars() {
@@ -6945,6 +7178,21 @@ mod tests {
     }
 
     #[test]
+    fn signal_registry_validation_json_preserves_diagnostics() {
+        let registry = SignalRegistry::with_built_ins();
+        let invalid = [SignalConfigParameter::integer("threshold", -1)];
+        let invalid_config = SignalConfig::with_parameters("delta_momentum_v1", &invalid);
+        let invalid_json = registry.validate_config_json(&invalid_config);
+        assert!(invalid_json.contains("\"valid\":false"));
+        assert!(invalid_json.contains("below the descriptor minimum"));
+
+        let valid_config = SignalConfig::new("delta_momentum_v1");
+        let valid_json = registry.validate_config_json(&valid_config);
+        assert!(valid_json.contains("\"valid\":true"));
+        assert!(valid_json.contains("\"error\":null"));
+    }
+
+    #[test]
     fn signal_validation_scores_directional_markouts() {
         let mut signal = DeltaMomentumSignal::new(10);
         let events = vec![
@@ -6991,6 +7239,15 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| matches!(warning, SignalValidationWarning::MissingMarkout { .. })));
+
+        let json = report.json_report();
+        assert!(json.contains("\"schema_version\":1"));
+        assert!(json.contains("\"valid\":true"));
+        assert!(json.contains("\"long_predictions\":1"));
+        assert!(json.contains("\"short_predictions\":2"));
+        assert!(json.contains("\"directional_accuracy_bps\":5000"));
+        assert!(json.contains("\"samples\":[{"));
+        assert!(json.contains("\"code\":\"missing_markout\""));
     }
 
     #[test]
