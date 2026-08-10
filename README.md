@@ -70,7 +70,9 @@ Major additions:
   institutional, and ML-feature modules
 - bindings: additive C ABI, Python, and Java execution APIs, including a
   deterministic TWAP parent handle with explicit plan/commit/event-folding
-  semantics, without changing existing analytics APIs
+  semantics, plus config-driven built-in signal replay validation with typed
+  event inputs and versioned JSON reports, without changing existing analytics
+  or signal-evaluation APIs
 - documentation: end-to-end strategy workflow, OMS architecture, OMS cookbook,
   low-latency design, provider adapter authoring, recovery operations, and
   exhaustive binding READMEs

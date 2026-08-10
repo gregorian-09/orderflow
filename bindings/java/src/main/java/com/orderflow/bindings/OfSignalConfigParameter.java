@@ -6,6 +6,7 @@ import com.sun.jna.Structure;
 @Structure.FieldOrder({
     "name", "kind", "integer_value", "float_value", "boolean_value", "text_value"
 })
+/** Native tagged signal configuration parameter structure. */
 public class OfSignalConfigParameter extends Structure {
     /** Parameter name. */ public String name;
     /** Tagged value kind. */ public int kind;

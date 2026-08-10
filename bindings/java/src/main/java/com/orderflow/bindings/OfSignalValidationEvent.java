@@ -8,6 +8,7 @@ import com.sun.jna.Structure;
     "point_of_control", "value_area_low", "value_area_high", "ts_exchange_ns",
     "has_ts_exchange_ns"
 })
+/** Native replay analytics observation structure. */
 public class OfSignalValidationEvent extends Structure {
     /** Session delta. */ public long delta;
     /** Cumulative session delta. */ public long cumulative_delta;

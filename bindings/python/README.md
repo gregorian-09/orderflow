@@ -46,6 +46,9 @@ Highlights:
   audit and dashboard diagnostics
 - signal metrics through `Engine.signal_metrics()` for state counts,
   confidence, quality, and explanation coverage diagnostics
+- offline config-driven signal validation through `SignalConfig`,
+  `validate_signal_config()`, and `validate_signal_replay()` with parsed reports,
+  retained samples, and replay-order warnings
 - manifest/header-driven low-level `ctypes` signature generation with CI drift
   checks, while typed high-level wrappers remain manually designed
 - analytics-to-execution examples in this README and the handbook
@@ -163,6 +166,64 @@ submission decisions should still flow through explicit strategy/risk/OMS code.
 `Engine.signal_metrics()` returns a compact runtime summary of the current
 signal cache: state counts, directional count, average confidence, quality
 flagged signals, and explanation coverage.
+
+### Config-driven replay validation
+
+Use the offline facade to validate a built-in signal without creating a live
+engine. Parameters are checked against the selected descriptor before native
+construction. Each observation is evaluated before its future markout is read,
+and optional exchange timestamps are checked for backward movement.
+
+```python
+from orderflow import (
+    SignalConfig,
+    SignalConfigParameter,
+    SignalValidationConfig,
+    SignalValidationEvent,
+    validate_signal_config,
+    validate_signal_replay,
+)
+
+signal = SignalConfig(
+    "delta_momentum_v1",
+    (SignalConfigParameter("threshold", 10),),
+)
+
+config_result = validate_signal_config(signal)
+if not config_result["valid"]:
+    raise ValueError(config_result["error"])
+
+events = [
+    SignalValidationEvent(delta=20, last_price=100, ts_exchange_ns=1),
+    SignalValidationEvent(delta=-20, last_price=90, ts_exchange_ns=2),
+    SignalValidationEvent(delta=-20, last_price=80, ts_exchange_ns=3),
+]
+report = validate_signal_replay(
+    signal,
+    events,
+    SignalValidationConfig(
+        markout_horizon_events=1,
+        flat_price_threshold=0,
+        min_confidence_bps=0,
+        store_samples=True,
+        check_monotonic_timestamps=True,
+    ),
+)
+
+print(report.directional_accuracy_bps, report.label_coverage_bps)
+for sample in report.samples:
+    print(sample["event_index"], sample["predicted_direction"], sample["correct"])
+for warning in report.warnings:
+    print(warning["code"])
+```
+
+`SignalValidationReport.raw` retains the full schema-versioned native document.
+An invalid registry id, duplicate/unknown parameter, type mismatch, or
+descriptor range violation raises `OrderflowArgError` from
+`validate_signal_replay`; use `validate_signal_config` first when a UI or config
+service needs a non-throwing validation result. This path is for research,
+replay review, and CI. It does not alter live `Engine` signal state or send OMS
+orders.
 
 ## Architecture
 

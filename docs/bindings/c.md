@@ -133,6 +133,21 @@ python3 tools/release/sync_binding_versions.py --check
 - `docs/api/README.md`
 - `examples/c/basic.c`
 
+## Signal validation facade
+
+- `of_validate_signal_config_json` validates descriptor ids and typed
+  `of_signal_config_parameter_t` arrays.
+- `of_validate_signal_replay_json` constructs the selected built-in and scores
+  ordered `of_signal_validation_event_t` observations using
+  `of_signal_validation_config_t`.
+- Both return library-owned, schema-versioned JSON. Release it with
+  `of_string_free` after parsing exactly `out_len` bytes.
+- Configuration rejection is a report outcome (`valid: false`), while null
+  pointers, invalid tags, and malformed scalar payloads return
+  `OF_ERR_INVALID_ARG`.
+- The facade is synchronous and offline; it does not use `of_engine_t`, mutate
+  live signal state, or bypass OMS/risk controls.
+
 ## TWAP Algorithm Handle
 
 `of_execution_twap_algo_t` is an additive, single-owner planner handle.

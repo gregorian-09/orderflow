@@ -8,6 +8,7 @@ an ergonomic, Pythonic API for:
 - external ingest (trade/book injection)
 - snapshots (book, analytics, signal, metrics)
 - feed-quality supervision (stale/sequence/reconnect policy)
+- offline config-driven built-in signal replay validation
 
 Quick start::
 

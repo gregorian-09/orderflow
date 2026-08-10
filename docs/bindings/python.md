@@ -41,6 +41,8 @@ Native lookup order:
 - `ExternalFeedPolicy(stale_after_ms=15000, enforce_sequence=True)`
 - execution: `ExecutionEngine`, `ConcurrentExecutionEngine`,
   `TwapExecutionAlgo`, `TwapConfig`, `AlgoChildPlan`, `AlgoProgress`
+- signal research: `SignalConfig`, `SignalConfigParameter`,
+  `SignalValidationConfig`, `SignalValidationEvent`, `SignalValidationReport`
 
 ### Engine
 
@@ -110,6 +112,20 @@ The Python binding automatically retries with a larger native buffer when a snap
   `discard_pending()`
 - fold returned child events with `record_execution(...)` and inspect
   `progress()`
+
+### Offline signal validation
+
+- discover parameter names/ranges with `signal_descriptors()`
+- build `SignalConfig` from typed `SignalConfigParameter` values
+- use `validate_signal_config(...)` for non-throwing config diagnostics
+- pass ordered `SignalValidationEvent` values to
+  `validate_signal_replay(...)`
+- inspect parsed accuracy/coverage, retained samples, warnings, and `raw`
+
+This facade constructs registered built-ins and does not mutate a live
+`Engine`. Custom Python signal implementations should emit their own snapshots
+or use a Python-native research harness; Rust custom modules use the typed
+`of_signals` validator directly.
 
 ## Distribution and Quality Controls
 

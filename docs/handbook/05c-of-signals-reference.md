@@ -546,6 +546,31 @@ Useful report methods:
 | `label_coverage_bps()` | Events with labels divided by evaluated events |
 | `has_warnings()` | Whether validation emitted warnings |
 | `json_summary()` | Compact JSON summary for notebooks, Python, dashboards, or CI artifacts |
+| `json_report()` | Versioned complete JSON with config, counters, optional samples, and structured warnings |
+
+### Portable validation facade
+
+The C/Python/Java facade exposes registry validation and built-in replay
+validation without moving Rust trait objects across an ABI boundary:
+
+| Layer | API | Ownership/result |
+| --- | --- | --- |
+| C | `of_validate_signal_config_json` | Caller-owned parameter array; library-owned JSON |
+| C | `of_validate_signal_replay_json` | Caller-owned parameters/events; library-owned JSON freed by `of_string_free` |
+| Python | `validate_signal_config`, `validate_signal_replay` | Parsed dictionaries and `SignalValidationReport` |
+| Java | `OrderflowEngine.validateSignalConfig`, `validateSignalReplay` | Parsed config/result summary plus complete `rawJson` |
+
+The portable replay function constructs only modules registered in the built-in
+registry. Rust callers with custom `SignalModule` implementations use
+`validate_signal_replay` directly. This preserves custom factory flexibility in
+Rust while keeping the C ABI free from trait-object layout and lifetime
+assumptions.
+
+All validation calls are synchronous and offline. They allocate report data and
+may retain samples when requested, so they must not be inserted into the live
+per-event decision path. Timestamp checks report backward exchange time but do
+not reorder observations; callers remain responsible for supplying the replay
+sequence they intend to validate.
 
 ## Calibration And Outcome Tracking
 

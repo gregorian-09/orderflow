@@ -387,6 +387,12 @@ through additive handles/classes:
   `TwapExecutionAlgo`, and Java `TwapExecutionAlgo` expose owned child plans,
   explicit submit commit/discard, and execution progress without exposing Rust
   generic or borrowed planner internals
+- signal research bridge: C `of_validate_signal_config_json` and
+  `of_validate_signal_replay_json`, Python `SignalConfig` and
+  `validate_signal_replay`, and Java `SignalConfig` and
+  `OrderflowEngine.validateSignalReplay` construct descriptor-validated
+  built-ins and return versioned reports with markout accuracy, coverage,
+  retained samples, and replay-order warnings
 
 Existing analytics handles and classes remain separate and unchanged.
 High-level Python context managers/dataclasses and Java `AutoCloseable`/typed

@@ -601,6 +601,8 @@ Common registry operations:
   available context.
 - [`SignalRegistry::validate_config`] checks unknown signals, duplicate
   parameters, unknown parameters, type mismatches, and descriptor ranges.
+- [`SignalRegistry::validate_config_json`] preserves the same validation result
+  and diagnostic in a stable binding-oriented JSON document.
 - [`SignalRegistry::create_signal`] constructs a boxed [`SignalModule`] from a
   valid config.
 - [`SignalRegistry::descriptors_json`] exports compact descriptor metadata.
@@ -672,6 +674,32 @@ Validation concepts:
   [`SignalValidationSample`] values for deeper review.
 - [`SignalValidationReport::json_summary`] returns dependency-free JSON for
   Python, notebooks, dashboards, or CI artifacts.
+- [`SignalValidationReport::json_report`] returns the versioned complete report,
+  including config, all counters, optional samples, and structured warnings,
+  without changing the compact summary schema.
+
+### C, Python, and Java validation facade
+
+The portable facade is intentionally offline and additive. Callers select a
+built-in descriptor id, provide typed descriptor parameters, and pass ordered
+analytics observations. Native code validates the config, constructs the
+registered signal, evaluates each observation before reading its future
+markout, and returns schema-versioned JSON. It does not mutate a live
+`of_runtime::Engine`, submit orders, or add work to per-tick evaluation.
+
+- C: `of_validate_signal_config_json` and
+  `of_validate_signal_replay_json` use caller-owned config/event arrays and a
+  library-owned report released with `of_string_free`.
+- Python: `SignalConfig`, `SignalConfigParameter`, `SignalValidationEvent`, and
+  `validate_signal_replay` provide the primary parsed research interface.
+- Java: `SignalConfig`, typed parameter factories, `SignalValidationEvent`, and
+  `OrderflowEngine.validateSignalReplay` return an operationally parsed summary
+  while retaining the complete JSON for samples and warnings.
+
+Rust custom `SignalModule` implementations continue to use
+[`validate_signal_replay`] directly. The portable facade constructs registered
+built-ins only because Rust trait objects and borrowed custom factories are not
+a stable cross-language ABI.
 
 ## Calibration And Outcome Tracking
 

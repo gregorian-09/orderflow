@@ -7,6 +7,7 @@ import com.sun.jna.Structure;
     "markout_horizon_events", "flat_price_threshold", "min_confidence_bps",
     "store_samples", "check_monotonic_timestamps"
 })
+/** Native replay-validation policy structure. */
 public class OfSignalValidationConfig extends Structure {
     /** Future event horizon. */ public int markout_horizon_events;
     /** Flat markout threshold. */ public long flat_price_threshold;
