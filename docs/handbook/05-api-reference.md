@@ -16,8 +16,10 @@ The C ABI also has a machine-readable inventory at
 `bindings/api_manifest.toml`. `tools/check_api_manifest.py` validates that the
 manifest and `orderflow.h` expose the same functions and return types, while
 `tools/check_ffi_exports.sh` uses the manifest as the expected native symbol
-list. The manifest is for low-level parity and future generated declarations;
-the Python and Java user-facing APIs remain manually designed.
+list. `tools/generate_binding_signatures.py` emits exact Python ctypes and Java
+JNA declarations in manifest order from the validated header. The mechanical
+native declarations are generated; Python and Java user-facing lifecycle,
+ownership, error, buffer, and naming APIs remain manually designed.
 
 ## Detailed Handbook Chapters
 

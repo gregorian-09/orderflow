@@ -1,7 +1,14 @@
 package com.orderflow.examples;
 
 import com.orderflow.bindings.EngineConfig;
+import com.orderflow.bindings.ExecutionOrderType;
+import com.orderflow.bindings.ExecutionSide;
+import com.orderflow.bindings.ExecutionTimeInForce;
+import com.orderflow.bindings.OrderRequest;
 import com.orderflow.bindings.OrderflowEngine;
+import com.orderflow.bindings.OrderflowExecutionEngine;
+import com.orderflow.bindings.RiskLimits;
+import com.orderflow.bindings.RouteConfig;
 import com.orderflow.bindings.Side;
 import com.orderflow.bindings.StreamKind;
 import com.orderflow.bindings.Symbol;
@@ -39,6 +46,23 @@ public final class BindingSmokeExample {
             require(callbackCount.get() > 0, "no callbacks observed in smoke run");
 
             engine.stop();
+        }
+
+        RiskLimits limits = new RiskLimits(false, 100L, 1_000_000L, 10, 10_000_000L, 0L);
+        RouteConfig route = new RouteConfig("SIM", "ACC", "SIM", "ES", true, limits);
+        try (OrderflowExecutionEngine execution = new OrderflowExecutionEngine(nativePath, route)) {
+            execution.start();
+            OrderRequest request = new OrderRequest(
+                "SMOKE-1", "ACC", "SIM", "SMOKE", "SIM", "ES",
+                ExecutionSide.BUY, ExecutionOrderType.LIMIT, ExecutionTimeInForce.DAY,
+                1L, 5_000L, 0L, 0L, 1L
+            );
+            require(!execution.submitOrder(request).isEmpty(), "execution binding returned no events");
+            require(
+                "SMOKE-1".equals(execution.orderState("SMOKE-1").clientOrderId),
+                "execution binding order-state mismatch"
+            );
+            execution.stop();
         }
 
         System.out.println("java binding smoke: PASS");

@@ -380,8 +380,15 @@ through additive handles/classes:
   `CancelRequest`, `AmendRequest`, `RiskLimits`, `RouteConfig`
 - Java: `OrderflowExecutionEngine`, `ConcurrentOrderflowExecutionEngine`,
   `OrderRequest`, `CancelRequest`, `AmendRequest`, `RiskLimits`, `RouteConfig`
+- low-level plumbing: all manifest-exposed C functions now generate exact
+  Python ctypes and Java JNA declarations from validated `orderflow.h` types in
+  `bindings/api_manifest.toml` order
 
 Existing analytics handles and classes remain separate and unchanged.
+High-level Python context managers/dataclasses and Java `AutoCloseable`/typed
+wrappers remain manual. CI checks deterministic generated output, exact pointer
+depth, callbacks, caller-owned buffers, output handles, JNA arrays, and
+allocated-string mappings without changing any existing binding method.
 
 ### 8. Documentation expansion
 

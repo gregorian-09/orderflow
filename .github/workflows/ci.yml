@@ -59,6 +59,10 @@ jobs:
         uses: ./.github/actions/setup-rust
       - name: Validate C ABI API manifest
         run: python3 tools/check_api_manifest.py
+      - name: Validate generated binding signatures
+        run: python3 tools/generate_binding_signatures.py --check
+      - name: Test binding signature generator
+        run: python3 tools/test_generate_binding_signatures.py
       - name: Validate low-level binding parity
         run: python3 tools/check_binding_parity.py
       - name: Validate generated binding inventory
@@ -86,7 +90,7 @@ jobs:
       - name: Build C ABI library
         run: cargo build -q -p of_ffi_c
       - name: Validate Python binding syntax
-        run: python3 -m py_compile bindings/python/orderflow/_ffi.py bindings/python/orderflow/api.py
+        run: python3 -m py_compile bindings/python/orderflow/_ffi.py bindings/python/orderflow/_generated_signatures.py bindings/python/orderflow/api.py
       - name: Smoke Python binding
         run: python3 tools/smoke_python_binding.py
 

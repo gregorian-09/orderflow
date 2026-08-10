@@ -6,6 +6,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added deterministic manifest/header-driven generation for all 87 low-level
+  Python ctypes and Java JNA function signatures, including exact pointer
+  depth, callbacks, output handles, caller buffers, JNA arrays, and allocated
+  string ownership. CI checks committed output, unit-tests contextual mappings,
+  and keeps the existing high-level Python/Java APIs manually designed and
+  unchanged.
 - Added typed market-data adapter operational status for transport mode,
   connection state, redacted endpoint, application name, reconnect attempts,
   sorted subscriptions, queue utilization, drop/gap counters, stale state,

@@ -12,7 +12,9 @@ from typing import Iterable
 from check_api_manifest import DEFAULT_MANIFEST, FunctionEntry, ROOT, load_manifest
 
 
-DEFAULT_PYTHON_FFI = ROOT / "bindings" / "python" / "orderflow" / "_ffi.py"
+DEFAULT_PYTHON_FFI = (
+    ROOT / "bindings" / "python" / "orderflow" / "_generated_signatures.py"
+)
 DEFAULT_JAVA_NATIVE = (
     ROOT
     / "bindings"

@@ -15,6 +15,10 @@ Latest release: `0.4.0`.
 - `bindings/api_manifest.toml` is checked against the C header, exported native
   symbols, Python ctypes registrations, and Java JNA declarations so low-level
   binding plumbing cannot silently drift from the ABI inventory.
+- `tools/generate_binding_signatures.py` emits the private Python ctypes
+  registrations and Java `OrderflowNative` interface in manifest order from
+  exact validated header types; CI checks committed output and unit-tests
+  pointer, callback, array, and buffer mappings.
 - [Binding API Inventory](./api-inventory.md) is generated from the same
   manifest and lists every exported symbol by family, ownership model, and
   binding exposure level. It also includes a per-symbol C/Python/Java

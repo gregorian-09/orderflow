@@ -10,7 +10,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "bindings" / "python"))
 
-from orderflow import Engine, EngineConfig, Side, StreamKind, Symbol  # noqa: E402
+from orderflow import (  # noqa: E402
+    Engine,
+    EngineConfig,
+    ExecutionEngine,
+    ExecutionOrderType,
+    ExecutionSide,
+    ExecutionTimeInForce,
+    OrderRequest,
+    RiskLimits,
+    RouteConfig,
+    Side,
+    StreamKind,
+    Symbol,
+)
 
 
 def shared_library_path() -> Path:
@@ -63,6 +76,36 @@ def main() -> int:
         require("started" in metrics and metrics["started"] is True, "metrics missing started=true")
         require(len(callbacks) > 0, "no callbacks observed in smoke run")
         require("delta" in callbacks[0], "analytics callback missing delta")
+
+    route = RouteConfig(
+        "SIM",
+        "ACC",
+        "SIM",
+        "ES",
+        True,
+        RiskLimits(False, 100, 1_000_000, 10, 10_000_000, 0),
+    )
+    with ExecutionEngine(route, library_path=str(lib_path)) as execution:
+        events = execution.submit_order(
+            OrderRequest(
+                "SMOKE-1",
+                "ACC",
+                "SIM",
+                "SMOKE",
+                "SIM",
+                "ES",
+                ExecutionSide.BUY,
+                ExecutionOrderType.LIMIT,
+                ExecutionTimeInForce.DAY,
+                1,
+                5_000,
+            )
+        )
+        require(bool(events), "execution binding returned no events")
+        require(
+            execution.order_state("SMOKE-1").client_order_id == "SMOKE-1",
+            "execution binding order-state mismatch",
+        )
 
     print("python binding smoke: PASS")
     return 0
