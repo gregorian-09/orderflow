@@ -570,6 +570,8 @@ analytics runtime.
 | `ExecutionWalIntegrityReport` | Offline WAL scan summary for operator diagnostics |
 | `ExecutionSegmentedWalIntegrityReport` | Offline segmented WAL directory scan summary |
 | `ExecutionCheckpointStoreIntegrityReport` | Offline checkpoint store scan summary |
+| `ExecutionRecoveryReplay` | Validated WAL byte/record/sequence range consumed by recovery |
+| `ExecutionRecoveryReport` | Bounded read-only OMS reconstruction summary and resume gates |
 | `ConcurrentExecutionConfig` | Command/report/event-buffer capacities |
 | `ExecutionCommandReport` | Concurrent command result, sequence, result code, and events |
 | `TwapConfig` | Parent ticket, clip bounds, schedule, and slice interval |
@@ -623,6 +625,7 @@ analytics runtime.
 | `inspect_execution_wal(path, library_path=None)` | Inspects a single execution WAL file without creating an execution engine |
 | `inspect_execution_segmented_wal(root, library_path=None)` | Inspects a segmented execution WAL directory without creating an execution engine |
 | `inspect_execution_checkpoint_store(root, library_path=None)` | Inspects an execution checkpoint store directory without creating an execution engine |
+| `inspect_execution_recovery(wal_root, checkpoint_root=None, require_checkpoint=True, library_path=None)` | Reconstructs OMS state from existing roots without mutating them |
 
 #### Recovery integrity diagnostics
 
@@ -641,9 +644,18 @@ report with `valid == False` so operators can inspect the failure and fall back
 to the latest valid checkpoint. Missing or unreadable roots raise the mapped
 native I/O error.
 
+After the integrity checks, call `inspect_execution_recovery()` to prove that
+the selected checkpoint and WAL tail can reconstruct deterministic OMS state.
+The default requires a valid checkpoint. Pass `require_checkpoint=False` only
+for a deliberate full-WAL replay; legacy command-only frames cannot safely
+recreate missing orders and therefore fail closed. The helper performs no
+writes, opens no venue session, and returns no order identifiers. A successful
+report still requires venue reconciliation and keeps submissions disabled.
+
 ```python
 from orderflow import (
     inspect_execution_checkpoint_store,
+    inspect_execution_recovery,
     inspect_execution_segmented_wal,
     inspect_execution_wal,
 )
@@ -655,6 +667,15 @@ if not single.valid or not segmented.valid or not checkpoints.valid:
     raise RuntimeError("unsafe execution recovery inputs")
 if checkpoints.latest_checkpoint_id is None:
     raise RuntimeError("no valid checkpoint available")
+
+recovery = inspect_execution_recovery(
+    "execution-wal",
+    checkpoint_root="execution-checkpoints",
+)
+if not recovery.venue_reconciliation_required or recovery.submissions_enabled:
+    raise RuntimeError("invalid fail-closed recovery gates")
+# Reconcile recovery.open_orders against venue/drop-copy truth before the host
+# creates or resumes any live execution engine.
 ```
 
 ## Usage Patterns

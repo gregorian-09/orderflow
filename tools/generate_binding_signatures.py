@@ -91,6 +91,7 @@ JAVA_STRUCT_TYPES = {
     "of_execution_checkpoint_store_integrity_report_t": (
         "OfExecutionCheckpointStoreIntegrityReport"
     ),
+    "of_execution_recovery_config_t": "OfExecutionRecoveryConfig",
     "of_execution_concurrent_config_t": "OfExecutionConcurrentConfig",
     "of_execution_command_report_t": "OfExecutionCommandReport",
     "of_execution_twap_config_t": "OfExecutionTwapConfig",

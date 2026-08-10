@@ -284,9 +284,9 @@ and checkpoint stores:
 
 | Layer | API |
 | --- | --- |
-| C | `of_execution_wal_integrity_report(path, out_report)`, `of_execution_segmented_wal_integrity_report(root, out_report)`, and `of_execution_checkpoint_store_integrity_report(root, out_report)` |
-| Python | `inspect_execution_wal(path, library_path=None)`, `inspect_execution_segmented_wal(root, library_path=None)`, and `inspect_execution_checkpoint_store(root, library_path=None)` |
-| Java | `OrderflowExecutionEngine.inspectWal(nativePath, walPath)`, `OrderflowExecutionEngine.inspectSegmentedWal(nativePath, walRoot)`, and `OrderflowExecutionEngine.inspectCheckpointStore(nativePath, checkpointRoot)` |
+| C | `of_execution_wal_integrity_report(...)`, `of_execution_segmented_wal_integrity_report(...)`, `of_execution_checkpoint_store_integrity_report(...)`, and `of_execution_recovery_report_json(...)` |
+| Python | `inspect_execution_wal(...)`, `inspect_execution_segmented_wal(...)`, `inspect_execution_checkpoint_store(...)`, and `inspect_execution_recovery(...)` |
+| Java | `OrderflowExecutionEngine.inspectWal(...)`, `inspectSegmentedWal(...)`, `inspectCheckpointStore(...)`, and `inspectRecovery(...)` |
 
 This diagnostic is intentionally offline/operator-oriented. It does not create
 an execution engine, does not submit orders, and does not mutate OMS state. It
@@ -351,13 +351,16 @@ Recovery functions:
 | --- | --- |
 | `recover_oms_state_from_records` | Rebuild state from decoded journal records |
 | `recover_oms_state_from_segmented_wal` | Replay a segmented WAL tail from a supplied plan |
+| `recover_oms_state_from_segmented_wal_root` | Replay an existing segmented-WAL root read-only from a supplied plan |
 | `recover_latest_checkpoint_from_segmented_wal` | Load latest checkpoint and replay the segmented WAL tail after it |
+| `recover_latest_checkpoint_from_segmented_wal_roots` | Select an optional checkpoint and reconstruct existing roots read-only |
 
 The recovery path is deterministic and fail closed. It starts from
-`checkpoint.last_applied_sequence.next()`, applies replayed execution events to
-checkpoint order states, and refuses to synthesize unknown orders from partial
-command metadata. Venue reconciliation remains required by default before
-strategy submissions resume.
+`checkpoint.last_applied_sequence.next()`, applies complete version-2 command
+intent and execution events, and reconstructs post-checkpoint pending orders.
+Legacy command-only frames remain replay-compatible but cannot recreate an
+absent order. Venue reconciliation remains required by default before strategy
+submissions resume, and the read-only report facade never enables submissions.
 
 ## Route Configuration
 

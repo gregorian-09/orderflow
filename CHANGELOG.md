@@ -6,6 +6,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added read-only OMS state reconstruction across Rust, C, Python, and Java:
+  root-based recovery never creates or mutates storage, checkpoint-required
+  defaults fail closed, bounded identifier-free reports expose replay evidence,
+  and submissions remain disabled pending venue reconciliation.
 - Added backward-compatible full-payload OMS WAL command frames and
   request-aware `ExecutionJournal` hooks. Binary journals now retain complete
   submit, cancel, and amend requests, recovery can reconstruct orders without a
@@ -24,7 +28,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
   child requests, retry-stable pending plans, explicit commit/discard after OMS
   submission, execution-event progress folding, and typed progress snapshots.
   Existing OMS/risk/journal and analytics APIs are unchanged.
-- Added deterministic manifest/header-driven generation for all 96 low-level
+- Added deterministic manifest/header-driven generation for all 97 low-level
   Python ctypes and Java JNA function signatures, including exact pointer
   depth, callbacks, output handles, caller buffers, JNA arrays, and allocated
   string ownership. CI checks committed output, unit-tests contextual mappings,

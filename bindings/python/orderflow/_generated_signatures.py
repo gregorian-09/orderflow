@@ -161,6 +161,13 @@ def _bind_symbols(lib: Any, namespace: dict[str, Any]) -> None:
     ]
     lib.of_execution_concurrent_try_recv_report.restype = ctypes.c_int32
 
+    lib.of_execution_recovery_report_json.argtypes = [
+        ctypes.POINTER(namespace["OfExecutionRecoveryConfig"]),
+        ctypes.POINTER(ctypes.c_char_p),
+        ctypes.POINTER(ctypes.c_uint32),
+    ]
+    lib.of_execution_recovery_report_json.restype = ctypes.c_int32
+
     lib.of_execution_engine_destroy.argtypes = [
         ctypes.c_void_p,
     ]

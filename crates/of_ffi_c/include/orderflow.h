@@ -415,6 +415,16 @@ typedef struct {
   uint8_t valid;
 } of_execution_checkpoint_store_integrity_report_t;
 
+/** Read-only execution recovery report configuration. */
+typedef struct {
+  /** Existing segmented execution WAL root. */
+  const char* wal_root;
+  /** Existing checkpoint root, or NULL/empty for checkpoint-free replay. */
+  const char* checkpoint_root;
+  /** Non-zero requires a valid checkpoint before replay. */
+  uint8_t require_checkpoint;
+} of_execution_recovery_config_t;
+
 /** Concurrent execution worker configuration. */
 typedef struct {
   /** Bounded command queue capacity; 0 uses default. */
@@ -569,6 +579,8 @@ int32_t of_execution_wal_integrity_report(const char* path, of_execution_wal_int
 int32_t of_execution_segmented_wal_integrity_report(const char* root, of_execution_segmented_wal_integrity_report_t* out_report);
 /** Inspects an execution checkpoint store root and writes an integrity report. */
 int32_t of_execution_checkpoint_store_integrity_report(const char* root, of_execution_checkpoint_store_integrity_report_t* out_report);
+/** Recovers existing roots read-only and returns allocated summary JSON. */
+int32_t of_execution_recovery_report_json(const of_execution_recovery_config_t* config, const char** out_json, uint32_t* out_len);
 
 /** Creates a simulated execution engine instance. */
 int32_t of_execution_engine_create(const of_execution_route_config_t* cfg, of_execution_engine_t** out_engine);

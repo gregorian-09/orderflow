@@ -1126,6 +1126,13 @@ checkpoint from an [`ExecutionCheckpointStore`], builds a plan from
 `last_applied_sequence + 1`, replays the segmented WAL tail, and returns a
 [`RecoveryResult`] with [`RecoveredOmsState`].
 
+For operator tooling and language bindings, use
+[`recover_latest_checkpoint_from_segmented_wal_roots`]. It opens existing WAL
+and checkpoint roots read-only, optionally requires a checkpoint, and never
+creates directories, opens append handles, calls a venue, or enables order
+submission. [`recover_oms_state_from_segmented_wal_root`] provides the same
+read-only root handling when the caller already has a [`RecoveryPlan`].
+
 ```rust
 use of_execution::{
     recover_latest_checkpoint_from_segmented_wal, CheckpointConfig,
@@ -1159,10 +1166,18 @@ Recovery reconstructs pending-new orders from full submit payloads before
 applying later execution events. A durable cancel or amend with no subsequent
 venue response restores the original order as `PendingCancel` or
 `PendingReplace`, making the crash-boundary uncertainty explicit. Legacy
-version-1 command records remain readable but cannot reconstruct an absent
-order; a later event for such an order still fails closed. Production hosts
-should checkpoint frequently and must reconcile recovered open orders against
-venue truth before submissions resume.
+version-1 command records remain readable through the journal replay API, but
+read-only state reconstruction fails closed if one is needed after the selected
+checkpoint because it lacks the complete request. Production hosts should
+checkpoint frequently and must reconcile recovered open orders against venue
+truth before submissions resume.
+
+`RecoveryResult::json_report()` emits a bounded schema-versioned operational
+summary. It intentionally omits order, account, strategy, and venue identifiers
+while reporting checkpoint selection, state counts, replay bounds, and the
+submission/reconciliation gates. Treat it as startup evidence, not authority to
+trade: `submissions_enabled` remains `false` and
+`venue_reconciliation_required` remains `true`.
 
 ### Recovery readiness gate
 

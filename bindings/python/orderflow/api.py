@@ -44,6 +44,7 @@ from ._ffi import (
     OfExecutionMetrics,
     OfExecutionOrderRequest,
     OfExecutionOrderState,
+    OfExecutionRecoveryConfig,
     OfExecutionRouteConfig,
     OfExecutionSegmentedWalIntegrityReport,
     OfExecutionTwapConfig,
@@ -642,6 +643,34 @@ class ExecutionCheckpointStoreIntegrityReport:
 
 
 @dataclass(frozen=True)
+class ExecutionRecoveryReplay:
+    """Validated WAL range consumed by a read-only recovery report."""
+
+    records: int
+    bytes: int
+    first_sequence: Optional[int]
+    last_sequence: Optional[int]
+
+
+@dataclass(frozen=True)
+class ExecutionRecoveryReport:
+    """Bounded, identifier-free summary of read-only OMS recovery."""
+
+    schema_version: int
+    checkpoint_id: Optional[int]
+    route_config_hash: int
+    kill_switch: bool
+    orders: int
+    open_orders: int
+    positions: int
+    commands_seen: int
+    events_applied: int
+    replay: ExecutionRecoveryReplay
+    venue_reconciliation_required: bool
+    submissions_enabled: bool
+
+
+@dataclass(frozen=True)
 class ConcurrentExecutionConfig:
     """Concurrent execution worker queue configuration."""
 
@@ -810,6 +839,86 @@ def inspect_execution_checkpoint_store(
         ),
         latest_created_ns=int(report.latest_created_ns) if report.has_latest else None,
         valid=bool(report.valid),
+    )
+
+
+def inspect_execution_recovery(
+    wal_root: str,
+    checkpoint_root: Optional[str] = None,
+    require_checkpoint: bool = True,
+    library_path: Optional[str] = None,
+) -> ExecutionRecoveryReport:
+    """Reconstructs OMS state from existing roots without mutating them.
+
+    Args:
+        wal_root: Existing segmented execution WAL directory.
+        checkpoint_root: Existing checkpoint directory, or ``None`` only when
+            checkpoint-free replay is explicitly allowed.
+        require_checkpoint: Whether recovery must reject a missing checkpoint.
+        library_path: Optional explicit path to ``libof_ffi_c``.
+
+    Returns:
+        A bounded summary. Individual identifiers are intentionally omitted;
+        venue reconciliation is still required and submissions stay disabled.
+
+    Raises:
+        OrderflowArgError: If a checkpoint is required but no root is supplied.
+        OrderflowError: If roots are missing/corrupt or replay fails closed.
+    """
+    if require_checkpoint and not checkpoint_root:
+        raise OrderflowArgError(
+            "checkpoint_root is required when require_checkpoint is true"
+        )
+    ffi = OrderflowLib(library_path=library_path)
+    wal_bytes = str(wal_root).encode("utf-8")
+    checkpoint_bytes = (
+        str(checkpoint_root).encode("utf-8") if checkpoint_root else None
+    )
+    config = OfExecutionRecoveryConfig(
+        wal_root=wal_bytes,
+        checkpoint_root=checkpoint_bytes,
+        require_checkpoint=int(require_checkpoint),
+    )
+    payload = _allocated_json_call(
+        ffi,
+        "of_execution_recovery_report_json",
+        lambda out, out_len: ffi.lib.of_execution_recovery_report_json(
+            ctypes.byref(config), out, out_len
+        ),
+    )
+    replay = payload.get("replay", {})
+    return ExecutionRecoveryReport(
+        schema_version=int(payload.get("schema_version", 0)),
+        checkpoint_id=(
+            int(payload["checkpoint_id"])
+            if payload.get("checkpoint_id") is not None
+            else None
+        ),
+        route_config_hash=int(payload.get("route_config_hash", 0)),
+        kill_switch=bool(payload.get("kill_switch", False)),
+        orders=int(payload.get("orders", 0)),
+        open_orders=int(payload.get("open_orders", 0)),
+        positions=int(payload.get("positions", 0)),
+        commands_seen=int(payload.get("commands_seen", 0)),
+        events_applied=int(payload.get("events_applied", 0)),
+        replay=ExecutionRecoveryReplay(
+            records=int(replay.get("records", 0)),
+            bytes=int(replay.get("bytes", 0)),
+            first_sequence=(
+                int(replay["first_sequence"])
+                if replay.get("first_sequence") is not None
+                else None
+            ),
+            last_sequence=(
+                int(replay["last_sequence"])
+                if replay.get("last_sequence") is not None
+                else None
+            ),
+        ),
+        venue_reconciliation_required=bool(
+            payload.get("venue_reconciliation_required", False)
+        ),
+        submissions_enabled=bool(payload.get("submissions_enabled", False)),
     )
 
 

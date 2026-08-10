@@ -92,6 +92,9 @@ public interface OrderflowNative extends Library {
     /** Attempts to receive one concurrent command report without blocking. */
     int of_execution_concurrent_try_recv_report(Pointer engine, OfExecutionCommandReport out_report, OfExecutionEvent[] out_events, IntByReference inout_len);
 
+    /** Recovers existing roots read-only and returns allocated summary JSON. */
+    int of_execution_recovery_report_json(OfExecutionRecoveryConfig config, PointerByReference out_json, IntByReference out_len);
+
     /** Destroys an execution engine. */
     void of_execution_engine_destroy(Pointer engine);
 

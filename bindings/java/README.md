@@ -564,6 +564,8 @@ analytics runtime.
 | `ExecutionWalIntegrityReport` | Offline WAL scan summary for operator diagnostics |
 | `ExecutionSegmentedWalIntegrityReport` | Offline segmented WAL directory scan summary |
 | `ExecutionCheckpointStoreIntegrityReport` | Offline checkpoint store scan summary |
+| `ExecutionRecoveryReplay` | Validated WAL byte/record/sequence range consumed by recovery |
+| `ExecutionRecoveryReport` | Bounded read-only OMS reconstruction summary and resume gates |
 | `ConcurrentExecutionConfig` | Command/report/event-buffer capacities |
 | `ExecutionCommandReport` | Concurrent command result, sequence, result code, and events |
 | `TwapConfig` | Parent ticket, clip bounds, schedule, and slice interval |
@@ -601,6 +603,8 @@ analytics runtime.
 | `static ExecutionWalIntegrityReport inspectWal(String nativePath, String walPath)` | Inspects a single execution WAL file without creating an execution engine |
 | `static ExecutionSegmentedWalIntegrityReport inspectSegmentedWal(String nativePath, String walRoot)` | Inspects a segmented execution WAL directory without creating an execution engine |
 | `static ExecutionCheckpointStoreIntegrityReport inspectCheckpointStore(String nativePath, String checkpointRoot)` | Inspects an execution checkpoint store directory without creating an execution engine |
+| `static ExecutionRecoveryReport inspectRecovery(String nativePath, String walRoot, String checkpointRoot)` | Reconstructs OMS state read-only and requires a valid checkpoint |
+| `static ExecutionRecoveryReport inspectRecovery(String nativePath, String walRoot, String checkpointRoot, boolean requireCheckpoint)` | Reconstructs with an explicit checkpoint policy |
 
 #### `ConcurrentOrderflowExecutionEngine`
 
@@ -633,9 +637,17 @@ they return a report with `valid == false` so operators can inspect the failure
 and fall back to the latest valid checkpoint. Missing or unreadable roots throw
 the mapped native I/O exception.
 
+After integrity inspection, call `inspectRecovery(...)` to validate actual OMS
+reconstruction. The three-argument overload requires a checkpoint. The explicit
+boolean overload permits checkpoint-free full-WAL drills, but recovery fails
+closed if a required legacy command frame lacks its complete request. Both
+overloads are read-only, omit order identifiers from the report, keep
+submissions disabled, and require venue reconciliation.
+
 ```java
 import com.orderflow.bindings.ExecutionCheckpointStoreIntegrityReport;
 import com.orderflow.bindings.ExecutionSegmentedWalIntegrityReport;
+import com.orderflow.bindings.ExecutionRecoveryReport;
 import com.orderflow.bindings.ExecutionWalIntegrityReport;
 import com.orderflow.bindings.OrderflowExecutionEngine;
 
@@ -651,6 +663,17 @@ if (!report.valid || !segmented.valid || !checkpoints.valid) {
 if (checkpoints.latestCheckpointId == null) {
     throw new IllegalStateException("no valid checkpoint available");
 }
+
+ExecutionRecoveryReport recovery = OrderflowExecutionEngine.inspectRecovery(
+    null,
+    "execution-wal",
+    "execution-checkpoints"
+);
+if (!recovery.venueReconciliationRequired || recovery.submissionsEnabled) {
+    throw new IllegalStateException("invalid fail-closed recovery gates");
+}
+// Reconcile recovery.openOrders against venue/drop-copy truth before creating
+// or resuming a live execution engine.
 ```
 
 ## Usage Patterns

@@ -120,9 +120,9 @@ public final class OrderflowEngine implements AutoCloseable {
         check(rc, "of_validate_signal_config_json");
         String json = takeAllocatedJson(nativeLib, out);
         return new SignalConfigValidation(
-            NativeSignalJson.nullableString(json, "signal_id"),
-            NativeSignalJson.booleanValue(json, "valid"),
-            NativeSignalJson.nullableString(json, "error"),
+            NativeJson.nullableString(json, "signal_id"),
+            NativeJson.booleanValue(json, "valid"),
+            NativeJson.nullableString(json, "error"),
             json);
     }
 
