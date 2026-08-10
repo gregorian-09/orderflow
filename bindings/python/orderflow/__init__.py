@@ -56,6 +56,11 @@ from .api import (
     RiskLimits,
     RouteConfig,
     Side,
+    SignalConfig,
+    SignalConfigParameter,
+    SignalValidationConfig,
+    SignalValidationEvent,
+    SignalValidationReport,
     StreamKind,
     Symbol,
     TwapConfig,
@@ -66,6 +71,8 @@ from .api import (
     inspect_execution_segmented_wal,
     inspect_execution_wal,
     signal_descriptors,
+    validate_signal_config,
+    validate_signal_replay,
 )
 
 __all__ = [
@@ -101,6 +108,11 @@ __all__ = [
     "RiskLimits",
     "RouteConfig",
     "Side",
+    "SignalConfig",
+    "SignalConfigParameter",
+    "SignalValidationConfig",
+    "SignalValidationEvent",
+    "SignalValidationReport",
     "StreamKind",
     "Symbol",
     "TwapConfig",
@@ -111,4 +123,6 @@ __all__ = [
     "inspect_execution_segmented_wal",
     "inspect_execution_wal",
     "signal_descriptors",
+    "validate_signal_config",
+    "validate_signal_replay",
 ]

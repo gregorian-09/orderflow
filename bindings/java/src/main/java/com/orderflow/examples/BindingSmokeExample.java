@@ -10,12 +10,17 @@ import com.orderflow.bindings.OrderflowExecutionEngine;
 import com.orderflow.bindings.RiskLimits;
 import com.orderflow.bindings.RouteConfig;
 import com.orderflow.bindings.Side;
+import com.orderflow.bindings.SignalConfig;
+import com.orderflow.bindings.SignalConfigParameter;
+import com.orderflow.bindings.SignalValidationConfig;
+import com.orderflow.bindings.SignalValidationEvent;
 import com.orderflow.bindings.StreamKind;
 import com.orderflow.bindings.Symbol;
 import com.orderflow.bindings.TwapConfig;
 import com.orderflow.bindings.TwapExecutionAlgo;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** Minimal end-to-end smoke check for the Java binding. */
@@ -83,6 +88,30 @@ public final class BindingSmokeExample {
             }
             execution.stop();
         }
+
+        SignalConfig signalConfig = new SignalConfig(
+            "delta_momentum_v1",
+            List.of(SignalConfigParameter.integer("threshold", 10L))
+        );
+        require(
+            OrderflowEngine.validateSignalConfig(signalConfig, nativePath).valid,
+            "signal config validation failed"
+        );
+        var validationReport = OrderflowEngine.validateSignalReplay(
+            signalConfig,
+            List.of(
+                new SignalValidationEvent(20L, 20L, 20L, 0L, 100L, 100L, 99L, 101L, 1L),
+                new SignalValidationEvent(-20L, 0L, 20L, 20L, 90L, 95L, 89L, 101L, 2L),
+                new SignalValidationEvent(-20L, -20L, 20L, 40L, 80L, 90L, 79L, 101L, 3L)
+            ),
+            new SignalValidationConfig(1L, 0L, 0, true, true),
+            nativePath
+        );
+        require(validationReport.evaluatedEvents == 3L, "signal validation event count mismatch");
+        require(
+            Integer.valueOf(5_000).equals(validationReport.directionalAccuracyBps),
+            "signal validation accuracy mismatch"
+        );
 
         System.out.println("java binding smoke: PASS");
     }

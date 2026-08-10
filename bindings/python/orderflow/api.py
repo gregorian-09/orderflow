@@ -49,6 +49,9 @@ from ._ffi import (
     OfExecutionTwapConfig,
     OfExecutionWalIntegrityReport,
     OfExternalFeedPolicy,
+    OfSignalConfigParameter,
+    OfSignalValidationConfig,
+    OfSignalValidationEvent,
     OfSymbol,
     OfTrade,
     OrderflowLib,
@@ -209,6 +212,220 @@ def signal_descriptors(library_path: Optional[str] = None) -> Dict[str, Any]:
         "of_get_signal_descriptors_json",
         ffi.lib.of_get_signal_descriptors_json,
     )
+
+
+@dataclass(frozen=True)
+class SignalConfigParameter:
+    """One typed parameter used to construct a built-in signal module."""
+
+    name: str
+    value: int | float | bool | str
+
+
+@dataclass(frozen=True)
+class SignalConfig:
+    """Registry identifier and parameters for a built-in signal module."""
+
+    signal_id: str
+    parameters: Sequence[SignalConfigParameter] = ()
+
+
+@dataclass(frozen=True)
+class SignalValidationConfig:
+    """Replay markout, confidence, sample, and timestamp policy."""
+
+    markout_horizon_events: int = 1
+    flat_price_threshold: int = 0
+    min_confidence_bps: int = 0
+    store_samples: bool = False
+    check_monotonic_timestamps: bool = True
+
+
+@dataclass(frozen=True)
+class SignalValidationEvent:
+    """One analytics observation consumed by offline signal validation."""
+
+    delta: int = 0
+    cumulative_delta: int = 0
+    buy_volume: int = 0
+    sell_volume: int = 0
+    last_price: int = 0
+    point_of_control: int = 0
+    value_area_low: int = 0
+    value_area_high: int = 0
+    ts_exchange_ns: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class SignalValidationReport:
+    """Parsed replay-validation report returned by the native signal registry."""
+
+    module_id: Optional[str]
+    config: Dict[str, Any]
+    evaluated_events: int
+    labeled_events: int
+    missing_markouts: int
+    directional_predictions: int
+    long_predictions: int
+    short_predictions: int
+    neutral_predictions: int
+    blocked_predictions: int
+    correct_directional: int
+    incorrect_directional: int
+    flat_markouts: int
+    average_confidence_bps: int
+    directional_accuracy_bps: Optional[int]
+    label_coverage_bps: Optional[int]
+    samples: Sequence[Dict[str, Any]]
+    warnings: Sequence[Dict[str, Any]]
+    raw: Dict[str, Any]
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "SignalValidationReport":
+        """Builds a typed report from a successful native JSON payload."""
+        if not payload.get("valid", False):
+            raise OrderflowArgError(str(payload.get("error") or "invalid signal configuration"))
+        return cls(
+            module_id=payload.get("module_id"),
+            config=dict(payload.get("config") or {}),
+            evaluated_events=int(payload.get("evaluated_events", 0)),
+            labeled_events=int(payload.get("labeled_events", 0)),
+            missing_markouts=int(payload.get("missing_markouts", 0)),
+            directional_predictions=int(payload.get("directional_predictions", 0)),
+            long_predictions=int(payload.get("long_predictions", 0)),
+            short_predictions=int(payload.get("short_predictions", 0)),
+            neutral_predictions=int(payload.get("neutral_predictions", 0)),
+            blocked_predictions=int(payload.get("blocked_predictions", 0)),
+            correct_directional=int(payload.get("correct_directional", 0)),
+            incorrect_directional=int(payload.get("incorrect_directional", 0)),
+            flat_markouts=int(payload.get("flat_markouts", 0)),
+            average_confidence_bps=int(payload.get("average_confidence_bps", 0)),
+            directional_accuracy_bps=payload.get("directional_accuracy_bps"),
+            label_coverage_bps=payload.get("label_coverage_bps"),
+            samples=tuple(payload.get("samples") or ()),
+            warnings=tuple(payload.get("warnings") or ()),
+            raw=payload,
+        )
+
+
+def _signal_parameter_array(
+    config: SignalConfig,
+) -> tuple[Any, list[bytes]]:
+    if not config.signal_id.strip():
+        raise ValueError("signal_id must not be empty")
+    if len(config.parameters) > 0xFFFF_FFFF:
+        raise ValueError("too many signal parameters")
+    array_type = OfSignalConfigParameter * len(config.parameters)
+    array = array_type()
+    keepalive: list[bytes] = []
+    for index, parameter in enumerate(config.parameters):
+        if not parameter.name.strip():
+            raise ValueError("signal parameter name must not be empty")
+        name = parameter.name.encode("utf-8")
+        keepalive.append(name)
+        value = parameter.value
+        if isinstance(value, bool):
+            array[index] = OfSignalConfigParameter(name, 3, 0, 0.0, int(value), None)
+        elif isinstance(value, int):
+            if not -(1 << 63) <= value < (1 << 63):
+                raise ValueError(f"signal parameter {parameter.name!r} is outside int64 range")
+            array[index] = OfSignalConfigParameter(name, 1, value, 0.0, 0, None)
+        elif isinstance(value, float):
+            if value != value or value in (float("inf"), float("-inf")):
+                raise ValueError(f"signal parameter {parameter.name!r} must be finite")
+            array[index] = OfSignalConfigParameter(name, 2, 0, value, 0, None)
+        elif isinstance(value, str):
+            text = value.encode("utf-8")
+            keepalive.append(text)
+            array[index] = OfSignalConfigParameter(name, 4, 0, 0.0, 0, text)
+        else:
+            raise TypeError(f"unsupported signal parameter type for {parameter.name!r}")
+    return array, keepalive
+
+
+def validate_signal_config(
+    config: SignalConfig,
+    library_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Validates built-in signal configuration without constructing a runtime engine."""
+    ffi = OrderflowLib(library_path=library_path)
+    parameters, keepalive = _signal_parameter_array(config)
+    signal_id = config.signal_id.encode("utf-8")
+    payload = _allocated_json_call(
+        ffi,
+        "of_validate_signal_config_json",
+        lambda out, out_len: ffi.lib.of_validate_signal_config_json(
+            signal_id, parameters, len(parameters), out, out_len
+        ),
+    )
+    del keepalive
+    return payload
+
+
+def validate_signal_replay(
+    config: SignalConfig,
+    events: Sequence[SignalValidationEvent],
+    validation_config: SignalValidationConfig = SignalValidationConfig(),
+    library_path: Optional[str] = None,
+) -> SignalValidationReport:
+    """Constructs a built-in signal and validates it over ordered observations."""
+    if not 0 <= validation_config.markout_horizon_events <= 0xFFFF_FFFF:
+        raise ValueError("markout_horizon_events must fit uint32")
+    if not 0 <= validation_config.min_confidence_bps <= 0xFFFF:
+        raise ValueError("min_confidence_bps must fit uint16")
+    if not -(1 << 63) <= validation_config.flat_price_threshold < (1 << 63):
+        raise ValueError("flat_price_threshold must fit int64")
+    if len(events) > 0xFFFF_FFFF:
+        raise ValueError("too many validation events")
+
+    ffi = OrderflowLib(library_path=library_path)
+    parameters, parameter_keepalive = _signal_parameter_array(config)
+    event_array = (OfSignalValidationEvent * len(events))()
+    for index, event in enumerate(events):
+        values = (
+            event.delta,
+            event.cumulative_delta,
+            event.buy_volume,
+            event.sell_volume,
+            event.last_price,
+            event.point_of_control,
+            event.value_area_low,
+            event.value_area_high,
+        )
+        if any(not -(1 << 63) <= value < (1 << 63) for value in values):
+            raise ValueError(f"validation event {index} contains a value outside int64 range")
+        timestamp = event.ts_exchange_ns
+        if timestamp is not None and not 0 <= timestamp < (1 << 64):
+            raise ValueError(f"validation event {index} timestamp must fit uint64")
+        event_array[index] = OfSignalValidationEvent(
+            *values,
+            timestamp or 0,
+            int(timestamp is not None),
+        )
+    native_config = OfSignalValidationConfig(
+        validation_config.markout_horizon_events,
+        validation_config.flat_price_threshold,
+        validation_config.min_confidence_bps,
+        int(validation_config.store_samples),
+        int(validation_config.check_monotonic_timestamps),
+    )
+    signal_id = config.signal_id.encode("utf-8")
+    payload = _allocated_json_call(
+        ffi,
+        "of_validate_signal_replay_json",
+        lambda out, out_len: ffi.lib.of_validate_signal_replay_json(
+            signal_id,
+            parameters,
+            len(parameters),
+            event_array,
+            len(event_array),
+            ctypes.byref(native_config),
+            out,
+            out_len,
+        ),
+    )
+    del parameter_keepalive
+    return SignalValidationReport.from_dict(payload)
 
 
 @dataclass(frozen=True)

@@ -101,6 +101,78 @@ public final class OrderflowEngine implements AutoCloseable {
     }
 
     /**
+     * Validates registry configuration for a built-in signal.
+     *
+     * @param config signal identifier and typed descriptor parameters
+     * @param nativePath library path, or null/blank for default lookup
+     * @return parsed registry validation result
+     */
+    public static SignalConfigValidation validateSignalConfig(
+            SignalConfig config, String nativePath) {
+        String libPath = nativePath == null || nativePath.isBlank()
+            ? defaultLibraryPath() : nativePath;
+        OrderflowNative nativeLib = OrderflowNative.load(libPath);
+        OfSignalConfigParameter[] parameters = toNativeSignalParameters(config);
+        PointerByReference out = new PointerByReference();
+        IntByReference outLen = new IntByReference(0);
+        int rc = nativeLib.of_validate_signal_config_json(
+            config.signalId, parameters, config.parameters.size(), out, outLen);
+        check(rc, "of_validate_signal_config_json");
+        String json = takeAllocatedJson(nativeLib, out);
+        return new SignalConfigValidation(
+            NativeSignalJson.nullableString(json, "signal_id"),
+            NativeSignalJson.booleanValue(json, "valid"),
+            NativeSignalJson.nullableString(json, "error"),
+            json);
+    }
+
+    /**
+     * Constructs a built-in signal and validates it over ordered observations.
+     *
+     * @param config signal identifier and typed descriptor parameters
+     * @param events ordered analytics observations
+     * @param validationConfig markout and timestamp policy
+     * @param nativePath library path, or null/blank for default lookup
+     * @return parsed validation summary retaining the complete native JSON
+     */
+    public static SignalValidationReport validateSignalReplay(
+            SignalConfig config,
+            List<SignalValidationEvent> events,
+            SignalValidationConfig validationConfig,
+            String nativePath) {
+        if (events == null || validationConfig == null) {
+            throw new IllegalArgumentException("events and validationConfig are required");
+        }
+        String libPath = nativePath == null || nativePath.isBlank()
+            ? defaultLibraryPath() : nativePath;
+        OrderflowNative nativeLib = OrderflowNative.load(libPath);
+        OfSignalConfigParameter[] parameters = toNativeSignalParameters(config);
+        OfSignalValidationEvent[] nativeEvents = toNativeSignalEvents(events);
+        OfSignalValidationConfig nativeConfig = new OfSignalValidationConfig();
+        nativeConfig.markout_horizon_events = (int) validationConfig.markoutHorizonEvents;
+        nativeConfig.flat_price_threshold = validationConfig.flatPriceThreshold;
+        nativeConfig.min_confidence_bps = (short) validationConfig.minConfidenceBps;
+        nativeConfig.store_samples = (byte) (validationConfig.storeSamples ? 1 : 0);
+        nativeConfig.check_monotonic_timestamps =
+            (byte) (validationConfig.checkMonotonicTimestamps ? 1 : 0);
+        nativeConfig.write();
+
+        PointerByReference out = new PointerByReference();
+        IntByReference outLen = new IntByReference(0);
+        int rc = nativeLib.of_validate_signal_replay_json(
+            config.signalId,
+            parameters,
+            config.parameters.size(),
+            nativeEvents,
+            events.size(),
+            nativeConfig,
+            out,
+            outLen);
+        check(rc, "of_validate_signal_replay_json");
+        return SignalValidationReport.parse(takeAllocatedJson(nativeLib, out));
+    }
+
+    /**
      * Starts engine processing.
      *
      * @throws OrderflowStateException if the runtime cannot start from current state
@@ -648,6 +720,71 @@ public final class OrderflowEngine implements AutoCloseable {
         } finally {
             nativeLib.of_string_free(p);
         }
+    }
+
+    private static String takeAllocatedJson(
+            OrderflowNative nativeLib, PointerByReference out) {
+        Pointer pointer = out.getValue();
+        if (pointer == null) {
+            return "{}";
+        }
+        try {
+            return pointer.getString(0, StandardCharsets.UTF_8.name());
+        } finally {
+            nativeLib.of_string_free(pointer);
+        }
+    }
+
+    private static OfSignalConfigParameter[] toNativeSignalParameters(SignalConfig config) {
+        if (config == null) {
+            throw new IllegalArgumentException("config is required");
+        }
+        if (config.parameters.isEmpty()) {
+            return null;
+        }
+        OfSignalConfigParameter[] nativeParameters =
+            (OfSignalConfigParameter[]) new OfSignalConfigParameter()
+                .toArray(config.parameters.size());
+        for (int index = 0; index < config.parameters.size(); index++) {
+            SignalConfigParameter parameter = config.parameters.get(index);
+            OfSignalConfigParameter nativeParameter = nativeParameters[index];
+            nativeParameter.name = parameter.name;
+            nativeParameter.kind = parameter.kind;
+            nativeParameter.integer_value = parameter.integerValue;
+            nativeParameter.float_value = parameter.floatValue;
+            nativeParameter.boolean_value = (byte) (parameter.booleanValue ? 1 : 0);
+            nativeParameter.text_value = parameter.textValue;
+            nativeParameter.write();
+        }
+        return nativeParameters;
+    }
+
+    private static OfSignalValidationEvent[] toNativeSignalEvents(
+            List<SignalValidationEvent> events) {
+        if (events.isEmpty()) {
+            return null;
+        }
+        OfSignalValidationEvent[] nativeEvents =
+            (OfSignalValidationEvent[]) new OfSignalValidationEvent().toArray(events.size());
+        for (int index = 0; index < events.size(); index++) {
+            SignalValidationEvent event = events.get(index);
+            if (event == null) {
+                throw new IllegalArgumentException("validation events must not contain null");
+            }
+            OfSignalValidationEvent nativeEvent = nativeEvents[index];
+            nativeEvent.delta = event.delta;
+            nativeEvent.cumulative_delta = event.cumulativeDelta;
+            nativeEvent.buy_volume = event.buyVolume;
+            nativeEvent.sell_volume = event.sellVolume;
+            nativeEvent.last_price = event.lastPrice;
+            nativeEvent.point_of_control = event.pointOfControl;
+            nativeEvent.value_area_low = event.valueAreaLow;
+            nativeEvent.value_area_high = event.valueAreaHigh;
+            nativeEvent.ts_exchange_ns = event.tsExchangeNs == null ? 0 : event.tsExchangeNs;
+            nativeEvent.has_ts_exchange_ns = (byte) (event.tsExchangeNs == null ? 0 : 1);
+            nativeEvent.write();
+        }
+        return nativeEvents;
     }
 
     private static String allocatedSignalExplanationJson(
