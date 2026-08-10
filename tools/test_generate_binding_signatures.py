@@ -26,7 +26,7 @@ class BindingSignatureGenerationTests(unittest.TestCase):
         cls.declarations = parse_header_declarations(DEFAULT_HEADER)
 
     def test_manifest_symbols_have_complete_header_declarations(self) -> None:
-        self.assertEqual(len(self.entries), 94)
+        self.assertEqual(len(self.entries), 96)
         self.assertEqual(
             {entry.name for entry in self.entries},
             set(self.declarations),
