@@ -39,6 +39,18 @@ foundation for lower-latency production capture paths.
 | `BoundedMarketDataWriterMetrics` | struct | Queue, durability, and failure snapshot |
 | `MarketDataWalProducer` | struct | Cloneable nonblocking producer |
 | `BoundedMarketDataWalWriter` | struct | Single-owner segmented WAL worker |
+| `RawCaptureTimestampSource` | enum | Receive-timestamp provenance |
+| `RawCaptureFlags` | newtype | Compression, encryption, redaction, and truncation flags |
+| `RawCaptureMetadata` | struct | Fixed provider/session/instrument identity |
+| `RawCaptureRecordInput` | struct | Owned provider-native capture input |
+| `RawCaptureRecord` | struct | Decoded provider-native replay record |
+| `RawCaptureDecodeError` | enum | Fail-closed envelope decode failure |
+| `RawCaptureInputError` | struct | Invalid envelope plus returned allocation |
+| `RawCaptureTryError` | enum | Ownership-preserving admission failure |
+| `RawCaptureProducer` | struct | Cloneable nonblocking capture producer |
+| `BoundedRawCaptureWriter` | struct | Bounded provider-native evidence writer |
+| `prepare_raw_capture_payload` | function | Writes an envelope into reusable storage |
+| `encode_raw_capture_payload_into` | function | Writes an envelope and copies provider bytes |
 | `MarketDataCheckpointId` | newtype | Monotonic checkpoint identifier |
 | `MarketDataCheckpointKind` | enum | Opaque checkpoint payload category |
 | `MarketDataCheckpointConfig` | struct | Checkpoint root, retention, and sync configuration |
@@ -390,6 +402,73 @@ All bounds are inclusive.
 
 Filtered replay still scans and validates frames in deterministic file order.
 Only matching payloads are materialized into the caller-provided vector.
+
+## Provider-Native Raw Capture
+
+Raw capture records provider bytes before normalization. Use a different WAL
+root from normalized events and correlate streams with provider sequence,
+exchange time, and receive time.
+
+```mermaid
+flowchart LR
+  T[Provider transport] -->|native bytes| E[OFRC envelope]
+  E -->|try_capture_owned| Q[Bounded FIFO]
+  Q --> W[Single writer]
+  W --> R[Raw segmented WAL]
+  T --> N[Normalizer]
+  N --> M[Normalized segmented WAL]
+```
+
+### Envelope
+
+| Field | Meaning |
+| --- | --- |
+| magic/version/header length | Fail-closed schema identity |
+| `provider_id`, `adapter_id` | Host-assigned source identities |
+| `connection_id`, `subscription_id` | Session and subscription correlation |
+| `venue_id`, `instrument_id` | Dictionary keys without per-message strings |
+| `timestamp_source` | Unknown, userspace, kernel software, or hardware |
+| `flags` | Compressed, encrypted, redacted, or truncated payload state |
+| reserved bytes | Must be zero for forward-compatible decoding |
+
+The enclosing checksum-linked WAL frame supplies capture sequence, provider
+sequence, exchange/receive timestamps, payload length, checksum, and previous-
+record link.
+
+### Low-latency admission
+
+`prepare_raw_capture_payload(metadata, out)` clears reusable storage and writes
+the envelope prefix. Append provider bytes, then call
+`RawCaptureRecordInput::from_encoded_payload`; validation does not copy the
+provider payload. `copy_from_slice` is the convenient one-copy path.
+
+All failed ownership transfers are reversible:
+
+- malformed input returns `RawCaptureInputError` and its encoded `Vec<u8>`;
+- pressure or stop returns `RawCaptureTryError` and its complete input;
+- queue count and aggregate queued bytes are independently bounded;
+- producers do no filesystem I/O and never wait for queue capacity;
+- `flush` and `shutdown` remain blocking control-plane operations.
+
+### Timestamp and security rules
+
+Linux kernel software receive timestamps are generated shortly after a driver
+hands a packet to the receive stack; hardware timestamps use the NIC clock.
+Preserve `RawCaptureTimestampSource` and correlate clock domains before latency
+calculations. Userspace timestamps include socket wake-up and scheduling delay.
+
+The library stores opaque bytes and does not sanitize them. Hosts exclude
+credentials and private keys, redact authentication messages before admission,
+provision encryption and key rotation externally, and set flags only after the
+represented transformation succeeds.
+
+### Replay
+
+Filter segmented replay by `MarketDataWalRecordKind::RawProviderMessage`, then
+convert each `MarketDataWalRecord` with `RawCaptureRecord::try_from`. Envelope
+magic, version, header length, timestamp source, flags, and reserved bytes are
+validated. The WAL scan separately validates frame checksums, sequence
+continuity, and cross-segment links.
 
 ## Cold JSONL Export
 

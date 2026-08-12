@@ -67,7 +67,9 @@ Major additions:
 - market-data persistence: additive checksum-linked segmented normalized WAL,
   explicit seal/sync policies, atomic rebuilt manifests, and cloneable
   nonblocking producers feeding a single bounded writer with separate record
-  and payload-byte limits
+  and payload-byte limits; provider-native raw evidence capture adds timestamp
+  provenance, source/session identity, payload flags, and ownership-preserving
+  bounded admission before normalization
 - execution algorithms: additive parent/child order primitives, fixed-capacity
   decision buffers, OMS execution-event progress folding, and deterministic
   TWAP slice planning in `of_execution_algos`

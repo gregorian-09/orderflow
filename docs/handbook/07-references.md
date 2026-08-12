@@ -60,6 +60,9 @@ This page lists external references used to shape the documentation structure an
   https://doc.rust-lang.org/std/sync/mpsc/
 - Rust standard-library `sync_channel` FIFO and capacity contract:
   https://doc.rust-lang.org/std/sync/mpsc/fn.sync_channel.html
+- Linux kernel network timestamping documentation, including userspace,
+  kernel-software, and raw-hardware timestamp sources:
+  https://docs.kernel.org/networking/timestamping.html
 
 ## Risk and Disclosure References
 
