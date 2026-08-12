@@ -35,12 +35,12 @@ It is intentionally separated from ingestion/runtime plumbing so strategy logic 
   - [`SweepDetectionSignal`]
   - [`CompositeSignal`]
 
-## New In 0.4.0
+## New In 0.5.0
 
-`0.4.0` keeps the [`SignalModule`] trait and built-in signal constructors
-stable. The major release-level change is that signals can now sit in a full
-developer workflow: analytics -> signal snapshot -> quality gate -> risk gate
--> simulated execution -> journal/replay review.
+`0.5.0` keeps the [`SignalModule`] trait and built-in constructors stable while
+adding opt-in descriptors, registries, contextual inputs, lifecycle control,
+stabilization, explanations, replay validation, calibration, ensembles,
+checkpoint/shadow support, and model metadata.
 
 What changes for signal authors:
 
@@ -55,11 +55,11 @@ What changes for signal authors:
 
 Version policy:
 
-- `of_signals` publishes as `0.4.0`;
+- `of_signals` publishes as `0.5.0`;
 - execution crates publish as `0.1.0` and depend on their own execution-domain
   contracts, not on this signal trait.
 
-## Unreleased Additive Metadata, Lifecycle, And Context APIs
+## Additional 0.5.0 Metadata, Lifecycle, And Context APIs
 
 The crate now exposes production-oriented signal metadata, lifecycle helpers,
 and contextual signal evaluation without changing the existing [`SignalModule`]

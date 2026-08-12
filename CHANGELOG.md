@@ -520,12 +520,27 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ### Fixed
 - Fixed release version synchronization for mixed-version workspace crates.
   Internal path dependencies are now checked against the effective version of
-  their target crate manifest, so established `0.4.0` crates and new `0.1.0`
+  their target crate manifest, so established `0.5.0` crates and new `0.1.0`
   analytics/execution/FIX crates can advance independently without hard-coded
   override drift.
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the
   shared FFI test lock and cascade misleading `PoisonError` failures through
   unrelated tests.
+
+### Changed
+- Prepared the established Rust crates, Python package, Java artifact, and
+  native SDK for a non-breaking `0.5.0` release while retaining independent
+  `0.1.0` versions for the new analytics, execution, FIX, algorithm, adapter,
+  and Parquet crates.
+- Declared Rust `1.88.0` as the all-feature MSRV, disabled the unused Python
+  default feature of optional `tickbar`, upgraded vulnerable transitive
+  dependencies, consolidated SHA-256 users on `sha2 0.11`, and added a
+  fail-closed `cargo-deny` policy and CI gate.
+- Tightened CI semver validation from a permissive major-release comparison to
+  the minor-release compatibility promised by the additive `0.5.0` line.
+- Hardened ordered crates.io publication by packaging every workspace crate
+  before release and waiting for each published dependency version to become
+  visible before publishing dependent crates.
 
 ## [0.4.0] - 2026-06-04
 ### Added

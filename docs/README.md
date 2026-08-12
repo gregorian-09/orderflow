@@ -12,6 +12,7 @@ The layout follows production-oriented documentation principles:
 
 ## Start Here
 
+- [Release 0.5.0 Notes](./ops/release-0.5.0.md)
 - [Release 0.4.0 Notes](./ops/release-0.4.0.md)
 - [Release 0.3.0 Notes](./ops/release-0.3.0.md)
 - [Handbook Home](./handbook/README.md)

@@ -13,7 +13,7 @@ state to one broker adapter or network stack.
 
 ## First Release: 0.1.0
 
-`of_fix` starts at `0.1.0` in the broader Orderflow `0.4.0` development line.
+`of_fix` starts at `0.1.0` in the broader Orderflow `0.5.0` development line.
 Its public surface is additive: the original codec APIs remain unchanged, and
 the transport-independent session engine composes those primitives.
 

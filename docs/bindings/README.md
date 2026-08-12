@@ -2,14 +2,14 @@
 
 These pages are binding-specific distribution and usage docs.
 
-Latest release: `0.4.0`.
+Current source release candidate: `0.5.0`.
 
 - Python and Java keep the existing analytics/runtime APIs and add separate
   execution classes.
 - C ABI symbols for analytics remain stable and add a separate execution symbol
   family.
-- The new execution Rust crates publish as `0.1.0`; bindings and native runtime
-  publish as `0.4.0`.
+- New standalone analytics, execution, FIX, algorithm, adapter, and Parquet
+  crates publish as `0.1.0`; bindings and native runtime publish as `0.5.0`.
 - Binding README files include end-to-end examples that combine market data,
   analytics, signal gating, simulated execution, and order reports.
 - C, Python, and Java expose a deterministic TWAP parent facade whose owned

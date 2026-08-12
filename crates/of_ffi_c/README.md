@@ -27,10 +27,11 @@ shared library. `tools/generate_binding_signatures.py` then emits exact Python
 CI runs it with `--check`, so the header, inventory, exports, and generated
 declarations cannot drift silently.
 
-## New In 0.4.0
+## New In 0.5.0
 
-`0.4.0` keeps all existing analytics/runtime C ABI symbols valid and adds a
-separate execution ABI family. Existing hosts that only call
+`0.5.0` keeps all existing analytics/runtime C ABI symbols valid and extends
+the separate execution, signal-validation, TWAP, adapter-status, and
+market-data persistence families additively. Existing hosts that only call
 `of_engine_create`, subscribe, poll, ingest, and read snapshots do not need to
 change those call sites.
 
@@ -77,7 +78,7 @@ workflows without destabilizing existing analytics deployments.
 
 Version policy:
 
-- `of_ffi_c` publishes as `0.4.0` with the established native library line;
+- `of_ffi_c` publishes as `0.5.0` with the established native library line;
 - the Rust execution crates behind the ABI publish as `0.1.0`;
 - native headers and libraries should still be upgraded together.
 

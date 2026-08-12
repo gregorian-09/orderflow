@@ -15,11 +15,11 @@ It standardizes lifecycle, subscription, polling, and health reporting while kee
   [`adapter_descriptors`], [`compiled_adapter_descriptors`],
   [`describe_adapter`], [`adapter_feature_enabled`]
 
-## New In 0.4.0
+## New In 0.5.0
 
-`0.4.0` keeps the market-data [`MarketDataAdapter`] trait stable. The execution
-and OMS expansion lives in separate crates, so existing feed adapters continue
-to compile against the same subscription, polling, event, and health contract.
+`0.5.0` keeps the market-data [`MarketDataAdapter`] trait stable while adding
+production conformance, operational status, Binance continuity, bounded queue,
+raw-capture, replay-fixture, reconnect-jitter, and latency diagnostics.
 
 What changes for adapter authors:
 
@@ -41,7 +41,7 @@ What changes for adapter authors:
 
 Version policy:
 
-- `of_adapters` publishes as `0.4.0` with the established analytics/runtime
+- `of_adapters` publishes as `0.5.0` with the established analytics/runtime
   family;
 - `of_execution_adapters` publishes as `0.1.0` because it is a new execution
   adapter scaffold family.

@@ -20,11 +20,11 @@ The README is intentionally API-complete so the PyPI page can be used as a
 single reference, similar to high-signal package pages such as TA-Lib and
 FastAPI.
 
-## What's New In 0.4.0
+## What's New In 0.5.0
 
-`0.4.0` is the first Python release with end-to-end analytics plus execution
-concepts in one binding package. Existing `Engine` users keep the same market
-data API; execution is exposed through separate classes and native handles.
+`0.5.0` keeps the existing Python market-data and execution APIs intact while
+adding production persistence lifecycle, typed adapter diagnostics,
+config-driven signal replay validation, and deterministic TWAP parent control.
 
 Highlights:
 
@@ -56,8 +56,8 @@ Highlights:
 
 Version policy:
 
-- Python package: `0.4.0`
-- compatible native `of_ffi_c` library/header: `0.4.0`
+- Python package: `0.5.0`
+- compatible native `of_ffi_c` library/header: `0.5.0`
 - new Rust execution crates behind the native ABI: `0.1.0`
 
 Install the Python package and native runtime at the same release version.

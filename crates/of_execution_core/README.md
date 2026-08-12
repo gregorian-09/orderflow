@@ -23,7 +23,7 @@ runtime. Higher-level crates build on it:
 ## First Release: 0.1.0
 
 `of_execution_core` starts at `0.1.0` even though the broader Orderflow release
-line is `0.4.0`. This crate is a new public execution-domain surface. It is
+line is `0.5.0`. This crate is a new public execution-domain surface. It is
 kept independent from the mature analytics crates so its identifiers, state
 machine, and risk contracts can stabilize honestly without implying the same
 API age as `of_core`.

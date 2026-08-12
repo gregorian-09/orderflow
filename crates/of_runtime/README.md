@@ -13,11 +13,13 @@ It wires adapter events into book state and analytics, applies quality-aware sig
 6. Gate risk-sensitive output using [`DataQualityFlags`](of_core::DataQualityFlags).
 7. Optionally persist event streams via `of_persist`.
 
-## New In 0.4.0
+## New In 0.5.0
 
-`0.4.0` keeps `of_runtime` focused on market-data orchestration. Execution and
-OMS state are intentionally separate in `of_execution`, so existing runtime
-users do not inherit order-entry behavior or new lifecycle obligations.
+`0.5.0` keeps `of_runtime` focused on market-data orchestration while adding
+opt-in bounded WAL ownership, explicit flush/shutdown barriers, failure-policy
+gating, quality-preserving replay, and event-time persistence health. Execution
+and OMS state are intentionally separate in `of_execution`, so existing
+runtime users do not inherit order-entry behavior or new lifecycle obligations.
 
 What changes for runtime users:
 
@@ -39,7 +41,7 @@ What changes for runtime users:
 
 Version policy:
 
-- `of_runtime` publishes as `0.4.0`;
+- `of_runtime` publishes as `0.5.0`;
 - `of_execution` publishes as `0.1.0`;
 - keeping those versions separate preserves the non-breaking runtime API while
   allowing execution traits to mature independently.
