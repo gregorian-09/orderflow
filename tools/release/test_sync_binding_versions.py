@@ -19,6 +19,7 @@ class SyncBindingVersionsTests(unittest.TestCase):
         self.assertEqual(versions["of_analytics"], "0.1.0")
         self.assertEqual(versions["of_execution_algos"], "0.1.0")
         self.assertEqual(versions["of_fix"], "0.1.0")
+        self.assertEqual(versions["of_persist_parquet"], "0.1.0")
 
     def test_internal_dependency_versions_match_target_crates(self) -> None:
         """Every checked path dependency matches its target package version."""

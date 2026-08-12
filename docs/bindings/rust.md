@@ -3,11 +3,15 @@
 Workspace crates intended for publication:
 
 - `of_core`
+- `of_analytics`
 - `of_execution_core`
+- `of_fix`
 - `of_execution`
+- `of_execution_algos`
 - `of_execution_adapters`
 - `of_signals`
 - `of_persist`
+- `of_persist_parquet`
 - `of_adapters`
 - `of_runtime`
 - `of_ffi_c`
@@ -15,14 +19,18 @@ Workspace crates intended for publication:
 ## Crates.io publishing order
 
 1. `of_core`
-2. `of_execution_core`
-3. `of_execution`
-4. `of_execution_adapters`
+2. `of_analytics`
+3. `of_execution_core`
+4. `of_fix`
 5. `of_signals`
 6. `of_persist`
-7. `of_adapters`
-8. `of_runtime`
-9. `of_ffi_c`
+7. `of_persist_parquet`
+8. `of_adapters`
+9. `of_runtime`
+10. `of_execution`
+11. `of_execution_algos`
+12. `of_execution_adapters`
+13. `of_ffi_c`
 
 This order matches dependency topology.
 
