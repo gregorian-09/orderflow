@@ -25,7 +25,7 @@ const INITIAL_FRAME_CAPACITY: usize = 64 * 1024;
 pub struct MarketDataWalSegmentId(pub u64);
 
 /// Sync cadence for segmented normalized market-data persistence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum MarketDataWalSyncPolicy {
     /// Rely on the operating-system page cache until an explicit sync.
@@ -35,13 +35,8 @@ pub enum MarketDataWalSyncPolicy {
     /// Call `sync_data` after every configured number of appended frames.
     EveryRecords(u64),
     /// Call `sync_data` when a segment is sealed.
+    #[default]
     OnSegmentSeal,
-}
-
-impl Default for MarketDataWalSyncPolicy {
-    fn default() -> Self {
-        Self::OnSegmentSeal
-    }
 }
 
 /// Configuration for [`SegmentedMarketDataWal`].

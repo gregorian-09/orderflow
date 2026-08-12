@@ -1,8 +1,10 @@
 #![doc = include_str!("../README.md")]
 
 mod market_data_segmented;
+mod market_data_writer;
 
 pub use market_data_segmented::*;
+pub use market_data_writer::*;
 
 use std::collections::BTreeSet;
 use std::fs::{self, create_dir_all, File, OpenOptions};
@@ -31,6 +33,22 @@ pub enum PersistError {
 impl From<std::io::Error> for PersistError {
     fn from(value: std::io::Error) -> Self {
         Self::Io(value)
+    }
+}
+
+impl std::fmt::Display for PersistError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for PersistError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+        }
     }
 }
 
@@ -2551,7 +2569,7 @@ fn encode_market_data_wal_frame_into(
     write_u32(&mut frame[48..52], payload.len() as u32);
     write_u32(&mut frame[56..60], input.previous_checksum);
     frame[MARKET_DATA_WAL_HEADER_LEN..].copy_from_slice(payload);
-    let checksum = market_data_wal_checksum(&frame);
+    let checksum = market_data_wal_checksum(frame);
     write_u32(&mut frame[52..56], checksum);
     Ok(())
 }
