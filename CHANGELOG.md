@@ -6,6 +6,15 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added `of_persist::SegmentedMarketDataWal` with checksum-linked global
+  sequence continuity, explicit seal frames, soft byte-target rotation,
+  configurable sync cadence, atomic rebuilt manifests, cross-segment integrity
+  inspection, fail-closed replay, and reusable append frame storage.
+- Added `of_persist::BoundedMarketDataWalWriter` and cloneable
+  `MarketDataWalProducer` handles with independently bounded record/payload-byte
+  queues, nonblocking ownership-transfer admission, ownership-preserving
+  pressure errors, one FIFO WAL owner, explicit flush/shutdown barriers, and
+  lock-free queue/write/durability/failure metrics without requiring Tokio.
 - Added a bounded deterministic FIX certification harness with a scripted
   counterparty `FixFrameTransport`, coherent test clock, exact ordered raw
   transcript assertions, 13 session/application/failure scenarios, explicit

@@ -2,9 +2,10 @@
 
 `of_persist` provides append-only persistence for normalized orderflow events.
 The stable [`RollingStore`] API writes human-readable JSONL for replay,
-auditability, and post-trade research workflows. The additive [`MarketDataWal`]
-API provides a binary normalized market-data WAL foundation for lower-latency
-production capture paths.
+auditability, and post-trade research workflows. Additive single-file and
+segmented WAL APIs provide binary normalized capture, while
+[`BoundedMarketDataWalWriter`] moves filesystem work to one bounded,
+single-owner worker for latency-sensitive producers.
 
 ## Main Types
 
@@ -21,6 +22,18 @@ production capture paths.
 - [`MarketDataWalReplayFilter`] - deterministic WAL replay selector.
 - [`MarketDataWalIntegrityReport`] - checksum and sequence validation summary.
 - [`MarketDataWalMetrics`] - append/sync counters.
+- [`SegmentedMarketDataWal`] - checksum-linked rotated WAL directory.
+- [`SegmentedMarketDataWalConfig`] - segment size, payload limit, and sync policy.
+- [`MarketDataWalSyncPolicy`] - explicit record/seal sync cadence.
+- [`MarketDataWalManifest`] - manifest rebuilt from validated segment truth.
+- [`MarketDataWalSegmentIntegrityReport`] - aggregate segment/link validation.
+- [`BoundedMarketDataWalWriter`] - single-owner background segmented WAL writer.
+- [`MarketDataWalProducer`] - cloneable nonblocking producer handle.
+- [`MarketDataWalRecordInput`] - owned queue input with reusable payload storage.
+- [`BoundedMarketDataWriterConfig`] - record and payload-byte queue limits.
+- [`BoundedMarketDataWriterMetrics`] - queue, write, sync, and failure counters.
+- [`MarketDataWriterTryError`] - ownership-preserving admission error.
+- [`MarketDataWriterControlError`] - flush/shutdown barrier error.
 - [`MarketDataCheckpointId`] - monotonic checkpoint identifier.
 - [`MarketDataCheckpointKind`] - checkpoint payload category.
 - [`MarketDataCheckpointConfig`] - checkpoint root, retention, and sync policy.
@@ -73,6 +86,14 @@ What changes for persistence users:
   audit, retention, and recovery policies can differ;
 - binary normalized market-data WAL helpers are available as additive building
   blocks for production capture without replacing JSONL workflows;
+- checksum-linked segmented WAL rotation preserves one global record sequence
+  and checksum chain across files, writes explicit seal records, and rebuilds
+  atomic manifests from segment truth on every open;
+- a bounded background writer supports cloneable nonblocking producers,
+  independently limits queued records and payload bytes, and returns ownership
+  of rejected buffers instead of blocking or silently dropping them;
+- reusable frame scratch storage removes the previous per-append frame
+  allocation from single-file and segmented WAL writers after capacity is warm;
 - production persistence policy and health helpers let hosts tie writer
   degradation into execution safety policy;
 - market-data backpressure helpers make slow-consumer and bounded-writer
@@ -118,6 +139,21 @@ Public types:
 - [`MarketDataWalReplayFilter`]
 - [`MarketDataWalIntegrityReport`]
 - [`MarketDataWalMetrics`]
+- [`MarketDataWalSegmentId`]
+- [`MarketDataWalSyncPolicy`]
+- [`SegmentedMarketDataWalConfig`]
+- [`MarketDataWalSegmentMetadata`]
+- [`MarketDataWalManifest`]
+- [`MarketDataWalSegmentIntegrityReport`]
+- [`SegmentedMarketDataWalMetrics`]
+- [`SegmentedMarketDataWal`]
+- [`MarketDataWalRecordInput`]
+- [`BoundedMarketDataWriterConfig`]
+- [`MarketDataWriterTryError`]
+- [`MarketDataWriterControlError`]
+- [`BoundedMarketDataWriterMetrics`]
+- [`MarketDataWalProducer`]
+- [`BoundedMarketDataWalWriter`]
 - [`MarketDataCheckpointId`]
 - [`MarketDataCheckpointKind`]
 - [`MarketDataCheckpointConfig`]
@@ -180,6 +216,41 @@ Public methods:
 - [`MarketDataWal::replay`]
 - [`MarketDataWal::replay_filtered`]
 - [`MarketDataWal::inspect_path`]
+- [`SegmentedMarketDataWalConfig::new`]
+- [`SegmentedMarketDataWalConfig::with_max_segment_bytes`]
+- [`SegmentedMarketDataWalConfig::with_max_payload_bytes`]
+- [`SegmentedMarketDataWalConfig::with_sync_policy`]
+- [`SegmentedMarketDataWalConfig::with_sync_manifest`]
+- [`SegmentedMarketDataWal::open`]
+- [`SegmentedMarketDataWal::config`]
+- [`SegmentedMarketDataWal::next_sequence`]
+- [`SegmentedMarketDataWal::manifest`]
+- [`SegmentedMarketDataWal::metrics`]
+- [`SegmentedMarketDataWal::append_record`]
+- [`SegmentedMarketDataWal::seal_active_segment`]
+- [`SegmentedMarketDataWal::sync_data`]
+- [`SegmentedMarketDataWal::replay`]
+- [`SegmentedMarketDataWal::replay_filtered`]
+- [`SegmentedMarketDataWal::inspect_root`]
+- [`MarketDataWalRecordInput::new`]
+- [`MarketDataWalRecordInput::into_payload`]
+- [`BoundedMarketDataWriterConfig::new`]
+- [`BoundedMarketDataWriterConfig::with_queue_capacity`]
+- [`BoundedMarketDataWriterConfig::with_max_queued_payload_bytes`]
+- [`BoundedMarketDataWriterConfig::with_thread_name`]
+- [`MarketDataWriterTryError::into_input`]
+- [`BoundedMarketDataWalWriter::start`]
+- [`BoundedMarketDataWalWriter::producer`]
+- [`BoundedMarketDataWalWriter::try_append_owned`]
+- [`BoundedMarketDataWalWriter::try_append_copy`]
+- [`BoundedMarketDataWalWriter::flush`]
+- [`BoundedMarketDataWalWriter::metrics`]
+- [`BoundedMarketDataWalWriter::last_error`]
+- [`BoundedMarketDataWalWriter::shutdown`]
+- [`MarketDataWalProducer::try_append_owned`]
+- [`MarketDataWalProducer::try_append_copy`]
+- [`MarketDataWalProducer::metrics`]
+- [`MarketDataWalProducer::last_error`]
 - [`MarketDataWalReplayFilter::new`]
 - [`MarketDataWalReplayFilter::with_sequence_range`]
 - [`MarketDataWalReplayFilter::with_provider_sequence_range`]
@@ -354,8 +425,110 @@ Sync policy is intentionally small in this first foundation:
 - `sync_on_write = false`: append to the OS page cache;
 - `sync_on_write = true`: call `sync_data` after each append.
 
-Segment rotation, async writer queues, raw provider capture, and cold-store
-export remain higher-level integration work.
+The single-file type remains unchanged for existing callers. New deployments
+that need rotation and asynchronous file ownership can select the additive
+segmented and bounded-writer APIs below. Raw provider capture and optional
+columnar export remain separate layers because their payload and dependency
+contracts differ from normalized WAL persistence.
+
+## Segmented WAL Contract
+
+[`SegmentedMarketDataWal`] stores files as:
+
+`<root>/segment-<20-digit-id>.ofmw`
+
+and installs an atomic recovery manifest at:
+
+`<root>/manifest.ofmm`
+
+The manifest is an accelerator, not the authority. Every open scans segment
+files in id order and validates:
+
+- ids begin at `1` and remain contiguous;
+- every non-final segment ends with an explicit `SegmentSeal` frame;
+- WAL sequences remain globally contiguous across files;
+- each first frame links to the previous segment's final checksum;
+- frame checksum, payload length, kind, and version are valid;
+- only the final segment may be unsealed or empty.
+
+Corruption fails closed before an append handle is returned. Filtered replay
+still validates every frame and rolls back records added to the caller's output
+if any segment or link fails. Existing single-file frame version and record
+discriminants remain unchanged.
+
+Rotation uses a soft byte target: a single valid record may exceed the target,
+but records never split across segments. The writer reserves room for a seal
+when deciding whether to rotate a non-empty segment. `SegmentSeal` is
+writer-reserved; callers seal through
+[`SegmentedMarketDataWal::seal_active_segment`].
+
+### Sync policies
+
+- [`MarketDataWalSyncPolicy::Never`] leaves durability to an explicit
+  [`SegmentedMarketDataWal::sync_data`] barrier.
+- [`MarketDataWalSyncPolicy::EveryRecord`] calls `sync_data` after every frame.
+- [`MarketDataWalSyncPolicy::EveryRecords`] syncs after the configured frame
+  count.
+- [`MarketDataWalSyncPolicy::OnSegmentSeal`] syncs when a segment is sealed and
+  is the default.
+
+An append returning successfully means the frame reached the file/page-cache
+write path. It does not mean stable-storage durability unless the selected sync
+policy performed a sync or the caller completed an explicit sync barrier.
+
+## Bounded Writer Contract
+
+```mermaid
+flowchart LR
+  P1[Market-data producer] -->|try_append_owned| Q[Bounded FIFO queue]
+  P2[Additional producer] -->|try_append_owned| Q
+  Q --> W[Single WAL owner thread]
+  W --> S[SegmentedMarketDataWal]
+  S --> F[Page cache / filesystem]
+  C[Control plane] -->|flush / shutdown| Q
+```
+
+[`BoundedMarketDataWalWriter`] opens one [`SegmentedMarketDataWal`] and moves it
+to one background thread. Cloneable [`MarketDataWalProducer`] handles call
+[`MarketDataWalProducer::try_append_owned`] without waiting for queue space or
+performing filesystem I/O. The bounded standard-library FIFO preserves the
+order in which accepted commands reach its receiver; simultaneous producers
+must not infer a venue-global ordering beyond that accepted queue order.
+
+Two independent limits bound memory:
+
+- record count through [`BoundedMarketDataWriterConfig::with_queue_capacity`];
+- aggregate queued payload bytes through
+  [`BoundedMarketDataWriterConfig::with_max_queued_payload_bytes`].
+
+The record-count bound also bounds command overhead. The payload-byte bound
+covers queued payload buffers, not the one record currently being written.
+`try_append_owned` consumes a [`MarketDataWalRecordInput`], and every rejection
+variant exposes [`MarketDataWriterTryError::into_input`] so callers can retry,
+route to alternate storage, or return the `Vec<u8>` to a pool. No pressure path
+silently discards an input.
+
+[`MarketDataWalProducer::try_append_copy`] is a convenience API and allocates a
+payload copy. Use owned, preallocated buffers on latency-sensitive paths.
+[`BoundedMarketDataWalWriter::flush`] and
+[`BoundedMarketDataWalWriter::shutdown`] are intentionally blocking control-
+plane barriers. `shutdown` fences new submissions, waits for submissions
+already entering the nonblocking call, drains earlier accepted records, syncs,
+and joins the worker.
+
+Metrics distinguish:
+
+- accepted records and payload bytes;
+- queued depth/bytes and high-water marks;
+- written records and last written sequence;
+- last sequence covered by a known sync barrier;
+- full, byte-full, oversized, reserved-kind, and stopped rejections;
+- write/sync failures, abandoned queued records, degraded state, and stop state.
+
+On an append or sync failure, the worker stops admission, records diagnostic
+text, marks itself degraded, accounts for queued records it cannot write, and
+disconnects producers. Hosts should map this state through their configured
+[`MarketDataPersistenceFailureAction`] instead of continuing silently.
 
 ## WAL Replay Filters
 
@@ -610,6 +783,72 @@ let sequence = wal.append_record(
 let mut records = Vec::new();
 let replay = wal.replay(&mut records)?;
 println!("sequence={sequence:?} replayed={}", replay.records);
+# Ok::<(), of_persist::PersistError>(())
+```
+
+## Segmented WAL Example
+
+```rust,no_run
+use of_persist::{
+    MarketDataWalRecordKind, MarketDataWalSyncPolicy, SegmentedMarketDataWal,
+    SegmentedMarketDataWalConfig,
+};
+
+let config = SegmentedMarketDataWalConfig::new("data/CME/ESM6/normalized-wal")
+    .with_max_segment_bytes(256 * 1024 * 1024)
+    .with_max_payload_bytes(1024 * 1024)
+    .with_sync_policy(MarketDataWalSyncPolicy::OnSegmentSeal);
+let mut wal = SegmentedMarketDataWal::open(config)?;
+
+wal.append_record(
+    MarketDataWalRecordKind::TradePrint,
+    42,
+    1001,
+    1_700_000_000,
+    1_700_000_050,
+    b"encoded-normalized-trade",
+)?;
+wal.sync_data()?;
+
+let report = SegmentedMarketDataWal::inspect_root("data/CME/ESM6/normalized-wal")?;
+assert!(report.valid);
+# Ok::<(), of_persist::PersistError>(())
+```
+
+## Bounded Writer Example
+
+```rust,no_run
+use of_persist::{
+    BoundedMarketDataWalWriter, BoundedMarketDataWriterConfig,
+    MarketDataWalRecordInput, MarketDataWalRecordKind, SegmentedMarketDataWalConfig,
+};
+
+let wal = SegmentedMarketDataWalConfig::new("data/CME/ESM6/normalized-wal")
+    .with_max_payload_bytes(1024 * 1024);
+let writer = BoundedMarketDataWalWriter::start(
+    wal,
+    BoundedMarketDataWriterConfig::new()
+        .with_queue_capacity(8_192)
+        .with_max_queued_payload_bytes(64 * 1024 * 1024),
+)?;
+let producer = writer.producer();
+
+let input = MarketDataWalRecordInput::new(
+    MarketDataWalRecordKind::TradePrint,
+    42,
+    1001,
+    1_700_000_000,
+    1_700_000_050,
+    Vec::from(&b"encoded-normalized-trade"[..]),
+);
+if let Err(rejected) = producer.try_append_owned(input) {
+    let input = rejected.into_input();
+    eprintln!("persistence pressure; retained {} payload bytes", input.payload_len());
+}
+
+// Control-plane only: drains accepted records, synchronizes, and joins.
+let metrics = writer.shutdown().expect("writer shutdown");
+assert!(metrics.stopped);
 # Ok::<(), of_persist::PersistError>(())
 ```
 

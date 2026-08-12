@@ -128,6 +128,35 @@ symbol sorting or string allocation to adapter polling. Existing C, Python, and
 Java status functions receive the new fields through their existing JSON
 payload and require no ABI or method-signature change.
 
+### 1B. Production normalized market-data persistence
+
+`of_persist 0.4.0` keeps `RollingStore` and `MarketDataWal` source-compatible
+while adding:
+
+- `SegmentedMarketDataWal` with globally linked WAL sequence/checksum state,
+  contiguous segment ids, explicit on-disk seal records, soft byte-target
+  rotation, and read-only aggregate integrity inspection
+- an atomic manifest treated as a rebuildable accelerator rather than recovery
+  authority; segment scans remain the source of truth
+- `Never`, `EveryRecord`, `EveryRecords(n)`, and `OnSegmentSeal` sync policies
+  plus explicit sync barriers
+- reusable frame scratch storage for single-file and segmented appenders,
+  avoiding one fresh frame allocation per append once capacity is warm
+- `BoundedMarketDataWalWriter` with a single WAL owner and cloneable
+  `MarketDataWalProducer` handles
+- independent hard bounds for queued record count and queued payload bytes
+- nonblocking owned admission that returns rejected inputs on record pressure,
+  byte pressure, payload-limit violation, reserved-kind use, or writer stop
+- blocking control-plane-only flush/shutdown barriers and metrics that separate
+  accepted, queued, written, and sync-covered sequences
+- fail-closed degraded state and explicit abandoned-record accounting after
+  append/sync failure
+
+No Tokio runtime or global executor is introduced. Existing single-file WAL,
+JSONL, checkpoint, cold-export, retention, and recovery-planning APIs retain
+their signatures and defaults. Runtime wiring and raw provider-message capture
+remain separate host/adapter responsibilities.
+
 ### 2. Execution core
 
 `of_execution_core 0.1.0` adds:

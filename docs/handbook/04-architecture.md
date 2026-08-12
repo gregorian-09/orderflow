@@ -51,7 +51,9 @@ flowchart LR
 - `of_core`: canonical data structures + analytics accumulator.
 - `of_signals`: signal trait + built-in delta momentum, imbalance, cumulative delta, absorption, exhaustion, sweep, and composite implementations.
 - `of_adapters`: provider abstraction and concrete adapters (feature-gated).
-- `of_persist`: rolling JSONL persistence, typed readback, and retention pruning.
+- `of_persist`: rolling JSONL persistence, typed readback, checksum-linked
+  single-file/segmented normalized WAL, bounded background writing,
+  checkpoints, recovery planning, cold export, and retention policy.
 - `of_runtime`: lifecycle, polling/ingest processing, quality supervision, health state.
 - `of_execution_core`: additive execution-domain IDs, requests, events, state machine, and risk primitives.
 - `of_fix`: reusable low-allocation FIX tag-value codec and transport-independent session engine with borrowed field views, body-length/checksum validation, caller-owned encoding buffers, deterministic liveness, and sequence recovery.
@@ -127,6 +129,34 @@ sequenceDiagram
 Low-latency execution paths use fixed-size identifiers, integer-normalized
 price/quantity fields, and caller-owned event buffers. JSON is not used on the
 submit/cancel/amend hot path.
+
+### Path D: Bounded normalized market-data persistence
+
+```mermaid
+sequenceDiagram
+  participant Adapter as Adapter/runtime producer
+  participant Producer as MarketDataWalProducer
+  participant Queue as Bounded FIFO
+  participant Worker as WAL owner thread
+  participant WAL as SegmentedMarketDataWal
+
+  Adapter->>Producer: try_append_owned(input)
+  alt record and byte capacity available
+    Producer->>Queue: transfer owned payload
+    Producer-->>Adapter: accepted
+    Queue->>Worker: FIFO input
+    Worker->>WAL: append normalized frame
+  else pressure or stopped
+    Producer-->>Adapter: typed error + original input
+  end
+```
+
+The producer call does not wait for queue capacity and does not perform file
+I/O. One worker owns segment rotation, checksum sequencing, manifests, and sync
+policy. Explicit `flush`/`shutdown` barriers are control-plane operations.
+Queue acceptance, file append, and stable-storage sync are separate observable
+states; hosts must apply their configured persistence failure action when the
+worker becomes degraded.
 
 Execution routing is configured as a set of route/account/symbol scopes. The
 engine builds an indexed route table for constant-time lookup and applies open
