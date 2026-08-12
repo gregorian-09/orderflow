@@ -210,6 +210,33 @@ pub struct MarketDataWalRecord {
     pub payload: Vec<u8>,
 }
 
+impl MarketDataWalRecord {
+    /// Creates a decoded/replay record value.
+    ///
+    /// Writers still assign WAL sequence and checksum linkage. This constructor
+    /// is intended for external exporters, replay fixtures, and format bridges.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        sequence: MarketDataWalSequence,
+        kind: MarketDataWalRecordKind,
+        provider_sequence: u64,
+        event_sequence: u64,
+        ts_exchange_ns: u64,
+        ts_recv_ns: u64,
+        payload: Vec<u8>,
+    ) -> Self {
+        Self {
+            sequence,
+            kind,
+            provider_sequence,
+            event_sequence,
+            ts_exchange_ns,
+            ts_recv_ns,
+            payload,
+        }
+    }
+}
+
 /// Replay summary for normalized market-data WAL reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -1545,6 +1572,58 @@ pub struct MarketDataColdExportPartition {
     pub last_ts_exchange_ns: Option<u64>,
     /// Checksum over exported bytes.
     pub checksum: u32,
+}
+
+impl MarketDataColdExportPartition {
+    /// Creates empty metadata for one externally implemented cold partition.
+    ///
+    /// This constructor lets optional columnar export crates participate in
+    /// the stable retention model without exposing this non-exhaustive
+    /// struct's layout as a construction contract.
+    pub fn new(
+        format: MarketDataColdExportFormat,
+        venue: impl Into<String>,
+        symbol: impl Into<String>,
+        stream: impl Into<String>,
+        path: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            format,
+            venue: venue.into(),
+            symbol: symbol.into(),
+            stream: stream.into(),
+            path: path.into(),
+            records: 0,
+            bytes: 0,
+            first_sequence: None,
+            last_sequence: None,
+            first_ts_exchange_ns: None,
+            last_ts_exchange_ns: None,
+            checksum: 0,
+        }
+    }
+
+    /// Sets record, byte, range, timestamp, and checksum summary fields.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn with_summary(
+        mut self,
+        records: u64,
+        bytes: u64,
+        first_sequence: Option<MarketDataWalSequence>,
+        last_sequence: Option<MarketDataWalSequence>,
+        first_ts_exchange_ns: Option<u64>,
+        last_ts_exchange_ns: Option<u64>,
+        checksum: u32,
+    ) -> Self {
+        self.records = records;
+        self.bytes = bytes;
+        self.first_sequence = first_sequence;
+        self.last_sequence = last_sequence;
+        self.first_ts_exchange_ns = first_ts_exchange_ns;
+        self.last_ts_exchange_ns = last_ts_exchange_ns;
+        self.checksum = checksum;
+        self
+    }
 }
 
 /// Manifest for a cold-export operation.

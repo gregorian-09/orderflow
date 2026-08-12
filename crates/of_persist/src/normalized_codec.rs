@@ -157,7 +157,8 @@ impl NormalizedMarketDataRecordInput {
         Ok(())
     }
 
-    fn symbol(&self) -> &SymbolId {
+    /// Returns the canonical event symbol.
+    pub fn symbol(&self) -> &SymbolId {
         match self {
             Self::Book { event, .. } => &event.symbol,
             Self::Trade { event, .. } => &event.symbol,
