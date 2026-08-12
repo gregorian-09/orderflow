@@ -210,6 +210,13 @@ impl Drop for RuntimeMarketDataPersistence {
     }
 }
 
+// Admission reservations use drop guards, poisoned diagnostic locks are
+// recovered, and the worker contains panics before exposing shared state. The
+// channel implementation's conservative auto-trait result therefore does not
+// invalidate the engine's historical unwind-safety contract.
+impl std::panic::UnwindSafe for RuntimeMarketDataPersistence {}
+impl std::panic::RefUnwindSafe for RuntimeMarketDataPersistence {}
+
 impl RuntimeMarketDataPersistence {
     fn policy(&self) -> MarketDataPersistencePolicy {
         MarketDataPersistencePolicy::bounded_async(

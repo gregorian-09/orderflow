@@ -520,12 +520,31 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ### Fixed
 - Fixed release version synchronization for mixed-version workspace crates.
   Internal path dependencies are now checked against the effective version of
-  their target crate manifest, so established `0.4.0` crates and new `0.1.0`
+  their target crate manifest, so established `0.5.0` crates and new `0.1.0`
   analytics/execution/FIX crates can advance independently without hard-coded
   override drift.
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the
   shared FFI test lock and cascade misleading `PoisonError` failures through
   unrelated tests.
+- Preserved `of_runtime::Engine`'s historical `UnwindSafe` and `RefUnwindSafe`
+  auto-trait contract after adding the private bounded WAL channel state.
+- Made Java Javadoc packaging fail closed and independent of Oracle API network
+  availability instead of masking external-link or documentation failures.
+
+### Changed
+- Prepared the established Rust crates, Python package, Java artifact, and
+  native SDK for a non-breaking `0.5.0` release while retaining independent
+  `0.1.0` versions for the new analytics, execution, FIX, algorithm, adapter,
+  and Parquet crates.
+- Declared Rust `1.88.0` as the all-feature MSRV, disabled the unused Python
+  default feature of optional `tickbar`, upgraded vulnerable transitive
+  dependencies, consolidated SHA-256 users on `sha2 0.11`, and added a
+  fail-closed `cargo-deny` policy and CI gate.
+- Tightened CI semver validation from a permissive major-release comparison to
+  the minor-release compatibility promised by the additive `0.5.0` line.
+- Hardened ordered crates.io publication with locked per-crate compilation,
+  package-content inspection for every publishable crate, full root-package
+  verification, and registry visibility polling before each dependent crate.
 
 ## [0.4.0] - 2026-06-04
 ### Added

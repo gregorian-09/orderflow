@@ -9,7 +9,7 @@ Orderflow. The crate exists so heavier analytics can evolve outside `of_core`
 without breaking existing `AnalyticsAccumulator`, runtime, C ABI, Python, or
 Java APIs.
 
-`of_analytics` starts at `0.1.0` in the broader Orderflow `0.4.0` development
+`of_analytics` starts at `0.1.0` in the broader Orderflow `0.5.0` development
 line because it is a new public Rust surface.
 
 The first foundation is dependency-light:

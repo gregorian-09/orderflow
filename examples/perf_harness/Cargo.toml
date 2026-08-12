@@ -2,10 +2,12 @@
 name = "perf_harness"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
-of_adapters = { path = "../../crates/of_adapters" }
-of_core = { path = "../../crates/of_core" }
-of_runtime = { path = "../../crates/of_runtime" }
-of_signals = { path = "../../crates/of_signals" }
+of_adapters = { path = "../../crates/of_adapters", version = "0.5.0" }
+of_core = { path = "../../crates/of_core", version = "0.5.0" }
+of_runtime = { path = "../../crates/of_runtime", version = "0.5.0" }
+of_signals = { path = "../../crates/of_signals", version = "0.5.0" }

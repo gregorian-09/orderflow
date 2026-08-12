@@ -24,7 +24,7 @@ Current FIX surfaces:
 ## First Release: 0.1.0
 
 `of_execution_adapters` publishes as `0.1.0` inside the broader Orderflow
-`0.4.0` release. It is a new adapter-infrastructure family, not a mature suite
+`0.5.0` release. It is a new adapter-infrastructure family, not a mature suite
 of counterparty-certified providers.
 
 Versioning rules:

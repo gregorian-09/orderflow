@@ -11,11 +11,11 @@ the same normalized semantics.
 - Quality flags: [`DataQualityFlags`]
 - Runtime outputs: [`AnalyticsSnapshot`], [`DerivedAnalyticsSnapshot`], [`SessionCandleSnapshot`], [`IntervalCandleSnapshot`], [`SignalSnapshot`], [`SignalState`]
 - Deterministic analytics engine: [`AnalyticsAccumulator`]
-## New In 0.4.0
+## New In 0.5.0
 
-`0.4.0` keeps the established `of_core` analytics contracts stable while the
-larger Orderflow release adds execution and OMS capabilities around them.
-Existing users of [`AnalyticsAccumulator`], [`AnalyticsSnapshot`],
+`0.5.0` keeps the established `of_core` analytics contracts stable while the
+larger Orderflow release hardens execution, persistence, and signal operations
+around them. Existing users of [`AnalyticsAccumulator`], [`AnalyticsSnapshot`],
 [`BookSnapshot`], candle snapshots, quality flags, and tickbar aggregation do
 not need to rename or rewrite code.
 
@@ -34,7 +34,7 @@ What changes for `of_core` users:
 
 Version policy:
 
-- established analytics crates publish as `0.4.0`;
+- established analytics crates publish as `0.5.0`;
 - new execution crates publish as `0.1.0`;
 - this split is intentional because execution has a newer public trait surface
   while `of_core` continues its existing compatibility line.

@@ -77,10 +77,11 @@ to any exchange or transport implementation.
 - [`MarketDataBackpressureDecision`] - evaluated action and flags.
 - [`PersistError`] / [`PersistResult<T>`] - persistence error contract.
 
-## New In 0.4.0
+## New In 0.5.0
 
-`0.4.0` keeps the existing market-data persistence API stable and documents how
-persistence participates in the larger strategy lifecycle. `of_persist`
+`0.5.0` keeps the existing market-data persistence API stable and adds the
+production normalized/raw WAL, bounded writer, checkpoint, recovery, cold
+export, and retention layers described below. `of_persist`
 continues to store normalized book/trade event streams; execution command and
 report journaling belongs to `of_execution`.
 
@@ -126,6 +127,8 @@ What changes for persistence users:
   preserving existing unfiltered replay behavior;
 - JSONL cold-export helpers write decoded WAL records into partition files with
   raw payload hex, sequence/timestamp metadata, checksums, and export manifests;
+- the separate `of_persist_parquet 0.1.0` companion adds verified bounded
+  columnar export without adding Arrow/Parquet dependencies to this hot crate;
 - retention planner helpers decide when to retain hot WAL, export cold data, or
   delete hot ranges while preserving incident windows and checkpoint
   dependencies;
@@ -134,7 +137,7 @@ What changes for persistence users:
 
 Version policy:
 
-- `of_persist` publishes as `0.4.0`;
+- `of_persist` publishes as `0.5.0`;
 - `of_execution` publishes as `0.1.0` and owns execution journaling helpers.
 
 ## Public API Inventory

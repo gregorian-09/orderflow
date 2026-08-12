@@ -6,31 +6,32 @@ Java — from spread metrics and VPIN toxicity through fingerprint patterns,
 volatility signatures, Almgren-Chriss impact models, options flow, futures
 basis, dark pool siphon detection, and machine-learning-ready LOB features.
 
-Version `0.4.0` adds an execution and OMS foundation for developer-built order
-management workflows. Execution APIs use separate Rust crates, C handles,
-Python classes, and Java classes, so existing analytics integrations remain
-stable. The execution layer provides typed order requests, FIX-style state
-transitions, structured risk rejection, simulated execution, bounded
+Version `0.5.0` hardens the execution, OMS, signal, adapter, and persistence
+foundations for developer-built production workflows. Execution APIs use
+separate Rust crates, C handles, Python classes, and Java classes, so existing
+analytics integrations remain stable. The execution layer provides typed order
+requests, FIX-style state transitions, structured risk rejection, simulated
+execution, bounded
 concurrent command workers, journals, recovery helpers, C/Python/Java bindings,
 a reusable low-allocation FIX codec/session foundation, a transport-injected
 FIX execution runtime, and a separate parent/child execution-algorithm crate.
 It is not a broker-certified production OMS by itself; it is the reusable
 foundation developers use to build one.
 
-## What's New In 0.4.0
+## What's New In 0.5.0
 
-`0.4.0` is a non-breaking expansion release. The mature analytics/runtime/C
-ABI/binding packages move from `0.3.0` to `0.4.0`; the new execution crates are
-published as `0.1.0` because they are new public crate surfaces with their own
-stabilization path.
+`0.5.0` is a non-breaking production-hardening release over `0.4.0`. The
+established analytics/runtime/C ABI/binding packages move together to `0.5.0`;
+new standalone crate surfaces remain at `0.1.0` on their own stabilization
+paths.
 
 Package versions for this release:
 
 | Package family | Version | Why |
 | --- | ---: | --- |
-| Existing Rust crates: `of_core`, `of_adapters`, `of_signals`, `of_persist`, `of_runtime`, `of_ffi_c` | `0.4.0` | Same established API line, additive analytics/execution exposure |
-| Python binding: `orderflow-gregorian09` | `0.4.0` | Matches the native `of_ffi_c` ABI package line |
-| Java binding: `orderflow-java-binding` | `0.4.0` | Matches the native `of_ffi_c` ABI package line |
+| Existing Rust crates: `of_core`, `of_adapters`, `of_signals`, `of_persist`, `of_runtime`, `of_ffi_c` | `0.5.0` | Same established API line, additive production hardening |
+| Python binding: `orderflow-gregorian09` | `0.5.0` | Matches the native `of_ffi_c` package line |
+| Java binding: `orderflow-java-binding` | `0.5.0` | Matches the native `of_ffi_c` package line |
 | New Rust crates: `of_analytics`, `of_execution_core`, `of_fix`, `of_execution`, `of_execution_adapters`, `of_execution_algos`, `of_persist_parquet` | `0.1.0` | New advanced analytics/execution/FIX/algo/cold-storage crate family, intentionally versioned from its own first public release |
 
 Major additions:
@@ -96,6 +97,9 @@ Upgrade rule: existing analytics users can upgrade without renaming existing
 APIs. Execution adopters should treat the new execution crates as a `0.1.0`
 surface and pin them explicitly if building provider adapters against their
 traits.
+
+The full release inventory, compatibility rules, operational constraints, and
+upgrade sequence are in [Release 0.5.0](./docs/ops/release-0.5.0.md).
 
 ## Documentation
 

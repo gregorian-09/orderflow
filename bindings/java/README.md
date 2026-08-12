@@ -21,16 +21,15 @@ entire public surface from one place.
 <dependency>
   <groupId>io.github.gregorian-09</groupId>
   <artifactId>orderflow-java-binding</artifactId>
-  <version>0.4.0</version>
+  <version>0.5.0</version>
 </dependency>
 ```
 
-## What's New In 0.4.0
+## What's New In 0.5.0
 
-`0.4.0` is the first Java release with end-to-end analytics plus execution
-concepts in one binding artifact. Existing `OrderflowEngine` users keep the
-same market-data API; execution is exposed through separate classes and native
-handles.
+`0.5.0` keeps the existing Java market-data and execution APIs intact while
+adding production persistence lifecycle, typed adapter diagnostics,
+config-driven signal replay validation, and deterministic TWAP parent control.
 
 Highlights:
 
@@ -64,8 +63,8 @@ Highlights:
 
 Version policy:
 
-- Java artifact: `0.4.0`
-- compatible native `of_ffi_c` library/header: `0.4.0`
+- Java artifact: `0.5.0`
+- compatible native `of_ffi_c` library/header: `0.5.0`
 - new Rust execution crates behind the native ABI: `0.1.0`
 
 Keep the Java artifact and native runtime on the same release version. If you
