@@ -16,6 +16,7 @@ PYPROJECT_PATH = ROOT / "bindings" / "python" / "pyproject.toml"
 JAVA_POM_PATH = ROOT / "bindings" / "java" / "pom.xml"
 CARGO_WORKSPACE_PATH = ROOT / "Cargo.toml"
 CRATES_DIR = ROOT / "crates"
+EXAMPLES_DIR = ROOT / "examples"
 
 
 def read_versions() -> dict[str, str]:
@@ -108,6 +109,7 @@ def rust_crate_versions(workspace_version: str) -> dict[str, str]:
 
 def sync_rust_internal_dependency_versions(version: str, check: bool) -> int:
     crate_files = sorted(CRATES_DIR.glob("*/Cargo.toml"))
+    crate_files.extend(sorted(EXAMPLES_DIR.glob("*/Cargo.toml")))
     crate_versions = rust_crate_versions(version)
     dep_pattern = re.compile(
         r'(?m)^(\s*(of_[a-z_]+)\s*=\s*\{[^\n]*\bpath\s*=\s*"\.\./(of_[^"/\n]+)"[^\n]*\bversion\s*=\s*")([^"\n]+)(")'

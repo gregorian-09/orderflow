@@ -606,7 +606,7 @@ dependencies = [
 
 [[package]]
 name = "of_adapters"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "of_core",
 ]
@@ -620,7 +620,7 @@ dependencies = [
 
 [[package]]
 name = "of_core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "tickbar",
 ]
@@ -657,7 +657,7 @@ version = "0.1.0"
 
 [[package]]
 name = "of_ffi_c"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "of_adapters",
  "of_core",
@@ -675,7 +675,7 @@ version = "0.1.0"
 
 [[package]]
 name = "of_persist"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "of_core",
  "serde",
@@ -696,7 +696,7 @@ dependencies = [
 
 [[package]]
 name = "of_runtime"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "of_adapters",
  "of_core",
@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "of_signals"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "of_core",
 ]
@@ -749,7 +749,7 @@ dependencies = [
 
 [[package]]
 name = "perf_harness"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "of_adapters",
  "of_core",
@@ -885,7 +885,7 @@ dependencies = [
 
 [[package]]
 name = "replay_cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "of_persist",
 ]
