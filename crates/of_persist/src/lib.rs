@@ -2,10 +2,12 @@
 
 mod market_data_segmented;
 mod market_data_writer;
+mod normalized_codec;
 mod raw_capture;
 
 pub use market_data_segmented::*;
 pub use market_data_writer::*;
+pub use normalized_codec::*;
 pub use raw_capture::*;
 
 use std::collections::BTreeSet;

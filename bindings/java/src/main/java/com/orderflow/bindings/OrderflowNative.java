@@ -152,6 +152,15 @@ public interface OrderflowNative extends Library {
     /** Configures external-feed supervision policy. */
     int of_configure_external_feed(Pointer engine, OfExternalFeedPolicy policy);
 
+    /** Configures an engine-owned bounded segmented market-data WAL. */
+    int of_configure_market_data_wal(Pointer engine, OfMarketDataWalConfig cfg);
+
+    /** Flushes an engine-owned market-data WAL through a durability barrier. */
+    int of_flush_market_data_wal(Pointer engine);
+
+    /** Drains, synchronizes, and shuts down engine-owned market-data persistence. */
+    int of_shutdown_market_data_wal(Pointer engine);
+
     /** Marks external feed reconnecting/degraded state. */
     int of_external_set_reconnecting(Pointer engine, byte reconnecting);
 
@@ -286,6 +295,9 @@ public interface OrderflowNative extends Library {
 
     /** Returns engine metrics JSON allocated by the library. */
     int of_get_metrics_json(Pointer engine, PointerByReference out_json, IntByReference out_len);
+
+    /** Returns market-data persistence health JSON allocated by the library. */
+    int of_get_market_data_persistence_health_json(Pointer engine, PointerByReference out_json, IntByReference out_len);
 
     /** Returns adapter inventory JSON allocated by the library. */
     int of_get_adapter_inventory_json(PointerByReference out_json, IntByReference out_len);

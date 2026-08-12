@@ -158,12 +158,19 @@ while adding:
 - `BoundedRawCaptureWriter` and cloneable `RawCaptureProducer` handles backed
   by the checksum-linked segmented WAL and the same bounded single-writer
   durability machinery as normalized capture
+- a versioned canonical `OFNE` envelope preserving normalized book/trade data
+  and effective quality flags, with worker-side encoding and fail-closed replay
+- runtime-owned or host-owned writer integration, explicit failure actions,
+  trading-readiness gating, quality-preserving live-to-WAL-to-replay parity,
+  and event-time backlog metrics
+- additive C, Python, and Java configure/flush/shutdown controls and allocated
+  persistence-health JSON without changing established engine config layouts
 
 No Tokio runtime or global executor is introduced. Existing single-file WAL,
 JSONL, checkpoint, cold-export, retention, and recovery-planning APIs retain
-their signatures and defaults. Runtime wiring remains an additive integration
-path; capture-policy selection, credential redaction, encryption, and provider
-transport ownership remain explicit host/adapter responsibilities.
+their signatures and defaults. Capture-policy selection, credential redaction,
+encryption, and provider transport ownership remain explicit host/adapter
+responsibilities.
 
 ### 2. Execution core
 

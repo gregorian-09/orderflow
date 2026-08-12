@@ -250,6 +250,7 @@ dependencies = [
  "of_execution",
  "of_execution_algos",
  "of_execution_core",
+ "of_persist",
  "of_runtime",
  "of_signals",
 ]

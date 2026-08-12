@@ -37,6 +37,8 @@ to any exchange or transport implementation.
 - [`RawCaptureTimestampSource`] / [`RawCaptureFlags`] - timestamp provenance and payload handling metadata.
 - [`MarketDataWalProducer`] - cloneable nonblocking producer handle.
 - [`MarketDataWalRecordInput`] - owned queue input with reusable payload storage.
+- [`NormalizedMarketDataRecordInput`] - owned canonical book/trade input with quality flags.
+- [`NormalizedMarketDataCodecError`] - fail-closed normalized payload codec error.
 - [`BoundedMarketDataWriterConfig`] - record and payload-byte queue limits.
 - [`BoundedMarketDataWriterMetrics`] - queue, write, sync, and failure counters.
 - [`MarketDataWriterTryError`] - ownership-preserving admission error.
@@ -99,6 +101,10 @@ What changes for persistence users:
 - a bounded background writer supports cloneable nonblocking producers,
   independently limits queued records and payload bytes, and returns ownership
   of rejected buffers instead of blocking or silently dropping them;
+- canonical book/trade inputs carry quality bits into a versioned fixed binary
+  envelope and are encoded with reusable scratch storage on the WAL worker;
+- writer metrics expose event-time backlog from the highest accepted and
+  written receive timestamps without reading a wall clock on admission;
 - provider-native raw capture adds a versioned fixed envelope, explicit receive-
   timestamp provenance, compression/encryption/redaction/truncation flags,
   zero-copy admission for pre-encoded pooled buffers, ownership-preserving
@@ -264,12 +270,14 @@ Public methods:
 - [`BoundedMarketDataWalWriter::producer`]
 - [`BoundedMarketDataWalWriter::try_append_owned`]
 - [`BoundedMarketDataWalWriter::try_append_copy`]
+- [`BoundedMarketDataWalWriter::try_append_normalized_owned`]
 - [`BoundedMarketDataWalWriter::flush`]
 - [`BoundedMarketDataWalWriter::metrics`]
 - [`BoundedMarketDataWalWriter::last_error`]
 - [`BoundedMarketDataWalWriter::shutdown`]
 - [`MarketDataWalProducer::try_append_owned`]
 - [`MarketDataWalProducer::try_append_copy`]
+- [`MarketDataWalProducer::try_append_normalized_owned`]
 - [`MarketDataWalProducer::metrics`]
 - [`MarketDataWalProducer::last_error`]
 - [`RawCaptureMetadata::new`]
@@ -555,6 +563,14 @@ silently discards an input.
 
 [`MarketDataWalProducer::try_append_copy`] is a convenience API and allocates a
 payload copy. Use owned, preallocated buffers on latency-sensitive paths.
+[`MarketDataWalProducer::try_append_normalized_owned`] transfers a canonical
+[`BookUpdate`](of_core::BookUpdate) or [`TradePrint`](of_core::TradePrint) to
+the worker. The producer computes only encoded length and queue accounting;
+the worker writes the versioned `OFNE` envelope into reusable scratch storage.
+[`decode_normalized_market_data_record`] restores the event and persisted
+quality bits for deterministic live-versus-replay behavior. Queue or codec
+failure returns the canonical event through
+[`NormalizedMarketDataWriterTryError::into_input`].
 [`BoundedMarketDataWalWriter::flush`] and
 [`BoundedMarketDataWalWriter::shutdown`] are intentionally blocking control-
 plane barriers. `shutdown` fences new submissions, waits for submissions
@@ -566,6 +582,7 @@ Metrics distinguish:
 - accepted records and payload bytes;
 - queued depth/bytes and high-water marks;
 - written records and last written sequence;
+- highest accepted/written receive timestamps and event-time backlog;
 - last sequence covered by a known sync barrier;
 - full, byte-full, oversized, reserved-kind, and stopped rejections;
 - write/sync failures, abandoned queued records, degraded state, and stop state.

@@ -50,6 +50,7 @@ from ._ffi import (
     OfExecutionTwapConfig,
     OfExecutionWalIntegrityReport,
     OfExternalFeedPolicy,
+    OfMarketDataWalConfig,
     OfSignalConfigParameter,
     OfSignalValidationConfig,
     OfSignalValidationEvent,
@@ -95,6 +96,25 @@ class DataQualityFlags:
     DEPTH_TRUNCATED = 1 << 3
     OUT_OF_ORDER = 1 << 4
     ADAPTER_DEGRADED = 1 << 5
+
+
+class MarketDataWalSyncPolicy:
+    """Native segmented market-data WAL synchronization policies."""
+
+    ON_SEGMENT_SEAL = 0
+    NEVER = 1
+    EVERY_RECORD = 2
+    EVERY_RECORDS = 3
+
+
+class MarketDataPersistenceFailureAction:
+    """Runtime behavior after bounded market-data persistence failure."""
+
+    MARK_DEGRADED = 0
+    STOP_MARKET_DATA = 1
+    STOP_TRADING = 2
+    FAIL_PROCESS = 3
+    MEMORY_ONLY = 4
 
 
 class ExecutionSide:
@@ -459,6 +479,22 @@ class ExternalFeedPolicy:
 
     stale_after_ms: int = 15_000
     enforce_sequence: bool = True
+
+
+@dataclass(frozen=True)
+class MarketDataWalConfig:
+    """Engine-owned bounded segmented market-data WAL configuration."""
+
+    root_path: str
+    max_segment_bytes: int = 0
+    max_payload_bytes: int = 0
+    sync_policy: int = MarketDataWalSyncPolicy.ON_SEGMENT_SEAL
+    sync_every_records: int = 0
+    sync_manifest: bool = True
+    queue_capacity: int = 0
+    max_queued_payload_bytes: int = 0
+    failure_action: int = MarketDataPersistenceFailureAction.STOP_TRADING
+    writer_thread_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -1557,6 +1593,49 @@ class Engine:
             self._check(rc, "of_engine_stop")
             self._alive = False
 
+    def configure_market_data_wal(self, config: MarketDataWalConfig) -> None:
+        """Starts an engine-owned bounded segmented market-data WAL.
+
+        This performs file opening on the calling thread. Event admission is
+        non-blocking after configuration; call :meth:`flush_market_data_wal`
+        or :meth:`shutdown_market_data_wal` from a control-plane thread.
+        """
+        self._require_handle()
+        root_path = config.root_path.encode("utf-8")
+        thread_name = config.writer_thread_name.encode("utf-8")
+        native = OfMarketDataWalConfig(
+            root_path=root_path,
+            max_segment_bytes=ctypes.c_uint64(config.max_segment_bytes),
+            max_payload_bytes=ctypes.c_uint64(config.max_payload_bytes),
+            sync_policy=ctypes.c_uint32(config.sync_policy),
+            sync_every_records=ctypes.c_uint64(config.sync_every_records),
+            sync_manifest=ctypes.c_uint8(1 if config.sync_manifest else 0),
+            queue_capacity=ctypes.c_uint32(config.queue_capacity),
+            max_queued_payload_bytes=ctypes.c_uint64(config.max_queued_payload_bytes),
+            failure_action=ctypes.c_uint32(config.failure_action),
+            writer_thread_name=thread_name,
+        )
+        rc = self._ffi.lib.of_configure_market_data_wal(
+            self._engine, ctypes.byref(native)
+        )
+        self._check(rc, "of_configure_market_data_wal")
+
+    def flush_market_data_wal(self) -> None:
+        """Blocks until prior WAL records are durably synchronized."""
+        self._require_handle()
+        self._check(
+            self._ffi.lib.of_flush_market_data_wal(self._engine),
+            "of_flush_market_data_wal",
+        )
+
+    def shutdown_market_data_wal(self) -> None:
+        """Drains, synchronizes, and disables engine-owned WAL persistence."""
+        self._require_handle()
+        self._check(
+            self._ffi.lib.of_shutdown_market_data_wal(self._engine),
+            "of_shutdown_market_data_wal",
+        )
+
     def close(self) -> None:
         """Unsubscribes callbacks and destroys native engine handle."""
         if self._engine:
@@ -1922,6 +2001,17 @@ class Engine:
             return self._decode_json(raw)
         finally:
             self._ffi.lib.of_string_free(out)
+
+    def market_data_persistence_health(self) -> Dict[str, Any]:
+        """Returns bounded market-data persistence health and backlog metrics."""
+        self._require_handle()
+        return _allocated_json_call(
+            self._ffi,
+            "of_get_market_data_persistence_health_json",
+            lambda out, out_len: self._ffi.lib.of_get_market_data_persistence_health_json(
+                self._engine, out, out_len
+            ),
+        )
 
     def adapter_inventory(self) -> Dict[str, Any]:
         """Returns adapter inventory with this engine's active provider marked."""

@@ -273,6 +273,43 @@ with Engine(EngineConfig(instance_id="py-client")) as eng:
     print("metrics", eng.metrics())
 ```
 
+### Production normalized market-data WAL
+
+```python
+from orderflow import (
+    Engine,
+    EngineConfig,
+    MarketDataPersistenceFailureAction,
+    MarketDataWalConfig,
+    MarketDataWalSyncPolicy,
+)
+
+eng = Engine(EngineConfig(instance_id="capture"))
+eng.configure_market_data_wal(MarketDataWalConfig(
+    root_path="data/normalized-wal",
+    queue_capacity=8192,
+    max_queued_payload_bytes=128 * 1024 * 1024,
+    sync_policy=MarketDataWalSyncPolicy.EVERY_RECORDS,
+    sync_every_records=1000,
+    failure_action=MarketDataPersistenceFailureAction.STOP_TRADING,
+))
+eng.start()
+try:
+    # subscribe/poll or configure external ingest here
+    print(eng.market_data_persistence_health())
+    eng.flush_market_data_wal()  # blocking control-plane barrier
+finally:
+    eng.stop()
+    eng.shutdown_market_data_wal()
+    eng.close()
+```
+
+Event admission is bounded and nonblocking; native worker-side encoding keeps
+filesystem work and JSON formatting off the calling thread. Flush and shutdown
+block and belong on a control-plane thread. The health payload exposes queue
+depth and high-water marks, event-time backlog, rejected/abandoned records,
+write/sync failures, and last written/durable sequence.
+
 ## Complete End-To-End Example
 
 This example uses deterministic external ingest and simulated execution. It is
@@ -505,6 +542,10 @@ additive keys and treat `null` as unavailable rather than zero.
 | `interval_candle_snapshot(symbol, window_ns)` | Current rolling interval candle snapshot | `dict[str, Any]` |
 | `signal_snapshot(symbol)` | Current signal snapshot | `dict[str, Any]` |
 | `metrics()` | Runtime metrics | `dict[str, Any]` |
+| `market_data_persistence_health()` | Production WAL health/backlog | `dict[str, Any]` |
+
+WAL lifecycle methods are `configure_market_data_wal(config)`,
+`flush_market_data_wal()`, and `shutdown_market_data_wal()`.
 
 `book_snapshot(symbol)` returns a dictionary with:
 

@@ -29,6 +29,7 @@ all-features = true
 [dependencies]
 of_core = { path = "../of_core", version = "0.4.0" }
 of_runtime = { path = "../of_runtime", version = "0.4.0" }
+of_persist = { path = "../of_persist", version = "0.4.0" }
 of_execution = { path = "../of_execution", version = "0.1.0" }
 of_execution_core = { path = "../of_execution_core", version = "0.1.0" }
 of_execution_algos = { path = "../of_execution_algos", version = "0.1.0" }

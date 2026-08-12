@@ -29,6 +29,10 @@ use of_execution_core::{
     FixedAscii, OrderPrice, OrderQty, OrderRequest, OrderSide, OrderState, OrderStatus, OrderType,
     RiskLimits, RiskRejectReason, StrategyId, TimeInForce, VenueOrderId, WalIntegrityReport,
 };
+use of_persist::{
+    BoundedMarketDataWriterConfig, MarketDataPersistenceFailureAction, MarketDataWalSyncPolicy,
+    SegmentedMarketDataWalConfig,
+};
 use of_runtime::{
     adapter_inventory_json as runtime_adapter_inventory_json, build_default_engine,
     load_engine_config_from_path, signal_descriptor_inventory_json, DefaultEngine, EngineConfig,
@@ -161,6 +165,31 @@ pub struct of_engine_config_t {
     pub data_retention_max_bytes: u64,
     /// Maximum retained persistence age seconds (0 disables).
     pub data_retention_max_age_secs: u64,
+}
+
+/// Engine-owned segmented market-data WAL configuration.
+#[repr(C)]
+pub struct of_market_data_wal_config_t {
+    /// Required WAL directory path.
+    pub root_path: *const c_char,
+    /// Soft segment size in bytes, or zero for the library default.
+    pub max_segment_bytes: u64,
+    /// Maximum encoded payload bytes, or zero for the library default.
+    pub max_payload_bytes: u64,
+    /// Sync policy (`0=segment seal`, `1=never`, `2=every record`, `3=every N`).
+    pub sync_policy: u32,
+    /// Record cadence used when `sync_policy` is `3`.
+    pub sync_every_records: u64,
+    /// Non-zero synchronizes manifest snapshots before atomic rename.
+    pub sync_manifest: u8,
+    /// Bounded queue record capacity, or zero for the library default.
+    pub queue_capacity: u32,
+    /// Bounded aggregate queued payload bytes, or zero for the library default.
+    pub max_queued_payload_bytes: u64,
+    /// Failure action (`0=degrade`, `1=stop data`, `2=stop trading`, `3=fail`, `4=memory`).
+    pub failure_action: u32,
+    /// Optional native writer thread name.
+    pub writer_thread_name: *const c_char,
 }
 
 /// Symbol descriptor used by subscription and snapshot functions.
@@ -1605,6 +1634,105 @@ pub extern "C" fn of_engine_stop(engine: *mut of_engine) -> i32 {
     of_error_t::OF_OK as i32
 }
 
+/// Configures an engine-owned bounded segmented market-data WAL.
+///
+/// This is a blocking control-plane operation. Existing engine creation and
+/// JSONL persistence behavior remain unchanged until this function is called.
+#[no_mangle]
+pub extern "C" fn of_configure_market_data_wal(
+    engine: *mut of_engine,
+    cfg: *const of_market_data_wal_config_t,
+) -> i32 {
+    if engine.is_null() || cfg.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    let cfg = unsafe { &*cfg };
+    let Some(root_path) = non_empty_string(cfg.root_path) else {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    };
+    let mut wal_config = SegmentedMarketDataWalConfig::new(root_path);
+    if cfg.max_segment_bytes > 0 {
+        wal_config = wal_config.with_max_segment_bytes(cfg.max_segment_bytes);
+    }
+    if cfg.max_payload_bytes > 0 {
+        let Ok(max_payload_bytes) = usize::try_from(cfg.max_payload_bytes) else {
+            return of_error_t::OF_ERR_INVALID_ARG as i32;
+        };
+        wal_config = wal_config.with_max_payload_bytes(max_payload_bytes);
+    }
+    let sync_policy = match cfg.sync_policy {
+        0 => MarketDataWalSyncPolicy::OnSegmentSeal,
+        1 => MarketDataWalSyncPolicy::Never,
+        2 => MarketDataWalSyncPolicy::EveryRecord,
+        3 if cfg.sync_every_records > 0 => {
+            MarketDataWalSyncPolicy::EveryRecords(cfg.sync_every_records)
+        }
+        _ => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+    wal_config = wal_config
+        .with_sync_policy(sync_policy)
+        .with_sync_manifest(cfg.sync_manifest != 0);
+
+    let mut writer_config = BoundedMarketDataWriterConfig::new();
+    if cfg.queue_capacity > 0 {
+        writer_config = writer_config.with_queue_capacity(cfg.queue_capacity as usize);
+    }
+    if cfg.max_queued_payload_bytes > 0 {
+        let Ok(max_queued_payload_bytes) = usize::try_from(cfg.max_queued_payload_bytes) else {
+            return of_error_t::OF_ERR_INVALID_ARG as i32;
+        };
+        writer_config = writer_config.with_max_queued_payload_bytes(max_queued_payload_bytes);
+    }
+    if let Some(thread_name) = non_empty_string(cfg.writer_thread_name) {
+        writer_config = writer_config.with_thread_name(thread_name);
+    }
+    let failure_action = match cfg.failure_action {
+        0 => MarketDataPersistenceFailureAction::MarkDegraded,
+        1 => MarketDataPersistenceFailureAction::StopMarketData,
+        2 => MarketDataPersistenceFailureAction::StopTrading,
+        3 => MarketDataPersistenceFailureAction::FailProcess,
+        4 => MarketDataPersistenceFailureAction::MemoryOnly,
+        _ => return of_error_t::OF_ERR_INVALID_ARG as i32,
+    };
+
+    match engine
+        .inner
+        .configure_market_data_wal(wal_config, writer_config, failure_action)
+    {
+        Ok(()) => of_error_t::OF_OK as i32,
+        Err(RuntimeError::Config(_)) => of_error_t::OF_ERR_STATE as i32,
+        Err(_) => of_error_t::OF_ERR_IO as i32,
+    }
+}
+
+/// Flushes an engine-owned market-data WAL through a durability barrier.
+#[no_mangle]
+pub extern "C" fn of_flush_market_data_wal(engine: *mut of_engine) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    match engine.inner.flush_market_data_persistence() {
+        Ok(()) => of_error_t::OF_OK as i32,
+        Err(RuntimeError::Config(_)) => of_error_t::OF_ERR_STATE as i32,
+        Err(_) => of_error_t::OF_ERR_IO as i32,
+    }
+}
+
+/// Drains, synchronizes, and shuts down engine-owned market-data persistence.
+#[no_mangle]
+pub extern "C" fn of_shutdown_market_data_wal(engine: *mut of_engine) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    match engine.inner.shutdown_market_data_persistence() {
+        Ok(_) => of_error_t::OF_OK as i32,
+        Err(_) => of_error_t::OF_ERR_IO as i32,
+    }
+}
+
 /// Destroys an engine created by [`of_engine_create`].
 #[no_mangle]
 pub extern "C" fn of_engine_destroy(engine: *mut of_engine) {
@@ -2653,6 +2781,26 @@ pub extern "C" fn of_get_metrics_json(
     let engine = unsafe { &mut *engine };
     let metrics = engine.inner.metrics_json();
     allocate_json_string(metrics, out_json, out_len)
+}
+
+/// Allocates production market-data persistence health JSON.
+///
+/// Release the returned pointer with [`of_string_free`].
+#[no_mangle]
+pub extern "C" fn of_get_market_data_persistence_health_json(
+    engine: *mut of_engine,
+    out_json: *mut *const c_char,
+    out_len: *mut u32,
+) -> i32 {
+    if engine.is_null() {
+        return of_error_t::OF_ERR_INVALID_ARG as i32;
+    }
+    let engine = unsafe { &mut *engine };
+    allocate_json_string(
+        engine.inner.market_data_persistence_health_json(),
+        out_json,
+        out_len,
+    )
 }
 
 /// Allocates and returns adapter inventory JSON.

@@ -91,6 +91,17 @@ Public `Engine<A, S>` methods:
 
 - [`Engine::new`]
 - [`Engine::with_persistence`]
+- [`Engine::with_market_data_wal_producer`]
+- [`Engine::set_market_data_wal_producer`]
+- [`Engine::configure_market_data_wal`]
+- [`Engine::flush_market_data_persistence`]
+- [`Engine::shutdown_market_data_persistence`]
+- [`Engine::market_data_writer_metrics`]
+- [`Engine::market_data_persistence_health`]
+- [`Engine::market_data_persistence_policy`]
+- [`Engine::market_data_persistence_blocks_trading`]
+- [`Engine::market_data_persistence_health_json`]
+- [`Engine::replay_normalized_wal_record`]
 - [`Engine::start`]
 - [`Engine::stop`]
 - [`Engine::subscribe`]
@@ -249,6 +260,62 @@ When persistence is enabled, the runtime writes normalized `book` and `trade` st
 - Retention limits are enforced through [`RetentionPolicy`](of_persist::RetentionPolicy).
 - The runtime persists normalized events, not provider-native wire payloads.
 - Readback and replay are handled by `of_persist` and `examples/replay_cli`.
+
+### Production normalized WAL
+
+[`Engine::configure_market_data_wal`] is the additive production path. It opens
+and owns a [`SegmentedMarketDataWalConfig`](of_persist::SegmentedMarketDataWalConfig)
+and [`BoundedMarketDataWriterConfig`](of_persist::BoundedMarketDataWriterConfig).
+The runtime moves each canonical event and its effective quality bits into a
+bounded queue; the worker performs binary encoding and filesystem writes.
+Existing `with_persistence` JSONL behavior is unchanged.
+
+```rust,no_run
+use of_adapters::MockAdapter;
+use of_persist::{
+    BoundedMarketDataWriterConfig, MarketDataPersistenceFailureAction,
+    MarketDataWalSyncPolicy, SegmentedMarketDataWalConfig,
+};
+use of_runtime::{Engine, EngineConfig};
+use of_signals::DeltaMomentumSignal;
+
+let mut engine = Engine::new(
+    EngineConfig::default(),
+    MockAdapter::default(),
+    DeltaMomentumSignal::new(100),
+);
+engine.configure_market_data_wal(
+    SegmentedMarketDataWalConfig::new("data/normalized-wal")
+        .with_sync_policy(MarketDataWalSyncPolicy::EveryRecords(1_000)),
+    BoundedMarketDataWriterConfig::new()
+        .with_queue_capacity(8_192)
+        .with_max_queued_payload_bytes(128 * 1024 * 1024),
+    MarketDataPersistenceFailureAction::StopTrading,
+)?;
+engine.start()?;
+// subscribe/poll or configure external ingest here
+engine.flush_market_data_persistence()?; // blocking control-plane barrier
+let final_metrics = engine.shutdown_market_data_persistence()?;
+assert!(final_metrics.is_some());
+# Ok::<(), of_runtime::RuntimeError>(())
+```
+
+`with_market_data_wal_producer` supports host-owned writer lifecycle. An
+engine-owned writer is automatically shut down during drop, but production
+hosts should call `shutdown_market_data_persistence` and handle its result.
+`flush` and `shutdown` block and must not run on a feed hot thread.
+
+Failure behavior is explicit: mark degraded, stop market data, stop trading,
+fail processing, or switch to memory-only. The event whose admission first
+fails has already been applied consistently to analytics; stop policies block
+subsequent processing. `market_data_persistence_blocks_trading` exposes the OMS
+gate. Health and metrics JSON include queue depth, record/byte high-water marks,
+event-time lag, rejected/abandoned records, write/sync failures, and last
+written/durable WAL sequence.
+
+[`Engine::replay_normalized_wal_record`] validates and applies one normalized
+WAL record without writing it back into the WAL. Persisted quality flags are
+restored, so signal gates match the original live path.
 
 ## End-to-End Example (Adapter Polling)
 

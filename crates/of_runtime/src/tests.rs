@@ -9,7 +9,11 @@ mod tests {
         SubscribeReq,
     };
     use of_core::{BookAction, BookUpdate, DataQualityFlags, Side, SignalState, SymbolId, TradePrint};
-    use of_persist::{RollingStore, StoredEvent};
+    use of_persist::{
+        BoundedMarketDataWalWriter, BoundedMarketDataWriterConfig,
+        MarketDataPersistenceFailureAction, MarketDataWalRecordKind, MarketDataWalSyncPolicy,
+        RollingStore, SegmentedMarketDataWal, SegmentedMarketDataWalConfig, StoredEvent,
+    };
     use of_signals::DeltaMomentumSignal;
 
     use super::*;
@@ -1085,6 +1089,265 @@ secret_env = "OF_STRICT_SECRET"
         let replay_book = replay.book_snapshot(&symbol).expect("replay book snapshot");
         assert_eq!(replay_book.bids, live_book.bids);
         assert_eq!(replay_book.asks, live_book.asks);
+    }
+
+    #[test]
+    fn bounded_wal_live_replay_preserves_state_and_quality() {
+        let root = temp_dir("bounded_wal_e2e");
+        let wal_config = SegmentedMarketDataWalConfig::new(&root)
+            .with_sync_policy(MarketDataWalSyncPolicy::Never)
+            .with_sync_manifest(false);
+        let writer = BoundedMarketDataWalWriter::start(
+            wal_config.clone(),
+            BoundedMarketDataWriterConfig::new()
+                .with_queue_capacity(16)
+                .with_max_queued_payload_bytes(16 * 1024),
+        )
+        .expect("start WAL writer");
+        let symbol = SymbolId {
+            venue: "CME".to_owned(),
+            symbol: "ESM6".to_owned(),
+        };
+        let mut live = Engine::new(
+            EngineConfig::default(),
+            MockAdapter::default(),
+            DeltaMomentumSignal::new(5),
+        )
+        .with_market_data_wal_producer(
+            writer.producer(),
+            MarketDataPersistenceFailureAction::StopTrading,
+        );
+        live.start().expect("live start");
+        live.ingest_book(
+            BookUpdate {
+                symbol: symbol.clone(),
+                side: Side::Bid,
+                level: 0,
+                price: 504_900,
+                size: 20,
+                action: BookAction::Upsert,
+                sequence: 1,
+                ts_exchange_ns: 10,
+                ts_recv_ns: 11,
+            },
+            DataQualityFlags::NONE,
+        )
+        .expect("live book");
+        live.ingest_trade(
+            TradePrint {
+                symbol: symbol.clone(),
+                price: 505_000,
+                size: 7,
+                aggressor_side: Side::Ask,
+                sequence: 2,
+                ts_exchange_ns: 20,
+                ts_recv_ns: 21,
+            },
+            DataQualityFlags::ADAPTER_DEGRADED,
+        )
+        .expect("live trade");
+        let live_analytics = live.analytics_snapshot(&symbol).expect("live analytics");
+        let live_signal = live.signal_snapshot(&symbol).expect("live signal");
+        assert_eq!(live_signal.state, SignalState::Blocked);
+
+        let final_metrics = writer.shutdown().expect("writer shutdown");
+        assert_eq!(final_metrics.accepted_records, 2);
+        assert_eq!(final_metrics.written_records, 2);
+        assert_eq!(final_metrics.latest_accepted_ts_recv_ns, 21);
+        assert_eq!(final_metrics.latest_written_ts_recv_ns, 21);
+        assert_eq!(final_metrics.event_time_lag_ns, 0);
+        assert_eq!(final_metrics.last_synced_sequence.map(|value| value.0), Some(2));
+
+        let wal = SegmentedMarketDataWal::open(wal_config).expect("reopen WAL");
+        let mut records = Vec::new();
+        wal.replay(&mut records).expect("replay records");
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].kind, MarketDataWalRecordKind::BookUpdate);
+        assert_eq!(records[1].kind, MarketDataWalRecordKind::TradePrint);
+
+        let mut replay = Engine::new(
+            EngineConfig::default(),
+            MockAdapter::default(),
+            DeltaMomentumSignal::new(5),
+        );
+        replay.start().expect("replay start");
+        for record in &records {
+            replay
+                .replay_normalized_wal_record(record)
+                .expect("replay normalized record");
+        }
+        let replay_analytics = replay
+            .analytics_snapshot(&symbol)
+            .expect("replay analytics");
+        let replay_signal = replay.signal_snapshot(&symbol).expect("replay signal");
+        assert_eq!(replay_analytics.delta, live_analytics.delta);
+        assert_eq!(replay_analytics.cumulative_delta, live_analytics.cumulative_delta);
+        assert_eq!(replay_signal.state, live_signal.state);
+        assert_eq!(replay_signal.quality_flags, live_signal.quality_flags);
+        assert_eq!(replay_signal.reason, live_signal.reason);
+        fs::remove_dir_all(root).expect("remove temp WAL root");
+    }
+
+    #[test]
+    fn engine_owned_wal_flushes_and_shuts_down_explicitly() {
+        let root = temp_dir("engine_owned_wal");
+        let mut engine = Engine::new(
+            EngineConfig::default(),
+            MockAdapter::default(),
+            DeltaMomentumSignal::new(5),
+        );
+        engine
+            .configure_market_data_wal(
+                SegmentedMarketDataWalConfig::new(&root)
+                    .with_sync_policy(MarketDataWalSyncPolicy::Never),
+                BoundedMarketDataWriterConfig::new()
+                    .with_queue_capacity(4)
+                    .with_max_queued_payload_bytes(4096),
+                MarketDataPersistenceFailureAction::StopTrading,
+            )
+            .expect("configure owned WAL");
+        assert!(engine
+            .configure_market_data_wal(
+                SegmentedMarketDataWalConfig::new(&root),
+                BoundedMarketDataWriterConfig::new(),
+                MarketDataPersistenceFailureAction::StopTrading,
+            )
+            .is_err());
+        engine.start().expect("start");
+        engine
+            .ingest_trade(
+                TradePrint {
+                    symbol: SymbolId {
+                        venue: "CME".to_owned(),
+                        symbol: "RTYM6".to_owned(),
+                    },
+                    price: 2_145_000,
+                    size: 3,
+                    aggressor_side: Side::Bid,
+                    sequence: 9,
+                    ts_exchange_ns: 90,
+                    ts_recv_ns: 91,
+                },
+                DataQualityFlags::NONE,
+            )
+            .expect("ingest");
+        engine
+            .flush_market_data_persistence()
+            .expect("flush owned WAL");
+        let metrics = engine
+            .shutdown_market_data_persistence()
+            .expect("shutdown owned WAL")
+            .expect("configured metrics");
+        assert_eq!(metrics.accepted_records, 1);
+        assert_eq!(metrics.written_records, 1);
+        assert_eq!(metrics.last_synced_sequence.map(|value| value.0), Some(1));
+        assert!(!engine.market_data_persistence_health().enabled);
+        assert!(engine
+            .shutdown_market_data_persistence()
+            .expect("idempotent shutdown")
+            .is_none());
+
+        let wal = SegmentedMarketDataWal::open(SegmentedMarketDataWalConfig::new(&root))
+            .expect("reopen WAL");
+        let mut records = Vec::new();
+        wal.replay(&mut records).expect("replay");
+        assert_eq!(records.len(), 1);
+        fs::remove_dir_all(root).expect("remove WAL root");
+    }
+
+    #[test]
+    fn runtime_persistence_failure_policies_are_deterministic() {
+        let symbol = SymbolId {
+            venue: "CME".to_owned(),
+            symbol: "NQM6".to_owned(),
+        };
+        for (index, action, returns_error, blocks_trading, memory_only, rejected) in [
+            (
+                0,
+                MarketDataPersistenceFailureAction::MarkDegraded,
+                false,
+                false,
+                false,
+                1,
+            ),
+            (
+                1,
+                MarketDataPersistenceFailureAction::StopTrading,
+                false,
+                true,
+                false,
+                1,
+            ),
+            (
+                2,
+                MarketDataPersistenceFailureAction::StopMarketData,
+                true,
+                true,
+                false,
+                0,
+            ),
+            (
+                3,
+                MarketDataPersistenceFailureAction::FailProcess,
+                true,
+                true,
+                false,
+                0,
+            ),
+            (
+                4,
+                MarketDataPersistenceFailureAction::MemoryOnly,
+                false,
+                false,
+                true,
+                1,
+            ),
+        ] {
+            let root = temp_dir(&format!("runtime_wal_policy_{index}"));
+            let writer = BoundedMarketDataWalWriter::start(
+                SegmentedMarketDataWalConfig::new(&root),
+                BoundedMarketDataWriterConfig::new(),
+            )
+            .expect("start writer");
+            let producer = writer.producer();
+            writer.shutdown().expect("stop writer before attach");
+
+            let mut engine = Engine::new(
+                EngineConfig::default(),
+                MockAdapter::default(),
+                DeltaMomentumSignal::new(5),
+            )
+            .with_market_data_wal_producer(producer, action);
+            engine.start().expect("engine start");
+            let result = engine.ingest_trade(
+                TradePrint {
+                    symbol: symbol.clone(),
+                    price: 100,
+                    size: 7,
+                    aggressor_side: Side::Ask,
+                    sequence: 1,
+                    ts_exchange_ns: 10,
+                    ts_recv_ns: 11,
+                },
+                DataQualityFlags::NONE,
+            );
+            assert_eq!(result.is_err(), returns_error, "action={action:?}");
+            assert_eq!(
+                engine.market_data_persistence_blocks_trading(),
+                blocks_trading,
+                "action={action:?}"
+            );
+            let health = engine.market_data_persistence_health();
+            assert!(health.degraded);
+            assert_eq!(health.dropped_records, rejected);
+            let json = engine.market_data_persistence_health_json();
+            assert!(json.contains("\"schema_version\":1"));
+            assert!(json.contains(&format!("\"rejected_records\":{rejected}")));
+            assert_eq!(json.contains("\"memory_only\":true"), memory_only);
+            assert!(engine.metrics_json().contains("\"market_data_persistence\":"));
+            assert!(engine.health_json().contains("\"market_data_persistence\":"));
+            fs::remove_dir_all(root).expect("remove policy WAL root");
+        }
     }
 
     fn write_temp_file(name: &str, content: &str) -> PathBuf {

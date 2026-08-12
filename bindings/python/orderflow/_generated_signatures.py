@@ -286,6 +286,22 @@ def _bind_symbols(lib: Any, namespace: dict[str, Any]) -> None:
     ]
     lib.of_configure_external_feed.restype = ctypes.c_int32
 
+    lib.of_configure_market_data_wal.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(namespace["OfMarketDataWalConfig"]),
+    ]
+    lib.of_configure_market_data_wal.restype = ctypes.c_int32
+
+    lib.of_flush_market_data_wal.argtypes = [
+        ctypes.c_void_p,
+    ]
+    lib.of_flush_market_data_wal.restype = ctypes.c_int32
+
+    lib.of_shutdown_market_data_wal.argtypes = [
+        ctypes.c_void_p,
+    ]
+    lib.of_shutdown_market_data_wal.restype = ctypes.c_int32
+
     lib.of_external_set_reconnecting.argtypes = [
         ctypes.c_void_p,
         ctypes.c_uint8,
@@ -639,6 +655,13 @@ def _bind_symbols(lib: Any, namespace: dict[str, Any]) -> None:
         ctypes.POINTER(ctypes.c_uint32),
     ]
     lib.of_get_metrics_json.restype = ctypes.c_int32
+
+    lib.of_get_market_data_persistence_health_json.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_char_p),
+        ctypes.POINTER(ctypes.c_uint32),
+    ]
+    lib.of_get_market_data_persistence_health_json.restype = ctypes.c_int32
 
     lib.of_get_adapter_inventory_json.argtypes = [
         ctypes.POINTER(ctypes.c_char_p),

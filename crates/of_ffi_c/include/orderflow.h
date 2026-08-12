@@ -65,6 +65,30 @@ typedef struct {
   uint64_t data_retention_max_age_secs;
 } of_engine_config_t;
 
+/** Engine-owned bounded segmented market-data WAL configuration. */
+typedef struct {
+  /** Required WAL directory path. */
+  const char* root_path;
+  /** Soft segment size in bytes, or zero for the library default. */
+  uint64_t max_segment_bytes;
+  /** Maximum encoded payload bytes, or zero for the library default. */
+  uint64_t max_payload_bytes;
+  /** Sync policy: 0=segment seal, 1=never, 2=every record, 3=every N. */
+  uint32_t sync_policy;
+  /** Record cadence used when sync_policy is 3. */
+  uint64_t sync_every_records;
+  /** Non-zero synchronizes manifest snapshots before atomic rename. */
+  uint8_t sync_manifest;
+  /** Bounded queue record capacity, or zero for the library default. */
+  uint32_t queue_capacity;
+  /** Bounded aggregate queued payload bytes, or zero for the library default. */
+  uint64_t max_queued_payload_bytes;
+  /** Failure action: 0=degrade, 1=stop data, 2=stop trading, 3=fail, 4=memory. */
+  uint32_t failure_action;
+  /** Optional native writer thread name. */
+  const char* writer_thread_name;
+} of_market_data_wal_config_t;
+
 /** Symbol descriptor used for subscriptions and snapshots. */
 typedef struct {
   /** Venue/exchange identifier (e.g. CME, BINANCE). */
@@ -644,6 +668,12 @@ int32_t of_engine_create(const of_engine_config_t* cfg, of_engine_t** out_engine
 int32_t of_engine_start(of_engine_t* engine);
 /** Stops engine adapter/session. */
 int32_t of_engine_stop(of_engine_t* engine);
+/** Configures an engine-owned bounded segmented market-data WAL. */
+int32_t of_configure_market_data_wal(of_engine_t* engine, const of_market_data_wal_config_t* cfg);
+/** Flushes an engine-owned market-data WAL through a durability barrier. */
+int32_t of_flush_market_data_wal(of_engine_t* engine);
+/** Drains, synchronizes, and shuts down engine-owned market-data persistence. */
+int32_t of_shutdown_market_data_wal(of_engine_t* engine);
 /** Destroys engine and releases owned resources. */
 void of_engine_destroy(of_engine_t* engine);
 
@@ -850,6 +880,8 @@ int32_t of_get_signal_snapshot(of_engine_t* engine, const of_symbol_t* symbol, v
 
 /** Returns engine metrics JSON allocated by the library. */
 int32_t of_get_metrics_json(of_engine_t* engine, const char** out_json, uint32_t* out_len);
+/** Returns market-data persistence health JSON allocated by the library. */
+int32_t of_get_market_data_persistence_health_json(of_engine_t* engine, const char** out_json, uint32_t* out_len);
 /** Returns adapter inventory JSON allocated by the library. */
 int32_t of_get_adapter_inventory_json(const char** out_json, uint32_t* out_len);
 /** Returns active adapter status JSON allocated by the library. */

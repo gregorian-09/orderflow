@@ -15,6 +15,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
   queues, nonblocking ownership-transfer admission, ownership-preserving
   pressure errors, one FIFO WAL owner, explicit flush/shutdown barriers, and
   lock-free queue/write/durability/failure metrics without requiring Tokio.
+- Added worker-side versioned normalized book/trade encoding with persisted
+  quality flags, ownership-preserving typed admission, receive-event-time
+  backlog metrics, runtime failure-policy gating, and deterministic
+  live-to-WAL-to-replay parity.
+- Added engine-owned bounded market-data WAL configuration, explicit
+  flush/shutdown lifecycle, health JSON, and additive C/Python/Java controls
+  without changing existing engine configuration layouts or signatures.
 - Added a bounded deterministic FIX certification harness with a scripted
   counterparty `FixFrameTransport`, coherent test clock, exact ordered raw
   transcript assertions, 13 session/application/failure scenarios, explicit

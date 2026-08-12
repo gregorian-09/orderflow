@@ -37,6 +37,23 @@ class OfEngineConfig(ctypes.Structure):
     ]
 
 
+class OfMarketDataWalConfig(ctypes.Structure):
+    """ctypes mirror of `of_market_data_wal_config_t`."""
+
+    _fields_ = [
+        ("root_path", c_char_p),
+        ("max_segment_bytes", c_uint64),
+        ("max_payload_bytes", c_uint64),
+        ("sync_policy", c_uint32),
+        ("sync_every_records", c_uint64),
+        ("sync_manifest", c_uint8),
+        ("queue_capacity", c_uint32),
+        ("max_queued_payload_bytes", c_uint64),
+        ("failure_action", c_uint32),
+        ("writer_thread_name", c_char_p),
+    ]
+
+
 class OfAnalyticsConfig(ctypes.Structure):
     """ctypes mirror of `of_analytics_config_t`."""
 

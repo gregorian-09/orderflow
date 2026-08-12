@@ -30,7 +30,13 @@ use of_core::{
     TradeClassifier, TradePrint, VolatilityEstimator, VolatilitySignature,
     VolatilitySignatureSnapshot, VolatilitySnapshot, VpinSnapshot, VpinTracker,
 };
-use of_persist::{RetentionPolicy, RollingStore};
+use of_persist::{
+    decode_normalized_market_data_record, BoundedMarketDataWalWriter,
+    BoundedMarketDataWriterConfig, BoundedMarketDataWriterMetrics,
+    MarketDataPersistenceFailureAction, MarketDataPersistenceHealth, MarketDataPersistenceMode,
+    MarketDataPersistencePolicy, MarketDataWalProducer, MarketDataWalRecord,
+    NormalizedMarketDataRecordInput, RetentionPolicy, RollingStore, SegmentedMarketDataWalConfig,
+};
 use of_signals::{SignalExplanation, SignalGateDecision, SignalModule, SignalReasonCode};
 
 use crate::config::config_hash;
@@ -184,6 +190,94 @@ struct CircuitBreakerState {
     consecutive_failures: u32,
     open_until_ns: Option<u64>,
     opened_count: u64,
+}
+
+#[derive(Debug)]
+struct RuntimeMarketDataPersistence {
+    producer: MarketDataWalProducer,
+    owned_writer: Option<BoundedMarketDataWalWriter>,
+    failure_action: MarketDataPersistenceFailureAction,
+    rejected_records: u64,
+    last_error: Option<String>,
+    memory_only: bool,
+}
+
+impl Drop for RuntimeMarketDataPersistence {
+    fn drop(&mut self) {
+        if let Some(writer) = self.owned_writer.take() {
+            let _ = writer.shutdown();
+        }
+    }
+}
+
+impl RuntimeMarketDataPersistence {
+    fn policy(&self) -> MarketDataPersistencePolicy {
+        MarketDataPersistencePolicy::bounded_async(
+            self.producer.queue_capacity().min(u32::MAX as usize) as u32,
+        )
+        .with_failure_action(self.failure_action)
+    }
+
+    fn health(&self) -> MarketDataPersistenceHealth {
+        let metrics = self.producer.metrics();
+        let records_lag = metrics
+            .accepted_records
+            .saturating_sub(metrics.written_records)
+            .saturating_sub(metrics.abandoned_records);
+        let dropped_records = self
+            .rejected_records
+            .saturating_add(metrics.abandoned_records);
+        let mut health = MarketDataPersistenceHealth::default();
+        health.mode = MarketDataPersistenceMode::BoundedAsync;
+        health.enabled = !self.memory_only;
+        health.degraded =
+            self.memory_only || metrics.degraded || metrics.stopped || dropped_records > 0;
+        health.queue_depth = metrics.queue_depth.min(u32::MAX as usize) as u32;
+        health.records_lag = records_lag;
+        health.lag_ns = metrics.event_time_lag_ns;
+        health.bytes_pending = metrics.queued_payload_bytes as u64;
+        health.dropped_records = dropped_records;
+        health.write_failures = metrics.write_failures;
+        health.sync_failures = metrics.sync_failures;
+        health.last_error = self
+            .last_error
+            .clone()
+            .or_else(|| self.producer.last_error());
+        if self.memory_only {
+            health.last_error.get_or_insert_with(|| {
+                "market-data persistence switched to memory-only retention".to_owned()
+            });
+        }
+        health
+    }
+
+    fn has_failure(&self) -> bool {
+        let metrics = self.producer.metrics();
+        self.rejected_records > 0
+            || self.memory_only
+            || metrics.degraded
+            || metrics.stopped
+            || metrics.abandoned_records > 0
+    }
+
+    fn blocks_market_data(&self) -> bool {
+        self.has_failure()
+            && matches!(
+                self.failure_action,
+                MarketDataPersistenceFailureAction::StopMarketData
+                    | MarketDataPersistenceFailureAction::FailProcess
+            )
+    }
+
+    fn blocks_trading(&self) -> bool {
+        self.has_failure()
+            && matches!(
+                self.failure_action,
+                MarketDataPersistenceFailureAction::StopTrading
+                    | MarketDataPersistenceFailureAction::StopMarketData
+                    | MarketDataPersistenceFailureAction::FailProcess
+            )
+    }
 }
 
 impl CircuitBreakerState {
@@ -435,6 +529,7 @@ pub struct Engine<A: MarketDataAdapter, S: SignalModule> {
     latest_signal_explanations: HashMap<SymbolId, String>,
     processed_events: u64,
     persistence: Option<RollingStore>,
+    market_data_persistence: Option<RuntimeMarketDataPersistence>,
     audit: Option<AuditLog>,
     health_seq: u64,
     last_health_fingerprint: String,
@@ -530,6 +625,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             latest_signal_explanations: HashMap::new(),
             processed_events: 0,
             persistence: None,
+            market_data_persistence: None,
             audit: None,
             health_seq: 0,
             last_health_fingerprint: String::new(),
@@ -580,6 +676,157 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
     pub fn with_persistence(mut self, persistence: Option<RollingStore>) -> Self {
         self.persistence = persistence;
         self
+    }
+
+    /// Attaches an additive bounded normalized market-data WAL producer.
+    ///
+    /// The caller retains the writer handle and owns explicit flush/shutdown.
+    /// Existing JSONL persistence and engine defaults are unchanged. Accepted
+    /// canonical events are encoded on the writer thread rather than this
+    /// runtime thread.
+    pub fn with_market_data_wal_producer(
+        mut self,
+        producer: MarketDataWalProducer,
+        failure_action: MarketDataPersistenceFailureAction,
+    ) -> Self {
+        self.set_market_data_wal_producer(Some(producer), failure_action);
+        self
+    }
+
+    /// Replaces or clears the bounded normalized market-data WAL producer.
+    pub fn set_market_data_wal_producer(
+        &mut self,
+        producer: Option<MarketDataWalProducer>,
+        failure_action: MarketDataPersistenceFailureAction,
+    ) {
+        self.market_data_persistence = producer.map(|producer| RuntimeMarketDataPersistence {
+            producer,
+            owned_writer: None,
+            failure_action,
+            rejected_records: 0,
+            last_error: None,
+            memory_only: false,
+        });
+        self.update_health_state(DataQualityFlags::from_bits_truncate(
+            self.last_quality_flags_bits,
+        ));
+    }
+
+    /// Starts and owns a bounded normalized market-data WAL writer.
+    ///
+    /// This is a blocking control-plane operation because it validates and
+    /// opens the WAL before returning. The engine shuts the writer down during
+    /// drop, while [`Self::shutdown_market_data_persistence`] provides an
+    /// explicit durability barrier and final metrics.
+    ///
+    /// # Errors
+    /// Returns an error when persistence is already configured or the WAL
+    /// cannot be opened.
+    pub fn configure_market_data_wal(
+        &mut self,
+        wal_config: SegmentedMarketDataWalConfig,
+        writer_config: BoundedMarketDataWriterConfig,
+        failure_action: MarketDataPersistenceFailureAction,
+    ) -> Result<(), RuntimeError> {
+        if self.market_data_persistence.is_some() {
+            return Err(RuntimeError::Config(
+                "market-data persistence is already configured".to_owned(),
+            ));
+        }
+        let writer = BoundedMarketDataWalWriter::start(wal_config, writer_config)
+            .map_err(|error| RuntimeError::Io(error.to_string()))?;
+        self.market_data_persistence = Some(RuntimeMarketDataPersistence {
+            producer: writer.producer(),
+            owned_writer: Some(writer),
+            failure_action,
+            rejected_records: 0,
+            last_error: None,
+            memory_only: false,
+        });
+        self.update_health_state(DataQualityFlags::from_bits_truncate(
+            self.last_quality_flags_bits,
+        ));
+        Ok(())
+    }
+
+    /// Flushes an engine-owned market-data WAL through a durability barrier.
+    ///
+    /// # Errors
+    /// Returns an error when persistence is disabled, the producer is
+    /// externally owned, or the writer fails its barrier.
+    pub fn flush_market_data_persistence(&self) -> Result<(), RuntimeError> {
+        let persistence = self.market_data_persistence.as_ref().ok_or_else(|| {
+            RuntimeError::Config("market-data persistence is not configured".to_owned())
+        })?;
+        let writer = persistence.owned_writer.as_ref().ok_or_else(|| {
+            RuntimeError::Config(
+                "market-data WAL producer is externally owned; flush it through its writer"
+                    .to_owned(),
+            )
+        })?;
+        writer
+            .flush()
+            .map_err(|error| RuntimeError::Io(error.to_string()))
+    }
+
+    /// Stops an engine-owned writer and disables production persistence.
+    ///
+    /// For an externally owned producer this only detaches the producer; its
+    /// caller remains responsible for shutdown.
+    ///
+    /// # Errors
+    /// Returns an error when the owned writer cannot drain, sync, or join.
+    pub fn shutdown_market_data_persistence(
+        &mut self,
+    ) -> Result<Option<BoundedMarketDataWriterMetrics>, RuntimeError> {
+        let Some(mut persistence) = self.market_data_persistence.take() else {
+            return Ok(None);
+        };
+        let metrics = match persistence.owned_writer.take() {
+            Some(writer) => writer
+                .shutdown()
+                .map_err(|error| RuntimeError::Io(error.to_string()))?,
+            None => persistence.producer.metrics(),
+        };
+        self.update_health_state(DataQualityFlags::from_bits_truncate(
+            self.last_quality_flags_bits,
+        ));
+        Ok(Some(metrics))
+    }
+
+    /// Returns bounded normalized market-data writer metrics when configured.
+    pub fn market_data_writer_metrics(&self) -> Option<BoundedMarketDataWriterMetrics> {
+        self.market_data_persistence
+            .as_ref()
+            .map(|persistence| persistence.producer.metrics())
+    }
+
+    /// Returns production normalized market-data persistence health.
+    pub fn market_data_persistence_health(&self) -> MarketDataPersistenceHealth {
+        self.market_data_persistence
+            .as_ref()
+            .map(RuntimeMarketDataPersistence::health)
+            .unwrap_or_default()
+    }
+
+    /// Returns configured production persistence policy.
+    pub fn market_data_persistence_policy(&self) -> MarketDataPersistencePolicy {
+        self.market_data_persistence
+            .as_ref()
+            .map(RuntimeMarketDataPersistence::policy)
+            .unwrap_or_default()
+    }
+
+    /// Returns whether persistence safety policy currently blocks trading.
+    pub fn market_data_persistence_blocks_trading(&self) -> bool {
+        self.market_data_persistence
+            .as_ref()
+            .is_some_and(RuntimeMarketDataPersistence::blocks_trading)
+    }
+
+    /// Returns production persistence health as stable compact JSON.
+    pub fn market_data_persistence_health_json(&self) -> String {
+        format_runtime_market_data_persistence_json(self.market_data_persistence.as_ref())
     }
 
     fn with_audit(mut self, audit: Option<AuditLog>) -> Self {
@@ -774,7 +1021,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         self.external.last_ingest_ns = Some(unix_ts_nanos());
         let event = RawEvent::Trade(trade);
         self.last_events = vec![event.clone()];
-        self.process_event(event, effective_quality)?;
+        self.process_event(event, effective_quality, true)?;
         self.update_health_state(effective_quality);
         Ok(())
     }
@@ -796,7 +1043,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         self.external.last_ingest_ns = Some(unix_ts_nanos());
         let event = RawEvent::Book(book);
         self.last_events = vec![event.clone()];
-        self.process_event(event, effective_quality)?;
+        self.process_event(event, effective_quality, true)?;
         self.update_health_state(effective_quality);
         Ok(())
     }
@@ -850,7 +1097,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         self.last_events = events.clone();
 
         for event in events {
-            self.process_event(event, effective_quality)?;
+            self.process_event(event, effective_quality, true)?;
         }
         self.update_health_state(effective_quality);
 
@@ -1401,12 +1648,15 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             started: self.started,
             circuit_breaker_open: circuit_open,
         });
+        let market_data_persistence = self.market_data_persistence_health();
+        let market_data_persistence_json = self.market_data_persistence_health_json();
         let runtime_health_status = if !self.started || !adapter_health.connected {
             "disconnected"
         } else if adapter_health.degraded
             || circuit_open
             || self.external.reconnecting
             || self.last_quality_flags_bits != 0
+            || market_data_persistence.degraded
         {
             "degraded"
         } else {
@@ -1414,7 +1664,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         };
 
         format!(
-            "{{\"instance_id\":\"{}\",\"started\":{},\"processed_events\":{},\"symbols\":{},\"book_symbols\":{},\"analytics_symbols\":{},\"signal_symbols\":{},\"persistence\":{},\"health_seq\":{},\"quality_flags\":{},\"quality_flags_detail\":{},\"adapter_connected\":{},\"adapter_degraded\":{},\"adapter_last_error\":{},\"adapter_protocol_info\":{},\"adapter_total_count\":1,\"adapter_healthy_count\":{},\"runtime_health_status\":\"{}\",\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_sequence_enforced\":{},\"external_stale_after_ms\":{},\"external_last_ingest_ns\":{},\"external_trade_sequence_symbols\":{},\"external_book_sequence_symbols\":{},\"max_events_per_poll\":{},\"backpressure_dropped_events\":{},\"circuit_breaker_enabled\":{},\"circuit_breaker_open\":{},\"circuit_breaker_consecutive_failures\":{},\"circuit_breaker_opened_count\":{},\"circuit_breaker_cooldown_ms\":{},\"adapters\":[{}]}}",
+            "{{\"instance_id\":\"{}\",\"started\":{},\"processed_events\":{},\"symbols\":{},\"book_symbols\":{},\"analytics_symbols\":{},\"signal_symbols\":{},\"persistence\":{},\"market_data_persistence\":{},\"health_seq\":{},\"quality_flags\":{},\"quality_flags_detail\":{},\"adapter_connected\":{},\"adapter_degraded\":{},\"adapter_last_error\":{},\"adapter_protocol_info\":{},\"adapter_total_count\":1,\"adapter_healthy_count\":{},\"runtime_health_status\":\"{}\",\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_sequence_enforced\":{},\"external_stale_after_ms\":{},\"external_last_ingest_ns\":{},\"external_trade_sequence_symbols\":{},\"external_book_sequence_symbols\":{},\"max_events_per_poll\":{},\"backpressure_dropped_events\":{},\"circuit_breaker_enabled\":{},\"circuit_breaker_open\":{},\"circuit_breaker_consecutive_failures\":{},\"circuit_breaker_opened_count\":{},\"circuit_breaker_cooldown_ms\":{},\"adapters\":[{}]}}",
             escape_json(&self.cfg.instance_id),
             self.started,
             self.processed_events,
@@ -1423,6 +1673,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             self.analytics.len(),
             self.latest_signals.len(),
             self.persistence.is_some(),
+            market_data_persistence_json,
             self.health_seq,
             self.last_quality_flags_bits,
             quality_flags_detail,
@@ -1481,19 +1732,22 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         let max_events_per_poll = optional_usize_json(self.max_events_per_poll);
         let adapter_healthy =
             self.started && adapter_health.connected && !adapter_health.degraded && !circuit_open;
+        let market_data_persistence = self.market_data_persistence_health();
+        let market_data_persistence_json = self.market_data_persistence_health_json();
         let runtime_health_status = if !self.started || !adapter_health.connected {
             "disconnected"
         } else if adapter_health.degraded
             || circuit_open
             || self.external.reconnecting
             || self.last_quality_flags_bits != 0
+            || market_data_persistence.degraded
         {
             "degraded"
         } else {
             "healthy"
         };
         format!(
-            "{{\"health_seq\":{},\"started\":{},\"connected\":{},\"degraded\":{},\"reconnect_state\":\"{}\",\"quality_flags\":{},\"quality_flags_detail\":{},\"last_error\":{},\"protocol_info\":{},\"tracked_symbols\":{},\"processed_events\":{},\"adapter_total_count\":1,\"adapter_healthy_count\":{},\"runtime_health_status\":\"{}\",\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_sequence_enforced\":{},\"external_last_ingest_ns\":{},\"max_events_per_poll\":{},\"backpressure_dropped_events\":{},\"circuit_breaker_enabled\":{},\"circuit_breaker_open\":{},\"circuit_breaker_consecutive_failures\":{},\"circuit_breaker_opened_count\":{},\"circuit_breaker_cooldown_ms\":{}}}",
+            "{{\"health_seq\":{},\"started\":{},\"connected\":{},\"degraded\":{},\"reconnect_state\":\"{}\",\"quality_flags\":{},\"quality_flags_detail\":{},\"last_error\":{},\"protocol_info\":{},\"tracked_symbols\":{},\"processed_events\":{},\"adapter_total_count\":1,\"adapter_healthy_count\":{},\"runtime_health_status\":\"{}\",\"external_feed_enabled\":{},\"external_feed_reconnecting\":{},\"external_sequence_enforced\":{},\"external_last_ingest_ns\":{},\"max_events_per_poll\":{},\"backpressure_dropped_events\":{},\"circuit_breaker_enabled\":{},\"circuit_breaker_open\":{},\"circuit_breaker_consecutive_failures\":{},\"circuit_breaker_opened_count\":{},\"circuit_breaker_cooldown_ms\":{},\"market_data_persistence\":{}}}",
             self.health_seq,
             self.started,
             adapter_health.connected,
@@ -1517,13 +1771,56 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             circuit_open,
             self.circuit_breaker.consecutive_failures,
             self.circuit_breaker.opened_count,
-            self.circuit_breaker.cooldown_ms
+            self.circuit_breaker.cooldown_ms,
+            market_data_persistence_json
         )
     }
 
     /// Returns events processed in the last poll/ingest cycle.
     pub fn last_events(&self) -> &[RawEvent] {
         &self.last_events
+    }
+
+    /// Replays one versioned normalized WAL record without writing it again.
+    ///
+    /// The event's persisted quality flags are applied to signal gating. The
+    /// engine must be started. Non-book/trade records and malformed payloads
+    /// fail closed.
+    pub fn replay_normalized_wal_record(
+        &mut self,
+        record: &MarketDataWalRecord,
+    ) -> Result<(), RuntimeError> {
+        if !self.started {
+            return Err(RuntimeError::NotStarted);
+        }
+        let input = decode_normalized_market_data_record(record)
+            .map_err(|error| RuntimeError::Io(format!("normalized WAL decode failed: {error}")))?;
+        let (event, quality_flags) = match input {
+            NormalizedMarketDataRecordInput::Book {
+                event,
+                quality_flags_bits,
+            } => (
+                RawEvent::Book(event),
+                DataQualityFlags::from_bits_truncate(quality_flags_bits),
+            ),
+            NormalizedMarketDataRecordInput::Trade {
+                event,
+                quality_flags_bits,
+            } => (
+                RawEvent::Trade(event),
+                DataQualityFlags::from_bits_truncate(quality_flags_bits),
+            ),
+            _ => {
+                return Err(RuntimeError::Io(
+                    "normalized WAL record kind is unsupported by this runtime".to_owned(),
+                ));
+            }
+        };
+        self.last_events.clear();
+        self.last_events.push(event.clone());
+        self.process_event(event, quality_flags, false)?;
+        self.update_health_state(quality_flags);
+        Ok(())
     }
 
     /// Returns currently-active quality flags as raw bits.
@@ -1603,7 +1900,18 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         &mut self,
         event: RawEvent,
         quality_flags: DataQualityFlags,
+        persist_to_wal: bool,
     ) -> Result<(), RuntimeError> {
+        if persist_to_wal
+            && self
+                .market_data_persistence
+                .as_ref()
+                .is_some_and(RuntimeMarketDataPersistence::blocks_market_data)
+        {
+            return Err(RuntimeError::Io(
+                "market-data persistence safety policy blocks event processing".to_owned(),
+            ));
+        }
         match event {
             RawEvent::Book(book) => {
                 self.books
@@ -1634,6 +1942,14 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                     pd.on_book_update(book.side, book.price, book.size);
                 }
                 self.processed_events += 1;
+                if persist_to_wal {
+                    self.persist_normalized_event(
+                        NormalizedMarketDataRecordInput::book_with_quality(
+                            book,
+                            quality_flags.bits(),
+                        ),
+                    )?;
+                }
             }
             RawEvent::Trade(trade) => {
                 if let Some(store) = &self.persistence {
@@ -1937,9 +2253,57 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
                     .on_metrics(spread_val, vol_val, vpin_val);
 
                 self.processed_events += 1;
+                if persist_to_wal {
+                    self.persist_normalized_event(
+                        NormalizedMarketDataRecordInput::trade_with_quality(
+                            trade,
+                            quality_flags.bits(),
+                        ),
+                    )?;
+                }
             }
         }
 
+        Ok(())
+    }
+
+    fn persist_normalized_event(
+        &mut self,
+        input: NormalizedMarketDataRecordInput,
+    ) -> Result<(), RuntimeError> {
+        let Some(persistence) = self.market_data_persistence.as_mut() else {
+            return Ok(());
+        };
+        if persistence.memory_only {
+            return Ok(());
+        }
+        if let Err(error) = persistence.producer.try_append_normalized_owned(input) {
+            persistence.rejected_records = persistence.rejected_records.saturating_add(1);
+            persistence.last_error = Some(error.to_string());
+            match persistence.failure_action {
+                MarketDataPersistenceFailureAction::MarkDegraded
+                | MarketDataPersistenceFailureAction::StopTrading => return Ok(()),
+                MarketDataPersistenceFailureAction::MemoryOnly => {
+                    persistence.memory_only = true;
+                    return Ok(());
+                }
+                MarketDataPersistenceFailureAction::StopMarketData => {
+                    return Err(RuntimeError::Io(format!(
+                        "market-data persistence stopped event processing: {error}"
+                    )));
+                }
+                MarketDataPersistenceFailureAction::FailProcess => {
+                    return Err(RuntimeError::Io(format!(
+                        "market-data persistence fail-closed policy triggered: {error}"
+                    )));
+                }
+                _ => {
+                    return Err(RuntimeError::Io(format!(
+                        "unknown market-data persistence failure action triggered: {error}"
+                    )));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1972,8 +2336,9 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
     fn update_health_state(&mut self, quality_flags: DataQualityFlags) {
         self.last_quality_flags_bits = quality_flags.bits();
         let adapter_health = self.adapter.health();
+        let persistence_health = self.market_data_persistence_health();
         let fingerprint = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             self.started,
             adapter_health.connected,
             adapter_health.degraded,
@@ -1983,7 +2348,11 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
             self.backpressure_dropped_events,
             self.circuit_breaker.is_open_at(unix_ts_nanos()),
             self.circuit_breaker.consecutive_failures,
-            self.circuit_breaker.opened_count
+            self.circuit_breaker.opened_count,
+            persistence_health.enabled,
+            persistence_health.degraded,
+            persistence_health.dropped_records,
+            persistence_health.last_error.as_deref().unwrap_or("")
         );
         if fingerprint != self.last_health_fingerprint {
             self.health_seq = self.health_seq.saturating_add(1);
@@ -2017,6 +2386,60 @@ fn optional_str_json(value: Option<&str>) -> String {
     value
         .map(|v| format!("\"{}\"", escape_json(v)))
         .unwrap_or_else(|| "null".to_string())
+}
+
+fn format_runtime_market_data_persistence_json(
+    persistence: Option<&RuntimeMarketDataPersistence>,
+) -> String {
+    let Some(persistence) = persistence else {
+        return "{\"schema_version\":1,\"mode\":\"disabled\",\"enabled\":false,\"degraded\":false,\"memory_only\":false,\"failure_action\":\"mark_degraded\",\"blocks_trading\":false,\"accepted_records\":0,\"written_records\":0,\"abandoned_records\":0,\"records_lag\":0,\"event_time_lag_ns\":0,\"latest_accepted_ts_recv_ns\":0,\"latest_written_ts_recv_ns\":0,\"queue_depth\":0,\"queue_capacity\":0,\"queue_high_watermark\":0,\"queued_payload_bytes\":0,\"queued_payload_capacity\":0,\"queued_payload_high_watermark\":0,\"rejected_records\":0,\"write_failures\":0,\"sync_failures\":0,\"last_written_sequence\":null,\"last_durable_sequence\":null,\"last_error\":null}".to_owned();
+    };
+    let metrics = persistence.producer.metrics();
+    let health = persistence.health();
+    format!(
+        "{{\"schema_version\":1,\"mode\":\"bounded_async\",\"enabled\":{},\"degraded\":{},\"memory_only\":{},\"failure_action\":\"{}\",\"blocks_trading\":{},\"accepted_records\":{},\"written_records\":{},\"abandoned_records\":{},\"records_lag\":{},\"event_time_lag_ns\":{},\"latest_accepted_ts_recv_ns\":{},\"latest_written_ts_recv_ns\":{},\"queue_depth\":{},\"queue_capacity\":{},\"queue_high_watermark\":{},\"queued_payload_bytes\":{},\"queued_payload_capacity\":{},\"queued_payload_high_watermark\":{},\"rejected_records\":{},\"write_failures\":{},\"sync_failures\":{},\"last_written_sequence\":{},\"last_durable_sequence\":{},\"last_error\":{}}}",
+        health.enabled,
+        health.degraded,
+        persistence.memory_only,
+        persistence_failure_action_id(persistence.failure_action),
+        persistence.blocks_trading(),
+        metrics.accepted_records,
+        metrics.written_records,
+        metrics.abandoned_records,
+        health.records_lag,
+        metrics.event_time_lag_ns,
+        metrics.latest_accepted_ts_recv_ns,
+        metrics.latest_written_ts_recv_ns,
+        metrics.queue_depth,
+        persistence.producer.queue_capacity(),
+        metrics.queue_high_watermark,
+        metrics.queued_payload_bytes,
+        persistence.producer.max_queued_payload_bytes(),
+        metrics.queued_payload_high_watermark,
+        persistence.rejected_records,
+        metrics.write_failures,
+        metrics.sync_failures,
+        optional_wal_sequence_json(metrics.last_written_sequence),
+        optional_wal_sequence_json(metrics.last_synced_sequence),
+        optional_str_json(health.last_error.as_deref())
+    )
+}
+
+fn persistence_failure_action_id(action: MarketDataPersistenceFailureAction) -> &'static str {
+    match action {
+        MarketDataPersistenceFailureAction::MarkDegraded => "mark_degraded",
+        MarketDataPersistenceFailureAction::StopMarketData => "stop_market_data",
+        MarketDataPersistenceFailureAction::StopTrading => "stop_trading",
+        MarketDataPersistenceFailureAction::FailProcess => "fail_process",
+        MarketDataPersistenceFailureAction::MemoryOnly => "memory_only",
+        _ => "unknown",
+    }
+}
+
+fn optional_wal_sequence_json(sequence: Option<of_persist::MarketDataWalSequence>) -> String {
+    sequence
+        .map(|sequence| sequence.0.to_string())
+        .unwrap_or_else(|| "null".to_owned())
 }
 
 fn format_adapter_descriptor_json(
