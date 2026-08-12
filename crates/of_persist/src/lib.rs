@@ -2,9 +2,11 @@
 
 mod market_data_segmented;
 mod market_data_writer;
+mod raw_capture;
 
 pub use market_data_segmented::*;
 pub use market_data_writer::*;
+pub use raw_capture::*;
 
 use std::collections::BTreeSet;
 use std::fs::{self, create_dir_all, File, OpenOptions};
@@ -92,6 +94,8 @@ pub enum MarketDataWalRecordKind {
     OutOfOrderMarker = 10,
     /// Checkpoint boundary marker payload.
     CheckpointMarker = 11,
+    /// Provider-native message captured before normalization.
+    RawProviderMessage = 12,
 }
 
 /// Opaque market-data checkpoint payload category.
@@ -144,6 +148,7 @@ impl MarketDataWalRecordKind {
             9 => Some(Self::SubscriptionState),
             10 => Some(Self::OutOfOrderMarker),
             11 => Some(Self::CheckpointMarker),
+            12 => Some(Self::RawProviderMessage),
             _ => None,
         }
     }
@@ -1978,6 +1983,7 @@ fn market_data_wal_record_kind_name(kind: MarketDataWalRecordKind) -> &'static s
         MarketDataWalRecordKind::SubscriptionState => "SubscriptionState",
         MarketDataWalRecordKind::OutOfOrderMarker => "OutOfOrderMarker",
         MarketDataWalRecordKind::CheckpointMarker => "CheckpointMarker",
+        MarketDataWalRecordKind::RawProviderMessage => "RawProviderMessage",
     }
 }
 

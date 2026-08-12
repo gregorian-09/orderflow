@@ -151,11 +151,19 @@ while adding:
   accepted, queued, written, and sync-covered sequences
 - fail-closed degraded state and explicit abandoned-record accounting after
   append/sync failure
+- provider-native raw capture with a versioned fixed envelope, compact numeric
+  source/session/instrument metadata, timestamp provenance, payload flags,
+  zero-copy pre-encoded admission, and ownership-preserving validation and
+  pressure failures
+- `BoundedRawCaptureWriter` and cloneable `RawCaptureProducer` handles backed
+  by the checksum-linked segmented WAL and the same bounded single-writer
+  durability machinery as normalized capture
 
 No Tokio runtime or global executor is introduced. Existing single-file WAL,
 JSONL, checkpoint, cold-export, retention, and recovery-planning APIs retain
-their signatures and defaults. Runtime wiring and raw provider-message capture
-remain separate host/adapter responsibilities.
+their signatures and defaults. Runtime wiring remains an additive integration
+path; capture-policy selection, credential redaction, encryption, and provider
+transport ownership remain explicit host/adapter responsibilities.
 
 ### 2. Execution core
 

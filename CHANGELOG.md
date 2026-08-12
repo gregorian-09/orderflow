@@ -224,6 +224,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added additive `of_persist` production market-data persistence policy and
   health snapshots for writer mode, failure action, lag, drops, and error
   reporting.
+- Added provider-native raw capture in `of_persist` with a versioned fixed
+  envelope, numeric provider/session/instrument identities, timestamp
+  provenance, payload handling flags, zero-copy pre-encoded admission,
+  ownership-preserving failures, and a bounded segmented-WAL writer.
 - Added additive `of_persist` market-data backpressure policy helpers for
   queue-depth, lag, pending-byte, degraded-state, drop-policy, trade-preserve,
   and critical-record decisions.

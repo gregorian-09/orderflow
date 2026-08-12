@@ -5,7 +5,9 @@ The stable [`RollingStore`] API writes human-readable JSONL for replay,
 auditability, and post-trade research workflows. Additive single-file and
 segmented WAL APIs provide binary normalized capture, while
 [`BoundedMarketDataWalWriter`] moves filesystem work to one bounded,
-single-owner worker for latency-sensitive producers.
+single-owner worker for latency-sensitive producers. Additive raw-capture types
+store provider-native evidence before normalization without coupling this crate
+to any exchange or transport implementation.
 
 ## Main Types
 
@@ -28,6 +30,11 @@ single-owner worker for latency-sensitive producers.
 - [`MarketDataWalManifest`] - manifest rebuilt from validated segment truth.
 - [`MarketDataWalSegmentIntegrityReport`] - aggregate segment/link validation.
 - [`BoundedMarketDataWalWriter`] - single-owner background segmented WAL writer.
+- [`BoundedRawCaptureWriter`] - bounded provider-native evidence writer.
+- [`RawCaptureProducer`] - cloneable nonblocking raw-capture producer.
+- [`RawCaptureRecordInput`] / [`RawCaptureRecord`] - owned input and decoded replay record.
+- [`RawCaptureMetadata`] - compact provider, session, venue, and instrument identity.
+- [`RawCaptureTimestampSource`] / [`RawCaptureFlags`] - timestamp provenance and payload handling metadata.
 - [`MarketDataWalProducer`] - cloneable nonblocking producer handle.
 - [`MarketDataWalRecordInput`] - owned queue input with reusable payload storage.
 - [`BoundedMarketDataWriterConfig`] - record and payload-byte queue limits.
@@ -92,6 +99,10 @@ What changes for persistence users:
 - a bounded background writer supports cloneable nonblocking producers,
   independently limits queued records and payload bytes, and returns ownership
   of rejected buffers instead of blocking or silently dropping them;
+- provider-native raw capture adds a versioned fixed envelope, explicit receive-
+  timestamp provenance, compression/encryption/redaction/truncation flags,
+  zero-copy admission for pre-encoded pooled buffers, ownership-preserving
+  validation/rejection, and checksum-linked segmented replay;
 - reusable frame scratch storage removes the previous per-append frame
   allocation from single-file and segmented WAL writers after capacity is warm;
 - production persistence policy and health helpers let hosts tie writer
@@ -154,6 +165,16 @@ Public types:
 - [`BoundedMarketDataWriterMetrics`]
 - [`MarketDataWalProducer`]
 - [`BoundedMarketDataWalWriter`]
+- [`RawCaptureTimestampSource`]
+- [`RawCaptureFlags`]
+- [`RawCaptureMetadata`]
+- [`RawCaptureDecodeError`]
+- [`RawCaptureInputError`]
+- [`RawCaptureRecordInput`]
+- [`RawCaptureRecord`]
+- [`RawCaptureTryError`]
+- [`RawCaptureProducer`]
+- [`BoundedRawCaptureWriter`]
 - [`MarketDataCheckpointId`]
 - [`MarketDataCheckpointKind`]
 - [`MarketDataCheckpointConfig`]
@@ -251,6 +272,30 @@ Public methods:
 - [`MarketDataWalProducer::try_append_copy`]
 - [`MarketDataWalProducer::metrics`]
 - [`MarketDataWalProducer::last_error`]
+- [`RawCaptureMetadata::new`]
+- [`RawCaptureMetadata::with_subscription_id`]
+- [`RawCaptureMetadata::with_venue_id`]
+- [`RawCaptureMetadata::with_instrument_id`]
+- [`RawCaptureMetadata::with_timestamp_source`]
+- [`RawCaptureMetadata::with_flags`]
+- [`prepare_raw_capture_payload`]
+- [`encode_raw_capture_payload_into`]
+- [`RawCaptureRecordInput::copy_from_slice`]
+- [`RawCaptureRecordInput::from_encoded_payload`]
+- [`RawCaptureRecordInput::into_encoded_payload`]
+- [`RawCaptureInputError::into_parts`]
+- [`RawCaptureTryError::into_input`]
+- [`RawCaptureProducer::try_capture_owned`]
+- [`RawCaptureProducer::try_capture_copy`]
+- [`RawCaptureProducer::metrics`]
+- [`RawCaptureProducer::last_error`]
+- [`BoundedRawCaptureWriter::start`]
+- [`BoundedRawCaptureWriter::producer`]
+- [`BoundedRawCaptureWriter::try_capture_owned`]
+- [`BoundedRawCaptureWriter::flush`]
+- [`BoundedRawCaptureWriter::metrics`]
+- [`BoundedRawCaptureWriter::last_error`]
+- [`BoundedRawCaptureWriter::shutdown`]
 - [`MarketDataWalReplayFilter::new`]
 - [`MarketDataWalReplayFilter::with_sequence_range`]
 - [`MarketDataWalReplayFilter::with_provider_sequence_range`]
@@ -529,6 +574,44 @@ On an append or sync failure, the worker stops admission, records diagnostic
 text, marks itself degraded, accounts for queued records it cannot write, and
 disconnects producers. Hosts should map this state through their configured
 [`MarketDataPersistenceFailureAction`] instead of continuing silently.
+
+## Provider-Native Raw Capture
+
+Raw capture is an evidence stream before normalization. It supports forensic
+replay, adapter regression tests, provider certification, and proof of which
+bytes an adapter observed. It does not replace the normalized WAL: keep raw and
+normalized roots separate and correlate them by provider sequence and time.
+
+[`RawCaptureMetadata`] stores compact numeric identities instead of allocating
+provider, venue, or symbol strings per message. The host owns the dictionaries
+that map those ids to deployment metadata. The enclosing WAL frame supplies
+the global capture sequence, provider sequence, exchange and receive
+timestamps, payload checksum, and previous-checksum link. The fixed `OFRC`
+envelope supplies provider, adapter, connection, subscription, venue,
+instrument, timestamp-source, and payload-handling metadata.
+
+[`RawCaptureTimestampSource`] distinguishes userspace, kernel-software, and
+hardware receive timestamps. Preserve provenance with the numeric value; do
+not compare hardware-clock and system-clock timestamps until the host applies
+its clock-correlation policy.
+
+[`prepare_raw_capture_payload`] clears a reusable `Vec<u8>` and writes only the
+fixed envelope. A transport can append provider bytes and construct
+[`RawCaptureRecordInput::from_encoded_payload`] without another payload copy.
+[`RawCaptureRecordInput::copy_from_slice`] is the convenient one-copy path.
+Malformed envelopes return [`RawCaptureInputError`] with the allocation; queue
+rejections return [`RawCaptureTryError`] with the complete record.
+
+[`BoundedRawCaptureWriter`] delegates queue bounds, sync policy, failure
+fencing, and lock-free metrics to the single-owner segmented writer. Capture
+has no silent drop policy: callers handle `Full`, `BytesFull`,
+`PayloadTooLarge`, and `Stopped` explicitly.
+
+Security remains host policy. Never capture credentials, access tokens,
+private keys, or unredacted authentication messages. Set
+[`RawCaptureFlags::REDACTED`] only after redaction succeeds. Compression and
+encryption codecs and key management are deliberately outside this crate; the
+flags describe bytes but do not transform them.
 
 ## WAL Replay Filters
 
@@ -849,6 +932,52 @@ if let Err(rejected) = producer.try_append_owned(input) {
 // Control-plane only: drains accepted records, synchronizes, and joins.
 let metrics = writer.shutdown().expect("writer shutdown");
 assert!(metrics.stopped);
+# Ok::<(), of_persist::PersistError>(())
+```
+
+## Raw Capture Example
+
+```rust,no_run
+use of_persist::{
+    prepare_raw_capture_payload, BoundedMarketDataWriterConfig,
+    BoundedRawCaptureWriter, RawCaptureFlags, RawCaptureMetadata,
+    RawCaptureRecordInput, RawCaptureTimestampSource,
+    SegmentedMarketDataWalConfig,
+};
+
+let writer = BoundedRawCaptureWriter::start(
+    SegmentedMarketDataWalConfig::new("data/binance/raw-wal")
+        .with_max_payload_bytes(2 * 1024 * 1024),
+    BoundedMarketDataWriterConfig::new()
+        .with_queue_capacity(16_384)
+        .with_max_queued_payload_bytes(128 * 1024 * 1024),
+)?;
+let producer = writer.producer();
+let metadata = RawCaptureMetadata::new(1, 7, 42)
+    .with_subscription_id(9)
+    .with_venue_id(100)
+    .with_instrument_id(200)
+    .with_timestamp_source(RawCaptureTimestampSource::KernelSoftware)
+    .with_flags(RawCaptureFlags::REDACTED);
+
+// Reuse this allocation. A transport can append after the fixed header.
+let mut encoded = Vec::with_capacity(64 * 1024);
+prepare_raw_capture_payload(metadata, &mut encoded);
+encoded.extend_from_slice(br#"{"stream":"btcusdt@trade"}"#);
+let input = RawCaptureRecordInput::from_encoded_payload(
+    101,
+    1_800_000_000,
+    1_800_000_050,
+    encoded,
+).expect("capture envelope built by this process");
+
+if let Err(rejected) = producer.try_capture_owned(input) {
+    let encoded = rejected.into_input().into_encoded_payload();
+    // Route explicitly or return `encoded` to the caller's buffer pool.
+    drop(encoded);
+}
+
+writer.shutdown().expect("capture shutdown");
 # Ok::<(), of_persist::PersistError>(())
 ```
 
