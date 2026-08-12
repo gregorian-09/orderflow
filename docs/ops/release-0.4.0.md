@@ -264,16 +264,18 @@ payload and require no ABI or method-signature change.
   metrics
 
 This is a complete reusable protocol state machine, not a venue-certified
-network adapter. TCP/TLS, credentials, automatic resend-plan transmission,
-venue certification, and counterparty-specific business rules remain separate
-layers composed around the session engine.
+network adapter. TCP/TLS, credentials, venue certification, and
+counterparty-specific business rules remain separate layers composed around
+the session engine.
 
-### 5. Execution adapter scaffolding
+### 5. Execution adapter infrastructure
 
-`of_execution_adapters 0.1.0` adds a feature-gated FIX scaffold:
+`of_execution_adapters 0.1.0` adds feature-gated FIX execution infrastructure:
 
 - FIX-style session config
 - normalized execution-report struct
+- FIX exec type/status mapping
+- canonical `ExecutionEvent` conversion
 - validated `of_fix::FixMessageView` execution-report parser bridge
 - validated `of_fix::FixMessageView` order-cancel-reject parser bridge
 - canonical OMS request to FIX NewOrderSingle, OrderCancelRequest, and
@@ -282,6 +284,24 @@ layers composed around the session engine.
 - stop and stop-limit new-order encoding through the FIX request bridge
 - explicit stop and stop-limit amend encoding through
   `encode_stop_amend_request`
+- synchronous, single-owner `FixTransportExecutionAdapter` with injected
+  complete-frame transport, coherent monotonic/UTC clock, venue profile, and
+  outbound durability journal
+- Logon/Logout, heartbeat/TestRequest liveness, strict session identity and
+  sequence validation, bounded out-of-order retention, ResendRequest recovery,
+  possible-duplicate replay, and SequenceReset gap fills
+- bounded peer resend work, working-order context, complete frame size,
+  per-poll work, output backpressure, and in-memory resend retention
+- pre-send durable original-frame journaling and restart construction from
+  sequence snapshots, durable resend frames, and restored OMS working orders
+- standard FIX 4.2/4.4 submit/cancel/replace and report mapping through a
+  replaceable `FixExecutionProfile`
+- asynchronous FIX 4.3/4.4 OrderMassStatusRequest recovery and an explicit
+  custom-profile requirement for counterparty-specific FIX 4.2 recovery
+- allocation-free session/adapter counters and exchange-to-receive latency and
+  clock-skew observations
+- retained fail-closed `FixExecutionAdapter` compatibility shell with unchanged
+  behavior for existing users
 
 ### 6. Execution algorithm foundation
 
@@ -373,12 +393,6 @@ foundation:
 The crate does not bypass OMS risk, journaling, adapter capability checks, kill
 switches, or reconciliation. Hosts should submit child orders through
 `of_execution` and feed resulting execution events back into algo progress.
-- FIX exec type/status mapping
-- canonical `ExecutionEvent` conversion
-- fail-closed adapter shell
-
-This is not a production FIX engine. It is a reusable mapping and adapter
-authoring scaffold.
 
 ### 7. C, Python, and Java execution APIs
 

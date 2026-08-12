@@ -1,27 +1,30 @@
 # `of_execution_adapters` Reference
 
-`of_execution_adapters` contains provider-specific execution adapter scaffolds.
+`of_execution_adapters` contains provider-specific execution adapter
+infrastructure.
 It is intentionally separate from `of_execution` so adapter implementations can
 remain feature-gated and provider-specific dependencies do not leak into the
 core execution crate.
 
-Current adapter scaffold:
+Current FIX surfaces:
 
-- `fix` feature: FIX execution-report parsing, mapping, and adapter shell.
+- transport-injected live FIX execution adapter;
+- standard and customizable application profiles;
+- standalone request/report bridges;
+- original fail-closed compatibility shell.
 
 ## Feature Flags
 
 | Feature | Purpose |
 | --- | --- |
-| `fix` | Enables FIX execution adapter scaffold, `of_fix` parser bridge, and report mapper |
+| `fix` | Enables live FIX execution infrastructure, `of_fix` session/codec integration, parser bridges, and compatibility shell |
 
 The crate should stay dependency-light. New providers should be optional
 features unless they are pure standard-library mappings.
 
-## FIX Scaffold
+## FIX API
 
-The FIX module is not a full FIX engine. It is a scaffold for building one.
-It contains:
+The module contains:
 
 - `FixSessionConfig`
 - `FixExecutionReport`
@@ -45,6 +48,15 @@ It contains:
 - `map_execution_report`
 - `map_order_cancel_reject`
 - `FixExecutionAdapter`
+- `FixTransportExecutionAdapter<T, C, P, J>`
+- `FixLiveAdapterConfig`
+- `FixFrameTransport` and `FixTransportPoll`
+- `FixTimeSource` and `FixTimeSample`
+- `FixExecutionProfile` and `StandardFixExecutionProfile`
+- `FixWorkingOrderContext`
+- `FixOutboundJournal`, `NoopFixOutboundJournal`, and
+  `DurableFixOutboundJournal`
+- `FixLiveAdapterMetrics`
 
 ### `FixSessionConfig`
 
@@ -118,7 +130,7 @@ Outbound helpers:
 
 The caller owns the `Vec<u8>` buffer and the `FixSessionHeader`, including
 sequence and sending-time fields. `transact_time` is passed as FIX wire bytes
-instead of being formatted by the scaffold, because venues differ in timestamp
+instead of being formatted by the standalone bridge, because venues differ in timestamp
 precision and format policy.
 
 Cancel and amend helpers require context because canonical `CancelRequest` and
@@ -179,9 +191,91 @@ Examples:
 | Replaced | `ExecutionType::ReplaceAck`, `OrderStatus::Replaced` |
 | Restated | `ExecutionType::Restated` |
 
-The parser and mapper are deliberately narrow. They do not hide transport
-behavior, sequence recovery, session reset, resend, duplicate suppression, or
-store management.
+The standalone parser and mapper are deliberately narrow. The live adapter
+composes transport/session/recovery behavior around them while keeping venue
+rules in an injected profile.
+
+## `FixTransportExecutionAdapter`
+
+This is a synchronous, single-owner FIX execution runtime implementing the
+existing `ExecutionAdapter` trait. It statically dispatches:
+
+| Generic | Contract |
+| --- | --- |
+| `T` | non-blocking, complete-frame `FixFrameTransport` |
+| `C` | coherent monotonic/UTC/FIX timestamp `FixTimeSource` |
+| `P` | venue-specific `FixExecutionProfile` |
+| `J` | pre-send durable `FixOutboundJournal`; defaults to no-op |
+
+The adapter owns no socket/TLS policy, credentials, thread, executor, or async
+runtime. A host chooses those components and calls `poll()` from its selected
+owner thread/task. `poll()` drains held gap frames, accepts a configured number
+of transport frames, maps canonical events, and advances one session timer.
+
+### Protocol Behavior
+
+- Connect emits Logon through the injected transport.
+- Application commands are rejected until peer Logon establishes `Ready`.
+- Begin string, component IDs, checksums, body length, and sequence numbers are
+  validated before application mapping.
+- Future inbound messages are held in a sorted bounded buffer while one
+  ResendRequest recovers the missing range.
+- Peer ResendRequests replay retained application messages with
+  `PossDupFlag(43)=Y`; administrative/missing ranges use SequenceReset gap fill.
+- SequenceReset discards now-obsolete held frames explicitly.
+- Session Reject and BusinessMessageReject create bounded health diagnostics.
+- ExecutionReport and OrderCancelReject map to canonical `ExecutionEvent`.
+- Heartbeat, TestRequest, Logout, and liveness disconnect actions come from
+  `of_fix::FixSessionEngine`.
+
+### Bounds And Backpressure
+
+`FixLiveAdapterConfig` bounds frame bytes, frames per poll, held gap frames,
+working orders, peer resend sequence span, resend actions, and in-memory resend
+retention. Output uses the existing bounded `ExecutionEventBuffer`. A full
+buffer preserves one pending event for a later poll. Any further work stops;
+nothing is silently dropped.
+
+### Durability And Restart
+
+Original frames follow this order:
+
+```text
+encode -> sequence -> durable journal -> resend retention -> transport send
+```
+
+The sequence is never rolled back after assignment. A send error is an
+uncertain command and is resolved through OMS WAL/idempotency, retained FIX
+frames, venue recovery, and reconciliation.
+
+Production restart should validate `FileFixSequenceSnapshotStore`, load
+`FileFixDurableResendStore` into a bounded `FixResendStore`, construct with
+`with_journal_and_resend_store`, and restore OMS orders with
+`restore_working_order`. `sequence_snapshot(trading_day)` exports the next
+inbound/outbound counters for atomic checkpointing. New submissions remain
+gated until Logon, open-order recovery, and OMS reconciliation are complete.
+
+### Standard Profile
+
+`StandardFixExecutionProfile` maps standard FIX 4.2/4.4 order entry and reports,
+uses explicit price/quantity scales, and enforces configured capabilities before
+sequence assignment. FIX 4.3/4.4 recovery uses OrderMassStatusRequest `<AF>`;
+FIX 4.2 and proprietary recovery require a custom profile.
+
+This runtime is production-capable infrastructure, not a certified venue
+profile. Deployment still requires the counterparty specification, certified
+custom fields/capabilities, transport/TLS/authentication, session schedule,
+rate limits, cancel-on-disconnect policy, transcript evidence, and operations
+approval. Raw transcript capture belongs in the transport using bounded
+`FixTranscriptCapture`, where physical wire completion is observable.
+
+### Metrics
+
+`FixLiveAdapterMetrics` reports frame/byte/event totals, inbound/send errors,
+held/duplicate/discarded gap frames, replay/gap-fill counts, rejected resend
+work, recovery requests, protocol reject counts, clock-skew reports, and latest
+and maximum exchange-to-local receive latency. `session_metrics()` returns the
+allocation-free session counters from `of_fix`.
 
 ## `FixExecutionAdapter`
 
@@ -193,21 +287,22 @@ store management.
 - `capabilities()` reports ordinary FIX-style order support.
 - `health()` reports degraded/disconnected state.
 
-This is intentional. It gives adapter authors a compilable shape and mapping
-contract without pretending a full live FIX session exists.
+This compatibility API is intentionally unchanged. New integrations use
+`FixTransportExecutionAdapter`; existing users do not receive new side effects
+or source breaks.
 
-## Implementing a Real Adapter
+## Implementing A Venue Profile
 
-A real execution adapter should:
+A venue integration should:
 
-1. own the provider session or transport,
-2. validate session lifecycle before accepting commands,
-3. map canonical requests into provider messages,
-4. map provider reports into `ExecutionEvent`,
-5. preserve client-order-id semantics where possible,
-6. implement recovery through `recover_open_orders`,
-7. expose accurate capabilities,
-8. report lifecycle state through `health`,
-9. avoid unbounded queues on command/report paths.
+1. implement or reuse a complete-frame transport,
+2. provide monotonic/UTC timestamp sampling,
+3. implement custom application tags and report variants in a profile,
+4. report only certified capabilities,
+5. load sequence/resend/OMS state before connect,
+6. use a durable outbound journal,
+7. capture bounded certification transcripts in the transport,
+8. pass venue certification and failure/recovery scenarios,
+9. gate production activation on reconciliation and operational evidence.
 
 For broader guidance, see [Provider Adapter Authoring](./12-provider-adapter-authoring.md).

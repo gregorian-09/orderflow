@@ -5,7 +5,7 @@
 [![CI](https://github.com/gregorian-09/orderflow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gregorian-09/orderflow/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/license/mit)
 
-`of_execution_adapters` contains optional execution adapter scaffolds for
+`of_execution_adapters` contains optional execution adapter infrastructure for
 Orderflow venues, brokers, and execution protocols.
 
 This crate is separate from `of_execution` so provider-specific dependencies
@@ -13,24 +13,27 @@ can remain feature-gated and so the core execution engine does not depend on a
 particular broker SDK, FIX stack, REST client, WebSocket implementation, or
 native transport.
 
-Current scaffold:
+Current FIX surfaces:
 
-- `fix` feature: FIX-style execution-report mapping and fail-closed adapter
-  shell.
+- `FixTransportExecutionAdapter`: a live, transport-injected FIX 4.2/4.4
+  execution runtime built on `of_fix`;
+- `StandardFixExecutionProfile`: standard order-entry/report mapping that can
+  be replaced with a venue-certified profile;
+- `FixExecutionAdapter`: the original fail-closed compatibility shell.
 
 ## First Release: 0.1.0
 
 `of_execution_adapters` publishes as `0.1.0` inside the broader Orderflow
-`0.4.0` release. It is a new adapter-scaffold family, not a mature production
-provider suite.
+`0.4.0` release. It is a new adapter-infrastructure family, not a mature suite
+of counterparty-certified providers.
 
 Versioning rules:
 
 - `of_execution_adapters` depends on `of_execution = 0.1` and
   `of_execution_core = 0.1`;
-- provider-specific scaffolds stay feature-gated and opt-in;
-- fail-closed scaffolds are allowed in `0.1.x` as long as README and docs state
-  the production boundary clearly;
+- provider-specific integrations stay feature-gated and opt-in;
+- compatibility shells remain fail closed unless every required live boundary
+  is configured;
 - production adapters should document certification status, recovery behavior,
   rate limits, duplicate handling, and latency assumptions.
 
@@ -39,10 +42,10 @@ Versioning rules:
 - Keep provider-specific code outside the execution core.
 - Keep optional transports behind feature flags.
 - Map provider reports into canonical `ExecutionEvent` values.
-- Fail closed until a real transport is wired.
+- Fail closed until a transport, clock, profile, and recovery policy are wired.
 - Expose honest capabilities and health.
 - Preserve low-latency typed request/report boundaries.
-- Avoid pretending that a scaffold is a production live adapter.
+- Avoid claiming venue production readiness without certification evidence.
 
 ## Feature Flags
 
@@ -50,7 +53,7 @@ Versioning rules:
 | --- | --- | --- |
 | `fix` | no | Enables `of_execution_adapters::fix` and its `of_fix` parser bridge |
 
-The crate has `default = []`. Consumers opt in to provider scaffolds explicitly:
+The crate has `default = []`. Consumers opt in to provider integrations explicitly:
 
 ```toml
 [dependencies]
@@ -83,14 +86,45 @@ With the `fix` feature enabled:
 - [`fix::map_execution_report`]
 - [`fix::map_order_cancel_reject`]
 - [`fix::FixExecutionAdapter`]
+- [`fix::FixTransportExecutionAdapter`]
+- [`fix::FixLiveAdapterConfig`]
+- [`fix::FixFrameTransport`]
+- [`fix::FixTransportPoll`]
+- [`fix::FixTimeSource`]
+- [`fix::FixTimeSample`]
+- [`fix::FixExecutionProfile`]
+- [`fix::StandardFixExecutionProfile`]
+- [`fix::FixWorkingOrderContext`]
+- [`fix::FixOutboundJournal`]
+- [`fix::NoopFixOutboundJournal`]
+- [`fix::DurableFixOutboundJournal`]
+- [`fix::FixLiveAdapterMetrics`]
 
-## FIX Scaffold
+## FIX Module Boundaries
 
-The FIX module is not a full FIX engine. It does not implement TCP/TLS,
-logon/logout, heartbeats, resend requests, sequence reset, session stores, or
-exchange-specific certification behavior.
+The module has two deliberately separate adapter levels.
 
-It provides the reusable pieces that are safe to share at this layer:
+`FixTransportExecutionAdapter` implements the reusable protocol runtime:
+
+- Logon/Logout, Heartbeat/TestRequest, and liveness timeout;
+- strict begin-string/component-id/session sequence validation;
+- bounded out-of-order frame retention;
+- ResendRequest, possible-duplicate replay, and SequenceReset gap-fill;
+- order submit/cancel/replace mapping;
+- execution-report and order-cancel-reject mapping;
+- session/business reject diagnostics;
+- asynchronous open-order recovery requests;
+- restored sequence, resend, and working-order context;
+- durable pre-send outbound journal hooks;
+- health and fixed-size operational counters.
+
+It deliberately does not open sockets, configure TLS, read the system clock,
+spawn threads/tasks, hold credentials, or claim venue certification. Those are
+injected through `FixFrameTransport`, `FixTimeSource`, and
+`FixExecutionProfile`.
+
+The original `FixExecutionAdapter` remains an unchanged fail-closed shell for
+source compatibility. Shared bridge pieces remain available independently:
 
 - session configuration shape,
 - normalized execution-report struct,
@@ -101,8 +135,7 @@ It provides the reusable pieces that are safe to share at this layer:
   OrderCancelReplaceRequest encoding helpers,
 - FIX-style exec type/status enums,
 - mapping into the canonical execution model,
-- adapter shell implementing the `ExecutionAdapter` trait,
-- fail-closed behavior until transport is configured.
+- standard and venue-specific adapter construction.
 
 ## FixSessionConfig
 
@@ -307,9 +340,156 @@ The mapper preserves:
 - exchange and receive timestamps,
 - bounded text.
 
-It does not handle transport ordering, FIX session sequence numbers, resend
-logic, duplicate suppression, or broker-specific certification rules. Those
-belong in a real adapter implementation.
+The standalone mapper does not handle transport ordering, sequence recovery,
+or certification. `FixTransportExecutionAdapter` composes those protocol
+responsibilities around the mapper; venue-specific rules stay in the profile.
+
+## Live Transport-Injected Adapter
+
+[`fix::FixTransportExecutionAdapter<T, C, P, J>`] implements
+`of_execution::ExecutionAdapter` with static dispatch over four host-owned
+boundaries:
+
+| Parameter | Responsibility | Hot-path contract |
+| --- | --- | --- |
+| `T: FixFrameTransport` | TCP/TLS/WebSocket/native transport and complete frame extraction | non-blocking receive into caller-provided memory; complete sends |
+| `C: FixTimeSource` | monotonic liveness time, UTC epoch time, FIX `SendingTime(52)` formatting | one coherent, allocation-free sample |
+| `P: FixExecutionProfile` | venue fields, capabilities, request encoding, report mapping, recovery message | statically dispatched; no trait object required |
+| `J: FixOutboundJournal` | durable original-frame retention before network transmission | return success only at configured durability point |
+
+`J` defaults to `NoopFixOutboundJournal`, preserving a simple four-argument
+constructor. Production hosts can inject
+`DurableFixOutboundJournal<FileFixDurableResendStore>` or a bounded
+asynchronous journal implementation.
+
+### Drive Model
+
+The adapter is synchronous and single-owner. `connect()` opens the injected
+transport and sends Logon. The host calls `poll()` from its selected thread,
+event loop, or pinned worker. Each poll:
+
+1. emits a previously backpressured event if capacity is available;
+2. drains now-contiguous held gap frames;
+3. processes at most `max_frames_per_poll` transport frames;
+4. performs one heartbeat/TestRequest/Logout timer action;
+5. returns canonical events through the bounded `ExecutionEventBuffer`.
+
+There is no internal Tokio runtime, mutex, callback thread, sleep, or socket.
+An async application can place this owner on one dedicated task/thread while
+many strategies submit through the existing bounded concurrent OMS layer.
+
+### Configuration And Bounds
+
+`FixLiveAdapterConfig` derives the session engine from `FixSessionConfig` and
+has explicit bounds for:
+
+- complete frame bytes;
+- frames processed per poll;
+- held out-of-order frames;
+- locally tracked working orders;
+- sequences served by one peer resend request;
+- replay/gap-fill actions generated by one request;
+- in-memory resend messages/bytes through `FixResendStoreConfig`.
+
+Zero capacities are rejected. Frames, held-gap state, working-order context,
+resend planning, and output events cannot grow without a configured bound.
+Reject text rendered into health diagnostics is truncated. Bound exhaustion
+returns `ExecutionError::BufferFull` or an adapter error and leaves health
+degraded rather than dropping state silently.
+
+### Send Ordering And Uncertain Outcomes
+
+For every newly sequenced original message the adapter performs:
+
+```text
+validate request -> encode -> assign sequence -> durable journal
+                 -> in-memory resend retention -> transport send
+```
+
+Sequence numbers are never rolled back. A journal or send failure therefore
+represents an uncertain command with a consumed sequence, exactly as a real FIX
+session requires. The OMS command WAL and idempotency layer must retain the
+canonical request before calling the adapter. Recovery then uses the outbound
+journal/resend store, OMS WAL, venue status, and reconciliation policy instead
+of issuing a new client-order id blindly.
+
+### Receive And Gap Recovery
+
+Inbound frames are checksum/body-length validated by `of_fix`, then session
+identity and sequence are checked before profile mapping. A future sequence
+causes one ResendRequest and the triggering frame is retained in a bounded,
+sorted buffer. Missing replay messages are accepted in order. SequenceReset
+advancement discards held frames made obsolete by the gap fill and records the
+count. Duplicate sequence numbers are suppressed only when FIX duplicate flags
+permit it; unflagged regressions fail closed.
+
+A peer ResendRequest is capped by `max_resend_sequences` and
+`max_resend_actions`. Retained application/reject messages are re-encoded with
+`PossDupFlag(43)=Y` and `OrigSendingTime(122)`. Administrative/missing messages
+become coalesced SequenceReset gap fills. Replays keep their original sequence
+and are not re-journaled as new sends.
+
+### Persistence And Restart
+
+Before reconnecting a production session:
+
+1. load and checksum-validate the latest `FixOwnedSequenceSnapshot`;
+2. load the durable outbound log into a bounded `FixResendStore`;
+3. build `FixSequenceTracker` from the snapshot;
+4. construct with `with_journal_and_resend_store(...)`;
+5. restore each OMS open order with `restore_working_order(...)`;
+6. connect and complete FIX Logon;
+7. call `recover_open_orders(...)` and reconcile venue truth;
+8. enable new submissions only after the OMS recovery-readiness gate passes.
+
+`sequence_snapshot(trading_day)` exports an owned checksummed snapshot for
+`FileFixSequenceSnapshotStore`. `restore_working_order` is idempotent for exact
+context and fails on conflicting context, so post-restart cancel/replace has
+the original side/order-type/TIF/stop-price fields FIX requires.
+
+For FIX 4.3/4.4, `StandardFixExecutionProfile` sends one idempotent
+OrderMassStatusRequest `<AF>` when `recover_open_orders` is first called and
+then continues draining reports on later calls. FIX 4.2 venues require a custom
+profile because the recovery workflow is counterparty-specific.
+
+### Profiles And Certification
+
+`StandardFixExecutionProfile` supports standard FIX 4.2/4.4 NewOrderSingle,
+OrderCancelRequest, OrderCancelReplaceRequest, ExecutionReport, and
+OrderCancelReject fields. It accepts an explicit capability set and decimal
+quantity/price scales. The adapter checks order type/TIF/amend capability before
+assigning a sequence.
+
+Implement `FixExecutionProfile` for counterparty requirements such as:
+
+- SecurityID/SecurityIDSource instead of Symbol;
+- custom Logon/application tags;
+- account/party and self-trade-prevention fields;
+- trading-session/destination fields;
+- venue-specific reject and execution variants;
+- cancel/replace restrictions;
+- proprietary open-order status workflows;
+- certified order-type/TIF capability limits.
+
+`StandardFixExecutionProfile` is protocol-capable, not venue-certified. A live
+deployment still needs the counterparty specification, TLS/authentication,
+session schedule, certificates, certification transcript, rate policy,
+cancel-on-disconnect policy, and operational evidence.
+
+### Health And Metrics
+
+`health()` reports readiness only when transport and FIX session are ready. It
+marks sequence recovery, protocol rejects, liveness failure, disconnects, and
+bound failures as degraded. `FixLiveAdapterMetrics` exposes frame/byte counts,
+events, parse/send errors, held/duplicate/discarded gap frames, replay/gap-fill
+counts, rejected resend work, recovery requests, reject counts, clock skew,
+and latest/maximum exchange-to-local receive latency. Metrics snapshots do not
+allocate; `health()` allocates only when explicitly queried.
+
+Transport implementations are the correct place for raw inbound/outbound
+capture and wire-level latency because they see physical read/write completion.
+Use bounded `of_fix::FixTranscriptCapture` there; never place unbounded capture
+or synchronous logging on the adapter owner thread.
 
 ## FixExecutionAdapter
 
@@ -325,12 +505,13 @@ Current behavior:
 - `health()` reports disconnected/degraded state with protocol info.
 - `config()` returns the stored [`fix::FixSessionConfig`].
 
-This is intentional. It gives adapter authors a compilable shape and shared
-mapping contract without implying that a production FIX session is present.
+This compatibility type is intentionally unchanged. New integrations should
+use `FixTransportExecutionAdapter`; existing users retain the same constructor
+and fail-closed behavior with no source or runtime semantic break.
 
-## Implementing A Real Adapter
+## Implementing A Venue Adapter
 
-A production adapter built from this scaffold should:
+A counterparty adapter built from this infrastructure should:
 
 1. Own the provider session or transport.
 2. Validate lifecycle before accepting commands.
@@ -437,16 +618,20 @@ Every real adapter should test:
 
 ## What This Crate Does Not Do
 
-This crate does not currently provide:
+The FIX runtime deliberately does not provide:
 
-- a production FIX transport,
-- a REST execution adapter,
-- a WebSocket execution adapter,
-- broker authentication,
-- exchange certification logic,
-- a session message store,
-- resend/sequence-reset implementation,
+- a concrete TCP/TLS, leased-line, or WebSocket transport;
+- REST or WebSocket execution adapters;
+- credential or certificate management;
+- a counterparty-certified venue profile;
+- a process-wide scheduler or async runtime;
+- OMS command-WAL ownership or venue-truth reconciliation policy;
 - order throttling by itself.
+
+Session sequence recovery, bounded in-memory resend retention, durable resend
+store integration, and SequenceReset handling are provided. Their concrete
+storage paths, sync policy, transport wiring, and certification evidence remain
+deployment decisions.
 
 Use `of_execution` for the execution engine, simulated execution, journals,
 reconciliation, safety policies, throttling helpers, and provider SDK helpers.

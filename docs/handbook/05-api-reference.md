@@ -1079,7 +1079,7 @@ For low-allocation FIX parsing, validation, and encoding details, see
 
 ### `of_execution_adapters`
 
-Feature-gated public FIX scaffold types under `of_execution_adapters::fix`:
+Feature-gated public FIX execution types under `of_execution_adapters::fix`:
 
 - `FixSessionConfig`
 - `FixExecutionReport`
@@ -1095,6 +1095,22 @@ Feature-gated public FIX scaffold types under `of_execution_adapters::fix`:
 - `FixOrdStatus`
 - `FixCancelRejectResponseTo`
 - `FixExecutionAdapter`
+- `FixTransportPoll`
+- `FixFrameTransport`
+- `FixTimeSample`
+- `FixTimeSource`
+- `FixOutboundJournal`
+- `NoopFixOutboundJournal`
+- `InfallibleFixJournalError`
+- `DurableFixOutboundJournal`
+- `FixWorkingOrderContext`
+- `FixExecutionProfile`
+- `StandardFixProfileError`
+- `StandardFixExecutionProfile`
+- `FixLiveAdapterConfigError`
+- `FixLiveAdapterConfig`
+- `FixLiveAdapterMetrics`
+- `FixTransportExecutionAdapter`
 
 Feature-gated public FIX helper functions under `of_execution_adapters::fix`:
 

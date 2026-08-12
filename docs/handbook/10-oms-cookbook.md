@@ -14,7 +14,7 @@ developers the reusable pieces needed to build one:
 - bounded command/report queues,
 - journals and replay helpers,
 - reconciliation and recovery primitives,
-- provider adapter scaffolding.
+- provider adapter infrastructure.
 
 ```mermaid
 flowchart LR
@@ -38,7 +38,7 @@ flowchart LR
 | `ExecutionEngine` | one thread owns execution and calls submit/cancel/amend directly | simplest and most deterministic |
 | `ConcurrentExecutionEngine` | multiple producers need to enqueue orders into one native owner | adds bounded queues and command reports |
 | Custom `ExecutionAdapter` | you are connecting a broker, exchange, REST API, WebSocket API, FIX session, or SDK | you own provider correctness and certification |
-| `of_execution_adapters::fix` | you want shared FIX report mapping scaffolding | not a full FIX transport |
+| `of_execution_adapters::fix` | you want a bounded FIX session/execution runtime with injected transport, clock, profile, and journal | transport/TLS, credentials, venue profile, and certification remain host-owned |
 
 Use the synchronous engine first. Move to the concurrent worker only when the
 host application really has multiple producers or must isolate execution
