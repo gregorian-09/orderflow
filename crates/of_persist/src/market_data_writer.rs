@@ -1415,7 +1415,7 @@ mod tests {
             .expect("trade frame");
         let decoded = decode_normalized_market_data_record(record).expect("decode");
         match decoded {
-            NormalizedMarketDataRecordInput::Trade(trade) => {
+            NormalizedMarketDataRecordInput::Trade { event: trade, .. } => {
                 assert_eq!(trade.symbol.venue, "CME");
                 assert_eq!(trade.symbol.symbol, "ESM6");
                 assert_eq!(trade.sequence, 41);
@@ -1454,7 +1454,7 @@ mod tests {
             Some(&NormalizedMarketDataCodecError::VenueTooLong)
         );
         match error.into_input() {
-            NormalizedMarketDataRecordInput::Trade(trade) => {
+            NormalizedMarketDataRecordInput::Trade { event: trade, .. } => {
                 assert_eq!(trade.symbol.venue.len(), u16::MAX as usize + 1);
             }
             _ => panic!("expected returned trade"),

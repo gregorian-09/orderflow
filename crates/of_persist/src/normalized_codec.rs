@@ -7,7 +7,7 @@ use std::fmt;
 
 const NORMALIZED_EVENT_MAGIC: [u8; 4] = *b"OFNE";
 const NORMALIZED_EVENT_VERSION: u16 = 1;
-const NORMALIZED_EVENT_HEADER_LEN: usize = 32;
+const NORMALIZED_EVENT_HEADER_LEN: usize = 36;
 const BOOK_KIND: u8 = 1;
 const TRADE_KIND: u8 = 2;
 
@@ -16,51 +16,89 @@ const TRADE_KIND: u8 = 2;
 #[non_exhaustive]
 pub enum NormalizedMarketDataRecordInput {
     /// Canonical level-2 book update.
-    Book(BookUpdate),
+    Book {
+        /// Canonical event.
+        event: BookUpdate,
+        /// Data-quality flags applied by the live runtime.
+        quality_flags_bits: u32,
+    },
     /// Canonical trade print.
-    Trade(TradePrint),
+    Trade {
+        /// Canonical event.
+        event: TradePrint,
+        /// Data-quality flags applied by the live runtime.
+        quality_flags_bits: u32,
+    },
 }
 
 impl NormalizedMarketDataRecordInput {
     /// Creates an input from a canonical book update.
     pub fn book(event: BookUpdate) -> Self {
-        Self::Book(event)
+        Self::book_with_quality(event, 0)
+    }
+
+    /// Creates a book input with the live data-quality flags.
+    pub fn book_with_quality(event: BookUpdate, quality_flags_bits: u32) -> Self {
+        Self::Book {
+            event,
+            quality_flags_bits,
+        }
     }
 
     /// Creates an input from a canonical trade print.
     pub fn trade(event: TradePrint) -> Self {
-        Self::Trade(event)
+        Self::trade_with_quality(event, 0)
+    }
+
+    /// Creates a trade input with the live data-quality flags.
+    pub fn trade_with_quality(event: TradePrint, quality_flags_bits: u32) -> Self {
+        Self::Trade {
+            event,
+            quality_flags_bits,
+        }
     }
 
     /// Returns the enclosing WAL record kind.
     pub const fn record_kind(&self) -> MarketDataWalRecordKind {
         match self {
-            Self::Book(_) => MarketDataWalRecordKind::BookUpdate,
-            Self::Trade(_) => MarketDataWalRecordKind::TradePrint,
+            Self::Book { .. } => MarketDataWalRecordKind::BookUpdate,
+            Self::Trade { .. } => MarketDataWalRecordKind::TradePrint,
         }
     }
 
     /// Returns provider/event sequence carried by the canonical event.
     pub const fn sequence(&self) -> u64 {
         match self {
-            Self::Book(event) => event.sequence,
-            Self::Trade(event) => event.sequence,
+            Self::Book { event, .. } => event.sequence,
+            Self::Trade { event, .. } => event.sequence,
         }
     }
 
     /// Returns exchange timestamp in nanoseconds.
     pub const fn ts_exchange_ns(&self) -> u64 {
         match self {
-            Self::Book(event) => event.ts_exchange_ns,
-            Self::Trade(event) => event.ts_exchange_ns,
+            Self::Book { event, .. } => event.ts_exchange_ns,
+            Self::Trade { event, .. } => event.ts_exchange_ns,
         }
     }
 
     /// Returns local receive timestamp in nanoseconds.
     pub const fn ts_recv_ns(&self) -> u64 {
         match self {
-            Self::Book(event) => event.ts_recv_ns,
-            Self::Trade(event) => event.ts_recv_ns,
+            Self::Book { event, .. } => event.ts_recv_ns,
+            Self::Trade { event, .. } => event.ts_recv_ns,
+        }
+    }
+
+    /// Returns live data-quality flag bits persisted with the event.
+    pub const fn quality_flags_bits(&self) -> u32 {
+        match self {
+            Self::Book {
+                quality_flags_bits, ..
+            }
+            | Self::Trade {
+                quality_flags_bits, ..
+            } => *quality_flags_bits,
         }
     }
 
@@ -86,7 +124,7 @@ impl NormalizedMarketDataRecordInput {
         out.extend_from_slice(&NORMALIZED_EVENT_MAGIC);
         out.extend_from_slice(&NORMALIZED_EVENT_VERSION.to_le_bytes());
         let (kind, side, action, level, price, size) = match self {
-            Self::Book(event) => (
+            Self::Book { event, .. } => (
                 BOOK_KIND,
                 encode_side(event.side),
                 encode_action(event.action),
@@ -94,7 +132,7 @@ impl NormalizedMarketDataRecordInput {
                 event.price,
                 event.size,
             ),
-            Self::Trade(event) => (
+            Self::Trade { event, .. } => (
                 TRADE_KIND,
                 encode_side(event.aggressor_side),
                 0,
@@ -112,6 +150,7 @@ impl NormalizedMarketDataRecordInput {
         out.extend_from_slice(&level.to_le_bytes());
         out.extend_from_slice(&price.to_le_bytes());
         out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&self.quality_flags_bits().to_le_bytes());
         out.extend_from_slice(symbol.venue.as_bytes());
         out.extend_from_slice(symbol.symbol.as_bytes());
         debug_assert_eq!(out.len(), encoded_len);
@@ -120,8 +159,8 @@ impl NormalizedMarketDataRecordInput {
 
     fn symbol(&self) -> &SymbolId {
         match self {
-            Self::Book(event) => &event.symbol,
-            Self::Trade(event) => &event.symbol,
+            Self::Book { event, .. } => &event.symbol,
+            Self::Trade { event, .. } => &event.symbol,
         }
     }
 }
@@ -231,32 +270,39 @@ pub fn decode_normalized_market_data_record(
     let level = read_u16(&payload[14..16]);
     let price = read_i64(&payload[16..24]);
     let size = read_i64(&payload[24..32]);
+    let quality_flags_bits = read_u32(&payload[32..36]);
 
     match (record.kind, payload[6]) {
         (MarketDataWalRecordKind::BookUpdate, BOOK_KIND) => {
             let action = decode_action(action)?;
-            Ok(NormalizedMarketDataRecordInput::Book(BookUpdate {
-                symbol,
-                side,
-                level,
-                price,
-                size,
-                action,
-                sequence: record.event_sequence,
-                ts_exchange_ns: record.ts_exchange_ns,
-                ts_recv_ns: record.ts_recv_ns,
-            }))
+            Ok(NormalizedMarketDataRecordInput::Book {
+                event: BookUpdate {
+                    symbol,
+                    side,
+                    level,
+                    price,
+                    size,
+                    action,
+                    sequence: record.event_sequence,
+                    ts_exchange_ns: record.ts_exchange_ns,
+                    ts_recv_ns: record.ts_recv_ns,
+                },
+                quality_flags_bits,
+            })
         }
         (MarketDataWalRecordKind::TradePrint, TRADE_KIND) if action == 0 && level == 0 => {
-            Ok(NormalizedMarketDataRecordInput::Trade(TradePrint {
-                symbol,
-                price,
-                size,
-                aggressor_side: side,
-                sequence: record.event_sequence,
-                ts_exchange_ns: record.ts_exchange_ns,
-                ts_recv_ns: record.ts_recv_ns,
-            }))
+            Ok(NormalizedMarketDataRecordInput::Trade {
+                event: TradePrint {
+                    symbol,
+                    price,
+                    size,
+                    aggressor_side: side,
+                    sequence: record.event_sequence,
+                    ts_exchange_ns: record.ts_exchange_ns,
+                    ts_recv_ns: record.ts_recv_ns,
+                },
+                quality_flags_bits,
+            })
         }
         _ => Err(NormalizedMarketDataCodecError::KindMismatch),
     }
@@ -310,6 +356,10 @@ fn read_i64(bytes: &[u8]) -> i64 {
     i64::from_le_bytes(bytes.try_into().expect("validated normalized i64 slice"))
 }
 
+fn read_u32(bytes: &[u8]) -> u32 {
+    u32::from_le_bytes(bytes.try_into().expect("validated normalized u32 slice"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,7 +401,10 @@ mod tests {
         ))
         .expect("decode book");
         match decoded {
-            NormalizedMarketDataRecordInput::Book(event) => {
+            NormalizedMarketDataRecordInput::Book {
+                event,
+                quality_flags_bits,
+            } => {
                 assert_eq!(event.symbol.venue, "CME");
                 assert_eq!(event.symbol.symbol, "ESM6");
                 assert_eq!(event.side, Side::Bid);
@@ -360,6 +413,7 @@ mod tests {
                 assert_eq!(event.size, 17);
                 assert_eq!(event.action, BookAction::Upsert);
                 assert_eq!(event.sequence, 99);
+                assert_eq!(quality_flags_bits, 0);
             }
             _ => panic!("expected book"),
         }
@@ -367,18 +421,21 @@ mod tests {
 
     #[test]
     fn trade_round_trip_is_exact() {
-        let input = NormalizedMarketDataRecordInput::trade(TradePrint {
-            symbol: SymbolId {
-                venue: "BINANCE".to_owned(),
-                symbol: "BTCUSDT".to_owned(),
+        let input = NormalizedMarketDataRecordInput::trade_with_quality(
+            TradePrint {
+                symbol: SymbolId {
+                    venue: "BINANCE".to_owned(),
+                    symbol: "BTCUSDT".to_owned(),
+                },
+                price: 100_000,
+                size: 4,
+                aggressor_side: Side::Ask,
+                sequence: 99,
+                ts_exchange_ns: 101,
+                ts_recv_ns: 103,
             },
-            price: 100_000,
-            size: 4,
-            aggressor_side: Side::Ask,
-            sequence: 99,
-            ts_exchange_ns: 101,
-            ts_recv_ns: 103,
-        });
+            0x24,
+        );
         let mut payload = Vec::new();
         input.encode_into(&mut payload).expect("encode trade");
         let decoded = decode_normalized_market_data_record(&record(
@@ -387,13 +444,17 @@ mod tests {
         ))
         .expect("decode trade");
         match decoded {
-            NormalizedMarketDataRecordInput::Trade(event) => {
+            NormalizedMarketDataRecordInput::Trade {
+                event,
+                quality_flags_bits,
+            } => {
                 assert_eq!(event.symbol.venue, "BINANCE");
                 assert_eq!(event.symbol.symbol, "BTCUSDT");
                 assert_eq!(event.aggressor_side, Side::Ask);
                 assert_eq!(event.price, 100_000);
                 assert_eq!(event.size, 4);
                 assert_eq!(event.sequence, 99);
+                assert_eq!(quality_flags_bits, 0x24);
             }
             _ => panic!("expected trade"),
         }
