@@ -1,8 +1,9 @@
 //! Bounded background writer for normalized market-data WAL records.
 
 use super::{
-    MarketDataWalRecordKind, MarketDataWalSequence, PersistError, PersistResult,
-    SegmentedMarketDataWal, SegmentedMarketDataWalConfig,
+    MarketDataWalRecordKind, MarketDataWalSequence, NormalizedMarketDataCodecError,
+    NormalizedMarketDataRecordInput, PersistError, PersistResult, SegmentedMarketDataWal,
+    SegmentedMarketDataWalConfig,
 };
 use std::error::Error;
 use std::fmt;
@@ -189,6 +190,70 @@ impl fmt::Display for MarketDataWriterTryError {
 
 impl Error for MarketDataWriterTryError {}
 
+/// Nonblocking typed-event admission failure that returns the canonical event.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum NormalizedMarketDataWriterTryError {
+    /// Record-count capacity is exhausted.
+    Full(NormalizedMarketDataRecordInput),
+    /// Aggregate queued payload-byte capacity is exhausted.
+    BytesFull(NormalizedMarketDataRecordInput),
+    /// Encoded event exceeds the WAL record limit.
+    PayloadTooLarge(NormalizedMarketDataRecordInput),
+    /// Event cannot be represented by the normalized payload codec.
+    InvalidInput {
+        /// Rejected canonical event.
+        input: NormalizedMarketDataRecordInput,
+        /// Codec validation failure.
+        error: NormalizedMarketDataCodecError,
+    },
+    /// Writer no longer accepts records.
+    Stopped(NormalizedMarketDataRecordInput),
+}
+
+impl NormalizedMarketDataWriterTryError {
+    /// Returns the rejected canonical input.
+    pub fn into_input(self) -> NormalizedMarketDataRecordInput {
+        match self {
+            Self::Full(input)
+            | Self::BytesFull(input)
+            | Self::PayloadTooLarge(input)
+            | Self::Stopped(input)
+            | Self::InvalidInput { input, .. } => input,
+        }
+    }
+
+    /// Returns the codec cause for an invalid input.
+    pub const fn codec_error(&self) -> Option<&NormalizedMarketDataCodecError> {
+        match self {
+            Self::InvalidInput { error, .. } => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for NormalizedMarketDataWriterTryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Full(_) => formatter.write_str("normalized market-data record queue is full"),
+            Self::BytesFull(_) => {
+                formatter.write_str("normalized market-data payload-byte queue is full")
+            }
+            Self::PayloadTooLarge(_) => {
+                formatter.write_str("normalized market-data payload exceeds configured maximum")
+            }
+            Self::InvalidInput { error, .. } => error.fmt(formatter),
+            Self::Stopped(_) => formatter.write_str("normalized market-data writer is stopped"),
+        }
+    }
+}
+
+impl Error for NormalizedMarketDataWriterTryError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.codec_error().map(|error| error as &dyn Error)
+    }
+}
+
 /// Control-plane failure from a flush or shutdown barrier.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -247,6 +312,8 @@ pub struct BoundedMarketDataWriterMetrics {
     pub payload_too_large_rejections: u64,
     /// Writer-reserved record-kind rejections.
     pub reserved_kind_rejections: u64,
+    /// Canonical events rejected because their identifiers are not encodable.
+    pub invalid_normalized_rejections: u64,
     /// Rejections after stop or failure.
     pub stopped_rejections: u64,
     /// WAL append failures.
@@ -287,6 +354,7 @@ struct WriterState {
     bytes_full_rejections: AtomicU64,
     payload_too_large_rejections: AtomicU64,
     reserved_kind_rejections: AtomicU64,
+    invalid_normalized_rejections: AtomicU64,
     stopped_rejections: AtomicU64,
     write_failures: AtomicU64,
     sync_failures: AtomicU64,
@@ -318,6 +386,7 @@ impl WriterState {
             bytes_full_rejections: AtomicU64::new(0),
             payload_too_large_rejections: AtomicU64::new(0),
             reserved_kind_rejections: AtomicU64::new(0),
+            invalid_normalized_rejections: AtomicU64::new(0),
             stopped_rejections: AtomicU64::new(0),
             write_failures: AtomicU64::new(0),
             sync_failures: AtomicU64::new(0),
@@ -347,6 +416,9 @@ impl WriterState {
             bytes_full_rejections: self.bytes_full_rejections.load(Ordering::Relaxed),
             payload_too_large_rejections: self.payload_too_large_rejections.load(Ordering::Relaxed),
             reserved_kind_rejections: self.reserved_kind_rejections.load(Ordering::Relaxed),
+            invalid_normalized_rejections: self
+                .invalid_normalized_rejections
+                .load(Ordering::Relaxed),
             stopped_rejections: self.stopped_rejections.load(Ordering::Relaxed),
             write_failures: self.write_failures.load(Ordering::Relaxed),
             sync_failures: self.sync_failures.load(Ordering::Relaxed),
@@ -373,6 +445,10 @@ impl WriterState {
 #[derive(Debug)]
 enum WriterCommand {
     Append(MarketDataWalRecordInput),
+    AppendNormalized {
+        input: NormalizedMarketDataRecordInput,
+        encoded_len: usize,
+    },
     Flush(SyncSender<Result<(), MarketDataWriterControlError>>),
     Shutdown(SyncSender<Result<(), MarketDataWriterControlError>>),
     #[cfg(test)]
@@ -490,6 +566,90 @@ impl MarketDataWalProducer {
         ))
     }
 
+    /// Attempts to enqueue an owned canonical book/trade event without
+    /// encoding or waiting on the caller thread.
+    ///
+    /// The writer thread encodes accepted events into reusable scratch storage.
+    /// Every rejection returns the canonical event to the caller.
+    pub fn try_append_normalized_owned(
+        &self,
+        input: NormalizedMarketDataRecordInput,
+    ) -> Result<(), NormalizedMarketDataWriterTryError> {
+        let submission = SubmissionGuard::enter(&self.state);
+        if !self.state.accepting.load(Ordering::Acquire) {
+            self.state
+                .stopped_rejections
+                .fetch_add(1, Ordering::Relaxed);
+            return Err(NormalizedMarketDataWriterTryError::Stopped(input));
+        }
+        let payload_bytes = match input.encoded_len() {
+            Ok(length) => length,
+            Err(error) => {
+                self.state
+                    .invalid_normalized_rejections
+                    .fetch_add(1, Ordering::Relaxed);
+                return Err(NormalizedMarketDataWriterTryError::InvalidInput { input, error });
+            }
+        };
+        if payload_bytes > self.max_record_payload_bytes {
+            self.state
+                .payload_too_large_rejections
+                .fetch_add(1, Ordering::Relaxed);
+            return Err(NormalizedMarketDataWriterTryError::PayloadTooLarge(input));
+        }
+        let Some(queued_payload_bytes) = reserve_bounded(
+            &self.state.queued_payload_bytes,
+            payload_bytes,
+            self.max_queued_payload_bytes,
+        ) else {
+            self.state
+                .bytes_full_rejections
+                .fetch_add(1, Ordering::Relaxed);
+            return Err(NormalizedMarketDataWriterTryError::BytesFull(input));
+        };
+        let queue_depth = self.state.queue_depth.fetch_add(1, Ordering::AcqRel) + 1;
+        match self.sender.try_send(WriterCommand::AppendNormalized {
+            input,
+            encoded_len: payload_bytes,
+        }) {
+            Ok(()) => {
+                self.state.accepted_records.fetch_add(1, Ordering::Relaxed);
+                self.state
+                    .accepted_payload_bytes
+                    .fetch_add(payload_bytes as u64, Ordering::Relaxed);
+                update_high_watermark(&self.state.queue_high_watermark, queue_depth);
+                update_high_watermark(
+                    &self.state.queued_payload_high_watermark,
+                    queued_payload_bytes,
+                );
+                drop(submission);
+                Ok(())
+            }
+            Err(TrySendError::Full(WriterCommand::AppendNormalized { input, encoded_len })) => {
+                debug_assert_eq!(encoded_len, payload_bytes);
+                release_queue_reservation(&self.state, payload_bytes);
+                self.state.full_rejections.fetch_add(1, Ordering::Relaxed);
+                Err(NormalizedMarketDataWriterTryError::Full(input))
+            }
+            Err(TrySendError::Disconnected(WriterCommand::AppendNormalized {
+                input,
+                encoded_len,
+            })) => {
+                debug_assert_eq!(encoded_len, payload_bytes);
+                release_queue_reservation(&self.state, payload_bytes);
+                self.state.accepting.store(false, Ordering::Release);
+                self.state.stopped.store(true, Ordering::Release);
+                self.state
+                    .stopped_rejections
+                    .fetch_add(1, Ordering::Relaxed);
+                Err(NormalizedMarketDataWriterTryError::Stopped(input))
+            }
+            Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
+                unreachable!("typed admission sends only normalized commands")
+            }
+        }
+    }
+
     /// Returns a lock-free writer metrics snapshot.
     pub fn metrics(&self) -> BoundedMarketDataWriterMetrics {
         self.state.metrics()
@@ -580,6 +740,14 @@ impl BoundedMarketDataWalWriter {
             ts_recv_ns,
             payload,
         )
+    }
+
+    /// Attempts to enqueue an owned canonical event for worker-side encoding.
+    pub fn try_append_normalized_owned(
+        &self,
+        input: NormalizedMarketDataRecordInput,
+    ) -> Result<(), NormalizedMarketDataWriterTryError> {
+        self.producer.try_append_normalized_owned(input)
     }
 
     /// Waits for all earlier records and synchronizes the active segment.
@@ -692,6 +860,7 @@ fn worker_loop(
     receiver: &Receiver<WriterCommand>,
     state: &WriterState,
 ) {
+    let mut normalized_scratch = Vec::with_capacity(512);
     while let Ok(command) = receiver.recv() {
         match command {
             WriterCommand::Append(input) => {
@@ -718,6 +887,56 @@ fn worker_loop(
                             state
                                 .last_synced_sequence
                                 .store(sequence.0, Ordering::Release);
+                        }
+                    }
+                    Err(error) => {
+                        state.write_failures.fetch_add(1, Ordering::Relaxed);
+                        let message = error.to_string();
+                        state.set_error(message.clone());
+                        wait_for_submissions(state);
+                        drain_abandoned(receiver, state, &message);
+                        return;
+                    }
+                }
+            }
+            WriterCommand::AppendNormalized {
+                input,
+                encoded_len: payload_bytes,
+            } => {
+                release_queue_reservation(state, payload_bytes);
+                let kind = input.record_kind();
+                let sequence = input.sequence();
+                let ts_exchange_ns = input.ts_exchange_ns();
+                let ts_recv_ns = input.ts_recv_ns();
+                if let Err(error) = input.encode_into(&mut normalized_scratch) {
+                    state.write_failures.fetch_add(1, Ordering::Relaxed);
+                    let message = error.to_string();
+                    state.set_error(message.clone());
+                    wait_for_submissions(state);
+                    drain_abandoned(receiver, state, &message);
+                    return;
+                }
+                let sync_count = wal.metrics().wal.sync_count;
+                match wal.append_record(
+                    kind,
+                    sequence,
+                    sequence,
+                    ts_exchange_ns,
+                    ts_recv_ns,
+                    &normalized_scratch,
+                ) {
+                    Ok(wal_sequence) => {
+                        state.written_records.fetch_add(1, Ordering::Relaxed);
+                        state
+                            .written_payload_bytes
+                            .fetch_add(payload_bytes as u64, Ordering::Relaxed);
+                        state
+                            .last_written_sequence
+                            .store(wal_sequence.0, Ordering::Release);
+                        if wal.metrics().wal.sync_count > sync_count {
+                            state
+                                .last_synced_sequence
+                                .store(wal_sequence.0, Ordering::Release);
                         }
                     }
                     Err(error) => {
@@ -782,6 +1001,16 @@ fn drain_abandoned(receiver: &Receiver<WriterCommand>, state: &WriterState, mess
         match receiver.try_recv() {
             Ok(WriterCommand::Append(input)) => {
                 let payload_bytes = input.payload_len();
+                release_queue_reservation(state, payload_bytes);
+                state.abandoned_records.fetch_add(1, Ordering::Relaxed);
+                state
+                    .abandoned_payload_bytes
+                    .fetch_add(payload_bytes as u64, Ordering::Relaxed);
+            }
+            Ok(WriterCommand::AppendNormalized {
+                encoded_len: payload_bytes,
+                ..
+            }) => {
                 release_queue_reservation(state, payload_bytes);
                 state.abandoned_records.fetch_add(1, Ordering::Relaxed);
                 state
@@ -884,7 +1113,10 @@ fn invalid_input(message: &'static str) -> PersistError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MarketDataWalRecord, MarketDataWalSyncPolicy};
+    use crate::{
+        decode_normalized_market_data_record, MarketDataWalRecord, MarketDataWalSyncPolicy,
+    };
+    use of_core::{Side, SymbolId, TradePrint};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1146,5 +1378,88 @@ mod tests {
         assert_eq!(input.ts_recv_ns(), 14);
         assert_eq!(input.payload_len(), 3);
         assert_eq!(input.into_payload(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn worker_encodes_owned_normalized_events_for_replay() {
+        let root = TestRoot::new("bounded-writer-normalized");
+        let writer = BoundedMarketDataWalWriter::start(
+            wal_config(&root.0),
+            BoundedMarketDataWriterConfig::new(),
+        )
+        .expect("start writer");
+        writer
+            .try_append_normalized_owned(NormalizedMarketDataRecordInput::trade(TradePrint {
+                symbol: SymbolId {
+                    venue: "CME".to_owned(),
+                    symbol: "ESM6".to_owned(),
+                },
+                price: 5_050_000,
+                size: 7,
+                aggressor_side: Side::Ask,
+                sequence: 41,
+                ts_exchange_ns: 43,
+                ts_recv_ns: 47,
+            }))
+            .expect("enqueue normalized trade");
+        let metrics = writer.shutdown().expect("shutdown");
+        assert_eq!(metrics.accepted_records, 1);
+        assert_eq!(metrics.written_records, 1);
+
+        let wal = SegmentedMarketDataWal::open(wal_config(&root.0)).expect("reopen");
+        let mut records = Vec::new();
+        wal.replay(&mut records).expect("replay");
+        let record = records
+            .iter()
+            .find(|record| record.kind == MarketDataWalRecordKind::TradePrint)
+            .expect("trade frame");
+        let decoded = decode_normalized_market_data_record(record).expect("decode");
+        match decoded {
+            NormalizedMarketDataRecordInput::Trade(trade) => {
+                assert_eq!(trade.symbol.venue, "CME");
+                assert_eq!(trade.symbol.symbol, "ESM6");
+                assert_eq!(trade.sequence, 41);
+                assert_eq!(trade.price, 5_050_000);
+                assert_eq!(trade.size, 7);
+            }
+            _ => panic!("expected trade"),
+        }
+    }
+
+    #[test]
+    fn typed_admission_returns_invalid_canonical_event() {
+        let root = TestRoot::new("bounded-writer-normalized-invalid");
+        let writer = BoundedMarketDataWalWriter::start(
+            wal_config(&root.0),
+            BoundedMarketDataWriterConfig::new(),
+        )
+        .expect("start writer");
+        let input = NormalizedMarketDataRecordInput::trade(TradePrint {
+            symbol: SymbolId {
+                venue: "X".repeat(u16::MAX as usize + 1),
+                symbol: "Y".to_owned(),
+            },
+            price: 1,
+            size: 1,
+            aggressor_side: Side::Bid,
+            sequence: 1,
+            ts_exchange_ns: 1,
+            ts_recv_ns: 1,
+        });
+        let error = writer
+            .try_append_normalized_owned(input)
+            .expect_err("invalid identifier");
+        assert_eq!(
+            error.codec_error(),
+            Some(&NormalizedMarketDataCodecError::VenueTooLong)
+        );
+        match error.into_input() {
+            NormalizedMarketDataRecordInput::Trade(trade) => {
+                assert_eq!(trade.symbol.venue.len(), u16::MAX as usize + 1);
+            }
+            _ => panic!("expected returned trade"),
+        }
+        assert_eq!(writer.metrics().invalid_normalized_rejections, 1);
+        writer.shutdown().expect("shutdown");
     }
 }
