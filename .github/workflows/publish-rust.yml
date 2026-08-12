@@ -28,9 +28,17 @@ jobs:
         run: |
           set -euo pipefail
           for crate in of_core of_analytics of_execution_core of_fix of_signals of_persist of_persist_parquet of_adapters of_runtime of_execution of_execution_algos of_execution_adapters of_ffi_c; do
-            cargo check -p "$crate"
-            cargo package -p "$crate" --allow-dirty --no-verify
+            cargo check --locked -p "$crate"
+            package_files="$(cargo package -p "$crate" --allow-dirty --list)"
+            test -n "$package_files"
+            grep -qx "Cargo.toml" <<<"$package_files"
+            grep -qx "README.md" <<<"$package_files"
           done
+
+          # The dependency root can receive Cargo's complete archive check now.
+          # Downstream 0.5/0.1 packages receive the same check during ordered
+          # publication after each new internal dependency reaches crates.io.
+          cargo package -p of_core --allow-dirty
 
       - name: Publish crates.io
         if: github.event_name == 'workflow_dispatch' && !inputs.dry_run

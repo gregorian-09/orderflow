@@ -538,9 +538,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   fail-closed `cargo-deny` policy and CI gate.
 - Tightened CI semver validation from a permissive major-release comparison to
   the minor-release compatibility promised by the additive `0.5.0` line.
-- Hardened ordered crates.io publication by packaging every workspace crate
-  before release and waiting for each published dependency version to become
-  visible before publishing dependent crates.
+- Hardened ordered crates.io publication with locked per-crate compilation,
+  package-content inspection for every publishable crate, full root-package
+  verification, and registry visibility polling before each dependent crate.
 
 ## [0.4.0] - 2026-06-04
 ### Added

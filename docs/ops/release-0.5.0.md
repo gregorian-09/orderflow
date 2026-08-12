@@ -245,9 +245,11 @@ Crates are published in dependency order:
 13. `of_ffi_c 0.5.0`
 
 The workflow waits until each successful publication is visible in the
-crates.io index before publishing a dependent crate. CI packages every crate
-without registry verification first; full package verification naturally
-occurs during ordered publication once dependency versions exist.
+crates.io index before publishing a dependent crate. CI performs locked
+compilation and package-content inspection for every crate, plus full package
+verification for the dependency root. Cargo performs full downstream package
+verification during ordered publication once each new dependency version
+exists in the registry.
 
 ## Upgrade Checklist
 
