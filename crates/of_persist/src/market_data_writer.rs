@@ -292,6 +292,12 @@ pub struct BoundedMarketDataWriterMetrics {
     pub written_records: u64,
     /// Successfully appended payload bytes.
     pub written_payload_bytes: u64,
+    /// Highest local receive timestamp accepted by the queue.
+    pub latest_accepted_ts_recv_ns: u64,
+    /// Highest local receive timestamp successfully appended.
+    pub latest_written_ts_recv_ns: u64,
+    /// Event-time backlog between accepted and written receive timestamps.
+    pub event_time_lag_ns: u64,
     /// Inputs abandoned after a worker failure.
     pub abandoned_records: u64,
     /// Payload bytes abandoned after a worker failure.
@@ -348,6 +354,8 @@ struct WriterState {
     accepted_payload_bytes: AtomicU64,
     written_records: AtomicU64,
     written_payload_bytes: AtomicU64,
+    latest_accepted_ts_recv_ns: AtomicU64,
+    latest_written_ts_recv_ns: AtomicU64,
     abandoned_records: AtomicU64,
     abandoned_payload_bytes: AtomicU64,
     full_rejections: AtomicU64,
@@ -380,6 +388,8 @@ impl WriterState {
             accepted_payload_bytes: AtomicU64::new(0),
             written_records: AtomicU64::new(0),
             written_payload_bytes: AtomicU64::new(0),
+            latest_accepted_ts_recv_ns: AtomicU64::new(0),
+            latest_written_ts_recv_ns: AtomicU64::new(0),
             abandoned_records: AtomicU64::new(0),
             abandoned_payload_bytes: AtomicU64::new(0),
             full_rejections: AtomicU64::new(0),
@@ -399,11 +409,16 @@ impl WriterState {
     }
 
     fn metrics(&self) -> BoundedMarketDataWriterMetrics {
+        let latest_accepted_ts_recv_ns = self.latest_accepted_ts_recv_ns.load(Ordering::Relaxed);
+        let latest_written_ts_recv_ns = self.latest_written_ts_recv_ns.load(Ordering::Relaxed);
         BoundedMarketDataWriterMetrics {
             accepted_records: self.accepted_records.load(Ordering::Relaxed),
             accepted_payload_bytes: self.accepted_payload_bytes.load(Ordering::Relaxed),
             written_records: self.written_records.load(Ordering::Relaxed),
             written_payload_bytes: self.written_payload_bytes.load(Ordering::Relaxed),
+            latest_accepted_ts_recv_ns,
+            latest_written_ts_recv_ns,
+            event_time_lag_ns: latest_accepted_ts_recv_ns.saturating_sub(latest_written_ts_recv_ns),
             abandoned_records: self.abandoned_records.load(Ordering::Relaxed),
             abandoned_payload_bytes: self.abandoned_payload_bytes.load(Ordering::Relaxed),
             queue_depth: self.queue_depth.load(Ordering::Acquire),
@@ -478,6 +493,7 @@ impl MarketDataWalProducer {
         input: MarketDataWalRecordInput,
     ) -> Result<(), MarketDataWriterTryError> {
         let submission = SubmissionGuard::enter(&self.state);
+        let input_ts_recv_ns = input.ts_recv_ns();
         if !self.state.accepting.load(Ordering::Acquire) {
             self.state
                 .stopped_rejections
@@ -515,6 +531,7 @@ impl MarketDataWalProducer {
                 self.state
                     .accepted_payload_bytes
                     .fetch_add(payload_bytes as u64, Ordering::Relaxed);
+                update_atomic_max_u64(&self.state.latest_accepted_ts_recv_ns, input_ts_recv_ns);
                 update_high_watermark(&self.state.queue_high_watermark, queue_depth);
                 update_high_watermark(
                     &self.state.queued_payload_high_watermark,
@@ -576,6 +593,7 @@ impl MarketDataWalProducer {
         input: NormalizedMarketDataRecordInput,
     ) -> Result<(), NormalizedMarketDataWriterTryError> {
         let submission = SubmissionGuard::enter(&self.state);
+        let input_ts_recv_ns = input.ts_recv_ns();
         if !self.state.accepting.load(Ordering::Acquire) {
             self.state
                 .stopped_rejections
@@ -617,6 +635,7 @@ impl MarketDataWalProducer {
                 self.state
                     .accepted_payload_bytes
                     .fetch_add(payload_bytes as u64, Ordering::Relaxed);
+                update_atomic_max_u64(&self.state.latest_accepted_ts_recv_ns, input_ts_recv_ns);
                 update_high_watermark(&self.state.queue_high_watermark, queue_depth);
                 update_high_watermark(
                     &self.state.queued_payload_high_watermark,
@@ -883,6 +902,7 @@ fn worker_loop(
                         state
                             .last_written_sequence
                             .store(sequence.0, Ordering::Release);
+                        update_atomic_max_u64(&state.latest_written_ts_recv_ns, input.ts_recv_ns);
                         if wal.metrics().wal.sync_count > sync_count {
                             state
                                 .last_synced_sequence
@@ -933,6 +953,7 @@ fn worker_loop(
                         state
                             .last_written_sequence
                             .store(wal_sequence.0, Ordering::Release);
+                        update_atomic_max_u64(&state.latest_written_ts_recv_ns, ts_recv_ns);
                         if wal.metrics().wal.sync_count > sync_count {
                             state
                                 .last_synced_sequence
@@ -1090,6 +1111,16 @@ fn update_high_watermark(high: &AtomicUsize, candidate: usize) {
     }
 }
 
+fn update_atomic_max_u64(high: &AtomicU64, candidate: u64) {
+    let mut current = high.load(Ordering::Relaxed);
+    while candidate > current {
+        match high.compare_exchange_weak(current, candidate, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
 fn wait_for_submissions(state: &WriterState) {
     while state.active_submissions.load(Ordering::Acquire) != 0 {
         thread::yield_now();
@@ -1229,6 +1260,31 @@ mod tests {
         assert_eq!(metrics.full_rejections, 1);
         resume.send(()).expect("resume");
         writer.shutdown().expect("shutdown");
+    }
+
+    #[test]
+    fn reports_event_time_backlog_without_reading_the_wall_clock() {
+        let root = TestRoot::new("bounded-writer-event-time-lag");
+        let writer = BoundedMarketDataWalWriter::start(
+            wal_config(&root.0),
+            BoundedMarketDataWriterConfig::new()
+                .with_queue_capacity(1)
+                .with_max_queued_payload_bytes(64),
+        )
+        .expect("start writer");
+        let resume = writer.pause_worker();
+        writer.try_append_owned(input(7, b"one")).expect("enqueue");
+
+        let queued = writer.metrics();
+        assert_eq!(queued.latest_accepted_ts_recv_ns, 71);
+        assert_eq!(queued.latest_written_ts_recv_ns, 0);
+        assert_eq!(queued.event_time_lag_ns, 71);
+
+        resume.send(()).expect("resume");
+        let drained = writer.shutdown().expect("shutdown");
+        assert_eq!(drained.latest_accepted_ts_recv_ns, 71);
+        assert_eq!(drained.latest_written_ts_recv_ns, 71);
+        assert_eq!(drained.event_time_lag_ns, 0);
     }
 
     #[test]
@@ -1405,6 +1461,9 @@ mod tests {
         let metrics = writer.shutdown().expect("shutdown");
         assert_eq!(metrics.accepted_records, 1);
         assert_eq!(metrics.written_records, 1);
+        assert_eq!(metrics.latest_accepted_ts_recv_ns, 47);
+        assert_eq!(metrics.latest_written_ts_recv_ns, 47);
+        assert_eq!(metrics.event_time_lag_ns, 0);
 
         let wal = SegmentedMarketDataWal::open(wal_config(&root.0)).expect("reopen");
         let mut records = Vec::new();
