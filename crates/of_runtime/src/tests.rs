@@ -1189,6 +1189,73 @@ secret_env = "OF_STRICT_SECRET"
     }
 
     #[test]
+    fn engine_owned_wal_flushes_and_shuts_down_explicitly() {
+        let root = temp_dir("engine_owned_wal");
+        let mut engine = Engine::new(
+            EngineConfig::default(),
+            MockAdapter::default(),
+            DeltaMomentumSignal::new(5),
+        );
+        engine
+            .configure_market_data_wal(
+                SegmentedMarketDataWalConfig::new(&root)
+                    .with_sync_policy(MarketDataWalSyncPolicy::Never),
+                BoundedMarketDataWriterConfig::new()
+                    .with_queue_capacity(4)
+                    .with_max_queued_payload_bytes(4096),
+                MarketDataPersistenceFailureAction::StopTrading,
+            )
+            .expect("configure owned WAL");
+        assert!(engine
+            .configure_market_data_wal(
+                SegmentedMarketDataWalConfig::new(&root),
+                BoundedMarketDataWriterConfig::new(),
+                MarketDataPersistenceFailureAction::StopTrading,
+            )
+            .is_err());
+        engine.start().expect("start");
+        engine
+            .ingest_trade(
+                TradePrint {
+                    symbol: SymbolId {
+                        venue: "CME".to_owned(),
+                        symbol: "RTYM6".to_owned(),
+                    },
+                    price: 2_145_000,
+                    size: 3,
+                    aggressor_side: Side::Bid,
+                    sequence: 9,
+                    ts_exchange_ns: 90,
+                    ts_recv_ns: 91,
+                },
+                DataQualityFlags::NONE,
+            )
+            .expect("ingest");
+        engine
+            .flush_market_data_persistence()
+            .expect("flush owned WAL");
+        let metrics = engine
+            .shutdown_market_data_persistence()
+            .expect("shutdown owned WAL")
+            .expect("configured metrics");
+        assert_eq!(metrics.accepted_records, 1);
+        assert_eq!(metrics.written_records, 1);
+        assert_eq!(metrics.last_synced_sequence.map(|value| value.0), Some(1));
+        assert!(!engine.market_data_persistence_health().enabled);
+        assert!(engine
+            .shutdown_market_data_persistence()
+            .expect("idempotent shutdown")
+            .is_none());
+
+        let wal = SegmentedMarketDataWal::open(SegmentedMarketDataWalConfig::new(&root))
+            .expect("reopen WAL");
+        let mut records = Vec::new();
+        wal.replay(&mut records).expect("replay");
+        assert_eq!(records.len(), 1);
+        fs::remove_dir_all(root).expect("remove WAL root");
+    }
+
+    #[test]
     fn runtime_persistence_failure_policies_are_deterministic() {
         let symbol = SymbolId {
             venue: "CME".to_owned(),

@@ -31,10 +31,11 @@ use of_core::{
     VolatilitySignatureSnapshot, VolatilitySnapshot, VpinSnapshot, VpinTracker,
 };
 use of_persist::{
-    decode_normalized_market_data_record, BoundedMarketDataWriterMetrics,
+    decode_normalized_market_data_record, BoundedMarketDataWalWriter,
+    BoundedMarketDataWriterConfig, BoundedMarketDataWriterMetrics,
     MarketDataPersistenceFailureAction, MarketDataPersistenceHealth, MarketDataPersistenceMode,
     MarketDataPersistencePolicy, MarketDataWalProducer, MarketDataWalRecord,
-    NormalizedMarketDataRecordInput, RetentionPolicy, RollingStore,
+    NormalizedMarketDataRecordInput, RetentionPolicy, RollingStore, SegmentedMarketDataWalConfig,
 };
 use of_signals::{SignalExplanation, SignalGateDecision, SignalModule, SignalReasonCode};
 
@@ -191,13 +192,22 @@ struct CircuitBreakerState {
     opened_count: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct RuntimeMarketDataPersistence {
     producer: MarketDataWalProducer,
+    owned_writer: Option<BoundedMarketDataWalWriter>,
     failure_action: MarketDataPersistenceFailureAction,
     rejected_records: u64,
     last_error: Option<String>,
     memory_only: bool,
+}
+
+impl Drop for RuntimeMarketDataPersistence {
+    fn drop(&mut self) {
+        if let Some(writer) = self.owned_writer.take() {
+            let _ = writer.shutdown();
+        }
+    }
 }
 
 impl RuntimeMarketDataPersistence {
@@ -691,6 +701,7 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
     ) {
         self.market_data_persistence = producer.map(|producer| RuntimeMarketDataPersistence {
             producer,
+            owned_writer: None,
             failure_action,
             rejected_records: 0,
             last_error: None,
@@ -699,6 +710,88 @@ impl<A: MarketDataAdapter, S: SignalModule> Engine<A, S> {
         self.update_health_state(DataQualityFlags::from_bits_truncate(
             self.last_quality_flags_bits,
         ));
+    }
+
+    /// Starts and owns a bounded normalized market-data WAL writer.
+    ///
+    /// This is a blocking control-plane operation because it validates and
+    /// opens the WAL before returning. The engine shuts the writer down during
+    /// drop, while [`Self::shutdown_market_data_persistence`] provides an
+    /// explicit durability barrier and final metrics.
+    ///
+    /// # Errors
+    /// Returns an error when persistence is already configured or the WAL
+    /// cannot be opened.
+    pub fn configure_market_data_wal(
+        &mut self,
+        wal_config: SegmentedMarketDataWalConfig,
+        writer_config: BoundedMarketDataWriterConfig,
+        failure_action: MarketDataPersistenceFailureAction,
+    ) -> Result<(), RuntimeError> {
+        if self.market_data_persistence.is_some() {
+            return Err(RuntimeError::Config(
+                "market-data persistence is already configured".to_owned(),
+            ));
+        }
+        let writer = BoundedMarketDataWalWriter::start(wal_config, writer_config)
+            .map_err(|error| RuntimeError::Io(error.to_string()))?;
+        self.market_data_persistence = Some(RuntimeMarketDataPersistence {
+            producer: writer.producer(),
+            owned_writer: Some(writer),
+            failure_action,
+            rejected_records: 0,
+            last_error: None,
+            memory_only: false,
+        });
+        self.update_health_state(DataQualityFlags::from_bits_truncate(
+            self.last_quality_flags_bits,
+        ));
+        Ok(())
+    }
+
+    /// Flushes an engine-owned market-data WAL through a durability barrier.
+    ///
+    /// # Errors
+    /// Returns an error when persistence is disabled, the producer is
+    /// externally owned, or the writer fails its barrier.
+    pub fn flush_market_data_persistence(&self) -> Result<(), RuntimeError> {
+        let persistence = self.market_data_persistence.as_ref().ok_or_else(|| {
+            RuntimeError::Config("market-data persistence is not configured".to_owned())
+        })?;
+        let writer = persistence.owned_writer.as_ref().ok_or_else(|| {
+            RuntimeError::Config(
+                "market-data WAL producer is externally owned; flush it through its writer"
+                    .to_owned(),
+            )
+        })?;
+        writer
+            .flush()
+            .map_err(|error| RuntimeError::Io(error.to_string()))
+    }
+
+    /// Stops an engine-owned writer and disables production persistence.
+    ///
+    /// For an externally owned producer this only detaches the producer; its
+    /// caller remains responsible for shutdown.
+    ///
+    /// # Errors
+    /// Returns an error when the owned writer cannot drain, sync, or join.
+    pub fn shutdown_market_data_persistence(
+        &mut self,
+    ) -> Result<Option<BoundedMarketDataWriterMetrics>, RuntimeError> {
+        let Some(mut persistence) = self.market_data_persistence.take() else {
+            return Ok(None);
+        };
+        let metrics = match persistence.owned_writer.take() {
+            Some(writer) => writer
+                .shutdown()
+                .map_err(|error| RuntimeError::Io(error.to_string()))?,
+            None => persistence.producer.metrics(),
+        };
+        self.update_health_state(DataQualityFlags::from_bits_truncate(
+            self.last_quality_flags_bits,
+        ));
+        Ok(Some(metrics))
     }
 
     /// Returns bounded normalized market-data writer metrics when configured.
