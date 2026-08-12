@@ -739,3 +739,7 @@ Malformed JSONL lines are surfaced as `Io` with `InvalidData`.
 - Use it directly when building replay, audit, or research tools.
 - Use `examples/replay_cli` when you want a ready-made discovery-and-replay
   command-line workflow.
+- Add [`of_persist_parquet`](./05m-of-persist-parquet-reference.md) when sealed,
+  sequence-bounded WAL ranges need verified columnar export for research,
+  batch analytics, or storage tiering. Keeping it separate avoids Arrow and
+  compression dependencies in live capture builds.

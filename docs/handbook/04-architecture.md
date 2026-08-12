@@ -21,6 +21,7 @@ flowchart LR
     EXA[of_execution_adapters]
     SIG[of_signals]
     PST[of_persist]
+    PQ[of_persist_parquet]
     ADP[of_adapters]
   end
 
@@ -38,6 +39,7 @@ flowchart LR
   RT --> CORE
   RT --> SIG
   RT --> PST
+  PST --> PQ
   RT --> ADP
   EXC --> EXA
   ADP --> VENUE
@@ -54,6 +56,9 @@ flowchart LR
 - `of_persist`: rolling JSONL persistence, typed readback, checksum-linked
   single-file/segmented normalized WAL, bounded background writing,
   checkpoints, recovery planning, cold export, and retention policy.
+- `of_persist_parquet`: optional maintenance-path Parquet compaction with
+  bounded Arrow batches, stable partition/schema metadata, full post-write
+  verification, and retention proof. It is not linked into the runtime hot path.
 - `of_runtime`: lifecycle, polling/ingest processing, quality supervision, health state.
 - `of_execution_core`: additive execution-domain IDs, requests, events, state machine, and risk primitives.
 - `of_fix`: reusable low-allocation FIX tag-value codec and transport-independent session engine with borrowed field views, body-length/checksum validation, caller-owned encoding buffers, deterministic liveness, and sequence recovery.

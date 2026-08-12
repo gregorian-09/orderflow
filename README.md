@@ -31,7 +31,7 @@ Package versions for this release:
 | Existing Rust crates: `of_core`, `of_adapters`, `of_signals`, `of_persist`, `of_runtime`, `of_ffi_c` | `0.4.0` | Same established API line, additive analytics/execution exposure |
 | Python binding: `orderflow-gregorian09` | `0.4.0` | Matches the native `of_ffi_c` ABI package line |
 | Java binding: `orderflow-java-binding` | `0.4.0` | Matches the native `of_ffi_c` ABI package line |
-| New Rust crates: `of_analytics`, `of_execution_core`, `of_fix`, `of_execution`, `of_execution_adapters`, `of_execution_algos` | `0.1.0` | New advanced analytics/execution/FIX/algo crate family, intentionally versioned from its own first public release |
+| New Rust crates: `of_analytics`, `of_execution_core`, `of_fix`, `of_execution`, `of_execution_adapters`, `of_execution_algos`, `of_persist_parquet` | `0.1.0` | New advanced analytics/execution/FIX/algo/cold-storage crate family, intentionally versioned from its own first public release |
 
 Major additions:
 
@@ -72,6 +72,10 @@ Major additions:
   bounded admission before normalization; runtime, C, Python, and Java hosts
   can opt into owned writer lifecycle, explicit failure policy, durability
   barriers, quality-preserving replay, and event-time backlog health
+- verified cold storage: opt-in `of_persist_parquet` exports bounded Arrow
+  batches into date/venue/symbol/stream partitions, preserves source, sequence,
+  timestamp, quality, raw normalized payload, and optional derived snapshots,
+  then reopens and verifies the file before producing retention evidence
 - execution algorithms: additive parent/child order primitives, fixed-capacity
   decision buffers, OMS execution-event progress folding, and deterministic
   TWAP slice planning in `of_execution_algos`

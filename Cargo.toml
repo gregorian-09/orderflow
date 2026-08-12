@@ -10,6 +10,7 @@ members = [
   "crates/of_adapters",
   "crates/of_signals",
   "crates/of_persist",
+  "crates/of_persist_parquet",
   "crates/of_runtime",
   "crates/of_ffi_c",
   "examples/replay_cli", "examples/perf_harness",

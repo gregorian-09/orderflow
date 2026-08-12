@@ -5,10 +5,17 @@ This guide explains how to build, test, and extend the system.
 ## Repository Layout
 
 - `crates/of_core`: canonical types and analytics math.
+- `crates/of_analytics`: optional advanced analytics and feature extraction.
 - `crates/of_signals`: signal trait and default signal module.
 - `crates/of_adapters`: provider interface + mock/rithmic/cqg/binance adapters.
-- `crates/of_persist`: JSONL persistence and retention.
+- `crates/of_persist`: JSONL, normalized/raw WAL, recovery, and retention.
+- `crates/of_persist_parquet`: verified columnar cold export outside the hot path.
 - `crates/of_runtime`: orchestration, quality supervision, metrics/health.
+- `crates/of_execution_core`: canonical order and execution domain types.
+- `crates/of_execution`: OMS engine, risk, recovery, journals, and concurrency.
+- `crates/of_execution_algos`: deterministic parent/child execution planners.
+- `crates/of_fix`: reusable FIX codec and session infrastructure.
+- `crates/of_execution_adapters`: provider execution bridges and certification.
 - `crates/of_ffi_c`: C ABI and callback bridge.
 - `bindings/python`: ctypes binding.
 - `bindings/java`: JNA binding.

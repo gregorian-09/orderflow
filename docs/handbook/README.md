@@ -47,6 +47,8 @@ It is written for three audiences:
    Parent/child execution-algorithm primitives and deterministic TWAP planning.
 5l. [of_analytics Reference](./05l-of-analytics-reference.md)
    Advanced market-quality and liquidity/depth analytics crate split.
+5m. [of_persist_parquet Reference](./05m-of-persist-parquet-reference.md)
+   Verified Parquet cold export, partition/schema contracts, and retention proof.
 6. [Contributor Guide](./06-contributor-guide.md)  
    Build/test/extend instructions and implementation notes.
 7. [References](./07-references.md)  

@@ -37,6 +37,7 @@ Rust crate chapters:
 - [`of_fix` reference](./05j-of-fix-reference.md)
 - [`of_execution_algos` reference](./05k-of-execution-algos-reference.md)
 - [`of_analytics` reference](./05l-of-analytics-reference.md)
+- [`of_persist_parquet` reference](./05m-of-persist-parquet-reference.md)
 
 Binding-specific docs:
 

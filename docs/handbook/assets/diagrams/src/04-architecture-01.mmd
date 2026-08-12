@@ -11,6 +11,7 @@ flowchart LR
     CORE[of_core]
     SIG[of_signals]
     PST[of_persist]
+    PQ[of_persist_parquet]
     ADP[of_adapters]
   end
 
@@ -26,6 +27,7 @@ flowchart LR
   RT --> CORE
   RT --> SIG
   RT --> PST
+  PST --> PQ
   RT --> ADP
   ADP --> VENUE
   PY --> DASH

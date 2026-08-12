@@ -15,7 +15,7 @@ This release uses a split version model:
 | Existing Rust crates: `of_core`, `of_adapters`, `of_signals`, `of_persist`, `of_runtime`, `of_ffi_c` | `0.4.0` |
 | Python binding: `orderflow-gregorian09` | `0.4.0` |
 | Java binding: `orderflow-java-binding` | `0.4.0` |
-| New Rust advanced analytics/execution/FIX/algo crates: `of_analytics`, `of_execution_core`, `of_fix`, `of_execution`, `of_execution_adapters`, `of_execution_algos` | `0.1.0` |
+| New Rust advanced analytics/execution/FIX/algo/cold-storage crates: `of_analytics`, `of_execution_core`, `of_fix`, `of_execution`, `of_execution_adapters`, `of_execution_algos`, `of_persist_parquet` | `0.1.0` |
 
 The split is intentional. The analytics/runtime/binding stack is the existing
 public package family. The advanced analytics/execution/FIX crates are new
@@ -28,8 +28,9 @@ Rust publish order for the new crate family:
 2. `of_execution_core`
 3. `of_fix`
 4. `of_execution`
-5. `of_execution_adapters`
-6. `of_execution_algos`
+5. `of_execution_algos`
+6. `of_execution_adapters`
+7. `of_persist_parquet`
 
 `of_execution_adapters`' `fix` feature depends on `of_fix`, so local
 `cargo package -p of_execution_adapters` verification can only resolve the
@@ -165,6 +166,25 @@ while adding:
   and event-time backlog metrics
 - additive C, Python, and Java configure/flush/shutdown controls and allocated
   persistence-health JSON without changing established engine config layouts
+
+The opt-in `of_persist_parquet 0.1.0` companion keeps columnar dependencies out
+of `of_persist` while adding:
+
+- bounded Arrow record batches and Parquet row groups with Zstandard, Snappy,
+  or uncompressed columns
+- Hive-style date/venue/symbol/stream partitions with no-clobber publication
+- WAL, provider, and event sequences; exchange/receive timestamps; source,
+  adapter, and session provenance; effective quality flags; and original
+  normalized payload bytes
+- optional caller-versioned derived analytics snapshots joined in WAL order
+- strict normalized-record and partition validation
+- SHA-256, file checksum, schema, row, range, row-group, constant-column, and
+  per-payload checksum verification after reopening the final file
+- retention input available only from a successfully verified export proof
+
+The exporter remains synchronous control-plane work. Production deployments
+should compact sealed, sequence-bounded WAL ranges on a dedicated worker and
+verify object-store bytes before authorizing hot-tier deletion.
 
 No Tokio runtime or global executor is introduced. Existing single-file WAL,
 JSONL, checkpoint, cold-export, retention, and recovery-planning APIs retain
@@ -507,6 +527,8 @@ Recommended upgrade steps:
   `0.4.0`
 - pin new execution crates to compatible `0.1.x` versions if building Rust
   execution providers
+- pin `of_persist_parquet` to a compatible `0.1.x` version when adopting
+  verified columnar cold storage; existing capture applications do not need it
 - keep market-data runtime and execution engine ownership explicit in your
   application architecture
 - treat simulated execution as a deterministic development/test adapter, not as
