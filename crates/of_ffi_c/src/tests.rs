@@ -522,7 +522,7 @@ mod tests {
         assert_eq!(sink.payloads.len(), 1);
         assert_eq!(
             sink.payloads[0],
-            "{\"health_seq\":1,\"started\":true,\"connected\":true,\"degraded\":false,\"reconnect_state\":\"streaming\",\"quality_flags\":0,\"quality_flags_detail\":[],\"last_error\":null,\"protocol_info\":\"mock_adapter\",\"tracked_symbols\":0,\"processed_events\":0,\"adapter_total_count\":1,\"adapter_healthy_count\":1,\"runtime_health_status\":\"healthy\",\"external_feed_enabled\":false,\"external_feed_reconnecting\":false,\"external_sequence_enforced\":true,\"external_last_ingest_ns\":null,\"max_events_per_poll\":null,\"backpressure_dropped_events\":0,\"circuit_breaker_enabled\":false,\"circuit_breaker_open\":false,\"circuit_breaker_consecutive_failures\":0,\"circuit_breaker_opened_count\":0,\"circuit_breaker_cooldown_ms\":1000}"
+            "{\"health_seq\":1,\"started\":true,\"connected\":true,\"degraded\":false,\"reconnect_state\":\"streaming\",\"quality_flags\":0,\"quality_flags_detail\":[],\"last_error\":null,\"protocol_info\":\"mock_adapter\",\"tracked_symbols\":0,\"processed_events\":0,\"adapter_total_count\":1,\"adapter_healthy_count\":1,\"runtime_health_status\":\"healthy\",\"external_feed_enabled\":false,\"external_feed_reconnecting\":false,\"external_sequence_enforced\":true,\"external_last_ingest_ns\":null,\"max_events_per_poll\":null,\"backpressure_dropped_events\":0,\"circuit_breaker_enabled\":false,\"circuit_breaker_open\":false,\"circuit_breaker_consecutive_failures\":0,\"circuit_breaker_opened_count\":0,\"circuit_breaker_cooldown_ms\":1000,\"market_data_persistence\":{\"schema_version\":1,\"mode\":\"disabled\",\"enabled\":false,\"degraded\":false,\"memory_only\":false,\"failure_action\":\"mark_degraded\",\"blocks_trading\":false,\"accepted_records\":0,\"written_records\":0,\"abandoned_records\":0,\"records_lag\":0,\"event_time_lag_ns\":0,\"latest_accepted_ts_recv_ns\":0,\"latest_written_ts_recv_ns\":0,\"queue_depth\":0,\"queue_capacity\":0,\"queue_high_watermark\":0,\"queued_payload_bytes\":0,\"queued_payload_capacity\":0,\"queued_payload_high_watermark\":0,\"rejected_records\":0,\"write_failures\":0,\"sync_failures\":0,\"last_written_sequence\":null,\"last_durable_sequence\":null,\"last_error\":null}}"
         );
 
         assert_eq!(of_unsubscribe(sub), of_error_t::OF_OK as i32);
@@ -655,6 +655,105 @@ mod tests {
 
         assert_eq!(of_engine_stop(engine), of_error_t::OF_OK as i32);
         of_engine_destroy(engine);
+    }
+
+    #[test]
+    fn engine_owned_market_data_wal_lifecycle_is_exposed() {
+        let _guard = test_guard();
+        let root = std::env::temp_dir().join(format!(
+            "orderflow-ffi-market-data-wal-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let root_c = CString::new(root.to_string_lossy().as_bytes()).expect("root cstring");
+        let instance_id = CString::new("ffi-market-data-wal-test").expect("cstring");
+        let cfg = of_engine_config_t {
+            instance_id: instance_id.as_ptr(),
+            config_path: ptr::null(),
+            log_level: 0,
+            enable_persistence: 0,
+            audit_max_bytes: 0,
+            audit_max_files: 0,
+            audit_redact_tokens_csv: ptr::null(),
+            data_retention_max_bytes: 0,
+            data_retention_max_age_secs: 0,
+        };
+        let mut engine = ptr::null_mut();
+        assert_eq!(
+            of_engine_create(&cfg, &mut engine),
+            of_error_t::OF_OK as i32
+        );
+        let wal_cfg = of_market_data_wal_config_t {
+            root_path: root_c.as_ptr(),
+            max_segment_bytes: 0,
+            max_payload_bytes: 0,
+            sync_policy: 1,
+            sync_every_records: 0,
+            sync_manifest: 1,
+            queue_capacity: 4,
+            max_queued_payload_bytes: 4096,
+            failure_action: 2,
+            writer_thread_name: ptr::null(),
+        };
+        assert_eq!(
+            of_configure_market_data_wal(engine, &wal_cfg),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(of_engine_start(engine), of_error_t::OF_OK as i32);
+
+        let venue = CString::new("CME").expect("venue");
+        let instrument = CString::new("ESM6").expect("instrument");
+        let trade = of_trade_t {
+            symbol: of_symbol_t {
+                venue: venue.as_ptr(),
+                symbol: instrument.as_ptr(),
+                depth_levels: 1,
+            },
+            price: 5_050_000,
+            size: 2,
+            aggressor_side: 1,
+            sequence: 1,
+            ts_exchange_ns: 10,
+            ts_recv_ns: 11,
+        };
+        assert_eq!(
+            of_ingest_trade(engine, &trade, 0),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(
+            of_flush_market_data_wal(engine),
+            of_error_t::OF_OK as i32
+        );
+
+        let mut out = ptr::null();
+        let mut out_len = 0;
+        assert_eq!(
+            of_get_market_data_persistence_health_json(engine, &mut out, &mut out_len),
+            of_error_t::OF_OK as i32
+        );
+        let health = unsafe {
+            String::from_utf8_lossy(std::slice::from_raw_parts(
+                out.cast::<u8>(),
+                out_len as usize,
+            ))
+            .to_string()
+        };
+        assert!(health.contains("\"enabled\":true"));
+        assert!(health.contains("\"written_records\":1"));
+        assert!(health.contains("\"event_time_lag_ns\":0"));
+        of_string_free(out);
+
+        assert_eq!(
+            of_shutdown_market_data_wal(engine),
+            of_error_t::OF_OK as i32
+        );
+        assert_eq!(
+            of_shutdown_market_data_wal(engine),
+            of_error_t::OF_OK as i32
+        );
+        of_engine_destroy(engine);
+        assert!(root.join("manifest.ofmm").is_file());
+        std::fs::remove_dir_all(root).expect("remove WAL root");
     }
 
     #[test]

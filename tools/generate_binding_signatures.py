@@ -72,6 +72,7 @@ JAVA_SCALARS = {
 
 JAVA_STRUCT_TYPES = {
     "of_engine_config_t": "OfEngineConfig",
+    "of_market_data_wal_config_t": "OfMarketDataWalConfig",
     "of_symbol_t": "OfSymbol",
     "of_trade_t": "OfTrade",
     "of_book_t": "OfBook",

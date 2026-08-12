@@ -9,7 +9,7 @@ wrappers remain documented in their binding-specific README files.
 
 ## Summary
 
-- Exported symbols: `97`
+- Exported symbols: `101`
 - Families: `6`
 
 ## Binding Compatibility Matrix
@@ -65,6 +65,9 @@ interface declaration.
 | `of_ingest_trade` | `runtime` | yes | yes | yes | `LowLevelGenerated` |
 | `of_ingest_book` | `runtime` | yes | yes | yes | `LowLevelGenerated` |
 | `of_configure_external_feed` | `runtime` | yes | yes | yes | `LowLevelGenerated` |
+| `of_configure_market_data_wal` | `runtime` | yes | yes | yes | `LowLevelGenerated` |
+| `of_flush_market_data_wal` | `runtime` | yes | yes | yes | `LowLevelGenerated` |
+| `of_shutdown_market_data_wal` | `runtime` | yes | yes | yes | `LowLevelGenerated` |
 | `of_external_set_reconnecting` | `runtime` | yes | yes | yes | `LowLevelGenerated` |
 | `of_external_health_tick` | `runtime` | yes | yes | yes | `LowLevelGenerated` |
 | `of_engine_poll_once` | `runtime` | yes | yes | yes | `LowLevelGenerated` |
@@ -110,6 +113,7 @@ interface declaration.
 | `of_compute_lob_features` | `analytics` | yes | yes | yes | `LowLevelGenerated` |
 | `of_engine_set_analytics_config` | `analytics` | yes | yes | yes | `LowLevelGenerated` |
 | `of_get_metrics_json` | `runtime` | yes | yes | yes | `JsonFacade` |
+| `of_get_market_data_persistence_health_json` | `runtime` | yes | yes | yes | `JsonFacade` |
 | `of_get_adapter_inventory_json` | `adapters` | yes | yes | yes | `JsonFacade` |
 | `of_get_active_adapter_status_json` | `adapters` | yes | yes | yes | `JsonFacade` |
 | `of_get_signal_descriptors_json` | `signals` | yes | yes | yes | `JsonFacade` |
@@ -222,7 +226,7 @@ Symbols: `7`
 
 ## Runtime
 
-Symbols: `19`
+Symbols: `23`
 
 | Function | Return | Ownership | Introduced | Binding Exposure |
 | --- | --- | --- | --- | --- |
@@ -238,12 +242,16 @@ Symbols: `19`
 | `of_ingest_trade` | `int32_t` | `caller_owned_output` | `pre-manifest` | `LowLevelGenerated` |
 | `of_ingest_book` | `int32_t` | `caller_owned_output` | `pre-manifest` | `LowLevelGenerated` |
 | `of_configure_external_feed` | `int32_t` | `caller_owned_output` | `pre-manifest` | `LowLevelGenerated` |
+| `of_configure_market_data_wal` | `int32_t` | `caller_owned_output` | `pre-manifest` | `LowLevelGenerated` |
+| `of_flush_market_data_wal` | `int32_t` | `caller_owned_output` | `pre-manifest` | `LowLevelGenerated` |
+| `of_shutdown_market_data_wal` | `int32_t` | `caller_owned_output` | `pre-manifest` | `LowLevelGenerated` |
 | `of_external_set_reconnecting` | `int32_t` | `caller_owned_output` | `pre-manifest` | `LowLevelGenerated` |
 | `of_external_health_tick` | `int32_t` | `caller_owned_output` | `pre-manifest` | `LowLevelGenerated` |
 | `of_engine_poll_once` | `int32_t` | `caller_owned_output` | `pre-manifest` | `LowLevelGenerated` |
 | `of_engine_set_tickbar_interval` | `int32_t` | `caller_owned_output` | `pre-manifest` | `LowLevelGenerated` |
 | `of_engine_destroy` | `void` | `releases_handle` | `pre-manifest` | `LowLevelGenerated` |
 | `of_get_metrics_json` | `int32_t` | `library_allocated_string` | `pre-manifest` | `JsonFacade` |
+| `of_get_market_data_persistence_health_json` | `int32_t` | `library_allocated_string` | `pre-manifest` | `JsonFacade` |
 | `of_string_free` | `void` | `releases_library_allocated_string` | `pre-manifest` | `LowLevelGenerated` |
 
 ## Signals

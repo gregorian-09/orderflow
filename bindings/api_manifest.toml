@@ -118,6 +118,9 @@ functions = [
   "of_ingest_trade",
   "of_ingest_book",
   "of_configure_external_feed",
+  "of_configure_market_data_wal",
+  "of_flush_market_data_wal",
+  "of_shutdown_market_data_wal",
   "of_external_set_reconnecting",
   "of_external_health_tick",
   "of_engine_poll_once",
@@ -185,6 +188,7 @@ ownership = "library_allocated_string"
 binding_exposure = "JsonFacade"
 functions = [
   "of_get_metrics_json",
+  "of_get_market_data_persistence_health_json",
 ]
 
 [[function_groups]]
