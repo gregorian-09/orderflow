@@ -98,6 +98,13 @@ signals, book state, persistence, health reporting, and external ingest flows.
 | --- | --- | --- |
 | `new(cfg, adapter, signal_module)` | `Engine<A, S>` | Creates engine with explicit adapter and signal |
 | `with_persistence(persistence)` | `Engine<A, S>` | Attaches optional `RollingStore` |
+| `with_market_data_wal_producer(producer, action)` | `Engine<A, S>` | Attaches a host-owned nonblocking WAL producer |
+| `configure_market_data_wal(wal, writer, action)` | `Result<(), RuntimeError>` | Opens and owns a bounded segmented WAL writer |
+| `flush_market_data_persistence()` | `Result<(), RuntimeError>` | Runs a blocking durability barrier for an owned writer |
+| `shutdown_market_data_persistence()` | `Result<Option<Metrics>, RuntimeError>` | Drains, syncs, joins, and disables persistence |
+| `market_data_persistence_health()` | `MarketDataPersistenceHealth` | Typed queue/durability/failure health |
+| `market_data_persistence_health_json()` | `String` | Stable compact operational JSON |
+| `market_data_persistence_blocks_trading()` | `bool` | Safety-policy readiness gate |
 
 ### Lifecycle methods
 
@@ -124,6 +131,7 @@ signals, book state, persistence, health reporting, and external ingest flows.
 | `ingest_trade(trade, quality_flags)` | `Result<(), RuntimeError>` | Processes one external trade |
 | `ingest_book(book, quality_flags)` | `Result<(), RuntimeError>` | Processes one external book update |
 | `poll_once(quality_flags)` | `Result<usize, RuntimeError>` | Polls adapter once and processes any ready events |
+| `replay_normalized_wal_record(record)` | `Result<(), RuntimeError>` | Applies validated WAL event without re-journaling |
 
 ### Snapshot getters
 

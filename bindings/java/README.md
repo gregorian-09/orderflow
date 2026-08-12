@@ -259,6 +259,41 @@ try (OrderflowEngine eng = new OrderflowEngine(null, cfg)) {
 }
 ```
 
+### Production normalized market-data WAL
+
+```java
+import com.orderflow.bindings.*;
+
+try (OrderflowEngine eng = new OrderflowEngine(null, EngineConfig.defaults())) {
+    MarketDataWalConfig wal = new MarketDataWalConfig(
+        "data/normalized-wal",
+        0,
+        0,
+        MarketDataWalSyncPolicy.EVERY_RECORDS,
+        1_000,
+        true,
+        8_192,
+        128L * 1024L * 1024L,
+        MarketDataPersistenceFailureAction.STOP_TRADING,
+        "orderflow-market-data-wal");
+    eng.configureMarketDataWal(wal);
+    eng.start();
+    try {
+        // Subscribe/poll or configure external ingest here.
+        System.out.println(eng.marketDataPersistenceHealthJson());
+        eng.flushMarketDataWal(); // blocking control-plane barrier
+    } finally {
+        eng.stop();
+        eng.shutdownMarketDataWal();
+    }
+}
+```
+
+Native event admission is bounded and nonblocking. Encoding and filesystem
+writes happen on the single WAL worker. Flush and shutdown block and belong on
+a control-plane thread. `close()` performs best-effort shutdown, while explicit
+shutdown surfaces errors to the application.
+
 ## Complete End-To-End Example
 
 This example uses deterministic external ingest and simulated execution. It is
@@ -500,6 +535,10 @@ future additive keys and treat `null` as unavailable rather than zero.
 | `String intervalCandleSnapshot(Symbol symbol, long windowNs)` | Rolling interval candle snapshot JSON |
 | `String signalSnapshot(Symbol symbol)` | Signal snapshot JSON |
 | `String metricsJson()` | Runtime metrics JSON |
+| `void configureMarketDataWal(MarketDataWalConfig config)` | Opens an engine-owned bounded segmented WAL |
+| `void flushMarketDataWal()` | Blocking durability barrier for prior records |
+| `void shutdownMarketDataWal()` | Drains, synchronizes, and disables persistence |
+| `String marketDataPersistenceHealthJson()` | Queue, durability, and failure health JSON |
 
 `bookSnapshot(Symbol symbol)` returns JSON with:
 

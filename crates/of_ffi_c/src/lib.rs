@@ -2785,7 +2785,7 @@ pub extern "C" fn of_get_metrics_json(
 
 /// Allocates production market-data persistence health JSON.
 ///
-/// Release the returned pointer with [`of_free_string`].
+/// Release the returned pointer with [`of_string_free`].
 #[no_mangle]
 pub extern "C" fn of_get_market_data_persistence_health_json(
     engine: *mut of_engine,

@@ -33,6 +33,9 @@ foundation for lower-latency production capture paths.
 | `SegmentedMarketDataWalMetrics` | struct | Rotation, seal, manifest, write, and sync counters |
 | `SegmentedMarketDataWal` | struct | Checksum-linked rotated normalized WAL |
 | `MarketDataWalRecordInput` | struct | Owned bounded-writer input |
+| `NormalizedMarketDataRecordInput` | enum | Owned canonical event plus quality bits |
+| `NormalizedMarketDataCodecError` | enum | Versioned normalized-envelope validation error |
+| `NormalizedMarketDataWriterTryError` | enum | Ownership-preserving typed admission error |
 | `BoundedMarketDataWriterConfig` | struct | Record/byte queue and worker configuration |
 | `MarketDataWriterTryError` | enum | Ownership-preserving nonblocking rejection |
 | `MarketDataWriterControlError` | enum | Flush/shutdown barrier failure |
@@ -346,6 +349,7 @@ bound still bounds per-command/channel overhead.
 | `producer()` | Clones a lightweight sender/state handle |
 | `try_append_owned(input)` | Nonblocking; transfers the existing payload allocation on success |
 | `try_append_copy(..., payload)` | Nonblocking queue operation but allocates/copies payload first |
+| `try_append_normalized_owned(input)` | Moves a canonical event; worker performs binary encoding |
 | `metrics()` | Reads atomics and returns a snapshot |
 | `last_error()` | Locks only the cold diagnostic string path |
 
@@ -353,6 +357,13 @@ bound still bounds per-command/channel overhead.
 capacity, per-record size, reserved record kinds, and stopped writers. Every
 variant owns the rejected `MarketDataWalRecordInput`; `into_input` returns it
 losslessly.
+
+The normalized `OFNE` envelope is versioned and length-delimited. It preserves
+venue, symbol, signed price/size, side/action/level, provider event sequence,
+exchange/receive timestamps, and `DataQualityFlags` bits. Unknown versions,
+invalid enums, malformed lengths, trailing bytes, and outer-kind mismatches
+fail closed. Replaying through `decode_normalized_market_data_record` therefore
+reconstructs the same quality-gated runtime state as live processing.
 
 ### Control methods
 
@@ -372,6 +383,11 @@ payload-byte values exclude the in-progress write, while high-water marks
 capture accepted queue occupancy. `last_written_sequence` means append
 completed; `last_synced_sequence` means a known sync policy/barrier covered that
 sequence.
+
+`latest_accepted_ts_recv_ns`, `latest_written_ts_recv_ns`, and
+`event_time_lag_ns` measure event-time backlog. They use atomic maxima over
+event receive timestamps, avoiding wall-clock reads in producer admission.
+This is a backlog signal, not a substitute for a queue-residency histogram.
 
 On append/sync failure the worker:
 

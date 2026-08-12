@@ -69,7 +69,9 @@ Major additions:
   nonblocking producers feeding a single bounded writer with separate record
   and payload-byte limits; provider-native raw evidence capture adds timestamp
   provenance, source/session identity, payload flags, and ownership-preserving
-  bounded admission before normalization
+  bounded admission before normalization; runtime, C, Python, and Java hosts
+  can opt into owned writer lifecycle, explicit failure policy, durability
+  barriers, quality-preserving replay, and event-time backlog health
 - execution algorithms: additive parent/child order primitives, fixed-capacity
   decision buffers, OMS execution-event progress folding, and deterministic
   TWAP slice planning in `of_execution_algos`

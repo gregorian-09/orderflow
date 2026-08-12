@@ -8,6 +8,9 @@ It is the native interface used by Python (`ctypes`), Java (JNA), and any C-comp
 - Engine lifecycle: `of_engine_create`, `of_engine_start`, `of_engine_stop`, `of_engine_destroy`
 - Subscription: `of_subscribe`, `of_unsubscribe`, `of_unsubscribe_symbol`, `of_reset_symbol_session`
 - External ingest and supervision: `of_ingest_trade`, `of_ingest_book`, `of_configure_external_feed`, `of_external_set_reconnecting`, `of_external_health_tick`
+- Production market-data persistence: `of_configure_market_data_wal`,
+  `of_flush_market_data_wal`, `of_shutdown_market_data_wal`,
+  `of_get_market_data_persistence_health_json`
 - Polling and snapshots: `of_engine_poll_once`, `of_get_book_snapshot`, `of_get_analytics_snapshot`, `of_get_derived_analytics_snapshot`, `of_get_session_candle_snapshot`, `of_get_interval_candle_snapshot`, `of_get_signal_snapshot`
 - Metrics, adapter discovery, and memory management:
   `of_get_metrics_json`, `of_get_adapter_inventory_json`,
@@ -65,6 +68,8 @@ New execution ABI concepts:
 - `of_validate_signal_replay_json`: config-driven built-in construction and
   ordered replay validation with markout metrics, optional samples, and
   timestamp-order warnings
+- additive engine-owned bounded segmented market-data WAL lifecycle and
+  allocated queue/durability/failure health JSON
 
 The execution ABI is additive and intentionally separate from the market-data
 engine ABI. That separation lets C, Python, Java, and other FFI users adopt OMS
@@ -81,6 +86,7 @@ Version policy:
 Public C structs/types:
 
 - `of_engine_config_t`
+- `of_market_data_wal_config_t`
 - `of_symbol_t`
 - `of_trade_t`
 - `of_book_t`
@@ -98,6 +104,9 @@ Exported C functions:
 - `of_engine_create`
 - `of_engine_start`
 - `of_engine_stop`
+- `of_configure_market_data_wal`
+- `of_flush_market_data_wal`
+- `of_shutdown_market_data_wal`
 - `of_engine_destroy`
 - `of_subscribe`
 - `of_unsubscribe`
@@ -115,6 +124,7 @@ Exported C functions:
 - `of_get_interval_candle_snapshot`
 - `of_get_signal_snapshot`
 - `of_get_metrics_json`
+- `of_get_market_data_persistence_health_json`
 - `of_get_adapter_inventory_json`
 - `of_get_active_adapter_status_json`
 - `of_get_signal_descriptors_json`
@@ -240,6 +250,15 @@ Subscription stream ids:
 - `audit_redact_tokens_csv`: comma-separated audit redaction tokens
 - `data_retention_max_bytes`: persistence byte cap
 - `data_retention_max_age_secs`: persistence age cap in seconds
+
+`of_market_data_wal_config_t` is separate so the established engine config
+layout remains unchanged. It configures the WAL root, segment/payload bounds,
+sync cadence, manifest sync, record/byte queue bounds, failure action, and
+optional writer thread name. Zero size/capacity fields select native defaults.
+Configure once before ingest, use `of_flush_market_data_wal` only as a blocking
+control-plane barrier, and call `of_shutdown_market_data_wal` before destroy
+when the host must observe shutdown errors. Destroy still performs best-effort
+owned-writer shutdown.
 
 `of_symbol_t`:
 

@@ -2,7 +2,6 @@ package com.orderflow.bindings;
 
 import com.sun.jna.Structure;
 
-/** JNA mirror of native {@code of_market_data_wal_config_t}. */
 @Structure.FieldOrder({
     "root_path",
     "max_segment_bytes",
@@ -15,6 +14,7 @@ import com.sun.jna.Structure;
     "failure_action",
     "writer_thread_name"
 })
+/** JNA mirror of native {@code of_market_data_wal_config_t}. */
 public class OfMarketDataWalConfig extends Structure {
     /** Required WAL directory. */
     public String root_path;
