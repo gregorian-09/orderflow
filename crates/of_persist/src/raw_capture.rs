@@ -108,6 +108,55 @@ pub struct RawCaptureMetadata {
     pub flags: RawCaptureFlags,
 }
 
+impl RawCaptureMetadata {
+    /// Creates source metadata with optional correlation fields unset.
+    pub const fn new(provider_id: u32, adapter_id: u32, connection_id: u64) -> Self {
+        Self {
+            provider_id,
+            adapter_id,
+            connection_id,
+            subscription_id: 0,
+            venue_id: 0,
+            instrument_id: 0,
+            timestamp_source: RawCaptureTimestampSource::Unknown,
+            flags: RawCaptureFlags::empty(),
+        }
+    }
+
+    /// Sets the provider subscription identifier.
+    pub const fn with_subscription_id(mut self, subscription_id: u64) -> Self {
+        self.subscription_id = subscription_id;
+        self
+    }
+
+    /// Sets the host venue dictionary identifier.
+    pub const fn with_venue_id(mut self, venue_id: u64) -> Self {
+        self.venue_id = venue_id;
+        self
+    }
+
+    /// Sets the provider-native instrument dictionary identifier.
+    pub const fn with_instrument_id(mut self, instrument_id: u64) -> Self {
+        self.instrument_id = instrument_id;
+        self
+    }
+
+    /// Sets receive-timestamp provenance.
+    pub const fn with_timestamp_source(
+        mut self,
+        timestamp_source: RawCaptureTimestampSource,
+    ) -> Self {
+        self.timestamp_source = timestamp_source;
+        self
+    }
+
+    /// Sets payload representation and handling flags.
+    pub const fn with_flags(mut self, flags: RawCaptureFlags) -> Self {
+        self.flags = flags;
+        self
+    }
+}
+
 /// Error returned while validating or decoding a raw-capture envelope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
