@@ -302,6 +302,11 @@ the session engine.
   clock-skew observations
 - retained fail-closed `FixExecutionAdapter` compatibility shell with unchanged
   behavior for existing users
+- bounded deterministic FIX certification infrastructure with a scripted
+  counterparty transport, deterministic clock, exact raw transcript assertions,
+  13 required protocol/application/failure scenarios, capability
+  advertised-versus-exercised evidence, latency/allocation thresholds, and a
+  fail-closed typed conformance report
 
 ### 6. Execution algorithm foundation
 

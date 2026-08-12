@@ -6,6 +6,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added a bounded deterministic FIX certification harness with a scripted
+  counterparty `FixFrameTransport`, coherent test clock, exact ordered raw
+  transcript assertions, 13 session/application/failure scenarios, explicit
+  advertised-versus-exercised capability evidence, external latency/allocation
+  measurements and thresholds, and a fail-closed typed conformance report.
+  Transcript loss, evidence overflow, missing scenarios, and zero-sample
+  measurements cannot produce a passing report.
 - Added `of_execution_adapters::fix::FixTransportExecutionAdapter`, a
   synchronous single-owner FIX 4.2/4.4 execution runtime with injected
   complete-frame transport, coherent clock, venue profile, and durable

@@ -99,10 +99,18 @@ With the `fix` feature enabled:
 - [`fix::NoopFixOutboundJournal`]
 - [`fix::DurableFixOutboundJournal`]
 - [`fix::FixLiveAdapterMetrics`]
+- [`fix::FixCertificationHarness`]
+- [`fix::FixCertificationConfig`]
+- [`fix::FixCertificationReport`]
+- [`fix::FixCertificationScenario`]
+- [`fix::FixScriptedTransport`]
+- [`fix::FixCertificationClock`]
+- [`fix::FixFrameExpectation`]
 
 ## FIX Module Boundaries
 
-The module has two deliberately separate adapter levels.
+The module has three deliberately separate surfaces: the live generic runtime,
+the original compatibility shell, and certification/control-plane tooling.
 
 `FixTransportExecutionAdapter` implements the reusable protocol runtime:
 
@@ -475,6 +483,53 @@ Implement `FixExecutionProfile` for counterparty requirements such as:
 deployment still needs the counterparty specification, TLS/authentication,
 session schedule, certificates, certification transcript, rate policy,
 cancel-on-disconnect policy, and operational evidence.
+
+### Deterministic Certification Harness
+
+`FixCertificationHarness` and `FixScriptedTransport` provide the reusable
+wire-level certification layer around the live adapter. This is deliberately
+test/control-plane code: it may retain owned frames and diagnostics, while the
+production adapter hot path remains bounded and single-owner.
+
+The stable required scenario inventory covers:
+
+- session lifecycle and heartbeat/TestRequest liveness;
+- inbound gaps and peer resend replay/gap fills;
+- duplicate reports and partial fills;
+- cancel/fill and replace/fill races;
+- disconnect/reconnect and restart recovery;
+- malformed frames, session rejects, and business rejects;
+- frame, queue, retained-gap, resend-work, and event-buffer bounds.
+
+`FixScriptedTransport` implements `FixFrameTransport`, so the same
+`FixTransportExecutionAdapter` used by a host can be driven with queued inbound
+frames and deterministic send/receive failures. It enforces separate inbound
+and outbound frame/byte bounds and archives both directions through
+`FixTranscriptCapture`. `FixCertificationClock` supplies repeatable coherent
+monotonic/UTC samples without system-clock reads.
+
+Use `FixFrameExpectation` for ordered direction, message-type, sequence, and
+exact tag assertions. Use `record_scenario` for event/state/race assertions that
+are richer than a wire predicate. A report passes only when:
+
+1. every configured scenario has a non-empty passing result;
+2. every required capability is advertised and explicitly exercised;
+3. required latency and allocator-profiler evidence has real samples;
+4. configured latency/allocation thresholds are satisfied;
+5. transcript records/raw bytes were not dropped or evicted;
+6. no failure detail overflow occurred.
+
+The harness never installs a global allocator or clock and therefore cannot
+distort the measurements it is evaluating. The host records physical-wire
+latency and supplies `FixCertificationAllocationEvidence` from its selected
+profiler. CI can inspect typed `FixCertificationReport` fields, retained raw
+transcript records, and the deterministic transcript rolling hash.
+
+A passing local report means the implementation passed the configured suite.
+It does not mean a broker/exchange certified the profile. Archive the exact
+counterparty specification revision, environment, endpoint/TLS policy,
+profile/config hash, harness report, raw transcript, performance evidence, and
+counterparty approval together before changing a public adapter quality claim.
 
 ### Health And Metrics
 

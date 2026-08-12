@@ -57,6 +57,12 @@ The module contains:
 - `FixOutboundJournal`, `NoopFixOutboundJournal`, and
   `DurableFixOutboundJournal`
 - `FixLiveAdapterMetrics`
+- `FixCertificationScenario` and `FixCertificationCapability`
+- `FixCertificationConfig`, `FixCertificationHarness`, and
+  `FixCertificationReport`
+- `FixFrameExpectation` and `FixExpectedField`
+- `FixScriptedTransportConfig` and `FixScriptedTransport`
+- `FixCertificationClock`
 
 ### `FixSessionConfig`
 
@@ -276,6 +282,32 @@ held/duplicate/discarded gap frames, replay/gap-fill counts, rejected resend
 work, recovery requests, protocol reject counts, clock-skew reports, and latest
 and maximum exchange-to-local receive latency. `session_metrics()` returns the
 allocation-free session counters from `of_fix`.
+
+### Certification Harness
+
+`FixScriptedTransport` is a bounded `FixFrameTransport` implementation for
+counterparty simulation. It queues complete inbound frames, retains bounded
+outbound frames, injects deterministic connect/send/receive/disconnect
+failures, and records both directions through `FixTranscriptCapture`.
+`FixCertificationClock` makes lifecycle and timeout scripts repeatable.
+
+`FixCertificationHarness` records the complete FIX scenario inventory and can
+assert exact ordered `FixFrameExpectation` values for direction, `MsgType(35)`,
+`MsgSeqNum(34)`, and arbitrary exact fields. Rich event/state assertions are
+recorded as scenario failures. Details and transcripts are bounded; overflow,
+raw evidence loss, or record eviction fails certification rather than silently
+weakening it.
+
+The report separately exposes missing scenarios, retained failures,
+unsupported required capabilities, unexercised advertised capabilities,
+latency evidence, allocator-profiler evidence, and transcript counters/hash.
+Optional maximum latency/allocation thresholds are evaluated at report time.
+The default full-suite configuration requires all 13 scenarios, latency
+samples, allocation evidence, and a complete transcript.
+
+Certification instrumentation is outside the live hot path. A deployment must
+still retain counterparty approval and specification/profile/config evidence;
+a local passing report is not a venue certification claim.
 
 ## `FixExecutionAdapter`
 
