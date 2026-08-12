@@ -1,4 +1,8 @@
-//! FIX execution adapter scaffold and report mapper.
+//! FIX execution adapters, transport contracts, and report mapping.
+
+mod live;
+
+pub use live::*;
 
 use of_execution::{
     ExecutionAdapter, ExecutionCapabilities, ExecutionError, ExecutionEventBuffer, ExecutionHealth,
@@ -963,13 +967,13 @@ fn map_ord_status(value: FixOrdStatus) -> OrderStatus {
 fn parse_exec_type(value: &[u8]) -> Result<FixExecType, FixReportParseError> {
     match value {
         b"0" => Ok(FixExecType::New),
-        b"1" | b"2" => Ok(FixExecType::Trade),
+        b"1" | b"2" | b"F" => Ok(FixExecType::Trade),
         b"4" => Ok(FixExecType::Canceled),
         b"5" => Ok(FixExecType::Replaced),
         b"6" => Ok(FixExecType::PendingCancel),
         b"8" => Ok(FixExecType::Rejected),
         b"C" => Ok(FixExecType::Expired),
-        b"D" => Ok(FixExecType::Restated),
+        b"D" | b"I" => Ok(FixExecType::Restated),
         b"E" => Ok(FixExecType::PendingReplace),
         _ => Err(FixReportParseError::InvalidExecType),
     }
@@ -1209,10 +1213,104 @@ fn parse_optional_u64(
     tag: FixTag,
 ) -> Result<u64, FixReportParseError> {
     if let Some(value) = message.get(tag) {
-        parse_u64_digits(value).ok_or(FixReportParseError::InvalidNumber(tag))
+        if tag == FixTag::TRANSACT_TIME {
+            parse_u64_digits(value)
+                .or_else(|| parse_fix_utc_timestamp_ns(value))
+                .ok_or(FixReportParseError::InvalidNumber(tag))
+        } else {
+            parse_u64_digits(value).ok_or(FixReportParseError::InvalidNumber(tag))
+        }
     } else {
         Ok(0)
     }
+}
+
+fn parse_fix_utc_timestamp_ns(value: &[u8]) -> Option<u64> {
+    if value.len() < 17
+        || value.get(8) != Some(&b'-')
+        || value.get(11) != Some(&b':')
+        || value.get(14) != Some(&b':')
+    {
+        return None;
+    }
+    let year = parse_fixed_digits(value.get(0..4)?)? as i64;
+    let month = parse_fixed_digits(value.get(4..6)?)? as u32;
+    let day = parse_fixed_digits(value.get(6..8)?)? as u32;
+    let hour = parse_fixed_digits(value.get(9..11)?)? as u32;
+    let minute = parse_fixed_digits(value.get(12..14)?)? as u32;
+    let second = parse_fixed_digits(value.get(15..17)?)? as u32;
+    if year < 1970
+        || !(1..=12).contains(&month)
+        || day == 0
+        || day > days_in_month(year, month)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+
+    let fractional_ns = match value.get(17..) {
+        Some([]) | None => 0,
+        Some(fraction) if fraction.first() == Some(&b'.') => {
+            let digits = &fraction[1..];
+            if digits.is_empty() || digits.len() > 9 || !digits.iter().all(u8::is_ascii_digit) {
+                return None;
+            }
+            let fraction = parse_fixed_digits(digits)?;
+            fraction.checked_mul(10u64.checked_pow(9u32.saturating_sub(digits.len() as u32))?)?
+        }
+        _ => return None,
+    };
+
+    let days = days_from_civil(year, month, day)?;
+    let seconds = u64::try_from(days)
+        .ok()?
+        .checked_mul(86_400)?
+        .checked_add(u64::from(hour) * 3_600)?
+        .checked_add(u64::from(minute) * 60)?
+        .checked_add(u64::from(second))?;
+    seconds
+        .checked_mul(1_000_000_000)?
+        .checked_add(fractional_ns)
+}
+
+fn parse_fixed_digits(value: &[u8]) -> Option<u64> {
+    if value.is_empty() || !value.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    value.iter().try_fold(0u64, |current, byte| {
+        current
+            .checked_mul(10)?
+            .checked_add(u64::from(*byte - b'0'))
+    })
+}
+
+fn days_in_month(year: i64, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+fn days_from_civil(year: i64, month: u32, day: u32) -> Option<i64> {
+    let adjusted_year = year.checked_sub(i64::from(month <= 2))?;
+    let era = adjusted_year.div_euclid(400);
+    let year_of_era = adjusted_year.checked_sub(era.checked_mul(400)?)?;
+    let adjusted_month = i64::from(month) + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153i64.checked_mul(adjusted_month)?.checked_add(2)? / 5)
+        .checked_add(i64::from(day).checked_sub(1)?)?;
+    let day_of_era = year_of_era
+        .checked_mul(365)?
+        .checked_add(year_of_era / 4)?
+        .checked_sub(year_of_era / 100)?
+        .checked_add(day_of_year)?;
+    era.checked_mul(146_097)?
+        .checked_add(day_of_era)?
+        .checked_sub(719_468)
 }
 
 fn parse_scaled(value: &[u8], scale: i64) -> Option<i64> {

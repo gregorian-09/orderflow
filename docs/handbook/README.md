@@ -39,7 +39,8 @@ It is written for three audiences:
    Execution engine, concurrent worker, routing, journals, risk, simulation,
    and OMS helper APIs.
 5i. [of_execution_adapters Reference](./05i-of-execution-adapters-reference.md)
-   Provider execution adapter scaffolds, FIX mapping, and adapter boundaries.
+   Transport-injected FIX execution, venue profiles, report mapping, recovery,
+   durability, and adapter boundaries.
 5j. [of_fix Reference](./05j-of-fix-reference.md)
    Low-allocation FIX tag-value codec, borrowed parser, validation, and encoder.
 5k. [of_execution_algos Reference](./05k-of-execution-algos-reference.md)

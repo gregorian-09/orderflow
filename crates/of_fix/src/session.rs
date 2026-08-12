@@ -1080,7 +1080,7 @@ impl FixSessionEngine {
     fn accept_application(&mut self, sequence: u64) -> Result<FixSessionAction, FixSessionError> {
         if !matches!(
             self.state,
-            FixSessionState::Ready | FixSessionState::Recovering
+            FixSessionState::Ready | FixSessionState::ResendRequested | FixSessionState::Recovering
         ) {
             return Err(FixSessionError::UnexpectedApplicationMessage);
         }
@@ -1452,6 +1452,28 @@ mod tests {
                 FixSessionAction::Application { sequence: 4 }
             );
         });
+    }
+
+    #[test]
+    fn gap_recovery_accepts_replayed_application_messages_in_order() {
+        let mut engine = engine();
+        let mut out = Vec::with_capacity(512);
+        connect_and_logon(&mut engine, &mut out);
+        with_message(FixMsgType::EXECUTION_REPORT, 3, &[], |message| {
+            assert!(matches!(
+                engine.on_inbound(message, 3, SEND_TIME, &mut out).unwrap(),
+                FixSessionAction::GapDetected { received: 3, .. }
+            ));
+        });
+        assert_eq!(engine.state(), FixSessionState::ResendRequested);
+
+        with_message(FixMsgType::EXECUTION_REPORT, 2, &[], |message| {
+            assert_eq!(
+                engine.on_inbound(message, 4, SEND_TIME, &mut out).unwrap(),
+                FixSessionAction::Application { sequence: 2 }
+            );
+        });
+        assert_eq!(engine.state(), FixSessionState::Ready);
     }
 
     #[test]

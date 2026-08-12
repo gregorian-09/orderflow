@@ -6,6 +6,16 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added `of_execution_adapters::fix::FixTransportExecutionAdapter`, a
+  synchronous single-owner FIX 4.2/4.4 execution runtime with injected
+  complete-frame transport, coherent clock, venue profile, and durable
+  outbound journal. It provides bounded session lifecycle, gap/resend replay,
+  output backpressure, restart restoration, open-order recovery, canonical
+  order/report mapping, and allocation-free operational metrics while keeping
+  sockets, TLS, credentials, scheduling, and venue certification host-owned.
+- Added the standard replaceable FIX execution profile, working-order recovery
+  context, durable resend-store journal adapter, and explicit live-adapter
+  bounds without changing the existing fail-closed `FixExecutionAdapter` API.
 - Added a reusable low-latency-sensitive `of_fix::FixSessionEngine` with
   transport-independent Logon/Logout, heartbeat/TestRequest liveness,
   component-id validation, deterministic gap/resend and SequenceReset
@@ -509,7 +519,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
   fixed-size execution identifiers, typed order/cancel/amend requests,
   FIX-style order-state transitions, structured pre-trade risk rejection,
   bounded execution event buffers, simulated execution, journal/recovery hooks,
-  and a FIX execution-report mapping scaffold.
+  and transport-injected FIX execution infrastructure.
 - Additive execution C ABI, Python, and Java APIs using separate execution
   handles (`of_execution_engine_t`, `ExecutionEngine`,
   `OrderflowExecutionEngine`). Existing analytics/runtime APIs are unchanged.

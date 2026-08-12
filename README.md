@@ -12,10 +12,10 @@ Python classes, and Java classes, so existing analytics integrations remain
 stable. The execution layer provides typed order requests, FIX-style state
 transitions, structured risk rejection, simulated execution, bounded
 concurrent command workers, journals, recovery helpers, C/Python/Java bindings,
-a reusable low-allocation FIX codec foundation, a FIX mapping scaffold, and a
-separate parent/child execution-algorithm crate. It is not a broker-certified
-production OMS by itself; it is the reusable foundation developers use to build
-one.
+a reusable low-allocation FIX codec/session foundation, a transport-injected
+FIX execution runtime, and a separate parent/child execution-algorithm crate.
+It is not a broker-certified production OMS by itself; it is the reusable
+foundation developers use to build one.
 
 ## What's New In 0.4.0
 
@@ -57,8 +57,9 @@ Major additions:
   static dictionary/profile validation, deterministic session sequence
   primitives, typed session/admin and order-entry builders, caller-owned encode
   buffers, and debug rendering outside the hot path
-- adapter scaffolding: FIX execution-report mapping and fail-closed adapter shell
-  for provider adapter authors
+- execution adapters: a transport-injected FIX 4.2/4.4 runtime with bounded
+  gap recovery, durable resend hooks, venue profiles, latency metrics, and the
+  original fail-closed compatibility shell
 - market-data operations: additive typed active-adapter mode/session status,
   subscription inventory, queue/loss/freshness/raw-capture diagnostics, and
   endpoint redaction that never returns userinfo, paths, queries, or fragments
@@ -121,7 +122,7 @@ Start here:
 | Rust core | `of_execution_core` order IDs, requests, events, state machine, risk |
 | FIX protocol | `of_fix` borrowed tag-value codec, profile rules, durable sequence/resend primitives, and transport-independent session engine |
 | Rust engine | `of_execution` adapter trait, bounded event buffer, simulator, journal/recovery, operator controls, and verifiable incident bundles |
-| Adapter scaffold | `of_execution_adapters::fix` execution-report mapper and FIX capabilities |
+| FIX execution adapter | `of_execution_adapters::fix` transport-injected session runtime, venue profile boundary, durable resend hooks, report mapper, and compatibility shell |
 | Execution algos | `of_execution_algos` parent/child substrate and deterministic TWAP planner |
 | C ABI | `of_execution_engine_t`, `of_execution_twap_algo_t`, submit/cancel/amend/poll/state/progress |
 | Python | `ExecutionEngine`, `TwapExecutionAlgo`, typed requests/plans/progress |

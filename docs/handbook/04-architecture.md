@@ -56,7 +56,9 @@ flowchart LR
 - `of_execution_core`: additive execution-domain IDs, requests, events, state machine, and risk primitives.
 - `of_fix`: reusable low-allocation FIX tag-value codec and transport-independent session engine with borrowed field views, body-length/checksum validation, caller-owned encoding buffers, deterministic liveness, and sequence recovery.
 - `of_execution`: execution adapter trait, routing engine, bounded event buffers, simulated execution, journal/recovery hooks.
-- `of_execution_adapters`: feature-gated execution adapter scaffolds, starting with FIX mapping.
+- `of_execution_adapters`: feature-gated provider execution infrastructure,
+  including transport-injected FIX session execution, venue profiles, durable
+  resend hooks, and canonical report mapping.
 - `of_ffi_c`: stable C ABI and callback dispatch.
 - `bindings/python`: ctypes wrapper over C ABI.
 - `bindings/java`: JNA wrapper over C ABI.
