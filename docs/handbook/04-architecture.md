@@ -54,7 +54,7 @@ flowchart LR
 - `of_persist`: rolling JSONL persistence, typed readback, and retention pruning.
 - `of_runtime`: lifecycle, polling/ingest processing, quality supervision, health state.
 - `of_execution_core`: additive execution-domain IDs, requests, events, state machine, and risk primitives.
-- `of_fix`: reusable low-allocation FIX tag-value codec with borrowed field views, body-length/checksum validation, and caller-owned encoding buffers.
+- `of_fix`: reusable low-allocation FIX tag-value codec and transport-independent session engine with borrowed field views, body-length/checksum validation, caller-owned encoding buffers, deterministic liveness, and sequence recovery.
 - `of_execution`: execution adapter trait, routing engine, bounded event buffers, simulated execution, journal/recovery hooks.
 - `of_execution_adapters`: feature-gated execution adapter scaffolds, starting with FIX mapping.
 - `of_ffi_c`: stable C ABI and callback dispatch.

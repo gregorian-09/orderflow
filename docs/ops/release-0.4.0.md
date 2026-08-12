@@ -257,11 +257,16 @@ payload and require no ABI or method-signature change.
 - common FIX tag constants and extraction helpers
 - caller-owned encoding buffers with computed body length and checksum
 - diagnostic rendering with `|` separators outside hot paths
+- transport-independent `FixSessionEngine` with deterministic Logon/Logout,
+  heartbeat/TestRequest liveness, component-id validation, sequence gap and
+  resend coordination, SequenceReset recovery, custom application flow,
+  caller-owned buffers/timestamps, inline TestReqID storage, and fixed-memory
+  metrics
 
-This is not a full FIX session engine. Transport, TCP/TLS-driven logon/logout,
-automatic resend response transmission, venue certification, and
-counterparty-specific business rules remain separate future layers built on top
-of the codec.
+This is a complete reusable protocol state machine, not a venue-certified
+network adapter. TCP/TLS, credentials, automatic resend-plan transmission,
+venue certification, and counterparty-specific business rules remain separate
+layers composed around the session engine.
 
 ### 5. Execution adapter scaffolding
 

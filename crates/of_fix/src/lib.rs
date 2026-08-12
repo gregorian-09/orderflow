@@ -8,6 +8,10 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+mod session;
+
+pub use session::*;
+
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 const SEQUENCE_SNAPSHOT_MAGIC: &[u8; 8] = b"OFIXSEQ\0";

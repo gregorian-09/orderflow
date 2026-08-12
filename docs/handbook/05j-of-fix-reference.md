@@ -1,6 +1,6 @@
 # `of_fix` Reference
 
-`of_fix` is the reusable FIX tag-value codec layer for Orderflow execution
+`of_fix` is the reusable FIX tag-value codec and session layer for Orderflow execution
 adapters. It is intentionally lower level than `of_execution_adapters::fix`:
 `of_fix` understands wire-format FIX frames, while the execution adapter layer
 maps parsed execution reports into canonical OMS events.
@@ -26,6 +26,14 @@ maps parsed execution reports into canonical OMS events.
 | `FixDecoder` | struct | Stateless decoder facade over caller-owned scratch |
 | `FixEncoder` | struct | Reusable encoder with an owned output buffer |
 | `FixSessionState` | enum | Session lifecycle state vocabulary |
+| `FixSessionEngineConfig` | struct | Heartbeat, liveness, logout, reset, and identity policy |
+| `FixSessionConfigError` | enum | Invalid session timing configuration |
+| `FixSessionEngine` | struct | Single-owner transport-independent session state machine |
+| `FixSessionAction` | enum | Send, flow, recovery, duplicate, and disconnect actions |
+| `FixSessionSendKind` | enum | Administrative frame kind written to the output buffer |
+| `FixSessionDisconnectReason` | enum | Typed host transport-close reason |
+| `FixSessionMetrics` | struct | Fixed-memory lifecycle, sequence, and liveness counters |
+| `FixSessionError` | enum | Session identity, timing, sequence, state, and encode errors |
 | `FixSequenceTracker` | struct | Deterministic inbound/outbound sequence tracker |
 | `FixSequenceAction` | enum | Result of observing an inbound sequence number |
 | `FixSequenceError` | enum | Sequence validation/reset errors |
@@ -96,8 +104,9 @@ maps parsed execution reports into canonical OMS events.
 
 ## Design Boundary
 
-`of_fix` does not implement a broker-certified session engine yet. It provides
-the allocation-light codec foundation required by that future session layer.
+`of_fix` implements the deterministic protocol state machine but deliberately
+does not implement a broker-certified network adapter. This keeps FIX session
+semantics reusable across TCP/TLS libraries and venue profiles.
 
 Included:
 
@@ -112,8 +121,11 @@ Included:
 - borrowed Session Reject and BusinessMessageReject diagnostics;
 - reusable encoder/decoder facades for components that prefer explicit codec
   objects;
-- session-state and sequence-tracking primitives for future transports and
-  adapters;
+- session-state and sequence-tracking primitives for transports and adapters;
+- transport-independent Logon/Logout, heartbeat/TestRequest, component-id,
+  gap/resend, SequenceReset, duplicate, and custom-message coordination;
+- caller-supplied monotonic time, caller-owned encode buffers, inline
+  TestReqID storage, and allocation-free metrics;
 - borrowed session identity and sequence snapshot primitives;
 - bounded in-memory resend-store planning for replay versus gap-fill decisions;
 - bounded in-memory transcript capture for certification/audit evidence;
@@ -127,15 +139,39 @@ Included:
 Not included:
 
 - TCP/TLS transport;
-- TCP/TLS-driven Logon/Logout/Heartbeat/TestRequest lifecycle;
-- automatic resend response transmission;
-- full session scheduler/state machine that owns transport and timers;
+- wall-clock, scheduler, credentials, and authentication extensions;
+- automatic transmission of resend-store replay/gap-fill plans;
+- a session owner that embeds a specific transport or async runtime;
 - repeating group dictionaries;
 - scripted certification harness;
 - OMS execution-event mapping.
 
-Those layers should build on top of `of_fix` rather than duplicating wire codec
-logic in each adapter.
+Those layers should compose `FixSessionEngine` rather than duplicating protocol
+state in each adapter.
+
+## Session Flow
+
+```mermaid
+stateDiagram-v2
+    [*] --> Disconnected
+    Disconnected --> Connecting: host starts transport
+    Connecting --> LogonSent: transport connected / encode Logon
+    LogonSent --> Ready: validated peer Logon
+    Ready --> ResendRequested: inbound sequence gap
+    ResendRequested --> Recovering: missing frame or gap fill accepted
+    Recovering --> Ready: inbound horizon reaches gap target
+    Ready --> LogoutSent: local or peer Logout
+    LogoutSent --> Stopped: peer Logout acknowledgement
+    Ready --> Degraded: liveness or sequence failure
+    Degraded --> Disconnected: host closes transport
+    Stopped --> Connecting: explicit restart
+```
+
+`on_timer` emits at most one action, reads no clock, and allocates no protocol
+state. `on_inbound` does not retain the out-of-order frame that exposed a gap;
+the host must buffer or redeliver it after recovery. A peer ResendRequest is
+returned as `PeerResendRequested` so the host can apply profile-specific
+`FixResendStore`/durable-store policy before transmitting replays or gap fills.
 
 ## Low-Latency Rules
 

@@ -6,6 +6,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added a reusable low-latency-sensitive `of_fix::FixSessionEngine` with
+  transport-independent Logon/Logout, heartbeat/TestRequest liveness,
+  component-id validation, deterministic gap/resend and SequenceReset
+  handling, custom application flow, fixed-memory metrics, caller-owned
+  buffers, and caller-supplied monotonic time.
 - Added read-only OMS state reconstruction across Rust, C, Python, and Java:
   root-based recovery never creates or mutates storage, checkpoint-required
   defaults fail closed, bounded identifier-free reports expose replay evidence,

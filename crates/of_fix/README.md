@@ -5,15 +5,17 @@
 [![CI](https://github.com/gregorian-09/orderflow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gregorian-09/orderflow/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/license/mit)
 
-`of_fix` is the reusable FIX tag-value codec foundation for Orderflow execution
-adapters. It is intentionally separate from `of_execution_adapters` so FIX
-wire handling, validation, profiles, and later certification tooling can evolve
-without coupling the low-level protocol layer to one broker adapter.
+`of_fix` is the reusable FIX tag-value codec and deterministic session
+foundation for Orderflow execution adapters. It is intentionally separate from
+`of_execution_adapters` so FIX wire handling, validation, profiles, session
+coordination, and certification tooling can evolve without coupling protocol
+state to one broker adapter or network stack.
 
 ## First Release: 0.1.0
 
 `of_fix` starts at `0.1.0` in the broader Orderflow `0.4.0` development line.
-The first slice is a codec foundation, not a complete FIX session engine.
+Its public surface is additive: the original codec APIs remain unchanged, and
+the transport-independent session engine composes those primitives.
 
 Included now:
 
@@ -27,6 +29,11 @@ Included now:
   diagnostics;
 - reusable `FixDecoder` and `FixEncoder` facades;
 - session-state and sequence-tracking primitives;
+- deterministic `FixSessionEngine` coordination for Logon/Logout, heartbeat,
+  TestRequest, component identity, gap detection, ResendRequest,
+  SequenceReset, duplicate handling, and custom application messages;
+- caller-driven monotonic timers, fixed-size TestReqID storage, typed session
+  actions/errors, and allocation-free session metrics;
 - resend-range detection for inbound sequence gaps;
 - sequence-reset guardrails that reject decreasing next expected sequence;
 - borrowed session identity and sequence snapshot primitives for persistence;
@@ -53,8 +60,8 @@ Included now:
 Not included yet:
 
 - TCP/TLS transport;
-- TCP/TLS-driven Logon/Logout/Heartbeat/TestRequest lifecycle;
-- automatic resend response transmission;
+- credentials, authentication extensions, or a wall-clock/scheduler;
+- automatic transmission of replay/gap-fill plans from a resend store;
 - repeating group dictionaries;
 - venue certification harness;
 - OMS execution mapping.
@@ -71,6 +78,8 @@ The codec is designed for execution hot paths:
 - keep profile rules as static borrowed slices;
 - expose reject diagnostics as borrowed views;
 - track inbound/outbound sequence numbers with plain integer state;
+- coordinate session lifecycle without sockets, locks, background tasks, or
+  per-timer allocation;
 - snapshot sequence counters without tying the codec to a storage backend;
 - persist sequence snapshots outside the per-message hot path with explicit
   sync policy and checksum validation;
@@ -105,6 +114,58 @@ let msg = parse_message(&raw, &mut scratch)?;
 
 assert_eq!(msg.get(FixTag::MSG_TYPE), Some(b"0".as_slice()));
 assert_eq!(msg.msg_type(), Some(b"0".as_slice()));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Session Engine Example
+
+The engine writes administrative frames into a reusable caller-owned buffer.
+The host owns TCP/TLS, timestamp formatting, persistence, and actual sends.
+
+```rust
+use of_fix::{
+    encode_logon, parse_message, FixFieldView, FixOwnedSessionId,
+    FixSessionAction, FixSessionEngine, FixSessionEngineConfig, FixSessionHeader,
+    FixSessionState, FixVersion,
+};
+
+let config = FixSessionEngineConfig::new(30)?;
+let id = FixOwnedSessionId::new(FixVersion::Fix44, b"BUY_SIDE".to_vec(), b"BROKER".to_vec())?;
+let mut session = FixSessionEngine::new(config, id);
+let mut outbound = Vec::with_capacity(512);
+
+session.on_transport_connecting()?;
+let action = session.on_transport_connected(
+    1_000_000_000,
+    b"20260810-12:00:00.000",
+    &mut outbound,
+)?;
+assert!(matches!(action, FixSessionAction::Send { .. }));
+
+// A transport test harness supplies the counterparty Logon frame.
+let mut inbound = Vec::with_capacity(512);
+encode_logon(
+    &mut inbound,
+    FixVersion::Fix44,
+    FixSessionHeader::new(
+        b"BROKER",
+        b"BUY_SIDE",
+        1,
+        b"20260810-12:00:00.001",
+    ),
+    30,
+    false,
+)?;
+let mut scratch = [FixFieldView::empty(); 24];
+let logon = parse_message(&inbound, &mut scratch)?;
+let action = session.on_inbound(
+    &logon,
+    1_000_001_000,
+    b"20260810-12:00:00.001",
+    &mut outbound,
+)?;
+assert_eq!(action, FixSessionAction::Ready { sequence: 1 });
+assert_eq!(session.state(), FixSessionState::Ready);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
@@ -517,7 +578,7 @@ allocate strings, classify venue severity, or decide whether trading should
 stop. Session engines and adapter profiles should turn these diagnostics into
 health, metrics, and fail-closed policies.
 
-`FixSequenceTracker` adds deterministic sequence bookkeeping for future session
+`FixSequenceTracker` adds deterministic sequence bookkeeping for session
 engines and adapters. It accepts expected inbound sequence numbers, reports
 missing ranges as `FixSequenceAction::Gap`, treats lower `PossDupFlag=Y`
 messages as duplicates, flags unmarked lower sequence numbers as too-low, and
@@ -528,6 +589,16 @@ state snapshots. They do not write files or choose durability policy; WAL,
 checkpoint, or database layers can serialize the session id, trading day, and
 next inbound/outbound counters according to their own latency and durability
 requirements.
+
+`FixSessionEngine` composes the codec, admin builders, and sequence tracker. It
+validates begin string and component identity, negotiates the configured
+heartbeat interval, drives heartbeat/TestRequest timers from caller timestamps,
+emits ResendRequest on gaps, applies SequenceReset, performs graceful Logout,
+and reports application/custom messages only after session readiness. It does
+not retain out-of-order frames; the transport host must redeliver a triggering
+frame after gap recovery. It also does not own a resend store, so a
+`PeerResendRequested` action remains an explicit handoff to the configured
+in-memory/durable resend policy.
 
 `FixResendStore` retains original outbound FIX frames behind explicit message
 and byte budgets. It produces caller-owned resend plans with replay actions for
@@ -553,8 +624,9 @@ messages are replayable or send them on a socket.
 
 The session/admin builders are intentionally small protocol helpers. They write
 the common standard header fields and the required admin body fields into the
-same strict encoder path used by `encode_message`; they do not manage sockets,
-timers, durable resend stores, or authentication extensions.
+same strict encoder path used by `encode_message`; `FixSessionEngine` composes
+them with deterministic timers but still does not manage sockets, durable
+resend stores, or authentication extensions.
 
 The order-entry builders provide common message shapes for NewOrderSingle,
 OrderCancelRequest, OrderCancelReplaceRequest, OrderStatusRequest,
@@ -572,4 +644,4 @@ The planned next layers are:
 - venue/profile-specific resend suppression policy;
 - order mass cancel/status response parsers;
 - scripted certification scenarios and report generation;
-- integration with `of_execution_adapters::fix`.
+- injected-transport integration with `of_execution_adapters::fix`.
