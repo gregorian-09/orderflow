@@ -194,6 +194,48 @@ public final class OrderflowEngine implements AutoCloseable {
     }
 
     /**
+     * Starts an engine-owned bounded segmented market-data WAL.
+     *
+     * <p>File opening happens on the calling thread. Subsequent event admission is non-blocking;
+     * flush and shutdown are blocking control-plane barriers.
+     *
+     * @param config complete WAL, queue, sync, and failure-policy configuration
+     */
+    public void configureMarketDataWal(MarketDataWalConfig config) {
+        requireEngine();
+        if (config == null) {
+            throw new IllegalArgumentException("config is required");
+        }
+        OfMarketDataWalConfig nativeConfig = new OfMarketDataWalConfig();
+        nativeConfig.root_path = config.rootPath;
+        nativeConfig.max_segment_bytes = config.maxSegmentBytes;
+        nativeConfig.max_payload_bytes = config.maxPayloadBytes;
+        nativeConfig.sync_policy = config.syncPolicy;
+        nativeConfig.sync_every_records = config.syncEveryRecords;
+        nativeConfig.sync_manifest = (byte) (config.syncManifest ? 1 : 0);
+        nativeConfig.queue_capacity = config.queueCapacity;
+        nativeConfig.max_queued_payload_bytes = config.maxQueuedPayloadBytes;
+        nativeConfig.failure_action = config.failureAction;
+        nativeConfig.writer_thread_name = config.writerThreadName;
+        nativeConfig.write();
+        check(
+            nativeLib.of_configure_market_data_wal(engine, nativeConfig),
+            "of_configure_market_data_wal");
+    }
+
+    /** Flushes all prior market-data WAL records through a durability barrier. */
+    public void flushMarketDataWal() {
+        requireEngine();
+        check(nativeLib.of_flush_market_data_wal(engine), "of_flush_market_data_wal");
+    }
+
+    /** Drains, synchronizes, and disables engine-owned market-data persistence. */
+    public void shutdownMarketDataWal() {
+        requireEngine();
+        check(nativeLib.of_shutdown_market_data_wal(engine), "of_shutdown_market_data_wal");
+    }
+
+    /**
      * Subscribes a symbol stream without callback listener.
      *
      * @param symbol target venue/instrument/depth descriptor
@@ -553,6 +595,17 @@ public final class OrderflowEngine implements AutoCloseable {
     }
 
     /**
+     * Returns bounded market-data persistence health and backlog metrics.
+     *
+     * @return native persistence-health JSON payload
+     */
+    public String marketDataPersistenceHealthJson() {
+        requireEngine();
+        return allocatedJson(
+            nativeLib, engine, "of_get_market_data_persistence_health_json");
+    }
+
+    /**
      * Returns market-data adapter inventory JSON for the native build.
      *
      * @return JSON payload with known providers, feature gates, and capabilities
@@ -699,6 +752,8 @@ public final class OrderflowEngine implements AutoCloseable {
         int rc;
         if ("of_get_metrics_json".equals(fn)) {
             rc = nativeLib.of_get_metrics_json(engine, out, outLen);
+        } else if ("of_get_market_data_persistence_health_json".equals(fn)) {
+            rc = nativeLib.of_get_market_data_persistence_health_json(engine, out, outLen);
         } else if ("of_get_adapter_inventory_json".equals(fn)) {
             rc = nativeLib.of_get_adapter_inventory_json(out, outLen);
         } else if ("of_get_active_adapter_status_json".equals(fn)) {
