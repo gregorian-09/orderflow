@@ -250,6 +250,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added additive `of_persist` JSONL cold-export helpers with partition
   manifests, payload hex preservation, WAL replay filtering, and dependency-free
   research export files.
+- Added opt-in `of_persist_parquet 0.1.0` verified columnar cold export with
+  bounded Arrow batches and Parquet row groups, date/venue/symbol/stream
+  partitioning, source and quality provenance, optional sequence-joined derived
+  snapshots, no-clobber publication, SHA-256 and payload-checksum verification,
+  and retention evidence produced only after a full reopen check.
 - Added additive `of_persist` retention/tiering planner helpers for hot WAL,
   verified cold export, checkpoint dependency, and incident-window decisions.
 - Added Binance adapter depth update-id continuity tracking with duplicate

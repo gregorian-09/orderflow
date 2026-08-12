@@ -3,6 +3,7 @@
 Primary API reference now lives in:
 
 - `docs/handbook/05-api-reference.md`
+- `docs/handbook/05m-of-persist-parquet-reference.md`
 
 Additional API-oriented docs:
 

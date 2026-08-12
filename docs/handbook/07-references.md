@@ -64,6 +64,14 @@ This page lists external references used to shape the documentation structure an
   kernel-software, and raw-hardware timestamp sources:
   https://docs.kernel.org/networking/timestamping.html
 
+## Apache Arrow And Parquet References
+
+- Apache Arrow Rust `ArrowWriter` documentation, including bounded row-group
+  behavior, explicit flush, and close metadata:
+  https://arrow.apache.org/rust/parquet/arrow/arrow_writer/struct.ArrowWriter.html
+- Apache Arrow Rust implementation and release source:
+  https://github.com/apache/arrow-rs
+
 ## Risk and Disclosure References
 
 - CFTC Rule 4.41 (eCFR, official):  
