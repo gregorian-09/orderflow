@@ -526,6 +526,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Hardened `of_ffi_c` native ABI tests so a failed test does not poison the
   shared FFI test lock and cascade misleading `PoisonError` failures through
   unrelated tests.
+- Preserved `of_runtime::Engine`'s historical `UnwindSafe` and `RefUnwindSafe`
+  auto-trait contract after adding the private bounded WAL channel state.
 
 ### Changed
 - Prepared the established Rust crates, Python package, Java artifact, and

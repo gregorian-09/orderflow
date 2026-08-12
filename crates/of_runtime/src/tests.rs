@@ -19,6 +19,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn engine_preserves_unwind_safety_auto_traits() {
+        fn assert_unwind_safe<T: std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+
+        assert_unwind_safe::<Engine<MockAdapter, DeltaMomentumSignal>>();
+    }
+
+    #[test]
     fn engine_processes_trade_and_updates_snapshots() {
         let symbol = SymbolId {
             venue: "CME".to_string(),
