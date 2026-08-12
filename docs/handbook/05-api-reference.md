@@ -1111,6 +1111,25 @@ Feature-gated public FIX execution types under `of_execution_adapters::fix`:
 - `FixLiveAdapterConfig`
 - `FixLiveAdapterMetrics`
 - `FixTransportExecutionAdapter`
+- `FixCertificationScenario`
+- `FixCertificationCapability`
+- `FixCertificationFailureKind`
+- `FixCertificationFailure`
+- `FixExpectedField`
+- `FixFrameExpectation`
+- `FixCertificationLatencyEvidence`
+- `FixCertificationAllocationEvidence`
+- `FixCertificationConfig`
+- `FixCertificationScenarioResult`
+- `FixCertificationReport`
+- `FixCertificationHarness`
+- `FixCertificationHarnessError`
+- `FixScriptedTransportConfig`
+- `FixScriptedTransportFailure`
+- `FixScriptedTransportError`
+- `FixScriptedTransport`
+- `FixCertificationClock`
+- `FixCertificationClockError`
 
 Feature-gated public FIX helper functions under `of_execution_adapters::fix`:
 

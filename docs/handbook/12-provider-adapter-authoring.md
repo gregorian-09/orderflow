@@ -88,11 +88,17 @@ Use `of_fix` for:
 Adapter-specific code should own:
 
 - TCP/TLS transport;
-- session lifecycle;
-- resend/gap-fill policy;
+- counterparty-specific session configuration and schedule;
 - venue profile validation;
 - canonical `ExecutionEvent` mapping;
 - certification reports.
+
+`of_fix::FixSessionEngine` and
+`of_execution_adapters::fix::FixTransportExecutionAdapter` already provide the
+shared lifecycle, liveness, sequence, resend/gap-fill, bounded backpressure,
+durable resend-hook, and restart machinery. Reuse those components unless the
+counterparty requires behavior outside their explicit profile/transport
+boundaries.
 
 ## Capabilities
 
@@ -175,6 +181,15 @@ For each adapter:
 - recovers open orders,
 - respects bounded event buffers,
 - reports accurate capabilities.
+
+For FIX integrations, instantiate the real live adapter over
+`FixScriptedTransport` and run `FixCertificationHarness`. The default suite
+requires session lifecycle/liveness, both resend directions, duplicate and
+partial-fill behavior, cancel/replace races, disconnect recovery, malformed and
+reject messages, bounds, complete transcripts, and external performance
+evidence. Require and exercise only capabilities actually approved by the
+counterparty. Store the typed report and transcript hash with the raw archive,
+private specification revision, profile/config hash, environment, and approval.
 
 ## Where To Put Adapters
 

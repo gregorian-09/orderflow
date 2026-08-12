@@ -58,8 +58,9 @@ Major additions:
   primitives, typed session/admin and order-entry builders, caller-owned encode
   buffers, and debug rendering outside the hot path
 - execution adapters: a transport-injected FIX 4.2/4.4 runtime with bounded
-  gap recovery, durable resend hooks, venue profiles, latency metrics, and the
-  original fail-closed compatibility shell
+  gap recovery, durable resend hooks, venue profiles, latency metrics, a
+  deterministic wire-level certification harness, and the original
+  fail-closed compatibility shell
 - market-data operations: additive typed active-adapter mode/session status,
   subscription inventory, queue/loss/freshness/raw-capture diagnostics, and
   endpoint redaction that never returns userinfo, paths, queries, or fragments

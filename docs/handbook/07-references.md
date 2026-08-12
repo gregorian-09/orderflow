@@ -45,6 +45,11 @@ This page lists external references used to shape the documentation structure an
   https://fixtrading.org/packages/fix-latest-unified-repository/
 - FIX Latest Orchestra repository package:
   https://fixtrading.org/packages/fix-latest-orchestra-repository/
+- FIX Trading Community automated trading and testing/certification guidance:
+  https://fixtrading.org/guidelines/automated-trading/
+- FIXimate `MsgType(35)` message semantics, including session recovery and
+  order/execution message roles:
+  https://fiximate.fixtrading.org/en/FIX.Latest/tag35.html
 - OnixS FIX 4.2 checksum calculation reference:
   https://www.onixs.biz/fix-dictionary/4.2/app_b.html
 
