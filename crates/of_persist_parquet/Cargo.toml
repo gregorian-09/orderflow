@@ -2,7 +2,7 @@
 name = "of_persist_parquet"
 version = "0.1.0"
 edition.workspace = true
-rust-version = "1.85"
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -22,7 +22,7 @@ arrow-array = { version = "59.2.0", default-features = false }
 arrow-schema = { version = "59.2.0", default-features = false }
 of_persist = { path = "../of_persist", version = "0.5.0" }
 parquet = { version = "59.2.0", default-features = false, features = ["arrow", "snap", "zstd"] }
-sha2 = { version = "0.10.9", default-features = false }
+sha2 = { version = "0.11.0", default-features = false }
 
 [dev-dependencies]
 of_core = { path = "../of_core", version = "0.5.0" }
