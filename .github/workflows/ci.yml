@@ -98,6 +98,10 @@ jobs:
         uses: ./.github/actions/setup-rust
       - name: Enforce documentation coverage
         run: python3 tools/docs_coverage.py --enforce
+      - name: Validate release version synchronization
+        run: |
+          python3 tools/release/sync_binding_versions.py --check
+          python3 tools/release/test_sync_binding_versions.py
 
   python-binding:
     runs-on: ubuntu-latest
@@ -111,6 +115,10 @@ jobs:
         run: python3 -m py_compile bindings/python/orderflow/_ffi.py bindings/python/orderflow/_generated_signatures.py bindings/python/orderflow/api.py
       - name: Smoke Python binding
         run: python3 tools/smoke_python_binding.py
+      - name: Test Python binding
+        env:
+          PYTHONPATH: bindings/python
+        run: python3 -m unittest discover -s bindings/python/tests -v
 
   java-binding:
     runs-on: ubuntu-latest
