@@ -528,6 +528,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
   unrelated tests.
 - Preserved `of_runtime::Engine`'s historical `UnwindSafe` and `RefUnwindSafe`
   auto-trait contract after adding the private bounded WAL channel state.
+- Made Java Javadoc packaging fail closed and independent of Oracle API network
+  availability instead of masking external-link or documentation failures.
 
 ### Changed
 - Prepared the established Rust crates, Python package, Java artifact, and
