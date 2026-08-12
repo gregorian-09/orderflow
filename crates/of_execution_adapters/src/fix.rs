@@ -1,7 +1,9 @@
 //! FIX execution adapters, transport contracts, and report mapping.
 
+mod certification;
 mod live;
 
+pub use certification::*;
 pub use live::*;
 
 use of_execution::{
