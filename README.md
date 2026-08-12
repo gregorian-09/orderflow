@@ -64,6 +64,10 @@ Major additions:
 - market-data operations: additive typed active-adapter mode/session status,
   subscription inventory, queue/loss/freshness/raw-capture diagnostics, and
   endpoint redaction that never returns userinfo, paths, queries, or fragments
+- market-data persistence: additive checksum-linked segmented normalized WAL,
+  explicit seal/sync policies, atomic rebuilt manifests, and cloneable
+  nonblocking producers feeding a single bounded writer with separate record
+  and payload-byte limits
 - execution algorithms: additive parent/child order primitives, fixed-capacity
   decision buffers, OMS execution-event progress folding, and deterministic
   TWAP slice planning in `of_execution_algos`

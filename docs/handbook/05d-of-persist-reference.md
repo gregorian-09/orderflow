@@ -24,6 +24,21 @@ foundation for lower-latency production capture paths.
 | `MarketDataWalReplayFilter` | struct | Deterministic binary WAL replay selector |
 | `MarketDataWalIntegrityReport` | struct | Checksum/sequence integrity report |
 | `MarketDataWalMetrics` | struct | Binary WAL append/sync counters |
+| `MarketDataWalSegmentId` | newtype | Monotonic segment identity |
+| `MarketDataWalSyncPolicy` | enum | Segmented WAL sync cadence |
+| `SegmentedMarketDataWalConfig` | struct | Segment root, limits, and sync configuration |
+| `MarketDataWalSegmentMetadata` | struct | Validated segment inventory row |
+| `MarketDataWalManifest` | struct | Rebuilt ordered segment manifest |
+| `MarketDataWalSegmentIntegrityReport` | struct | Aggregate segment/link integrity result |
+| `SegmentedMarketDataWalMetrics` | struct | Rotation, seal, manifest, write, and sync counters |
+| `SegmentedMarketDataWal` | struct | Checksum-linked rotated normalized WAL |
+| `MarketDataWalRecordInput` | struct | Owned bounded-writer input |
+| `BoundedMarketDataWriterConfig` | struct | Record/byte queue and worker configuration |
+| `MarketDataWriterTryError` | enum | Ownership-preserving nonblocking rejection |
+| `MarketDataWriterControlError` | enum | Flush/shutdown barrier failure |
+| `BoundedMarketDataWriterMetrics` | struct | Queue, durability, and failure snapshot |
+| `MarketDataWalProducer` | struct | Cloneable nonblocking producer |
+| `BoundedMarketDataWalWriter` | struct | Single-owner segmented WAL worker |
 | `MarketDataCheckpointId` | newtype | Monotonic checkpoint identifier |
 | `MarketDataCheckpointKind` | enum | Opaque checkpoint payload category |
 | `MarketDataCheckpointConfig` | struct | Checkpoint root, retention, and sync configuration |
@@ -197,9 +212,166 @@ normalized event sequence, exchange timestamp, receive timestamp, payload
 length, checksum, and previous-record checksum link. Existing bytes must
 validate before append state is initialized.
 
-The first implementation is intentionally single-file. Segment rotation,
-bounded async writer queues, raw provider-message capture, and cold research
-export remain separate integration layers.
+The existing implementation remains intentionally single-file and unchanged.
+The additive segmented WAL and bounded writer below provide rotation and
+background file ownership without changing that API. Raw provider-message
+capture remains an adapter-owned evidence layer.
+
+## `SegmentedMarketDataWal`
+
+The segmented WAL reuses the single-file frame contract while maintaining one
+global WAL sequence and previous-checksum chain across all files.
+
+### Layout and authority
+
+```text
+<root>/manifest.ofmm
+<root>/segment-00000000000000000001.ofmw
+<root>/segment-00000000000000000002.ofmw
+...
+```
+
+`manifest.ofmm` is installed by temporary-file rename, but it is not trusted as
+the recovery authority. `open` scans segment files, validates them, rebuilds
+the in-memory inventory, and replaces stale or corrupt manifest text.
+
+### Configuration
+
+| Method | Meaning |
+| --- | --- |
+| `SegmentedMarketDataWalConfig::new(root)` | Creates default configuration rooted at `root` |
+| `with_max_segment_bytes(bytes)` | Sets the soft rotation target |
+| `with_max_payload_bytes(bytes)` | Sets the hard per-record payload limit |
+| `with_sync_policy(policy)` | Sets data sync cadence |
+| `with_sync_manifest(bool)` | Controls manifest-file sync before rename |
+| `root()` / limit getters | Return effective configuration |
+
+`max_segment_bytes` is a soft target because one frame is never split. A frame
+larger than the target can occupy one segment if it remains under
+`max_payload_bytes`.
+
+### Sync policy
+
+| Variant | Durability behavior |
+| --- | --- |
+| `Never` | No implicit data sync; caller uses `sync_data` |
+| `EveryRecord` | Sync after each frame |
+| `EveryRecords(n)` | Sync after each `n` frames; zero is rejected |
+| `OnSegmentSeal` | Sync when a segment is sealed; default |
+
+### Writer and replay methods
+
+| Method | Meaning |
+| --- | --- |
+| `open(config)` | Validates/rebuilds existing root and opens the final active segment |
+| `config()` | Returns effective configuration |
+| `next_sequence()` | Returns next global sequence |
+| `manifest()` | Returns rebuilt in-memory segment inventory |
+| `metrics()` | Returns append/rotation/seal/manifest counters |
+| `append_record(...)` | Appends one complete normalized frame and rotates when needed |
+| `seal_active_segment()` | Writes an explicit seal frame and refreshes the manifest |
+| `sync_data()` | Flushes userspace state and calls `sync_data` |
+| `replay(out)` | Validates and replays all segments |
+| `replay_filtered(filter, out)` | Validates all frames and retains matches only |
+| `inspect_root(root)` | Performs read-only aggregate integrity inspection |
+
+`SegmentSeal` is reserved to `seal_active_segment`; passing it through ordinary
+`append_record` is rejected. Segment ids and WAL sequences fail on exhaustion
+instead of saturating into duplicate identities.
+
+### Integrity invariants
+
+- Segment ids start at `1`, are unique, and are contiguous.
+- Every non-final segment ends with an on-disk seal frame.
+- The final segment may be active or empty.
+- Global WAL sequence never resets at a file boundary.
+- The first frame of each segment links to the prior segment checksum.
+- Missing files, unsealed middle segments, broken checksums, invalid kinds,
+  invalid versions, and truncated tails make the aggregate report invalid.
+- Failed replay truncates records it added to the caller's output before
+  returning an error.
+
+## `BoundedMarketDataWalWriter`
+
+```mermaid
+sequenceDiagram
+  participant P as Producer(s)
+  participant Q as Bounded FIFO
+  participant W as Single writer thread
+  participant WAL as SegmentedMarketDataWal
+  P->>Q: try_append_owned(input)
+  alt capacity available
+    Q-->>P: accepted immediately
+    Q->>W: owned input
+    W->>WAL: append_record(...)
+  else record or byte limit reached
+    Q-->>P: error containing original input
+  end
+```
+
+The worker deliberately uses no Tokio/global async runtime. It uses a bounded
+standard-library multi-producer/single-consumer FIFO, one native thread, and
+one WAL owner. Producers never call filesystem APIs and never wait for queue
+space.
+
+### Configuration and startup
+
+| Method | Meaning |
+| --- | --- |
+| `BoundedMarketDataWriterConfig::new()` | Defaults to 4,096 records and 64 MiB queued payload bytes |
+| `with_queue_capacity(n)` | Sets hard queued command count; zero is rejected |
+| `with_max_queued_payload_bytes(n)` | Sets hard aggregate queued payload bytes; zero is rejected |
+| `with_thread_name(name)` | Sets non-empty worker thread name |
+| `BoundedMarketDataWalWriter::start(wal, writer)` | Opens the WAL before spawning the worker |
+
+The payload-byte bound excludes the record currently being written. The record
+bound still bounds per-command/channel overhead.
+
+### Producer methods
+
+| Method | Hot-path behavior |
+| --- | --- |
+| `producer()` | Clones a lightweight sender/state handle |
+| `try_append_owned(input)` | Nonblocking; transfers the existing payload allocation on success |
+| `try_append_copy(..., payload)` | Nonblocking queue operation but allocates/copies payload first |
+| `metrics()` | Reads atomics and returns a snapshot |
+| `last_error()` | Locks only the cold diagnostic string path |
+
+`MarketDataWriterTryError` distinguishes record capacity, payload-byte
+capacity, per-record size, reserved record kinds, and stopped writers. Every
+variant owns the rejected `MarketDataWalRecordInput`; `into_input` returns it
+losslessly.
+
+### Control methods
+
+| Method | Behavior |
+| --- | --- |
+| `flush()` | Blocking FIFO barrier: waits for prior records and syncs active data |
+| `shutdown()` | Fences admission, waits for submissions already entering, drains, syncs, joins, and returns final metrics |
+
+These methods belong on control/maintenance threads. Dropping without
+`shutdown` stops admission; explicit shutdown is the deterministic durability
+contract applications should use.
+
+### Metrics and failure semantics
+
+Metrics separate accepted, queued, written, and synced states. Queue depth and
+payload-byte values exclude the in-progress write, while high-water marks
+capture accepted queue occupancy. `last_written_sequence` means append
+completed; `last_synced_sequence` means a known sync policy/barrier covered that
+sequence.
+
+On append/sync failure the worker:
+
+1. stops admission,
+2. records a diagnostic and marks itself degraded,
+3. waits for producer calls already entering the nonblocking operation,
+4. accounts for accepted queued records that cannot be written,
+5. disconnects producer/control handles.
+
+The crate reports this condition; the host chooses stop-market-data,
+stop-trading, fail-process, or another explicit
+`MarketDataPersistenceFailureAction`.
 
 ### Replay filters
 

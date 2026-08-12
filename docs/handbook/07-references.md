@@ -53,6 +53,14 @@ This page lists external references used to shape the documentation structure an
 - OnixS FIX 4.2 checksum calculation reference:
   https://www.onixs.biz/fix-dictionary/4.2/app_b.html
 
+## Rust Concurrency References
+
+- Rust standard-library MPSC channel module, including bounded `sync_channel`,
+  disconnection, and nonblocking `try_send` semantics:
+  https://doc.rust-lang.org/std/sync/mpsc/
+- Rust standard-library `sync_channel` FIFO and capacity contract:
+  https://doc.rust-lang.org/std/sync/mpsc/fn.sync_channel.html
+
 ## Risk and Disclosure References
 
 - CFTC Rule 4.41 (eCFR, official):  
