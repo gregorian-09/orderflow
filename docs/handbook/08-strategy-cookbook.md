@@ -9,41 +9,653 @@
 
 ## Table of Contents
 
-0. [Complete 0.4.0 Analytics-To-Execution Loop](#0-complete-040-analytics-to-execution-loop)
-1. [Spread Regime Scalping](#1-spread-regime-scalping)
-2. [Depth-Imbalance Mean Reversion](#2-depth-imbalance-mean-reversion)
-3. [Book-Event Momentum Detection](#3-book-event-momentum-detection)
-4. [Resiliency-Driven Reversal](#4-resiliency-driven-reversal)
-5. [VPIN Toxicity Gating](#5-vpin-toxicity-gating)
-6. [Kyle's Lambda Liquidity Scoring](#6-kyles-lambda-liquidity-scoring)
-7. [Amihud Cost-Aware Position Sizing](#7-amihud-cost-aware-position-sizing)
-8. [CVD Divergence for Exhaustion Signals](#8-cvd-divergence-for-exhaustion-signals)
-9. [Pattern-Detector Combo (Absorption + Imbalance)](#9-pattern-detector-combo-absorption-imbalance)
-10. [Footprint Imbalance Continuation](#10-footprint-imbalance-continuation)
-11. [DOM Iceberg Detection](#11-dom-iceberg-detection)
-12. [Session Classification — Trend vs Range Day](#12-session-classification-trend-vs-range-day)
-13. [Volume Profile — HVN/LVN Support and Resistance](#13-volume-profile-hvnlvn-support-and-resistance)
-14. [Volatility-Regime Position Sizing](#14-volatility-regime-position-sizing)
-15. [Microstructure Noise Filter](#15-microstructure-noise-filter)
-16. [Hasbrouck Information Share](#16-hasbrouck-information-share)
-17. [Almgren-Chriss Execution Cost Model](#17-almgren-chriss-execution-cost-model)
-18. [Spread Decomposition — Adverse Selection Warning](#18-spread-decomposition-adverse-selection-warning)
-19. [ACD Trade-Timing Regime](#19-acd-trade-timing-regime)
-20. [Regime-Detector Multi-Filter](#20-regime-detector-multi-filter)
-21. [Kinetic Energy Breakout Confirmation](#21-kinetic-energy-breakout-confirmation)
-22. [Agent-Type HFT Reflexivity](#22-agent-type-hft-reflexivity)
-23. [Dark Pool Siphon Detection](#23-dark-pool-siphon-detection)
-24. [Institutional Flow Crowding Warning](#24-institutional-flow-crowding-warning)
-25. [Options Flow — Gamma Positioning](#25-options-flow-gamma-positioning)
-26. [OI Divergence for Trend Exhaustion](#26-oi-divergence-for-trend-exhaustion)
-27. [LOB Feature ML Inference Pipeline](#27-lob-feature-ml-inference-pipeline)
-28. [Futures Basis Calendar Spread Arbitrage](#28-futures-basis-calendar-spread-arbitrage)
-29. [AnalyticsConfig Tuning Workflow](#29-analyticsconfig-tuning-workflow)
-30. [Tickbar OHLCV Momentum Confirmation](#30-tickbar-ohlcv-momentum-confirmation)
+1. [Complete 0.5.0 Analytics-To-Execution Loop](#1-complete-050-analytics-to-execution-loop)
+2. [Spread Regime Scalping](#2-spread-regime-scalping)
+3. [Depth-Imbalance Mean Reversion](#3-depth-imbalance-mean-reversion)
+4. [Book-Event Momentum Detection](#4-book-event-momentum-detection)
+5. [Resiliency-Driven Reversal](#5-resiliency-driven-reversal)
+6. [VPIN Toxicity Gating](#6-vpin-toxicity-gating)
+7. [Kyle's Lambda Liquidity Scoring](#7-kyles-lambda-liquidity-scoring)
+8. [Amihud Cost-Aware Position Sizing](#8-amihud-cost-aware-position-sizing)
+9. [CVD Divergence for Exhaustion Signals](#9-cvd-divergence-for-exhaustion-signals)
+10. [Pattern-Detector Combo (Absorption + Imbalance)](#10-pattern-detector-combo-absorption-imbalance)
+11. [Footprint Imbalance Continuation](#11-footprint-imbalance-continuation)
+12. [DOM Iceberg Detection](#12-dom-iceberg-detection)
+13. [Session Classification — Trend vs Range Day](#13-session-classification-trend-vs-range-day)
+14. [Volume Profile — HVN/LVN Support and Resistance](#14-volume-profile-hvnlvn-support-and-resistance)
+15. [Volatility-Regime Position Sizing](#15-volatility-regime-position-sizing)
+16. [Microstructure Noise Filter](#16-microstructure-noise-filter)
+17. [Hasbrouck Information Share](#17-hasbrouck-information-share)
+18. [Almgren-Chriss Execution Cost Model](#18-almgren-chriss-execution-cost-model)
+19. [Spread Decomposition — Adverse Selection Warning](#19-spread-decomposition-adverse-selection-warning)
+20. [ACD Trade-Timing Regime](#20-acd-trade-timing-regime)
+21. [Regime-Detector Multi-Filter](#21-regime-detector-multi-filter)
+22. [Kinetic Energy Breakout Confirmation](#22-kinetic-energy-breakout-confirmation)
+23. [Agent-Type HFT Reflexivity](#23-agent-type-hft-reflexivity)
+24. [Dark Pool Siphon Detection](#24-dark-pool-siphon-detection)
+25. [Institutional Flow Crowding Warning](#25-institutional-flow-crowding-warning)
+26. [Options Flow — Gamma Positioning](#26-options-flow-gamma-positioning)
+27. [OI Divergence for Trend Exhaustion](#27-oi-divergence-for-trend-exhaustion)
+28. [LOB Feature ML Inference Pipeline](#28-lob-feature-ml-inference-pipeline)
+29. [Futures Basis Calendar Spread Arbitrage](#29-futures-basis-calendar-spread-arbitrage)
+30. [AnalyticsConfig Tuning Workflow](#30-analyticsconfig-tuning-workflow)
+31. [Tickbar OHLCV Momentum Confirmation](#31-tickbar-ohlcv-momentum-confirmation)
 
 ---
 
-## 0. Complete 0.4.0 Analytics-To-Execution Loop
+## How to Use This Cookbook
+
+This cookbook is an engineering and research reference, not a list of trading
+claims. Each analytics value is an observation derived from a particular event
+stream, lookback window, normalization rule, and data-quality state. The value
+does not become a trade signal until a user defines a decision rule, validates
+the rule out of sample, applies risk controls, and chooses an execution policy.
+
+The correct mental model is:
+
+```mermaid
+flowchart LR
+  Events[Trades and book events] --> State[Bounded per-symbol state]
+  State --> Snapshot[Typed analytics snapshot]
+  Snapshot --> Interpretation[Market interpretation]
+  Interpretation --> Rule[Explicit strategy rule]
+  Rule --> Quality{Quality and sample checks}
+  Quality -->|pass| Risk[Risk limits and sizing]
+  Quality -->|fail| Block[Record no-trade reason]
+  Risk --> Execution[Simulated or live execution]
+  Execution --> Review[Journal, replay, and evaluation]
+```
+
+### Observation is not prediction
+
+An analytics snapshot describes what the normalized data currently says. It
+does not guarantee that the next price move will follow a hypothesis. A useful
+strategy must specify:
+
+1. the observation and its units;
+2. the market mechanism that could produce it;
+3. the condition under which the observation is considered meaningful;
+4. the direction, timing, and holding horizon of the trade rule;
+5. what invalidates the observation;
+6. the risk and execution response;
+7. how the result will be measured in replay and live review.
+
+For example, a positive depth imbalance means displayed bid quantity exceeds
+displayed ask quantity under the configured depth and event ordering. It does
+not prove that buyers are informed, that displayed bids will remain, or that
+the next trade will be higher. A strategy must account for cancellation,
+spoofing, hidden liquidity, stale books, queue position, and transaction cost.
+
+### Data-quality gate
+
+Every live or replay decision should inspect quality and sample sufficiency
+before using an analytics value. At minimum, check:
+
+- no stale-feed flag when freshness is required;
+- no sequence-gap or out-of-order flag when ordering matters;
+- no clock-skew flag when event-time alignment matters;
+- no depth-truncated flag when depth comparisons require the full requested
+  book;
+- no adapter-degraded flag when the provider is not ready;
+- enough observations, buckets, trades, or bars for the estimator;
+- non-empty values and valid denominators.
+
+An empty or under-sampled snapshot is not a bearish or bullish value. It is a
+reason to wait, record a no-trade decision, or use a separately documented
+fallback.
+
+### Units and normalization
+
+Orderflow's canonical prices and quantities are integer-normalized. The value
+500025 may mean 5000.25 when the symbol scale is two decimal places; it is not
+automatically a floating-point price. Basis points, parts per million, ratios,
+nanoseconds, milliseconds, and provider-native quantities must be read from the
+snapshot contract and not inferred from a display string.
+
+Use the symbol's tick size, price scale, quantity scale, contract multiplier,
+and currency when converting a snapshot into a risk or execution value. A
+decision rule should never compare values from two symbols until their units
+have been normalized.
+
+### Lookback and warm-up
+
+Most analytics are estimators over bounded state. Their first values can be
+empty, zero, unstable, or deliberately conservative. The cookbook therefore
+uses the following terms:
+
+- **warm-up**: the minimum observations needed before using a value;
+- **lookback**: the retained event or sample horizon;
+- **window**: the time or event interval used for one calculation;
+- **threshold**: a decision boundary chosen from research and costs;
+- **regime**: a classification used to select or disable a strategy;
+- **quality gate**: a condition that blocks use of otherwise valid numbers.
+
+Thresholds in examples are starting points, not universal market constants.
+They must be calibrated by symbol, venue, session, fee schedule, latency, and
+execution style, then tested on data that was not used to choose them.
+
+### Complete runnable Python setup
+
+The following program is the common setup used by the Python examples. It is
+complete: it imports the public classes, creates the engine, configures the
+external-feed policy, subscribes the symbol, ingests deterministic book and
+trade events, polls the runtime, and closes the native handle. Replace the
+synthetic ingest function with a provider adapter or replay source for real
+work.
+
+```python
+from __future__ import annotations
+
+from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import Any
+
+from orderflow import (
+    BookAction,
+    DataQualityFlags,
+    Engine,
+    EngineConfig,
+    ExternalFeedPolicy,
+    Side,
+    StreamKind,
+    Symbol,
+)
+
+
+@dataclass(frozen=True)
+class Event:
+    kind: str
+    side: int
+    level: int
+    price: int
+    size: int
+    sequence: int
+    timestamp_ns: int
+
+
+def synthetic_events(start_ns: int = 1_000_000_000) -> Iterator[Event]:
+    """Yield a deterministic two-sided book and trade stream for examples."""
+    yield Event("book", Side.BID, 0, 500_000, 500, 1, start_ns)
+    yield Event("book", Side.ASK, 0, 500_025, 300, 2, start_ns + 1_000)
+    yield Event("trade", Side.ASK, 0, 500_025, 25, 3, start_ns + 2_000)
+
+
+def ingest(engine: Engine, symbol: Symbol, event: Event) -> None:
+    """Translate one canonical example event into the Python runtime API."""
+    if event.kind == "book":
+        engine.ingest_book(
+            symbol,
+            event.side,
+            event.level,
+            event.price,
+            event.size,
+            BookAction.UPSERT,
+            event.sequence,
+            event.timestamp_ns,
+            event.timestamp_ns + 100,
+            DataQualityFlags.NONE,
+        )
+    elif event.kind == "trade":
+        engine.ingest_trade(
+            symbol,
+            event.price,
+            event.size,
+            event.side,
+            event.sequence,
+            event.timestamp_ns,
+            event.timestamp_ns + 100,
+            DataQualityFlags.NONE,
+        )
+    else:
+        raise ValueError(f"unsupported event kind: {event.kind}")
+
+
+def run_once() -> dict[str, Any]:
+    symbol = Symbol("SIM", "ES", 10)
+    with Engine(EngineConfig(instance_id="cookbook-reference")) as engine:
+        engine.configure_external_feed(ExternalFeedPolicy(15_000, True))
+        engine.start()
+        engine.subscribe(symbol, StreamKind.ANALYTICS)
+        engine.subscribe(symbol, StreamKind.BOOK)
+
+        for event in synthetic_events():
+            ingest(engine, symbol, event)
+            engine.poll_once(DataQualityFlags.NONE)
+
+        book = engine.book_analytics_snapshot(symbol)
+        analytics = engine.analytics_snapshot(symbol)
+        quality_flags = int(analytics.get("quality_flags", 0))
+        return {
+            "book": book,
+            "analytics": analytics,
+            "quality_ok": quality_flags == DataQualityFlags.NONE,
+        }
+
+
+if __name__ == "__main__":
+    print(run_once())
+```
+
+Run it after building the native library and setting the normal library lookup
+environment or explicit library path:
+
+```bash
+cargo build -p of_ffi_c
+PYTHONPATH=bindings/python python3 cookbook_reference.py
+```
+
+The C and Java binding examples use the same lifecycle: construct, start,
+configure/subscribe, ingest or poll, query a snapshot, apply a quality gate,
+and close. Their JSON snapshot methods are presentation boundaries; low-latency
+applications should keep typed data in Rust or C when JSON parsing is not needed.
+
+## Concept Atlas
+
+The atlas gives the market meaning before the recipes show code. Each entry
+answers: what is measured, why market participants use it, what can make it
+misleading, and how it becomes a responsible strategy input.
+
+### Spread and execution quality
+
+The quoted spread is the distance between the best ask and best bid. It is the
+immediate displayed cost of crossing the market before fees and slippage. A
+narrow spread usually indicates competition for liquidity, but it can also be
+fragile when displayed size is small or the feed is stale.
+
+The effective spread compares an executed trade with the midpoint at the time
+of the trade. It includes whether the aggressor paid above or below the
+midpoint. The realized spread compares the execution with a later midpoint and
+therefore includes the short-horizon price response after the trade. Effective
+spread is useful for measuring immediate trading cost; realized spread is useful
+for asking whether the liquidity provider was adversely selected.
+
+Use spread metrics to choose between passive and aggressive execution, filter
+high-cost entries, and compare venue quality. Do not use a single narrow spread
+observation as proof that a market is liquid. Require a warm-up window, stable
+quotes, sufficient displayed quantity, and a fee/latency budget.
+
+### Depth imbalance and microprice
+
+Depth imbalance compares displayed bid and ask quantity over selected levels.
+Positive imbalance means more displayed bid quantity; negative imbalance means
+more displayed ask quantity. It is used as a short-horizon pressure indicator,
+as an input to queue and execution models, and as a filter for trade direction.
+
+Microprice weights the midpoint toward the side with less available liquidity.
+It is useful because a symmetric midpoint ignores the fact that one side may be
+easier to consume. Both measures are vulnerable to cancellations, hidden
+liquidity, feed truncation, and spoofing. Use them as conditional evidence, not
+as standalone direction predictors.
+
+### Book-event arrivals and cancellations
+
+Arrival and cancellation rates describe how quickly displayed liquidity changes.
+High arrivals can mean genuine quoting interest, but may also be automated
+quote churn. High cancellations can signal withdrawal, risk reduction, a quote
+refresh policy, or spoofing. Comparing the rates with executed volume and price
+response helps distinguish passive activity from pressure.
+
+Use this family to choose whether a book signal is stable enough to trade and
+to detect transitions into an active or fragile market. Rates need a time
+window, event-type definition, and minimum event count. Comparing rates from
+different window lengths or providers without normalization is invalid.
+
+### Resiliency
+
+Resiliency measures how quickly displayed depth and price conditions recover
+after a liquidity shock such as a large trade or book depletion. Fast recovery
+can indicate replenishment and absorption; slow recovery can indicate that
+liquidity was genuinely removed. The same observation can support reversal or
+continuation depending on the initiating price move and broader regime.
+
+Use recovery time and depth elasticity for execution timing and as a regime
+filter. A recovery measurement requires an identifiable shock and enough post-
+shock observations. Missing book updates or a provider reset can look like slow
+recovery, so sequence and freshness gates are essential.
+
+### VPIN-style toxicity
+
+VPIN-style measures compare buy and sell volume imbalance across volume buckets.
+The idea is that persistent imbalance may indicate informed or toxic flow for
+liquidity providers. It is used to widen or cancel passive quotes, disable
+mean-reversion strategies, and reduce size during adverse conditions.
+
+VPIN is not a direct measure of informed traders. Bucket size, trade
+classification, sampling, session boundaries, and feed quality materially
+change the result. Require enough complete buckets, calibrate by instrument,
+and treat a high value as a risk-control input rather than a guaranteed price
+direction.
+
+### Kyle's lambda and Amihud illiquidity
+
+Kyle's lambda estimates price response per unit of signed order flow. Higher
+lambda means a given amount of signed volume is associated with a larger price
+move. It is useful for comparing liquidity regimes and choosing order size or
+execution style.
+
+Amihud illiquidity relates absolute return to traded notional or volume. Higher
+Amihud means more price movement per unit of trading activity. It is useful for
+cost-aware sizing and cross-period liquidity comparison, especially when a
+book snapshot is incomplete.
+
+Both are scale-sensitive and noisy at short horizons. Use robust windows,
+minimum samples, stable price and quantity units, and a cost model that includes
+fees, spread, impact, and latency. Never multiply a raw ratio by an arbitrary
+constant without documenting its calibration.
+
+### Cumulative volume delta and divergence
+
+Cumulative volume delta accumulates aggressor-side volume. It attempts to
+separate buying and selling pressure from price alone. A divergence occurs when
+price makes a new extreme without comparable delta confirmation. Traders use
+this to investigate exhaustion, absorption, or hidden liquidity.
+
+Divergence is a context signal, not an immediate reversal order. It can persist
+through a strong trend, and trade classification errors can manufacture it.
+Require a defined price window, delta window, sample count, and invalidation
+level. Record whether the rule is fade, wait-for-confirmation, or continuation.
+
+### Absorption, imbalance, and footprint patterns
+
+Absorption describes aggressive trade volume meeting substantial passive
+liquidity without proportional price progress. A stacked imbalance describes
+repeated side-dominant volume across adjacent levels or bars. Together they can
+describe a battle between aggressive initiative and passive defense.
+
+Patterns are derived labels, not independent evidence. Their thresholds depend
+on tick size, depth, bucket construction, and session. Use the underlying
+volume, price progress, and quality fields to validate a label, and avoid
+double-counting absorption and imbalance as unrelated signals.
+
+### Icebergs and stop-hunt patterns
+
+An iceberg hypothesis arises when executed quantity repeatedly replenishes at a
+price despite limited displayed quantity. A stop-hunt label describes a rapid
+liquidity sweep or wick-like event that may trigger clustered stops. Both are
+inferences from observable prints and book changes; they do not identify a
+hidden participant with certainty.
+
+Use them for execution caution, queue decisions, and post-event analysis. Do
+not submit a fade solely because an iceberg or stop-hunt flag is true. Require
+replenishment evidence, event ordering, minimum size, and a defined failure
+condition.
+
+### Session classification and volume profile
+
+Session classification uses distribution, range, volume, and directional
+behavior to distinguish trend, range, and reversal conditions. It helps choose
+which strategy family is allowed. Classification is retrospective or slowly
+changing; it should not be treated as an instant forecast.
+
+A volume profile groups traded volume by price. High-volume nodes are areas of
+acceptance where many transactions occurred; low-volume nodes are areas of
+less acceptance that price may cross quickly. HVN/LVN behavior depends on
+session boundaries, tick size, volume quality, and whether the profile is
+composite or session-specific. Define the profile period before evaluating a
+level.
+
+### Volatility and microstructure noise
+
+Realized volatility estimates variation over observed returns. Parkinson uses
+high/low range, Garman-Klass uses OHLC information, and Yang-Zhang combines
+overnight and open-to-close components under its assumptions. They are useful
+for sizing, stop distance, regime selection, and execution urgency.
+
+Microstructure noise is the part of observed price variation attributable to
+bid/ask bounce, discrete ticks, asynchronous observations, and short-horizon
+market mechanics rather than durable movement. A low signal-to-noise ratio is a
+reason to reduce trading frequency or lengthen the horizon. Volatility estimates
+must not be compared across different units or sampling intervals without
+normalization.
+
+### Hasbrouck impact and information share
+
+Hasbrouck-style models separate short-lived and more persistent price responses
+using trades, quotes, and a time-series model. An information-share estimate is
+model-dependent and sensitive to sampling and market selection. It is useful
+for studying which flow or venue contributes to price discovery, and for
+deciding whether an execution should be passive or urgent.
+
+It is not a real-time oracle. Require enough observations, stable model
+parameters, and out-of-sample validation. Keep model fitting off the hot path.
+
+### Almgren-Chriss and spread decomposition
+
+Almgren-Chriss models the trade-off between execution risk and market impact
+when a parent order is sliced over time. Permanent impact represents a durable
+price effect; temporary impact represents the execution pressure that decays.
+Use it to choose a schedule, participation rate, and urgency, not to promise a
+precise fill cost.
+
+Spread decomposition separates components such as adverse selection, order
+processing, and inventory effects. High adverse selection warns that passive
+orders may be filled just before price moves against them. It can justify
+cancel/requote or aggressive execution, but only after fees, queue position,
+and fill probability are included.
+
+### ACD and regime detection
+
+An autoregressive conditional duration model describes the time between trades.
+Higher intensity means events arrive more frequently; lower intensity means
+the market is quieter. ACD is useful for timing participation and deciding
+whether an event-driven strategy has enough opportunity.
+
+Regime detection combines standardized measures such as spread, volatility,
+and toxicity. The output is a policy input: allow, reduce, or disable strategy
+families. The numeric labels and thresholds are configuration contracts, not
+universal truths. Document the mapping and test transitions at boundaries.
+
+### Kinetic energy and agent-type inference
+
+Kinetic-energy analytics combine signed flow and price movement to represent
+the strength and change of order-flow motion. Agent-type inference estimates
+behavioral signatures such as retail, institutional, or high-frequency
+participation from observable activity. These are feature models, not identities.
+
+Use them as confirmation or risk filters. They are especially sensitive to
+venue selection, trade classification, aggregation, and sample size. Do not
+describe inferred agent labels as facts about a participant.
+
+### Dark-lit correlation and institutional flow
+
+Dark-lit correlation compares opaque or off-exchange activity with lit-market
+flow. Divergence can indicate that large activity is being executed through a
+different channel, but incomplete prints and delayed reporting can create the
+same pattern. Institutional-flow analytics classify size or behavior according
+to configured thresholds; they do not prove institutional identity.
+
+Use these features for participation, crowding, and execution-risk analysis.
+Define reporting delay, venue coverage, size thresholds, and missing-data policy.
+
+### Options flow, gamma, and open interest
+
+Options-flow analytics summarize contracts, direction, delta or notional, and
+possibly sweep behavior. Gamma positioning describes how dealer hedging could
+amplify or damp price moves under a positioning assumption. Open-interest
+analysis compares changes in price and open interest to investigate whether
+positions are being opened, closed, or transferred.
+
+These interpretations require contract metadata, expiry, strike, multiplier,
+underlying mapping, and reporting timing. Put/call ratio or positive gamma is
+not sufficient to infer a market direction. Use options features as contextual
+inputs and validate against underlying execution and settlement behavior.
+
+### LOB features and machine learning
+
+LOB features turn book shape and flow into a fixed numerical vector for an
+offline-trained model. Feature order, scaling, missing-value policy, training
+period, label horizon, and leakage controls are part of the model contract.
+
+The runtime computes features; it does not validate that an external model is
+well-trained or free of look-ahead bias. Persist feature schema and model
+version, reject mismatched vectors, monitor feature drift, and keep inference
+separate from model training.
+
+### Futures basis, calendar spreads, and tickbars
+
+Futures basis compares a futures price with a reference or related contract.
+Calendar-spread analysis compares expiries and must account for carry, funding,
+roll, expiry, multiplier, and liquidity. A wide basis is not automatically an
+arbitrage opportunity.
+
+Tickbars aggregate trades into fixed time intervals. A completed bar provides a
+stable decision cadence above raw events, but it introduces close timing and
+aggregation assumptions. Configure tickbars before the first symbol trade and
+use only completed bars for confirmation.
+
+### Complete decision and execution boundary
+
+The following complete Python example shows how an analytics observation becomes
+a quality-gated, risk-gated simulated order. It intentionally uses only public
+binding types and does not claim that the rule is profitable.
+
+```python
+from __future__ import annotations
+
+from typing import Any
+
+from orderflow import (
+    BookAction,
+    DataQualityFlags,
+    Engine,
+    EngineConfig,
+    ExecutionEngine,
+    ExecutionOrderType,
+    ExecutionSide,
+    ExecutionTimeInForce,
+    ExternalFeedPolicy,
+    OrderRequest,
+    RiskLimits,
+    RouteConfig,
+    Side,
+    StreamKind,
+    Symbol,
+)
+
+
+def quality_ok(analytics: dict[str, Any]) -> bool:
+    """Allow decisions only when the snapshot reports clean input quality."""
+    return int(analytics.get("quality_flags", 0)) == DataQualityFlags.NONE
+
+
+def spread_and_imbalance_rule(
+    book: dict[str, Any],
+    analytics: dict[str, Any],
+) -> str | None:
+    """Return BUY/SELL only for a complete, explicitly defined observation."""
+    if not quality_ok(analytics):
+        return None
+    if int(analytics.get("trade_count", 0)) < 20:
+        return None
+    imbalance = int(book.get("depth_imbalance_bps", 0))
+    spread = int(book.get("spread_bps", 0))
+    if spread <= 0 or spread > 20:
+        return None
+    if imbalance >= 3_000:
+        return "BUY"
+    if imbalance <= -3_000:
+        return "SELL"
+    return None
+
+
+def main() -> None:
+    symbol = Symbol("SIM", "ES", 10)
+    limits = RiskLimits(
+        kill_switch=False,
+        max_order_qty=1,
+        max_order_notional=1_000_000,
+        max_open_orders=1,
+        max_open_notional=1_000_000,
+        price_band_ticks=0,
+    )
+    route = RouteConfig("SIM", "ACC", "SIM", "ES", True, limits)
+
+    with Engine(EngineConfig(instance_id="cookbook-decision")) as market, \
+            ExecutionEngine([route]) as execution:
+        market.configure_external_feed(ExternalFeedPolicy(15_000, True))
+        market.start()
+        market.subscribe(symbol, StreamKind.BOOK)
+        market.subscribe(symbol, StreamKind.ANALYTICS)
+
+        market.ingest_book(symbol, Side.BID, 0, 500_000, 500, BookAction.UPSERT, 1, 1_000_000_000, 1_000_000_100)
+        market.ingest_book(symbol, Side.ASK, 0, 500_025, 300, BookAction.UPSERT, 2, 1_000_000_001, 1_000_000_101)
+        market.ingest_trade(symbol, 500_025, 25, Side.ASK, 3, 1_000_000_002, 1_000_000_102)
+        market.poll_once(DataQualityFlags.NONE)
+
+        book = market.book_analytics_snapshot(symbol)
+        analytics = market.analytics_snapshot(symbol)
+        direction = spread_and_imbalance_rule(book, analytics)
+        if direction is None:
+            print("NO_TRADE", {"book": book, "analytics": analytics})
+            return
+
+        side = ExecutionSide.BUY if direction == "BUY" else ExecutionSide.SELL
+        events = execution.submit_order(OrderRequest(
+            client_order_id="COOKBOOK-0001",
+            account_id="ACC",
+            route_id="SIM",
+            strategy_id="spread-imbalance-demo",
+            venue="SIM",
+            instrument="ES",
+            side=side,
+            order_type=ExecutionOrderType.LIMIT,
+            time_in_force=ExecutionTimeInForce.DAY,
+            quantity=1,
+            limit_price=500_025 if side == ExecutionSide.BUY else 500_000,
+        ))
+        print("SUBMITTED", direction, events)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+This is a simulated execution example. A live adapter requires provider
+credentials, capability validation, a journal/recovery policy, reconciliation,
+and operational approval. A strategy must also define exits, cancellation,
+position limits, and restart behavior before it is deployable.
+
+## Recipe Specification Matrix
+
+Use this matrix before copying a recipe into a strategy. The “use” column is
+the market question; the “invalidated by” column is the evidence that makes the
+observation unsafe; the “response” column is an execution or risk action, not a
+prediction of price.
+
+| Recipe | Market question | Invalidated by | Appropriate response |
+| --- | --- | --- | --- |
+| Spread regime | Is displayed execution cost stable enough for passive liquidity? | Stale quote, thin size, high realized spread, or fee budget breach | Reduce size, widen/cancel, or use a bounded aggressive order |
+| Depth imbalance | Which side has more displayed depth over the chosen levels? | Truncated book, rapid cancellations, gap, or spoof-like churn | Use as directional confirmation or queue filter |
+| Book events | Is displayed liquidity arriving, withdrawing, or churning unusually fast? | Low sample count, provider reset, or mixed event definitions | Delay entry and reduce participation during unstable flow |
+| Resiliency | Does liquidity replenish after a shock? | Missing deltas, no identifiable shock, or stale recovery clock | Distinguish absorption from continuation; size conservatively |
+| VPIN | Is signed volume persistently imbalanced across volume buckets? | Incomplete buckets, bad classification, or wrong bucket scale | Disable passive mean reversion or widen risk budget |
+| Kyle lambda | How much price response accompanies signed flow? | Too few samples, unstable regression, or unit mismatch | Reduce quantity and increase execution patience when high |
+| Amihud | How much return is produced per unit of traded activity? | Zero notional, sparse returns, or cross-symbol scale mismatch | Scale quantity by measured liquidity cost |
+| CVD divergence | Does aggressive volume confirm the price extreme? | Trade-side errors, changing window, or persistent trend | Wait for confirmation or define a strict invalidation level |
+| Pattern combination | Do multiple order-flow patterns describe the same event? | Pattern double-counting, low sample, or feed quality failure | Require underlying volume and price-progress confirmation |
+| Footprint imbalance | Is side-dominant activity repeated across adjacent bars/levels? | Isolated print, thin book, or incomplete bar | Use as continuation confirmation, not a standalone entry |
+| Iceberg | Is executed volume replenishing at one price? | Hidden venue coverage, duplicate prints, or queue changes | Avoid joining a defended level without fill/exit planning |
+| Session type | Is the session behaving as trend, range, or reversal? | Early-session warm-up or regime transition | Enable only the strategy family allowed for the class |
+| Volume profile | Where did the session accept or reject price? | Wrong session boundary, rollover, or sparse volume | Set reference zones and avoid blind support/resistance trades |
+| Volatility | What is the current realized movement scale? | Estimator warm-up or sampling-frequency mismatch | Scale size, stop distance, and urgency |
+| Noise | Is short-horizon movement mostly market microstructure noise? | Bounce-dominated sampling or stale quotes | Lengthen horizon or remain flat |
+| Hasbrouck | Is observed price response persistent or temporary? | Model instability or insufficient time series | Choose passive versus urgent execution and validate out of sample |
+| Almgren-Chriss | What schedule balances impact and execution risk? | Wrong impact parameters, liquidity change, or urgency change | Slice, participate, or stop when cost budget fails |
+| Spread decomposition | Is passive liquidity being adversely selected? | Incomplete quote/trade alignment or stale midpoint | Cancel/requote or reduce passive exposure |
+| ACD | How frequently are trades arriving? | Sparse duration sample or session break | Change participation frequency, not direction automatically |
+| Regime detector | Which combined market state is active? | Boundary instability or unknown class | Apply allow/reduce/halt policy |
+| Kinetic energy | Is signed flow producing accelerating price movement? | Single outlier, bad sign, or low sample | Confirm breakout or exit when energy collapses |
+| Agent type | Which behavioral signature best explains the flow? | Model ambiguity or insufficient sample | Use as context and never as participant identity |
+| Dark-lit correlation | Is opaque activity diverging from lit activity? | Reporting delay, incomplete venue coverage, or stale data | Treat as participation context, not guaranteed direction |
+| Institutional flow | Is configured large-flow activity one-sided and crowded? | Arbitrary size threshold or incomplete market coverage | Reduce crowding risk or wait for confirmation |
+| Options gamma | Could dealer hedging dampen or amplify movement? | Missing contract metadata or positioning uncertainty | Adjust expected range and hedge policy |
+| Open interest | Are price and open interest confirming or diverging? | Settlement delay, contract roll, or stale OI | Use for context and expiry-aware risk management |
+| LOB features | Does a fixed feature vector match the trained model contract? | Schema drift, leakage, missing values, or feature drift | Reject inference and fall back to deterministic rules |
+| Futures basis | Is relative pricing outside a carry/liquidity-adjusted range? | Roll, funding, multiplier, or execution-leg mismatch | Quote both legs with synchronized risk |
+| AnalyticsConfig | Are windows and thresholds appropriate for this instrument? | Unvalidated tuning or excessive memory | Change configuration only at controlled boundaries |
+| Tickbar | Does the completed bar confirm event-level direction? | Incomplete bar, late event, or disabled feature | Wait for completion and trade only with a fresh signal |
+
+## 1. Complete 0.5.0 Analytics-To-Execution Loop
 
 Use this as the reference shape for the rest of the cookbook. Individual
 recipes later in this document focus on one analytics idea; real strategies
@@ -152,9 +764,27 @@ The same structure applies to C, Java, and Rust:
 | Concurrent order path | `ConcurrentExecutionEngine` | `of_execution_concurrent_*` | `ConcurrentExecutionEngine` | `ConcurrentOrderflowExecutionEngine` |
 | Review | `of_persist`, `ExecutionJournal` | host-owned files | market snapshots + execution events | JSON snapshots + execution events |
 
+### How to read each recipe
+
+Each recipe below has four distinct layers. Keep them separate in code and in
+research notes:
+
+1. **Market concept**: what the observable quantity represents and why it can
+   matter to liquidity, price discovery, risk, or execution;
+2. **Measurement**: which snapshot fields provide the observation, including
+   units, warm-up, window, and quality requirements;
+3. **Decision rule**: the explicit threshold and direction used in the example;
+4. **Execution policy**: how sizing, order type, cancellation, exit, and
+   recovery should respond if the rule passes or becomes invalid.
+
+The example thresholds are deliberately visible so they can be challenged.
+They are not recommendations. A researcher should replace them with values
+estimated from a training period, validate them on a separate period, include
+fees and slippage, and test behavior during gaps, reconnects, and sparse data.
+
 ---
 
-## 1. Spread Regime Scalping
+## 2. Spread Regime Scalping
 
 **Hypothesis.** When the effective spread contracts below its recent average,
 market makers are competing aggressively — a signal that the market is liquid
@@ -230,7 +860,7 @@ flowchart TD
 
 ---
 
-## 2. Depth-Imbalance Mean Reversion
+## 3. Depth-Imbalance Mean Reversion
 
 **Hypothesis.** When one side of the book carries more than 2× the volume of
 the other, the price is biased toward the thinner side as liquidity gets
@@ -278,7 +908,7 @@ if (rc == OF_OK) {
 
 ---
 
-## 3. Book-Event Momentum Detection
+## 4. Book-Event Momentum Detection
 
 **Hypothesis.** A sudden spike in order arrival rate without a corresponding
 increase in cancellation rate signals genuine new interest — momentum is
@@ -316,7 +946,7 @@ if arrivals > cancels * 1.5:
 
 ---
 
-## 4. Resiliency-Driven Reversal
+## 5. Resiliency-Driven Reversal
 
 **Hypothesis.** If depth snaps back quickly after a large trade (high
 resiliency), the market absorbed the flow — the move is likely to reverse.
@@ -344,7 +974,7 @@ if r["recovery_time_ms"] < 500.0 and r["depth_elasticity"] > 0.8:
 
 ---
 
-## 5. VPIN Toxicity Gating
+## 6. VPIN Toxicity Gating
 
 **Hypothesis.** When VPIN is above its toxicity threshold, order-flow is
 toxic and mean-reversion strategies should be disabled.
@@ -370,7 +1000,7 @@ if (v.getBoolean("is_toxic")) {
 
 ---
 
-## 6. Kyle's Lambda Liquidity Scoring
+## 7. Kyle's Lambda Liquidity Scoring
 
 **Hypothesis.** Low lambda means a trade moves price less — the market is
 deep. High lambda means you pay more to get size. Scale bids/asks accordingly.
@@ -390,7 +1020,7 @@ if kl.lambda_bps < 1.0 {
 
 ---
 
-## 7. Amihud Cost-Aware Position Sizing
+## 8. Amihud Cost-Aware Position Sizing
 
 **Hypothesis.** When Amihud illiquidity is elevated, each dollar of volume
 moves price more. Scale down when the ratio is high.
@@ -407,7 +1037,7 @@ print(f"Scale size to {size_pct:.0%} of max")
 
 ---
 
-## 8. CVD Divergence for Exhaustion Signals
+## 9. CVD Divergence for Exhaustion Signals
 
 **Hypothesis.** Price makes a higher high, but cumulative delta does not
 confirm — buyers are exhausting and a reversal is imminent.
@@ -433,7 +1063,7 @@ if cvd.get("divergence_detected"):
 
 ---
 
-## 9. Pattern-Detector Combo (Absorption + Imbalance)
+## 10. Pattern-Detector Combo (Absorption + Imbalance)
 
 **Hypothesis.** When a footprint stacked-imbalance pattern appears while an
 absorption pattern is active, the absorption is breaking — enter in the
@@ -477,7 +1107,7 @@ p["session_type_score"]                # 0.0 (range) to 1.0 (trend)
 
 ---
 
-## 10. Footprint Imbalance Continuation
+## 11. Footprint Imbalance Continuation
 
 **Hypothesis.** Three or more consecutive bars with buy-initiated imbalance
 above 1.5× average size — buyers are in control and continuation is likely.
@@ -494,7 +1124,7 @@ if p["stacked_imbalance_detected"] and p["initiation_detected"]:
 
 ---
 
-## 11. DOM Iceberg Detection
+## 12. DOM Iceberg Detection
 
 **Hypothesis.** When a large order repeatedly reappears at the same price
 level after being filled, an iceberg is present. Stop hunting usually
@@ -513,7 +1143,7 @@ if p["stop_hunt_detected"]:
 
 ---
 
-## 12. Session Classification — Trend vs Range Day
+## 13. Session Classification — Trend vs Range Day
 
 **Hypothesis.** Classify the session type to determine the right strategy:
 trend days get trend-following, range days get mean-reversion.
@@ -533,7 +1163,7 @@ if snap.session_type_score > 0.7 {
 
 ---
 
-## 13. Volume Profile — HVN/LVN Support and Resistance
+## 14. Volume Profile — HVN/LVN Support and Resistance
 
 **Hypothesis.** High-volume nodes (HVN) act as support/resistance. Low-volume
 nodes (LVN) are gaps that price moves through quickly. Composite multi-session
@@ -554,7 +1184,7 @@ if p["lvn_count"] > 2:
 
 ---
 
-## 14. Volatility-Regime Position Sizing
+## 15. Volatility-Regime Position Sizing
 
 **Hypothesis.** Scale position size inversely to volatility. Use Parkinson
 (Garman-Klass / Yang-Zhang) for a more robust estimate than simple RV.
@@ -585,7 +1215,7 @@ print(f"Position size: {size:.0%}")
 
 ---
 
-## 15. Microstructure Noise Filter
+## 16. Microstructure Noise Filter
 
 **Hypothesis.** When microstructure noise variance is high relative to signal,
 price moves are noise-dominated. Avoid trading until SNR improves.
@@ -603,7 +1233,7 @@ else:
 
 ---
 
-## 16. Hasbrouck Information Share
+## 17. Hasbrouck Information Share
 
 **Hypothesis.** When the permanent impact component dominates the temporary
 component, the trade carries information — follow it. When temporary dominates,
@@ -631,7 +1261,7 @@ if h["permanent_impact"] > h["temporary_impact"] * 2:
 
 ---
 
-## 17. Almgren-Chriss Execution Cost Model
+## 18. Almgren-Chriss Execution Cost Model
 
 **Hypothesis.** Estimate the market impact cost before entering a large order.
 If total predicted impact exceeds acceptable slippage, slice the order or
@@ -651,7 +1281,7 @@ if cost > 1.0 { /* bps — use dark pool */ }
 
 ---
 
-## 18. Spread Decomposition — Adverse Selection Warning
+## 19. Spread Decomposition — Adverse Selection Warning
 
 **Hypothesis.** When the adverse-selection component of the spread is
 elevated, informed traders are present — your limit orders are likely to be
@@ -671,7 +1301,7 @@ if sd["pin"] > 0.3:
 
 ---
 
-## 19. ACD Trade-Timing Regime
+## 20. ACD Trade-Timing Regime
 
 **Hypothesis.** When mean duration between trades shrinks (high intensity),
 the market is active and you can trade frequently. When duration expands
@@ -692,7 +1322,7 @@ if acd.intensity > 5.0 {
 
 ---
 
-## 20. Regime-Detector Multi-Filter
+## 21. Regime-Detector Multi-Filter
 
 **Hypothesis.** Combine spread z-score, volatility z-score, and VPIN z-score
 to classify the market regime. Disable trend strategies in stressed/quiet
@@ -720,7 +1350,7 @@ else:
 
 ---
 
-## 21. Kinetic Energy Breakout Confirmation
+## 22. Kinetic Energy Breakout Confirmation
 
 **Hypothesis.** A breakout with high kinetic energy (signed volume × price
 change) is genuine. A breakout with low energy is a false move.
@@ -740,7 +1370,7 @@ if ke.energy_change > 0.5 && ke.kinetic_energy > 1000.0 {
 
 ---
 
-## 22. Agent-Type HFT Reflexivity
+## 23. Agent-Type HFT Reflexivity
 
 **Hypothesis.** When the HFT reflexivity score is high, algos are driving
 the tape. Price moves are self-reinforcing and tend to overshoot. Fade the
@@ -761,7 +1391,7 @@ if a["irp"] > 0.6:
 
 ---
 
-## 23. Dark Pool Siphon Detection
+## 24. Dark Pool Siphon Detection
 
 **Hypothesis.** When dark-lit correlation drops below -0.5, dark volume is
 diverging from lit flow — institutions are working large orders in the dark.
@@ -781,7 +1411,7 @@ elif dc["correlation"] < -0.5:
 
 ---
 
-## 24. Institutional Flow Crowding Warning
+## 25. Institutional Flow Crowding Warning
 
 **Hypothesis.** When the institutional buy ratio is above 0.8 and crowding
 score is elevated, too many smart-money participants are on the same side —
@@ -802,7 +1432,7 @@ if inst.institutional_buy_ratio > 0.8 && inst.crowding_score > 0.6 {
 
 ---
 
-## 25. Options Flow — Gamma Positioning
+## 26. Options Flow — Gamma Positioning
 
 **Hypothesis.** Rising delta notional with positive gamma means dealers are
 long gamma — they hedge by buying into weakness (supportive). Rising delta
@@ -826,7 +1456,7 @@ if opt['sweep_detected']:
 
 ---
 
-## 26. OI Divergence for Trend Exhaustion
+## 27. OI Divergence for Trend Exhaustion
 
 **Hypothesis.** When price rises but open interest falls, the trend is
 losing participants — reversal imminent. OI build with price confirms.
@@ -847,7 +1477,7 @@ if oi.oi_build_rate > 0.05 {
 
 ---
 
-## 27. LOB Feature ML Inference Pipeline
+## 28. LOB Feature ML Inference Pipeline
 
 **Hypothesis.** Use 16 numerical LOB features as inputs to an XGBoost model
 trained offline. The model predicts 1-minute-award price direction.
@@ -911,7 +1541,7 @@ if (rc == OF_OK) {
 
 ---
 
-## 28. Futures Basis Calendar Spread Arbitrage
+## 29. Futures Basis Calendar Spread Arbitrage
 
 **Hypothesis.** When the front-month / next-month basis widens beyond its
 recent distribution, enter a calendar spread to capture the convergence.
@@ -930,7 +1560,7 @@ if fut["roll_progress"] > 0.8:
 
 ---
 
-## 29. AnalyticsConfig Tuning Workflow
+## 30. AnalyticsConfig Tuning Workflow
 
 **Hypothesis.** Different market regimes need different buffer sizes. A
 fast-moving crypto market needs shorter windows than US Treasuries. Tune
@@ -995,7 +1625,7 @@ the corresponding rolling windows.
 
 ---
 
-## 30. Tickbar OHLCV Momentum Confirmation
+## 31. Tickbar OHLCV Momentum Confirmation
 
 **Hypothesis.** Fixed-interval OHLCV bars provide a stable decision cadence
 above raw prints. Confirm orderflow entries only when completed bars agree
@@ -1106,6 +1736,177 @@ flowchart TD
 ```
 
 ---
+
+## Complete Python Recipe Module
+
+The short examples in the individual recipes show the decision-specific line
+that matters. The following is the complete Python module shape for users who
+want to implement several recipes in one process. It includes imports, engine
+construction, deterministic input, snapshot acquisition, quality gating,
+warm-up handling, decision recording, and cleanup. Replace the deterministic
+input function with a market-data adapter or replay reader; do not remove the
+quality, warm-up, or no-trade paths when doing so.
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from orderflow import (
+    BookAction,
+    DataQualityFlags,
+    Engine,
+    EngineConfig,
+    ExternalFeedPolicy,
+    Side,
+    StreamKind,
+    Symbol,
+)
+
+
+@dataclass(frozen=True)
+class Decision:
+    action: str
+    reason: str
+    value: float | int | None = None
+
+
+def snapshot_bundle(engine: Engine, symbol: Symbol) -> dict[str, Any]:
+    """Read one consistent application-level bundle of public snapshots."""
+    analytics = engine.analytics_snapshot(symbol)
+    return {
+        "analytics": analytics,
+        "book": engine.book_analytics_snapshot(symbol),
+        "effective_spread": engine.effective_spread_bps(symbol),
+        "book_events": engine.book_event_analytics(symbol),
+        "resiliency": engine.resiliency_snapshot(symbol),
+        "vpin": engine.vpin_snapshot(symbol),
+        "kyle": engine.kyle_lambda_snapshot(symbol),
+        "amihud": engine.amihud_snapshot(symbol),
+        "cvd": engine.cvd_enhancement_snapshot(symbol),
+        "patterns": engine.pattern_snapshot(symbol),
+        "volatility": engine.volatility_snapshot(symbol),
+        "noise": engine.noise_snapshot(symbol),
+        "hasbrouck": engine.hasbrouck_snapshot(symbol),
+        "almgren_chriss": engine.almgren_chriss_snapshot(symbol),
+        "spread_decomposition": engine.spread_decomp_snapshot(symbol),
+        "acd": engine.acd_snapshot(symbol),
+        "regime": engine.regime_snapshot(symbol),
+        "kinetic_energy": engine.kinetic_energy_snapshot(symbol),
+        "dark_pool": engine.dark_pool_snapshot(symbol),
+        "options": engine.options_flow_snapshot(symbol),
+        "futures": engine.futures_snapshot(symbol),
+        "vol_signature": engine.vol_signature_snapshot(symbol),
+        "agent_type": engine.agent_type_snapshot(symbol),
+        "dark_lit": engine.dark_lit_correlation_snapshot(symbol),
+        "institutional": engine.institutional_flow_snapshot(symbol),
+        "open_interest": engine.oi_analysis_snapshot(symbol),
+    }
+
+
+def has_clean_quality(bundle: dict[str, Any]) -> bool:
+    """Reject stale, gapped, skewed, truncated, or degraded observations."""
+    flags = int(bundle["analytics"].get("quality_flags", 0))
+    return flags == DataQualityFlags.NONE
+
+
+def warm_enough(bundle: dict[str, Any], minimum_trades: int = 20) -> bool:
+    """Apply a strategy-specific minimum sample requirement."""
+    return int(bundle["analytics"].get("trade_count", 0)) >= minimum_trades
+
+
+def decide_spread(bundle: dict[str, Any]) -> Decision:
+    if not has_clean_quality(bundle) or not warm_enough(bundle):
+        return Decision("HOLD", "quality_or_warmup")
+    spread = int(bundle["effective_spread"].get("bps", 0))
+    if spread <= 20:
+        return Decision("ALLOW_PASSIVE", "spread_within_cost_budget", spread)
+    return Decision("HOLD", "spread_exceeds_cost_budget", spread)
+
+
+def decide_depth(bundle: dict[str, Any]) -> Decision:
+    if not has_clean_quality(bundle) or not warm_enough(bundle):
+        return Decision("HOLD", "quality_or_warmup")
+    imbalance = int(bundle["book"].get("depth_imbalance_bps", 0))
+    if imbalance >= 3_000:
+        return Decision("BUY_BIAS", "bid_depth_dominates", imbalance)
+    if imbalance <= -3_000:
+        return Decision("SELL_BIAS", "ask_depth_dominates", imbalance)
+    return Decision("HOLD", "balanced_depth", imbalance)
+
+
+def decide_toxicity(bundle: dict[str, Any]) -> Decision:
+    if not has_clean_quality(bundle):
+        return Decision("HOLD", "quality_failure")
+    vpin = bundle["vpin"]
+    if bool(vpin.get("is_toxic", False)):
+        return Decision("DISABLE_PASSIVE", "vpin_toxic")
+    return Decision("ALLOW_PASSIVE", "vpin_below_toxicity_gate")
+
+
+def decide_volatility(bundle: dict[str, Any]) -> Decision:
+    if not has_clean_quality(bundle) or not warm_enough(bundle):
+        return Decision("HOLD", "quality_or_warmup")
+    volatility = float(bundle["volatility"].get("yang_zhang", 0.0))
+    if volatility <= 0.01:
+        return Decision("SIZE_100_PERCENT", "low_volatility", volatility)
+    if volatility <= 0.02:
+        return Decision("SIZE_50_PERCENT", "medium_volatility", volatility)
+    return Decision("SIZE_25_PERCENT", "high_volatility", volatility)
+
+
+def decide_regime(bundle: dict[str, Any]) -> Decision:
+    if not has_clean_quality(bundle):
+        return Decision("HALT", "quality_failure")
+    regime = int(bundle["regime"].get("regime", -1))
+    actions = {
+        0: ("ALLOW", "normal_regime"),
+        1: ("REDUCE", "stressed_regime"),
+        2: ("HALT", "flash_crash_regime"),
+        3: ("MEAN_REVERT_ONLY", "quiet_regime"),
+    }
+    action, reason = actions.get(regime, ("HOLD", "unknown_regime"))
+    return Decision(action, reason, regime)
+
+
+def evaluate_all(bundle: dict[str, Any]) -> list[Decision]:
+    """Evaluate independent filters; the caller decides how to combine them."""
+    return [
+        decide_spread(bundle),
+        decide_depth(bundle),
+        decide_toxicity(bundle),
+        decide_volatility(bundle),
+        decide_regime(bundle),
+    ]
+
+
+def run(symbol: Symbol) -> list[Decision]:
+    """Run the complete public Python analytics path for one symbol."""
+    with Engine(EngineConfig(instance_id="cookbook-module")) as engine:
+        engine.configure_external_feed(ExternalFeedPolicy(15_000, True))
+        engine.start()
+        engine.subscribe(symbol, StreamKind.BOOK)
+        engine.subscribe(symbol, StreamKind.TRADES)
+        engine.subscribe(symbol, StreamKind.ANALYTICS)
+        engine.ingest_book(symbol, Side.BID, 0, 500_000, 500, BookAction.UPSERT, 1, 1_000_000_000, 1_000_000_100)
+        engine.ingest_book(symbol, Side.ASK, 0, 500_025, 300, BookAction.UPSERT, 2, 1_000_000_001, 1_000_000_101)
+        for sequence in range(3, 23):
+            engine.ingest_trade(symbol, 500_025, 25, Side.ASK, sequence, 1_000_000_000 + sequence, 1_000_000_100 + sequence)
+            engine.poll_once(DataQualityFlags.NONE)
+        return evaluate_all(snapshot_bundle(engine, symbol))
+
+
+if __name__ == "__main__":
+    for decision in run(Symbol("SIM", "ES", 10)):
+        print(decision)
+```
+
+The functions deliberately return decisions rather than placing orders. This
+keeps analytics interpretation separate from risk and execution. To connect a
+decision to the OMS, use the complete risk-gated execution example in section
+1 and require an explicit route, quantity, price, exit, cancellation, journal,
+and recovery policy.
 
 ## Putting It All Together — A Multi-Concept Strategy
 
