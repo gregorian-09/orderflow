@@ -175,7 +175,8 @@ returned as `PeerResendRequested` so the host can apply profile-specific
 
 ## Low-Latency Rules
 
-The codec follows the production FIX plan in `new_features.md`:
+The codec follows the production low-latency design described by this
+reference and the FIX integration manual:
 
 - parse from bytes, not strings;
 - borrow field values from the raw frame;
