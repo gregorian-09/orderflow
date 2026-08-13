@@ -8,10 +8,8 @@
 Orderflow. The crate is intentionally separate from `of_execution` so users who
 only need a direct OMS do not compile algorithmic execution machinery.
 
-`of_execution_algos` has not been published yet. Its first release with the
-current `of_execution_core 0.2.x` dependency is therefore `0.1.0`; a dependency
-change before first publication does not require a patch version. Future
-published additive fixes can use `0.1.1` and later.
+The crate follows an independent `0.1.x` compatibility line and integrates
+with `of_execution_core 0.2.x`. Future additive fixes can use `0.1.1` and later.
 
 The first foundation focuses on deterministic parent/child order handling:
 
