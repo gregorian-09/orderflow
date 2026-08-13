@@ -4,6 +4,12 @@ This section will become the exhaustive symbol-level reference. Exact API
 signatures remain generated or derived from source authorities; explanatory
 pages add semantics, invariants, values, examples, and operational behavior.
 
+Begin with [How to Read a Crate Reference](./crate-reading-guide.md). It
+explains why the crates are separated, what each package owns, and how to move
+from a conceptual manual to a source-accurate symbol contract. The generated
+crate pages are intentionally searchable inventories; they are read together
+with that guide, the narrative manuals, Rustdoc, source, and tests.
+
 ## Reference Sources
 
 | Surface | Exact authority | Current companion |

@@ -72,6 +72,23 @@ acceptable p99 latency. Benchmark results must identify hardware, features,
 build profile, input distribution, and whether persistence or diagnostics were
 enabled.
 
+## Incident Decision Tree
+
+When health degrades, first freeze or narrow new risk according to policy.
+Inspect health transitions, WAL and checkpoint integrity, adapter evidence,
+and venue truth. Resume only when local state is provably complete or external
+reconciliation has finished. Otherwise remain blocked and escalate. An
+incident record should preserve the timeline, build/configuration identity,
+integrity reports, adapter evidence, risk decisions, and operator actions.
+
+## Upgrade Discipline
+
+Before upgrading, compare public signatures, C ABI exports, serialized schema
+versions, feature defaults, persistence readers, binding loading, and recovery
+behavior. Run replay compatibility and simulated disconnect/restart tests
+before live order entry. A binary rollback that cannot read the newer WAL is
+not a rollback plan.
+
 ## References
 
 - [Operations handbook](../handbook/13-recovery-and-operations.md)

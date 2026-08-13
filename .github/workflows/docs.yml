@@ -42,6 +42,9 @@ jobs:
       - name: Refresh crate reference pages
         run: python3 tools/generate_crate_pages.py
 
+      - name: Refresh semantic API reference
+        run: python3 tools/enrich_api_reference.py
+
       - name: Check documentation inventory
         run: python3 tools/generate_docs_inventory.py --check
 
@@ -59,6 +62,9 @@ jobs:
 
       - name: Check crate reference pages
         run: python3 tools/generate_crate_pages.py --check
+
+      - name: Check semantic API reference
+        run: python3 tools/enrich_api_reference.py --check
 
       - name: Build Rust API reference
         run: cargo doc --workspace --all-features --no-deps

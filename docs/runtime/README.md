@@ -33,6 +33,18 @@ records, and publish health/metrics changes. The exact event count is bounded
 by configuration where a poll limit is enabled. Backpressure must be visible in
 health and metrics; it must not look like a healthy empty feed.
 
+## A Poll Cycle in Detail
+
+One `poll_once` call is a host-controlled consistency boundary. It advances
+adapter state, reads bounded provider work, validates events, updates books and
+analytics, evaluates signal lifecycle, admits persistence records, and then
+publishes callbacks and health changes. A caller must handle idle, pressure,
+and failure outcomes; an empty cycle is not automatically a healthy feed.
+
+Running and ready are different states. Running means lifecycle work has
+started. Readiness additionally depends on freshness, sequence continuity,
+persistence policy, signal warm-up, and host-owned execution gates.
+
 ## Thread-Safety and Reentrancy
 
 The synchronous engine is designed for host-controlled access. Consumers should

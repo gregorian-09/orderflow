@@ -13,6 +13,7 @@ build:
       - python3 tools/generate_rust_values.py
       - python3 tools/generate_package_matrix.py
       - python3 tools/generate_crate_pages.py
+      - python3 tools/enrich_api_reference.py
     pre_build:
       - cargo doc --workspace --all-features --no-deps
     post_build:

@@ -60,6 +60,19 @@ apply position/risk/quality policy, and submit it through the execution plane.
 This separation prevents a signal module from bypassing idempotency, risk,
 route health, or reconciliation controls.
 
+## Designing a Signal Module
+
+Begin with an input contract, not a direction. State required features, warm-up
+requirements, blocked quality flags, missing-value behavior, and the decision
+rule. Keep raw observation separate from debounce, hysteresis, cooldown, and
+transition-only emission so replay, calibration, shadow mode, and ensembles do
+not change the underlying analytics.
+
+Replay validation should record configuration, feature schema, quality state,
+signal transitions, markout horizon, and outcomes. A confidence score is not a
+probability until the host defines and measures calibration. Shadow mode is the
+safe bridge between deterministic validation and live inputs.
+
 ## References
 
 - [Signals crate reference](../handbook/05c-of-signals-reference.md)

@@ -57,6 +57,19 @@ capability, and kill-switch checks. Algorithm configuration cannot authorize a
 route that the execution engine rejects. A failed or uncertain child submission
 must be represented in progress and recovery state.
 
+## Choosing an Algorithm
+
+TWAP distributes by time, VWAP follows a volume curve, POV targets
+participation, implementation shortfall balances urgency and impact, an
+iceberg controls display, and a sweep consumes levels under a collar. These
+objectives are not interchangeable names for splitting an order.
+
+For every planner document parent progress, time/volume/price inputs, clip
+limits, rounding, zero-output meaning, partial-fill behavior, rejection and
+uncertain-submit behavior, and stale-input policy. Tests should assert that
+the planner never releases more than the parent and produces the same decision
+for the same inputs.
+
 ## References
 
 - [Algorithm crate reference](../handbook/05k-of-execution-algos-reference.md)

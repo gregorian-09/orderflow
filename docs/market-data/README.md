@@ -61,6 +61,19 @@ degraded. It must not silently fabricate missing market state.
 | Binance | WebSocket streams, subscriptions, depth update IDs, ping/pong | Stream names, update continuity, reconnect, rate limits, raw capture |
 | Custom | User-owned transport and normalization | Conformance report, quality policy, ownership, shutdown, tests |
 
+## Adapter Test Matrix
+
+Every provider adapter should test the full lifecycle, not only a happy-path
+trade: connect and authenticate; subscribe one and multiple symbols; normalize
+trades and book updates with exact units and timestamps; reject malformed,
+mis-correlated, duplicate, and out-of-order messages; detect gaps; reconnect
+with bounded backoff; shed work under pressure while exposing counts; and
+unsubscribe without affecting other symbols.
+
+Normalization may change representation, not meaning. Missing aggressor side,
+provider time, or incomplete depth must remain explicit quality facts rather
+than being invented to make downstream analytics run.
+
 ## Low-Latency Guidance
 
 - Keep provider decoding off the analytics state boundary.

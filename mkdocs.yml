@@ -78,6 +78,7 @@ nav:
       - Rust Surface Audit: reference/rust-surface.md
       - Rust Values and Layout Audit: reference/rust-values.md
       - Package and Feature Matrix: reference/package-matrix.md
+      - How to Read Crate References: reference/crate-reading-guide.md
       - Crate References:
           - of_core: reference/crates/of_core.md
           - of_analytics: reference/crates/of_analytics.md
@@ -96,6 +97,7 @@ nav:
           - perf_harness: reference/crates/perf_harness.md
   - Start Here:
       - Handbook Home: handbook/README.md
+      - How to Read: handbook/00-how-to-read.md
       - Orderflow Primer: handbook/01-orderflow-primer.md
       - Trade Workflow: handbook/03-trade-workflow.md
       - Strategy Design: handbook/02-strategy-design.md

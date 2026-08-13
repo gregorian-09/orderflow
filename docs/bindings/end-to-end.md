@@ -33,6 +33,21 @@ Bindings may hide this loop, but must not silently truncate output or retry
 forever. Hosts exposing untrusted depth or diagnostics should apply a memory
 ceiling around convenience retries.
 
+## Complete Binding Lifecycle
+
+Every language follows the same native sequence: load the library, create an
+opaque handle, configure and subscribe, ingest or poll bounded work, negotiate
+snapshot buffers, inspect health and errors, flush/stop, and destroy the handle
+exactly once. The wrapper may make these steps ergonomic, but it must preserve
+the native result and ownership contract.
+
+Native callbacks may run on a provider-created thread. Callback code should
+copy only data whose lifetime is guaranteed, avoid re-entering the same engine,
+avoid blocking and heavy allocation, and hand work to an application-owned
+bounded queue. Python callbacks interact with the GIL; Java callbacks interact
+with JNA thread attachment and object lifetime. Keep callback objects alive
+until native unregistration is complete.
+
 ## Python
 
 The Python facade provides idiomatic names, context-manager lifecycle, JSON

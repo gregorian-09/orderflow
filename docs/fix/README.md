@@ -51,6 +51,25 @@ partial fills, disconnect/reconnect, malformed messages, sequence gaps,
 duplicate reports, and recovery. Evidence must identify the profile, session
 configuration, input transcript, expected actions, and actual outputs.
 
+## FIX Session Reasoning
+
+FIX has session messages that maintain the conversation and application
+messages that carry business intent and reports. Resend requests, sequence
+resets, duplicate flags, and heartbeats therefore cannot be handled as
+ordinary business data. The session layer decides whether to hold, replay,
+gap-fill, reject, or advance before the execution adapter sees a business
+event.
+
+```text
+bytes -> framing/checksum -> typed message -> session sequence policy
+      -> profile validation -> adapter mapping -> OMS event
+```
+
+Before reconnecting, restore the sequence snapshot and resend evidence,
+validate the durable log, and establish whether the peer expects reset or
+resend. If the store cannot prove what was sent, expose unresolved recovery
+instead of assigning new identities or guessing order state.
+
 ## References
 
 - [FIX crate reference](../handbook/05j-of-fix-reference.md)

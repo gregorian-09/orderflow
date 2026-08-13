@@ -1,5 +1,14 @@
 # Orderflow Handbook
 
+The handbook is the explanatory spine of the project. It is intentionally
+written before the generated symbol inventories: readers need the domain
+model, causal relationships, and design reasons before a list of names becomes
+useful.
+
+Start with [How to Read the Documentation](./00-how-to-read.md), then follow
+the learning path below. Use the generated [crate references](../reference/README.md)
+when you need exact declarations after the concept is clear.
+
 This handbook is the primary documentation for the project.
 
 It is written for three audiences:

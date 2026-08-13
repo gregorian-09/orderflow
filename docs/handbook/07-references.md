@@ -1,6 +1,9 @@
 # References and Source Links
 
-This page lists external references used to shape the documentation structure and concept explanations.
+This page lists external references used for protocol, market-data, runtime,
+storage, and operational terminology. The API and architecture contracts are
+defined by this repository's source, tests, manifests, headers, and generated
+Rustdoc.
 
 ## Documentation Standards and Structure
 

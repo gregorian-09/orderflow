@@ -71,6 +71,29 @@ input and configuration must produce the same reconstructed state. A replay
 that silently drops malformed records or rewrites event order is not equivalent
 to live processing.
 
+## What a Successful Append Means
+
+Persistence exposes several different success boundaries. Admission means the
+bounded writer accepted ownership; write means a frame was encoded and
+written; sync means the configured durability barrier completed; seal means a
+segment's integrity metadata was finalized; checkpoint means state was tied to
+an exact covered sequence. None of these boundaries proves that the provider
+stream was gap-free. Applications should expose them separately in health and
+readiness.
+
+## Capture-to-Replay Flow
+
+```text
+receive event -> validate bounds -> bounded admission -> encode/write -> sync
+       -> checkpoint covered sequence -> restart -> validate -> replay -> reconcile
+```
+
+On overflow, the application must choose whether to preserve critical events,
+drop explicitly non-critical diagnostics, block a control-plane operation, or
+reject while returning ownership for buffer reuse. The choice is part of the
+data contract because a missing normalized event changes what can be
+reconstructed.
+
 ## Retention and Cold Export
 
 Retention may delete hot WAL data only after export and checkpoint dependency

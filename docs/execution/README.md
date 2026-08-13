@@ -46,6 +46,19 @@ disconnect, and recovery transitions must be explicit. A request sent to a
 venue is not evidence that the venue accepted it; an execution report is not
 valid merely because it has a plausible symbol.
 
+## One Order Through the OMS
+
+The durable order path is: validate identity and shape, check idempotency,
+apply risk and kill-switch policy, journal the accepted command, route through
+the adapter, fold authoritative reports into canonical state, and journal the
+result. A transport acknowledgement is not a fill. A timeout after submission
+is uncertain state, not permission to create a new client order id.
+
+For multiple symbols and routes, every command and report retains account,
+route, strategy, instrument, client-order, venue-order, execution, quantity,
+side, and sequence identity. A basket can coordinate legs, but a partial fill
+in one leg must not become a complete basket fill.
+
 ## Safety Controls
 
 Before routing, the execution engine can apply:
