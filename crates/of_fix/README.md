@@ -96,6 +96,27 @@ The codec is designed for execution hot paths:
 - encode into caller-owned `Vec<u8>` buffers;
 - keep debug rendering opt-in and outside hot paths.
 
+## Public API Meaning
+
+`FixFieldView`, `FixMessageView`, `FixTag`, and the decoder facade represent a
+borrowed view over one validated FIX frame. They avoid allocating field names
+or values and are valid only while the source bytes remain alive. Encoder
+functions write into caller-owned buffers and calculate `BodyLength(9)` and
+`CheckSum(10)` as part of final frame construction.
+
+`FixDictionary` and profile rules validate message-specific required, optional,
+and disallowed tags. Session identity, header, sequence, and action types model
+administrative protocol state independently from a socket. The session engine
+consumes inbound views and emits explicit actions such as send, resend, gap
+fill, reject, ready, or disconnect for the host transport to carry out.
+
+Sequence trackers, snapshots, resend stores, replay plans, and transcript
+capture are restart and certification surfaces. They make gaps, duplicate
+messages, possible-duplicate replay, and persistence boundaries observable;
+they do not create a scheduler or transmit bytes. Order builders provide typed
+FIX entry messages, while the execution adapter remains responsible for
+mapping those messages to the OMS.
+
 ## Decode Example
 
 ```rust
@@ -636,12 +657,3 @@ quantities are rounded, whether a mass-cancel or mass-status scope is enabled
 at a venue, or which party groups, clearing instructions, or custom tags a
 venue requires. Those checks belong in profile/certification layers above the
 codec.
-
-## Roadmap
-
-The planned next layers are:
-
-- venue/profile-specific resend suppression policy;
-- order mass cancel/status response parsers;
-- scripted certification scenarios and report generation;
-- injected-transport integration with `of_execution_adapters::fix`.

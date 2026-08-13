@@ -42,7 +42,7 @@ What changes for runtime users:
 Version policy:
 
 - `of_runtime` publishes as `0.5.0`;
-- `of_execution` publishes as `0.1.0`;
+- `of_execution` publishes as `0.2.0`;
 - keeping those versions separate preserves the non-breaking runtime API while
   allowing execution traits to mature independently.
 
@@ -135,6 +135,27 @@ Public `Engine<A, S>` methods:
 - [`Engine::current_quality_flags_bits`]
 - [`Engine::with_max_events_per_poll`]
 - [`Engine::with_circuit_breaker`]
+
+### What the public runtime items mean
+
+`Engine<A, S>` owns the deterministic orchestration loop for one adapter and
+signal module. `EngineConfig` configures lifecycle, limits, persistence,
+external-feed policy, and supervision; `DefaultEngine` is the convenient boxed
+configuration for common hosts. `RuntimeError` reports failures at those
+boundaries, while `ExternalFeedPolicy` applies stale and sequence rules when a
+host injects events instead of using an adapter.
+
+Lifecycle methods (`start`, `stop`, subscription, and reset) define ownership
+and session boundaries. Ingest and `poll_once` advance state. Snapshot methods
+return read-only market, analytics, candle, signal, and book views. Health,
+adapter inventory, signal inventory, and metrics methods are diagnostics and
+may allocate or serialize; they are not intended for the event hot path.
+
+The WAL producer/configuration methods separate event admission from flush and
+shutdown barriers. Persistence health and policy methods tell a host whether
+degradation should be observed, block trading, or fail the runtime.
+`with_max_events_per_poll` bounds work per tick; circuit-breaker configuration
+limits reconnect storms and exposes degraded state rather than hiding failure.
 
 ## EngineConfig Field Reference
 

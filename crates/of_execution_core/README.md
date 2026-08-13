@@ -20,19 +20,23 @@ runtime. Higher-level crates build on it:
 - `of_ffi_c`, Python, and Java expose execution APIs through additive handles
   and classes.
 
-## First Release: 0.1.0
+## What's New in 0.2.0
 
-`of_execution_core` starts at `0.1.0` even though the broader Orderflow release
-line is `0.5.0`. This crate is a new public execution-domain surface. It is
-kept independent from the mature analytics crates so its identifiers, state
-machine, and risk contracts can stabilize honestly without implying the same
-API age as `of_core`.
+`of_execution_core 0.1.0` was published with Orderflow `0.4.0`. The current
+`0.2.0` release adds the reusable execution WAL frame layer while preserving
+the existing identifier, request, report, state-machine, and risk APIs.
+
+The new WAL surface provides bounded headers, record-kind classification,
+sequence and segment identifiers, explicit sync policy, borrowed record views,
+replay cursors, checksum validation, and integrity reports. It is a storage
+primitive for higher-level journals; it does not open files, spawn workers, or
+own an OMS.
 
 Compatibility expectations:
 
 - all public APIs are intended to be additive where possible;
-- provider adapters should pin compatible `0.1.x` versions while the execution
-  trait family matures;
+- provider adapters should pin compatible `0.2.x` versions of this crate while
+  the execution trait family matures;
 - analytics crates do not depend on this crate;
 - bindings expose these concepts through additive execution handles/classes,
   not by changing existing analytics types.
@@ -116,6 +120,29 @@ Execution WAL primitives:
 - [`WalReplayCursor`]
 - [`WalIntegrityReport`]
 - [`execution_wal_checksum`]
+
+### What the public execution items mean
+
+The fixed-size identifier aliases give client, venue, execution, account,
+route, strategy, venue, and instrument identities a bounded representation.
+`FixedAscii<N>` enforces the capacity and ASCII contract; the aliases document
+which identity owns each value. `ExecutionSymbol` combines venue and instrument
+identity without importing market-data runtime state.
+
+`OrderQty` and `OrderPrice` validate integer-normalized quantities and prices.
+`OrderSide`, `OrderType`, `TimeInForce`, `OrderStatus`, and `ExecutionType`
+describe classification and lifecycle values, not provider-specific strings.
+`OrderRequest`, `CancelRequest`, and `AmendRequest` are commands; an
+`ExecutionEvent` is a canonical observation or report. `OrderStateMachine`
+applies events to an order state and rejects invalid transitions so callers do
+not infer lifecycle from a single acknowledgement.
+
+`RiskLimits`, `RiskContext`, `RiskCheck`, `RiskDecision`, and
+`BasicRiskGate` form a typed pre-submit decision boundary. They are deliberately
+separate from routing and transport. The WAL types describe bounded binary
+frames, sequence/checksum validation, replay cursors, and integrity reports;
+they provide persistence primitives but do not open files, submit orders, or
+own an OMS.
 
 ## Identifier Model
 

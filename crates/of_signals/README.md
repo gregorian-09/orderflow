@@ -56,8 +56,9 @@ What changes for signal authors:
 Version policy:
 
 - `of_signals` publishes as `0.5.0`;
-- execution crates publish as `0.1.0` and depend on their own execution-domain
-  contracts, not on this signal trait.
+- `of_execution_core` and `of_execution` publish as `0.2.0`, while algorithms
+  begin at `0.1.0` and adapter companions remain on independent `0.1.x` lines;
+  none of these changes alter this signal trait.
 
 ## Additional 0.5.0 Metadata, Lifecycle, And Context APIs
 
@@ -292,6 +293,29 @@ Public constructors:
 - `quality_gate(DataQualityFlags) -> SignalGateDecision`
 
 Signal output uses `of_core::SignalSnapshot` and states such as `LongBias`, `ShortBias`, `Neutral`, and `Blocked`.
+
+### What the public signal surface means
+
+`SignalModule` is the minimal compatibility trait: it receives an analytics
+snapshot, maintains only its own deterministic state, returns a
+`SignalSnapshot`, and decides whether current `DataQualityFlags` permit output.
+`ContextualSignalModule` adds optional book, timestamp, lifecycle, and host
+context without changing existing implementations; `LegacySignalAdapter`
+bridges old modules into that richer host.
+
+Descriptors and registry types (`SignalDescriptor`, parameter descriptors,
+`SignalRegistry`, and `SignalConfig`) describe and construct modules from
+stable identifiers. They belong to configuration/startup, not the per-event
+hot path. Lifecycle, warmup, stabilizer, hysteresis, debounce, and cooldown
+types control when a signal may become active and how state flapping is reduced.
+
+Explanation, calibration, validation, ensemble, checkpoint, shadow, feature,
+and model types are separate control-plane contracts. They make decisions
+inspectable, replayable, calibratable, composable, restorable, or model-backed;
+they do not turn a signal into an order and do not bypass quality or risk
+controls. The built-in signal structs are deterministic implementations of the
+same module contract, and their constructors define the parameters exposed by
+descriptors and configuration validation.
 
 ## SignalModule Contract
 

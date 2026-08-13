@@ -15,20 +15,23 @@ adapter behavior and does not merge execution state into `of_runtime`.
 Strategies can read analytics from `of_runtime` and send orders through
 `of_execution`, while those two domains stay separate.
 
-## First Release: 0.1.0
+## What's New in 0.2.0
 
-`of_execution` publishes as `0.1.0` inside the Orderflow `0.5.0` release. This
-is intentional. The market-data runtime and bindings are on the established
-`0.5.0` line; execution routing, adapter traits, journals, and OMS helpers are
-new public crate surfaces and should carry their own compatibility signal.
+`of_execution 0.1.0` was published with the Orderflow `0.4.0` release. The
+current `0.2.0` release is the first additive OMS expansion after that
+publication and remains source-compatible with the `0.1.x` API.
+
+The market-data runtime and bindings are on the established `0.5.0` line;
+execution routing, journals, recovery, reconciliation, operator controls, and
+OMS helpers carry their own compatibility signal.
 
 Versioning rules:
 
-- `of_execution` depends on `of_execution_core = 0.1`;
+- `of_execution 0.2.0` depends on `of_execution_core = 0.1`;
 - existing analytics crates do not depend on `of_execution`;
 - `of_ffi_c 0.5.0`, Python `0.5.0`, and Java `0.5.0` expose execution through
   additive handles/classes backed by this crate;
-- future `0.1.x` releases should prefer additive changes and clear migration
+- future `0.2.x` releases should prefer additive changes and clear migration
   notes for adapter authors.
 
 ## Design Goals
@@ -349,6 +352,28 @@ OMS helpers:
 - [`ProviderAdapterContext`]
 - [`ExecutionAdapterFactory`]
 - [`ProviderAdapterSdk`]
+
+### What the public execution items mean
+
+The core execution traits define ownership boundaries. `ExecutionAdapter`
+translates canonical commands to a venue and returns canonical events;
+`ExecutionEngine` owns authoritative order state, while
+`ExecutionEventBuffer` provides bounded caller-visible event delivery.
+`ExecutionCapabilities` and `ExecutionHealth` describe what a route can do and
+whether it is safe to use; they are not claims that a provider is certified.
+
+Order-intent and parent/child types represent strategy intent separately from
+venue orders. Journals, WALs, checkpoints, and recovery plans record and
+reconstruct state at explicit sequence boundaries. Idempotency and report
+deduplication ensure retries or duplicate venue reports cannot double-apply a
+transition. Reconciliation compares independent venue, drop-copy, local-order,
+and position observations and returns an explicit policy action.
+
+Risk, kill-switch, operator, and production-health types are fail-closed safety
+boundaries. They can reject, pause, cancel, or require reconciliation, but they
+must not silently rewrite an order's history. The concurrent engine accepts
+commands from multiple producers through bounded channels while preserving one
+deterministic state owner; it does not make state mutation concurrently unsafe.
 
 ## Layer Model
 
@@ -1331,9 +1356,9 @@ sequenceDiagram
         Venue-->>Adapter: ack / reject
         Adapter-->>Guard: complete
     else matching retry
-        Guard-->>Strategy: Duplicate(original state; do not send)
+        Guard-->>Strategy: Duplicate(original state, do not send)
     else same key, different parameters
-        Guard-->>Strategy: ParameterMismatch; fail closed
+        Guard-->>Strategy: ParameterMismatch, fail closed
     end
 ```
 

@@ -43,8 +43,9 @@ Version policy:
 
 - `of_adapters` publishes as `0.5.0` with the established analytics/runtime
   family;
-- `of_execution_adapters` publishes as `0.1.0` because it is a new execution
-  adapter scaffold family.
+- `of_execution_adapters` publishes as `0.2.0` because its public execution
+  adapter capability surface expanded alongside the `of_execution 0.2.0` and
+  `of_execution_core 0.2.0` lines.
 
 ## Public API Inventory
 
@@ -83,6 +84,29 @@ Public functions and methods:
 - `poll(&mut Vec<RawEvent>)`
 - `health() -> AdapterHealth`
 - `operational_status() -> AdapterOperationalStatus`
+
+### What these public items mean
+
+`MarketDataAdapter` is the provider boundary. `connect` establishes the
+provider session, `subscribe` requests a canonical symbol/depth, `poll` moves
+already-received normalized events into the caller-owned output vector, and
+`health` reports the compatibility health view. `operational_status` is the
+additive structured control-plane view for queue, freshness, reconnect,
+sequence, capture, and endpoint diagnostics.
+
+`RawEvent` is the only event vocabulary the runtime consumes: a normalized book
+mutation or trade print. `SubscribeReq` carries the canonical subscription
+request. `AdapterConfig`, `ProviderKind`, and `CredentialsRef` describe how an
+adapter is selected and configured; credentials are references, not secret
+values. `AdapterError` and `AdapterResult` distinguish connection, parameter,
+sequence, provider, and queue failures without requiring string parsing.
+
+`AdapterDescriptor`, `AdapterQualityLevel`, and the discovery functions describe
+what is compiled and what is actually supported before an adapter is created.
+`MockAdapter` is deterministic test/replay infrastructure, not a live-provider
+implementation. Factory and discovery calls are control-plane operations;
+event normalization and `poll` are the latency-sensitive path and must remain
+bounded, allocation-aware, and explicit about loss or reordering.
 
 ## Typed Operational Status
 

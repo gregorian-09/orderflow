@@ -92,6 +92,28 @@ Reserved additive profiles:
 - `ml-features`
 - `all`
 
+## Public API Meaning
+
+The analytics types are typed calculators and snapshots, not hidden strategy
+decisions. Context types such as quote, trade, depth, route, derivative, and
+feature inputs carry normalized observations and timestamps. Tracker or
+calculator types accumulate a bounded window; snapshot types expose the result
+without mutating the input observation. Constructors validate units, capacities,
+thresholds, and required metadata before a tracker is used.
+
+The market-quality and execution-quality surfaces explain spread, slippage,
+impact, adverse selection, and fill outcomes. Liquidity, queue, resiliency,
+toxicity, pattern-risk, volatility, regime, cross-asset, and derivatives
+surfaces answer distinct analytical questions rather than producing one
+universal signal. Feature vectors and model metadata define stable input
+ordering and quality/missing-value semantics for downstream models.
+
+All profiles are additive feature boundaries. A feature flag controls compile
+cost and dependency inclusion; it does not silently change the meaning of
+existing `of_core` snapshots. These calculations do not place orders, own
+persistence, or override `DataQualityFlags`; hosts remain responsible for
+quality gating, replay validation, and execution risk.
+
 ## Market Quality Example
 
 ```rust

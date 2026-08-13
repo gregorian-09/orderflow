@@ -8,8 +8,10 @@
 Orderflow. The crate is intentionally separate from `of_execution` so users who
 only need a direct OMS do not compile algorithmic execution machinery.
 
-`of_execution_algos` starts at `0.1.0` in the broader Orderflow `0.5.0`
-development line because it is a new public Rust surface.
+`of_execution_algos` has not been published yet. Its first release with the
+current `of_execution_core 0.2.x` dependency is therefore `0.1.0`; a dependency
+change before first publication does not require a patch version. Future
+published additive fixes can use `0.1.1` and later.
 
 The first foundation focuses on deterministic parent/child order handling:
 
@@ -55,6 +57,27 @@ The crate does not submit orders, open sockets, own an OMS, bypass risk, or
 claim strategy profitability. Host applications still send every child order
 through `of_execution`, where risk gates, journals, adapters, kill switches, and
 reconciliation remain authoritative.
+
+## Public API Meaning
+
+`ParentOrder` describes the objective and lifecycle identity supplied by a host.
+Planner types (`TwapSlicePlanner`, `PovSlicePlanner`, `VwapSlicePlanner`, and
+the other algorithm planners) convert explicit market, timer, route, or
+execution observations into `ChildOrderPlan` values. They do not send those
+plans. `AlgoDecision` is the bounded decision envelope and records why a
+planner emitted, deferred, or rejected child work.
+
+`AlgoProgress` folds canonical execution events back into parent state.
+Simulation uses the same event vocabulary to test fills, partial fills,
+cancels, and rejects without a live venue. Checkpoints and recovery plans make
+algorithm state restartable at an explicit sequence boundary. Risk policy,
+metrics, and TCA types explain whether a child plan is admissible and how the
+result compares with arrival, schedule, liquidity, and impact expectations.
+
+All planners are deterministic: callers provide timestamps, market inputs,
+route candidates, and identifiers. The crate does not read a wall clock, open a
+socket, allocate an unbounded decision list, or bypass the OMS risk and journal
+contracts.
 
 ## Architecture
 

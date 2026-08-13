@@ -35,7 +35,9 @@ What changes for `of_core` users:
 Version policy:
 
 - established analytics crates publish as `0.5.0`;
-- new execution crates publish as `0.1.0`;
+- `of_execution_core` and `of_execution` are now `0.2.0`; algorithms begin at
+  their first `0.1.0` publication and adapter companions use compatible
+  `0.1.x` releases;
 - this split is intentional because execution has a newer public trait surface
   while `of_core` continues its existing compatibility line.
 
@@ -85,6 +87,32 @@ Public `AnalyticsAccumulator` methods:
 - [`AnalyticsAccumulator::with_tickbar`] (requires `tickbar` feature)
 - [`AnalyticsAccumulator::bar_series`] (requires `tickbar` feature)
 - [`AnalyticsAccumulator::reset_tickbar`] (requires `tickbar` feature)
+
+### What these public items mean
+
+`SymbolId` is the stable `(venue, symbol)` identity used to keep events from
+different instruments separate. `Side` means bid or ask and is used both for
+book direction and trade aggressor direction; `BookAction` means whether a
+book level is inserted/replaced or deleted. `BookUpdate` is one normalized
+level mutation, `BookLevel` is one materialized level, and `BookSnapshot` is the
+reconstructed book at a sequence boundary.
+
+`TradePrint` is one normalized execution with integer price/size, sequence, and
+exchange/receive timestamps. `AnalyticsSnapshot` is the stable session payload
+for volume, delta, profile, and quality state. `DerivedAnalyticsSnapshot`
+contains additive derived values, while the candle snapshots represent either
+the full session or a caller-selected rolling interval. `SignalState` and
+`SignalSnapshot` are output contracts; they do not place orders.
+
+`DataQualityFlags` is a bitset of conditions that can make analytics unsafe to
+interpret, such as stale data, sequence gaps, clock skew, truncated depth, or
+out-of-order events. Consumers should propagate or gate on these flags rather
+than treating a numerically valid snapshot as automatically trustworthy.
+
+`AnalyticsAccumulator::on_trade` is the state-mutating hot-path operation. The
+reset methods define session boundaries. Snapshot methods are read-only views;
+they do not consume events or alter state. Tickbar methods are optional and
+maintain completed fixed-interval bars separately from session analytics.
 
 ## Design Principles
 

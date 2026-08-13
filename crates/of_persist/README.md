@@ -77,6 +77,29 @@ to any exchange or transport implementation.
 - [`MarketDataBackpressureDecision`] - evaluated action and flags.
 - [`PersistError`] / [`PersistResult<T>`] - persistence error contract.
 
+### What the public persistence items mean
+
+`RollingStore` is the compatibility JSONL store: it appends book/trade records,
+discovers streams, and reads merged or sequence-bounded history. `MarketDataWal`
+is the simpler single-file binary normalized WAL. `SegmentedMarketDataWal`
+adds rotation, manifests, linked integrity, and bounded segment recovery for
+long-running production capture.
+
+`MarketDataWalRecordInput` and normalized/raw input types describe owned data
+admitted to persistence. Producer handles and bounded writers separate a
+nonblocking producer call from the single owner that performs file I/O.
+`MarketDataWriterTryError`, backpressure policies, criticality, and metrics make
+queue-full, byte-limit, drop, and writer-failure outcomes explicit instead of
+silently losing evidence.
+
+Checkpoint, recovery, retention, and cold-export types are control-plane
+contracts. A checkpoint records a known application boundary; a recovery plan
+decides whether to restore, replay, quarantine, or require an operator;
+retention decides when hot data may be removed; export manifests describe data
+moved to a colder format. None of these maintenance operations should run on a
+feed or execution hot thread. `PersistError` identifies failures that callers
+must handle, retry, quarantine, or surface as degraded health.
+
 ## New In 0.5.0
 
 `0.5.0` keeps the existing market-data persistence API stable and adds the
@@ -138,7 +161,7 @@ What changes for persistence users:
 Version policy:
 
 - `of_persist` publishes as `0.5.0`;
-- `of_execution` publishes as `0.1.0` and owns execution journaling helpers.
+- `of_execution` publishes as `0.2.0` and owns execution journaling helpers.
 
 ## Public API Inventory
 

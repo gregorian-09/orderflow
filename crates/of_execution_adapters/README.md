@@ -21,16 +21,19 @@ Current FIX surfaces:
   be replaced with a venue-certified profile;
 - `FixExecutionAdapter`: the original fail-closed compatibility shell.
 
-## First Release: 0.1.0
+## What's New in 0.2.0
 
-`of_execution_adapters` publishes as `0.1.0` inside the broader Orderflow
-`0.5.0` release. It is a new adapter-infrastructure family, not a mature suite
-of counterparty-certified providers.
+`of_execution_adapters 0.1.0` was published with Orderflow `0.4.0`. The
+current `0.2.0` release adds the transport-injected FIX execution runtime,
+standard profile, report/request mapping, durable resend hooks, recovery
+context, health/metrics, and deterministic certification harness. These are
+additive public capabilities after `0.1.0`; this is still an adapter-
+infrastructure family, not a mature suite of counterparty-certified providers.
 
 Versioning rules:
 
-- `of_execution_adapters` depends on `of_execution = 0.1` and
-  `of_execution_core = 0.1`;
+- `of_execution_adapters 0.2.0` depends on `of_execution = 0.2` and
+  `of_execution_core = 0.2`;
 - provider-specific integrations stay feature-gated and opt-in;
 - compatibility shells remain fail closed unless every required live boundary
   is configured;
@@ -57,7 +60,7 @@ The crate has `default = []`. Consumers opt in to provider integrations explicit
 
 ```toml
 [dependencies]
-of_execution_adapters = { version = "0.1.0", features = ["fix"] }
+of_execution_adapters = { version = "0.2.0", features = ["fix"] }
 ```
 
 ## Public API Inventory
@@ -106,6 +109,29 @@ With the `fix` feature enabled:
 - [`fix::FixScriptedTransport`]
 - [`fix::FixCertificationClock`]
 - [`fix::FixFrameExpectation`]
+
+### What the public FIX adapter items mean
+
+The parse/config types define how FIX fields are interpreted and which optional
+fields a venue accepts. `parse_execution_report` and
+`parse_order_cancel_reject` borrow fields from a validated FIX message and
+return typed provider observations; mapping functions convert those
+observations into canonical execution events. Encoding functions perform the
+inverse operation for order, cancel, amend, and stop-amend commands.
+
+`FixTransportExecutionAdapter` is the generic live session runtime. The host
+owns transport I/O, time, credentials, and scheduling through
+`FixFrameTransport`, `FixTimeSource`, and the drive/poll contract. A
+`FixExecutionProfile` owns venue-specific fields and capability rules;
+`StandardFixExecutionProfile` is protocol-capable but is not evidence of venue
+certification. `FixExecutionAdapter` remains the compatibility shell.
+
+Outbound journals, working-order context, metrics, and health make uncertain
+sends and restart recovery explicit. Certification types are deterministic test
+fixtures and transcript expectations, not a substitute for counterparty
+certification. All transport and certification abstractions are additive and
+must keep malformed frames, duplicate reports, sequence gaps, and uncertain
+outcomes fail-closed.
 
 ## FIX Module Boundaries
 

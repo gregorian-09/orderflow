@@ -24,6 +24,23 @@ export method from an adapter polling or execution hot thread.
   normalized payloads fail export instead of being silently downgraded.
 - Existing `of_persist` JSONL, WAL, checkpoint, and retention APIs are unchanged.
 
+## Public API Meaning
+
+`MarketDataParquetExportConfig` controls a bounded control-plane export,
+including compression, batch size, row-group size, synchronization, and
+publication behavior. `MarketDataParquetPartitionKey` identifies the dataset
+partition and validates date, venue, symbol, and stream components.
+`MarketDataParquetSourceMetadata` records provenance so a cold file can be
+audited without guessing which adapter or session produced it.
+
+`MarketDataParquetWriter` consumes selected normalized records from
+`of_persist`; it does not own a live WAL or alter the hot persistence API.
+`VerifiedMarketDataParquetExport` is returned only after reopen, schema,
+sequence, row-count, and checksum verification. Its retention input is the
+proof-bearing handoff that allows a host to consider deleting dependent hot
+data. Compression and Parquet operations are synchronous and must run on a
+maintenance worker, never on a feed or execution hot thread.
+
 ## Quick Start
 
 ```rust,no_run

@@ -79,7 +79,12 @@ workflows without destabilizing existing analytics deployments.
 Version policy:
 
 - `of_ffi_c` publishes as `0.5.0` with the established native library line;
-- the Rust execution crates behind the ABI publish as `0.1.0`;
+- `of_execution` and `of_execution_core` behind the ABI publish as `0.2.0`;
+- `of_execution_algos` is preparing its first `0.1.0` publication against the
+  compatible core dependency;
+- `of_execution_adapters` publishes as `0.2.0` for its expanded execution and
+  core adapter capability surface;
+- `of_fix` remains on `0.1.x`;
 - native headers and libraries should still be upgraded together.
 
 ## Public ABI Inventory
@@ -135,6 +140,28 @@ Exported C functions:
 - `of_validate_signal_replay_json`
 - `of_string_free`
 - `of_engine_poll_once`
+
+### What the public ABI items mean
+
+The opaque `of_engine` and `of_subscription` handles hide Rust ownership from
+C callers. The `of_*_t` structs are stable `repr(C)` value layouts: field order,
+width, alignment, and meaning are part of the ABI. Input structs are borrowed
+for the duration of a call; returned strings and buffers follow the ownership
+rules documented in the header and must be released with the matching function.
+
+Lifecycle functions create, start, stop, and destroy an engine. Subscription
+and ingest functions submit normalized inputs. Polling advances the caller's
+event pump. Snapshot functions materialize one bounded JSON payload using the
+capacity-negotiation contract. Metrics, inventory, health, explanation, and
+validation functions are diagnostic/control-plane surfaces and may allocate;
+they are not zero-allocation hot-path calls.
+
+Every exported function returns a stable integer status. Null pointers,
+invalid handles, insufficient capacity, stopped engines, serialization errors,
+and invalid values are distinct outcomes where the ABI promises that
+distinction. New capabilities must add symbols or structs; existing signatures,
+field positions, numeric error values, and callback lifetime rules cannot be
+changed without an explicit ABI break.
 
 ## Offline Signal Validation
 
