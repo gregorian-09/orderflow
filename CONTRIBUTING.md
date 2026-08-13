@@ -63,6 +63,54 @@ The workspace currently uses:
 - .github/workflows: CI, documentation, wheel, Maven, Rust, and native release
   automation.
 
+### 1.3 Files contributors must know
+
+This is the repository's file-level navigation map. A contributor does not need
+to read every implementation file before making a small change, but must read
+the owning contract and the relevant files below before editing behavior. All
+paths are repository-relative.
+
+| Area | Files | Contract |
+| --- | --- | --- |
+| Project entry point | `README.md`, `LICENSE`, `CHANGELOG.md`, `RELEASE_NOTES.md` | Project scope, license obligations, user-visible changes, and release history. |
+| Workspace | `Cargo.toml`, `Cargo.lock`, `deny.toml` | Workspace members, versions, feature resolution, dependencies, and supply-chain policy. |
+| Public contribution rules | `CONTRIBUTING.md` | Coding, compatibility, documentation, testing, security, and commit requirements. |
+| Local-only context | `AGENTS.md` | May exist in a maintainer or agent environment, but is not a public project contract and must not be required to contribute. |
+| Version and ABI manifests | `bindings/versions.toml`, `bindings/api_manifest.toml` | Binding version coordination and the C ABI surface that must remain compatible. |
+| Core domain | `crates/of_core/Cargo.toml`, `crates/of_core/README.md`, `crates/of_core/src/lib.rs` | Normalized market-data types, accumulator state, snapshots, quality flags, and hot-path invariants. |
+| Advanced analytics | `crates/of_analytics/Cargo.toml`, `crates/of_analytics/README.md`, `crates/of_analytics/src/lib.rs` | Optional liquidity, market-quality, TCA, toxicity, volatility, regime, queue, and feature analytics. |
+| Market-data adapters | `crates/of_adapters/Cargo.toml`, `crates/of_adapters/README.md`, `crates/of_adapters/src/lib.rs`, `crates/of_adapters/src/cqg/`, `crates/of_adapters/src/binance.rs`, `crates/of_adapters/src/rithmic.rs` | Provider normalization, subscriptions, health, sequencing, reconnect, capabilities, and provider behavior. |
+| Signals | `crates/of_signals/Cargo.toml`, `crates/of_signals/README.md`, `crates/of_signals/src/lib.rs` | Signal traits, built-in modules, confidence, explanations, validation, and quality gating. |
+| Market-data persistence | `crates/of_persist/Cargo.toml`, `crates/of_persist/README.md`, `crates/of_persist/src/lib.rs`, `crates/of_persist/src/normalized_codec.rs`, `crates/of_persist/src/raw_capture.rs`, `crates/of_persist/src/market_data_writer.rs`, `crates/of_persist/src/market_data_segmented.rs` | Normalized history, raw capture, WAL/segments, replay ordering, retention, durability, and corruption handling. |
+| Cold storage | `crates/of_persist_parquet/Cargo.toml`, `crates/of_persist_parquet/README.md`, `crates/of_persist_parquet/src/lib.rs` | Verified Parquet export and readback outside the hot path. |
+| Runtime | `crates/of_runtime/Cargo.toml`, `crates/of_runtime/README.md`, `crates/of_runtime/src/lib.rs`, `crates/of_runtime/src/config.rs`, `crates/of_runtime/src/engine.rs`, `crates/of_runtime/src/tests.rs` | Lifecycle, polling, subscriptions, external ingest, snapshots, supervision, health, metrics, and persistence integration. |
+| Execution domain | `crates/of_execution_core/Cargo.toml`, `crates/of_execution_core/README.md`, `crates/of_execution_core/src/lib.rs` | Canonical orders, commands, reports, states, risks, identifiers, and WAL frames. |
+| OMS and execution | `crates/of_execution/Cargo.toml`, `crates/of_execution/README.md`, `crates/of_execution/src/lib.rs`, `crates/of_execution/src/oms.rs`, `crates/of_execution/src/order_intent.rs`, `crates/of_execution/src/reconciliation.rs`, `crates/of_execution/src/position_ledger.rs` | Order lifecycle, routing, idempotency, journals, recovery, reconciliation, positions, controls, and safety. |
+| Execution algorithms | `crates/of_execution_algos/Cargo.toml`, `crates/of_execution_algos/README.md`, `crates/of_execution_algos/src/lib.rs` | Deterministic parent/child planning, TWAP and algorithm primitives, simulation, replay, and TCA. |
+| FIX protocol | `crates/of_fix/Cargo.toml`, `crates/of_fix/README.md`, `crates/of_fix/src/lib.rs`, `crates/of_fix/src/session.rs` | Tag definitions, borrowed parsing, framing, validation, sequencing, resend, heartbeat, and sessions. |
+| Execution adapters | `crates/of_execution_adapters/Cargo.toml`, `crates/of_execution_adapters/README.md`, `crates/of_execution_adapters/src/lib.rs`, `crates/of_execution_adapters/src/fix.rs`, `crates/of_execution_adapters/src/fix/live.rs`, `crates/of_execution_adapters/src/fix/certification.rs` | Venue profiles, transport composition, command/report mapping, capabilities, recovery, and certification. |
+| C ABI | `crates/of_ffi_c/Cargo.toml`, `crates/of_ffi_c/README.md`, `crates/of_ffi_c/include/orderflow.h`, `crates/of_ffi_c/src/lib.rs`, `crates/of_ffi_c/src/support.rs`, `crates/of_ffi_c/src/tests.rs` | Stable native symbols, layouts, ownership, errors, buffers, callbacks, exports, and native tests. |
+| Python binding | `bindings/python/README.md`, `bindings/python/pyproject.toml`, `bindings/python/orderflow/_ffi.py`, `bindings/python/orderflow/_generated_signatures.py`, `bindings/python/orderflow/api.py`, `bindings/python/tests/`, `bindings/python/examples/` | ctypes declarations, loading, high-level lifecycle, exceptions, buffer handling, examples, and compatibility. |
+| Java binding | `bindings/java/README.md`, `bindings/java/pom.xml`, `bindings/java/src/main/java/com/orderflow/bindings/OrderflowNative.java`, `bindings/java/src/main/java/com/orderflow/bindings/OrderflowEngine.java`, `bindings/java/src/main/java/com/orderflow/bindings/OrderflowExecutionEngine.java`, `bindings/java/src/main/java/com/orderflow/examples/` | JNA signatures, lifecycle, exceptions, execution wrappers, examples, and Maven packaging. |
+| Dashboard and deployment | `dashboard/README.md`, `dashboard/server.py`, `dashboard/static/index.html`, `Dockerfile`, `docker-compose.yml` | Live/replay operation, HTTP state/session behavior, and deployment defaults. |
+| Replay and performance binaries | `examples/replay_cli/Cargo.toml`, `examples/replay_cli/src/main.rs`, `examples/perf_harness/Cargo.toml`, `examples/perf_harness/src/main.rs`, `docs/ops/performance.md` | Persistence discovery/replay and synthetic throughput, p99 latency, soak, and memory measurements. Both packages are `publish = false`. |
+| Rust examples | `examples/` | Supported end-to-end Rust usage and integration paths. |
+| Handbook entry points | `docs/handbook/README.md`, `docs/handbook/00-how-to-read.md`, `docs/handbook/01-orderflow-primer.md`, `docs/handbook/04-architecture.md` | Documentation navigation, domain vocabulary, and system boundaries. |
+| API references | `docs/handbook/05-api-reference.md`, `docs/handbook/05a-of-core-reference.md` through `docs/handbook/05m-of-persist-parquet-reference.md` | Meaning and behavior of public Rust types, methods, fields, values, and compatibility rules. |
+| Contributor and knowledge system | `docs/handbook/06-contributor-guide.md`, `docs/contributors/README.md`, `docs/knowledge-system/README.md`, `docs/knowledge-system/source-of-truth.md`, `docs/knowledge-system/portal-tree.md`, `docs/knowledge-system/documentation-charter.md`, `docs/knowledge-system/coverage-inventory.md` | Documentation workflow, fact ownership, portal structure, coverage, and generated-file policy. |
+| Strategy and OMS guides | `docs/handbook/02-strategy-design.md`, `docs/handbook/08-strategy-cookbook.md`, `docs/handbook/09-oms-architecture.md`, `docs/handbook/10-oms-cookbook.md`, `docs/handbook/11-low-latency-design.md`, `docs/handbook/13-recovery-and-operations.md` | Concepts, complete workflows, execution architecture, latency constraints, recovery, and operations. |
+| Adapter and FIX guides | `docs/handbook/12-provider-adapter-authoring.md`, `docs/fix/README.md`, `docs/execution/README.md`, `docs/execution-algorithms/README.md` | Adapter implementation, FIX infrastructure, execution bridges, and algorithm contracts. |
+| Binding and compatibility guides | `docs/bindings/README.md`, `docs/bindings/c.md`, `docs/bindings/python.md`, `docs/bindings/java.md`, `docs/bindings/end-to-end.md`, `docs/bindings/api-inventory.md`, `docs/bindings/surface-audit.md`, `docs/compatibility/README.md` | Cross-language parity, loading, lifecycle, examples, API coverage, and compatibility audits. |
+| Diagram sources | `docs/handbook/assets/diagrams/src/`, `docs/handbook/assets/diagrams/svg/`, `docs/handbook/assets/diagrams/png/` | Mermaid sources are authoritative; SVG and PNG files are rendered distribution artifacts. |
+| Validation tools | `tools/check_ffi_exports.sh`, `tools/check_docs.sh`, `tools/docs_coverage.py`, `tools/provider_conformance.py`, `tools/dashboard_smoke_test.py`, `tools/smoke_python_binding.py` | ABI, documentation, provider, dashboard, and Python validation. |
+| Generated-reference tools | `tools/generate_docs_inventory.py`, `tools/generate_rust_surface.py`, `tools/generate_rust_values.py`, `tools/generate_binding_surface.py`, `tools/generate_package_matrix.py`, `tools/generate_crate_pages.py`, `tools/enrich_api_reference.py`, `tools/enrich_handbook_public_lists.py` | Regenerates committed inventories and reference pages from source. |
+| Binding and release automation | `tools/generate_binding_signatures.py`, `tools/check_api_manifest.py`, `tools/check_binding_parity.py`, `tools/release/`, `.github/workflows/` | Synchronizes native declarations and automates CI, packaging, documentation, and releases. |
+
+When a row names a directory, inspect its README, manifest, public module root,
+tests, and relevant examples before changing behavior. When a row names a
+generated file, edit its source inputs and run the owning generator rather than
+editing the generated output directly.
+
 ## 2. Repository Orientation
 
 Read the relevant documentation before editing:
@@ -576,4 +624,3 @@ A fresh contributor should be able to use this file and the handbook to:
 
 If a contributor must infer a public contract from implementation details, the
 change or its documentation is not finished.
-
