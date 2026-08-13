@@ -1,0 +1,159 @@
+site_name: Orderflow Documentation
+site_description: Complete technical, integration, reference, and operations documentation for Orderflow.
+site_url: !ENV [READTHEDOCS_CANONICAL_URL, '']
+repo_url: https://github.com/gregorian-09/orderflow
+repo_name: gregorian-09/orderflow
+docs_dir: docs
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.instant
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+plugins:
+  - search
+
+nav:
+  - Home: README.md
+  - Knowledge System:
+      - Overview: knowledge-system/README.md
+      - Documentation Charter: knowledge-system/documentation-charter.md
+      - Source-of-Truth Map: knowledge-system/source-of-truth.md
+      - Coverage Inventory: knowledge-system/coverage-inventory.md
+      - Portal Tree: knowledge-system/portal-tree.md
+      - Subsystem Audit Template: knowledge-system/audit-template.md
+  - Foundations:
+      - Domain Foundations: foundations/README.md
+  - Market Data:
+      - Adapter Manual: market-data/README.md
+  - Persistence:
+      - Persistence and Replay Manual: persistence/README.md
+  - OMS and Execution:
+      - Execution Manual: execution/README.md
+  - Runtime:
+      - Lifecycle and Concurrency: runtime/README.md
+  - Signals:
+      - Signals and Strategy Evaluation: signals/README.md
+  - Execution Algorithms:
+      - Algorithm Manual: execution-algorithms/README.md
+  - FIX:
+      - FIX and Connectivity Manual: fix/README.md
+  - Architecture:
+      - Architecture Manual: architecture/README.md
+      - Reference Model: reference/README.md
+  - Reference:
+      - Rust Surface Audit: reference/rust-surface.md
+      - Rust Values and Layout Audit: reference/rust-values.md
+      - Package and Feature Matrix: reference/package-matrix.md
+      - Crate References:
+          - of_core: reference/crates/of_core.md
+          - of_analytics: reference/crates/of_analytics.md
+          - of_adapters: reference/crates/of_adapters.md
+          - of_signals: reference/crates/of_signals.md
+          - of_persist: reference/crates/of_persist.md
+          - of_persist_parquet: reference/crates/of_persist_parquet.md
+          - of_runtime: reference/crates/of_runtime.md
+          - of_execution_core: reference/crates/of_execution_core.md
+          - of_execution: reference/crates/of_execution.md
+          - of_execution_adapters: reference/crates/of_execution_adapters.md
+          - of_execution_algos: reference/crates/of_execution_algos.md
+          - of_fix: reference/crates/of_fix.md
+          - of_ffi_c: reference/crates/of_ffi_c.md
+          - replay_cli: reference/crates/replay_cli.md
+          - perf_harness: reference/crates/perf_harness.md
+  - Start Here:
+      - Handbook Home: handbook/README.md
+      - Orderflow Primer: handbook/01-orderflow-primer.md
+      - Trade Workflow: handbook/03-trade-workflow.md
+      - Strategy Design: handbook/02-strategy-design.md
+  - Existing Architecture Notes:
+      - System Architecture: handbook/04-architecture.md
+      - OMS Architecture: handbook/09-oms-architecture.md
+      - Low-Latency Design: handbook/11-low-latency-design.md
+  - Crate Reference:
+      - API Overview: handbook/05-api-reference.md
+      - of_core: handbook/05a-of-core-reference.md
+      - of_analytics: handbook/05l-of-analytics-reference.md
+      - of_adapters: handbook/05b-of-adapters-reference.md
+      - of_signals: handbook/05c-of-signals-reference.md
+      - of_persist: handbook/05d-of-persist-reference.md
+      - of_persist_parquet: handbook/05m-of-persist-parquet-reference.md
+      - of_runtime: handbook/05e-of-runtime-reference.md
+      - of_execution_core: handbook/05g-of-execution-core-reference.md
+      - of_execution: handbook/05h-of-execution-reference.md
+      - of_execution_adapters: handbook/05i-of-execution-adapters-reference.md
+      - of_execution_algos: handbook/05k-of-execution-algos-reference.md
+      - of_fix: handbook/05j-of-fix-reference.md
+      - of_ffi_c: handbook/05f-of-ffi-c-reference.md
+  - Execution:
+      - OMS Cookbook: handbook/10-oms-cookbook.md
+      - Provider Adapter Authoring: handbook/12-provider-adapter-authoring.md
+      - Recovery and Operations: handbook/13-recovery-and-operations.md
+  - Bindings:
+      - Overview: bindings/README.md
+      - End-to-End Integration Model: bindings/end-to-end.md
+      - Rust: bindings/rust.md
+      - C: bindings/c.md
+      - Python: bindings/python.md
+      - Java: bindings/java.md
+      - API Inventory: bindings/api-inventory.md
+      - Binding Surface Audit: bindings/surface-audit.md
+  - Operations:
+      - Operations Overview: ops/README.md
+      - Production Operations Manual: operations/README.md
+      - Real Data Testing: ops/real_data_test.md
+      - Performance: ops/performance.md
+      - Deployment Templates: ops/deployment_templates.md
+      - Provider Certification: ops/provider_certification.md
+      - Release Checklist: ops/release_checklist.md
+      - Stabilization Checklist: ops/stabilization_checklist.md
+      - Releases: 
+          - 0.2.0: ops/release-0.2.0.md
+          - 0.3.0: ops/release-0.3.0.md
+          - 0.5.0: ops/release-0.5.0.md
+          - 0.4.0: ops/release-0.4.0.md
+  - Legacy API Entry Points:
+      - API Overview: api/README.md
+      - Provider Configuration: api/provider_config.md
+  - Cookbooks:
+      - Strategy Cookbook: handbook/08-strategy-cookbook.md
+  - Contributors:
+      - Contributor and Documentation Workflow: contributors/README.md
+      - Contributor Guide: handbook/06-contributor-guide.md
+      - References: handbook/07-references.md
+  - Compatibility:
+      - Compatibility and Releases: compatibility/README.md
+  - Security: security/README.md

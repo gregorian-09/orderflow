@@ -43,7 +43,7 @@ Binding-specific docs:
 
 - [Python binding handbook](../bindings/python.md)
 - [Java binding handbook](../bindings/java.md)
-- [C ABI header](../../crates/of_ffi_c/include/orderflow.h)
+- [C ABI header](https://github.com/gregorian-09/orderflow/blob/main/crates/of_ffi_c/include/orderflow.h)
 
 Execution and OMS workflow docs:
 

@@ -26,7 +26,7 @@ Local/dev certification:
 
 - A `.env` file is acceptable for local runs only.
 - Keep `.env` uncommitted.
-- Use [`docs/ops/examples/.env.example`](./examples/.env.example) as the template.
+- Use the [`.env.example`](https://github.com/gregorian-09/orderflow/blob/main/docs/ops/examples/.env.example) template.
 
 Load local `.env` into your shell before running the harness:
 

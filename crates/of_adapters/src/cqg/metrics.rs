@@ -1,3 +1,4 @@
+/// Counters and timing observations collected by the CQG adapter.
 #[derive(Debug, Clone, Default)]
 pub struct CqgMetrics {
     pub ws_connect_attempts: u64,

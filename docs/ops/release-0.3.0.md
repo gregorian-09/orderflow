@@ -178,6 +178,6 @@ trait redesign.
 
 ## Where To Read Next
 
-- Changelog: [`CHANGELOG.md`](../../CHANGELOG.md)
+- Changelog: [`CHANGELOG.md`](https://github.com/gregorian-09/orderflow/blob/main/CHANGELOG.md)
 - Runtime reference: [`docs/handbook/05e-of-runtime-reference.md`](../handbook/05e-of-runtime-reference.md)
 - Release checklist: [`docs/ops/release_checklist.md`](release_checklist.md)

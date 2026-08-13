@@ -548,11 +548,11 @@ The release does not intentionally remove or rename:
 
 ## Where To Read Next
 
-- Root README: [`README.md`](../../README.md)
+- Root README: [`README.md`](https://github.com/gregorian-09/orderflow/blob/main/README.md)
 - Strategy design: [`docs/handbook/02-strategy-design.md`](../handbook/02-strategy-design.md)
 - Strategy cookbook: [`docs/handbook/08-strategy-cookbook.md`](../handbook/08-strategy-cookbook.md)
 - OMS architecture: [`docs/handbook/09-oms-architecture.md`](../handbook/09-oms-architecture.md)
 - OMS cookbook: [`docs/handbook/10-oms-cookbook.md`](../handbook/10-oms-cookbook.md)
 - Low-latency design: [`docs/handbook/11-low-latency-design.md`](../handbook/11-low-latency-design.md)
 - Provider adapter authoring: [`docs/handbook/12-provider-adapter-authoring.md`](../handbook/12-provider-adapter-authoring.md)
-- Changelog: [`CHANGELOG.md`](../../CHANGELOG.md)
+- Changelog: [`CHANGELOG.md`](https://github.com/gregorian-09/orderflow/blob/main/CHANGELOG.md)

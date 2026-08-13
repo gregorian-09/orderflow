@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use of_core::SymbolId;
 
+/// Lifecycle state of a CQG session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CqgSessionState {
     Disconnected,
@@ -14,6 +15,7 @@ pub enum CqgSessionState {
     BackoffWait,
 }
 
+/// Correlates CQG symbol and subscription requests with their acknowledgements.
 #[derive(Debug)]
 pub struct CqgSession {
     state: CqgSessionState,
@@ -25,6 +27,7 @@ pub struct CqgSession {
 }
 
 impl CqgSession {
+    /// Creates a disconnected CQG session with request identifiers starting at one.
     pub fn new() -> Self {
         Self {
             state: CqgSessionState::Disconnected,
@@ -36,20 +39,24 @@ impl CqgSession {
         }
     }
 
+    /// Returns the current session lifecycle state.
     pub fn state(&self) -> CqgSessionState {
         self.state
     }
 
+    /// Sets the current session lifecycle state.
     pub fn set_state(&mut self, state: CqgSessionState) {
         self.state = state;
     }
 
+    /// Allocates the next non-zero request identifier.
     pub fn next_request_id(&mut self) -> u64 {
         let id = self.next_request_id;
         self.next_request_id = self.next_request_id.saturating_add(1);
         id
     }
 
+    /// Queues symbol resolution and returns its request identifier.
     pub fn queue_symbol_resolution(&mut self, symbol: SymbolId, depth: u16) -> u64 {
         let req_id = self.next_request_id();
         self.pending_symbol_resolution
@@ -58,6 +65,7 @@ impl CqgSession {
         req_id
     }
 
+    /// Completes symbol resolution and returns the symbol and requested depth.
     pub fn on_symbol_resolved(
         &mut self,
         request_id: u64,
@@ -69,28 +77,34 @@ impl CqgSession {
         Some((symbol, depth))
     }
 
+    /// Records the expected subscription acknowledgement for a request.
     pub fn queue_subscription_ack(&mut self, request_id: u64, symbol: SymbolId, contract_id: i64) {
         self.pending_subscription_ack
             .insert(request_id, (symbol, contract_id));
     }
 
+    /// Resolves a subscription acknowledgement request, if it is pending.
     pub fn on_subscription_ack(&mut self, request_id: u64) -> Option<(SymbolId, i64)> {
         self.pending_subscription_ack.remove(&request_id)
     }
 
+    /// Returns whether symbol or subscription requests are awaiting responses.
     pub fn has_pending_work(&self) -> bool {
         !self.pending_symbol_resolution.is_empty() || !self.pending_subscription_ack.is_empty()
     }
 
+    /// Removes requests that cannot survive a reconnect.
     pub fn clear_transient(&mut self) {
         self.pending_symbol_resolution.clear();
         self.pending_subscription_ack.clear();
     }
 
+    /// Records the desired market-data depth for a symbol.
     pub fn upsert_requested_depth(&mut self, symbol: SymbolId, depth: u16) {
         self.requested_depth.insert(symbol, depth);
     }
 
+    /// Removes a symbol and all pending requests associated with it.
     pub fn remove_symbol(&mut self, symbol: &SymbolId) {
         self.requested_depth.remove(symbol);
         self.symbol_to_contract.remove(symbol);

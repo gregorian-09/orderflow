@@ -8,6 +8,7 @@ use std::thread;
 use super::proto::{encode_inbound_for_test, is_ping_outbound_frame, CqgInbound};
 use crate::{AdapterError, AdapterResult};
 
+/// Transport boundary used by the CQG session and adapter.
 pub trait CqgTransport: Send + std::fmt::Debug {
     fn connect(&mut self) -> AdapterResult<()>;
     fn send_frame(&mut self, frame: Vec<u8>) -> AdapterResult<()>;
@@ -17,6 +18,7 @@ pub trait CqgTransport: Send + std::fmt::Debug {
     fn force_disconnect(&mut self) {}
 }
 
+/// In-memory CQG transport used by tests and deterministic simulations.
 #[derive(Debug, Default)]
 pub struct MockTransport {
     connected: bool,
@@ -52,6 +54,7 @@ impl CqgTransport for MockTransport {
     }
 }
 
+/// TCP-backed WebSocket/protobuf transport for CQG sessions.
 #[derive(Debug)]
 pub struct WsProtobufTransport {
     endpoint: String,
@@ -61,6 +64,7 @@ pub struct WsProtobufTransport {
 }
 
 impl WsProtobufTransport {
+    /// Creates a transport for the supplied CQG endpoint.
     pub fn new(endpoint: String) -> Self {
         Self {
             endpoint,

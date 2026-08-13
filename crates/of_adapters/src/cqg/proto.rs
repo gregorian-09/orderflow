@@ -1,3 +1,4 @@
+/// Outbound messages supported by the CQG transport protocol.
 #[derive(Debug, Clone)]
 pub enum CqgOutbound {
     Logon,
@@ -14,6 +15,7 @@ pub enum CqgOutbound {
     Logoff,
 }
 
+/// Inbound messages supported by the CQG transport protocol.
 #[derive(Debug, Clone)]
 pub enum CqgInbound {
     LogonResult {
@@ -73,6 +75,7 @@ mod protobuf_codec {
     const MSG_IN_HEARTBEAT: u64 = 105;
     const MSG_IN_SUB_ACK: u64 = 106;
 
+    /// Encodes an outbound message using the CQG protobuf-compatible frame format.
     pub fn encode_outbound(msg: &CqgOutbound) -> Vec<u8> {
         match msg {
             CqgOutbound::Logon => wrap(MSG_OUT_LOGON, Vec::new()),
@@ -98,6 +101,7 @@ mod protobuf_codec {
         }
     }
 
+    /// Encodes an inbound message for deterministic transport and codec tests.
     pub fn encode_inbound_for_test(msg: &CqgInbound) -> Vec<u8> {
         match msg {
             CqgInbound::LogonResult { success, message } => {
@@ -172,6 +176,7 @@ mod protobuf_codec {
         }
     }
 
+    /// Decodes one CQG protobuf-compatible frame into a normalized inbound message.
     pub fn decode_inbound(frame: &[u8]) -> Result<CqgInbound, String> {
         let (msg_type, payload) = decode_envelope(frame)?;
         match msg_type {
@@ -257,6 +262,7 @@ mod protobuf_codec {
         }
     }
 
+    /// Returns whether a frame is a CQG ping message.
     pub fn is_ping_outbound_frame(frame: &[u8]) -> bool {
         decode_envelope(frame)
             .map(|(msg_type, _)| msg_type == MSG_OUT_PING)
@@ -445,21 +451,25 @@ mod protobuf_codec {
 }
 
 #[cfg(feature = "cqg_proto")]
+/// Encodes an outbound CQG message using the enabled protobuf codec.
 pub fn encode_outbound(msg: &CqgOutbound) -> Vec<u8> {
     protobuf_codec::encode_outbound(msg)
 }
 
 #[cfg(feature = "cqg_proto")]
+/// Returns the CQG wire schema version implemented by this build.
 pub fn pb_schema_version() -> u32 {
     protobuf_codec::PB_SCHEMA_VERSION
 }
 
 #[cfg(not(feature = "cqg_proto"))]
+/// Returns zero when the optional CQG protobuf codec is disabled.
 pub fn pb_schema_version() -> u32 {
     0
 }
 
 #[cfg(not(feature = "cqg_proto"))]
+/// Encodes an outbound CQG message with the fallback text codec.
 pub fn encode_outbound(msg: &CqgOutbound) -> Vec<u8> {
     let wire = match msg {
         CqgOutbound::Logon => "OUT|LOGON".to_string(),
@@ -478,11 +488,13 @@ pub fn encode_outbound(msg: &CqgOutbound) -> Vec<u8> {
 }
 
 #[cfg(feature = "cqg_proto")]
+/// Encodes an inbound CQG message for deterministic tests.
 pub fn encode_inbound_for_test(msg: &CqgInbound) -> Vec<u8> {
     protobuf_codec::encode_inbound_for_test(msg)
 }
 
 #[cfg(not(feature = "cqg_proto"))]
+/// Encodes an inbound CQG message with the fallback text codec.
 pub fn encode_inbound_for_test(msg: &CqgInbound) -> Vec<u8> {
     let wire = match msg {
         CqgInbound::LogonResult { success, message } => {
@@ -544,11 +556,13 @@ pub fn encode_inbound_for_test(msg: &CqgInbound) -> Vec<u8> {
 }
 
 #[cfg(feature = "cqg_proto")]
+/// Decodes one inbound CQG frame with the enabled protobuf codec.
 pub fn decode_inbound(frame: &[u8]) -> Result<CqgInbound, String> {
     protobuf_codec::decode_inbound(frame)
 }
 
 #[cfg(not(feature = "cqg_proto"))]
+/// Decodes one inbound CQG frame with the fallback text codec.
 pub fn decode_inbound(frame: &[u8]) -> Result<CqgInbound, String> {
     let text = std::str::from_utf8(frame).map_err(|_| "invalid utf8 frame".to_string())?;
     let parts: Vec<&str> = text.split('|').collect();
@@ -627,21 +641,25 @@ pub fn decode_inbound(frame: &[u8]) -> Result<CqgInbound, String> {
 }
 
 #[cfg(feature = "cqg_proto")]
+/// Returns whether a frame is a CQG ping message.
 pub fn is_ping_outbound_frame(frame: &[u8]) -> bool {
     protobuf_codec::is_ping_outbound_frame(frame)
 }
 
 #[cfg(not(feature = "cqg_proto"))]
+/// Returns whether a fallback frame is a CQG ping message.
 pub fn is_ping_outbound_frame(frame: &[u8]) -> bool {
     frame.starts_with(b"OUT|PING")
 }
 
 #[cfg(feature = "cqg_proto")]
+/// Returns the active CQG wire mode name.
 pub fn wire_mode() -> &'static str {
     "protobuf"
 }
 
 #[cfg(not(feature = "cqg_proto"))]
+/// Returns the fallback CQG wire mode name.
 pub fn wire_mode() -> &'static str {
     "text"
 }

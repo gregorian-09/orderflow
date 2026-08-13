@@ -1,7 +1,7 @@
 # Release 0.5.0
 
 Status: release candidate  
-Date: TBD
+Publication date: pending release approval
 
 Orderflow `0.5.0` is a non-breaking production-hardening release over the
 published `0.4.0` line. It completes the planned OMS, FIX, execution-algorithm,

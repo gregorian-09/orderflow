@@ -239,6 +239,6 @@ Validated locally before finalizing the release notes:
 
 ## Where To Read Next
 
-- Changelog: [`CHANGELOG.md`](/home/gregorian-rayne/RustroverProjects/orderflow/CHANGELOG.md)
-- Complete API reference: [docs/handbook/05-api-reference.md](/home/gregorian-rayne/RustroverProjects/orderflow/docs/handbook/05-api-reference.md)
-- Release checklist: [docs/ops/release_checklist.md](/home/gregorian-rayne/RustroverProjects/orderflow/docs/ops/release_checklist.md)
+- Changelog: [`CHANGELOG.md`](https://github.com/gregorian-09/orderflow/blob/main/CHANGELOG.md)
+- Complete API reference: [docs/handbook/05-api-reference.md](../handbook/05-api-reference.md)
+- Release checklist: [docs/ops/release_checklist.md](./release_checklist.md)

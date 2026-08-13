@@ -1,5 +1,13 @@
 # Binding Documentation
 
+The [binding integration model](./end-to-end.md) explains the shared C ABI,
+ownership, loading, buffer negotiation, callbacks, and compatibility rules
+before the language-specific guides.
+
+The [binding surface audit](./surface-audit.md) provides the generated
+Python/Java declaration checklist. The C ABI checklist remains the
+[machine-generated API inventory](./api-inventory.md).
+
 These pages are binding-specific distribution and usage docs.
 
 Current source release candidate: `0.5.0`.

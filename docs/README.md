@@ -1,5 +1,12 @@
 # Orderflow Documentation
 
+The public documentation portal is being built as a complete knowledge system
+for the Orderflow library. Begin with the [Knowledge System overview](./knowledge-system/README.md)
+to understand the documentation model, source-of-truth rules, and coverage
+inventory. The rendered portal is configured in the repository root
+[`mkdocs.yml`](https://github.com/gregorian-09/orderflow/blob/main/mkdocs.yml)
+and is suitable for local preview and Read the Docs hosting.
+
 This repository now uses a handbook-style documentation set intended for both:
 
 - Non-coders who need to understand orderflow concepts and trading workflow.

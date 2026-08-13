@@ -3,6 +3,7 @@ use of_core::{BookAction, BookUpdate, Side, SymbolId, TradePrint};
 use super::proto::CqgInbound;
 use crate::RawEvent;
 
+/// Maps a decoded CQG event into the normalized raw adapter event model.
 pub fn map_inbound_to_raw(symbol: &SymbolId, msg: &CqgInbound) -> Option<RawEvent> {
     match msg {
         CqgInbound::MarketDataIncremental {
