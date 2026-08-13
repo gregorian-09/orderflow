@@ -26,43 +26,51 @@ features unless they are pure standard-library mappings.
 
 The module contains:
 
-- `FixSessionConfig`
-- `FixExecutionReport`
-- `FixOrderCancelReject`
-- `FixReportParseConfig`
-- `FixRequestEncodeConfig`
-- `FixCancelEncodeContext`
-- `FixAmendEncodeContext`
-- `FixStopAmendEncodeContext`
-- `FixReportParseError`
-- `FixRequestEncodeError`
-- `FixExecType`
-- `FixOrdStatus`
-- `FixCancelRejectResponseTo`
-- `parse_execution_report`
-- `parse_order_cancel_reject`
-- `encode_order_request`
-- `encode_cancel_request`
-- `encode_amend_request`
-- `encode_stop_amend_request`
-- `map_execution_report`
-- `map_order_cancel_reject`
-- `FixExecutionAdapter`
-- `FixTransportExecutionAdapter<T, C, P, J>`
-- `FixLiveAdapterConfig`
-- `FixFrameTransport` and `FixTransportPoll`
-- `FixTimeSource` and `FixTimeSample`
-- `FixExecutionProfile` and `StandardFixExecutionProfile`
-- `FixWorkingOrderContext`
-- `FixOutboundJournal`, `NoopFixOutboundJournal`, and
-  `DurableFixOutboundJournal`
-- `FixLiveAdapterMetrics`
-- `FixCertificationScenario` and `FixCertificationCapability`
-- `FixCertificationConfig`, `FixCertificationHarness`, and
-  `FixCertificationReport`
-- `FixFrameExpectation` and `FixExpectedField`
-- `FixScriptedTransportConfig` and `FixScriptedTransport`
-- `FixCertificationClock`
+- `FixSessionConfig` — FIX sender/target configuration.
+- `FixExecutionReport` — Minimal FIX execution-report payload after transport parsing.
+- `FixOrderCancelReject` — Minimal FIX OrderCancelReject payload after transport parsing.
+- `FixReportParseConfig` — Context required to map raw FIX execution reports into canonical OMS fields.
+- `FixRequestEncodeConfig` — Context required to encode canonical OMS requests as FIX order-entry frames.
+- `FixCancelEncodeContext` — Extra fields required to encode a canonical cancel request as FIX.
+- `FixAmendEncodeContext` — Extra fields required to encode a canonical amend request as FIX.
+- `FixStopAmendEncodeContext` — Extra fields required to encode a stop/stop-limit amend request as FIX.
+- `FixReportParseError` — Errors returned while converting a parsed FIX execution report.
+- `FixRequestEncodeError` — Errors returned while encoding canonical OMS requests as FIX frames.
+- `FixExecType` — FIX ExecType values normalized for mapping.
+- `FixOrdStatus` — FIX OrdStatus values normalized for mapping.
+- `FixCancelRejectResponseTo` — FIX CxlRejResponseTo values normalized for mapping.
+- `parse_execution_report` — Parses a validated FIX `ExecutionReport(35=8)` into a normalized report.
+- `parse_order_cancel_reject` — Parses a validated FIX `OrderCancelReject(35=9)` into a normalized report.
+- `encode_order_request` — Encodes a canonical new-order request as FIX NewOrderSingle `<D>`.
+- `encode_cancel_request` — Encodes a canonical cancel request as FIX OrderCancelRequest `<F>`.
+- `encode_amend_request` — Encodes a canonical amend request as FIX OrderCancelReplaceRequest `<G>`.
+- `encode_stop_amend_request` — Encodes a stop/stop-limit amend request as FIX OrderCancelReplaceRequest `<G>`.
+- `map_execution_report` — Maps a parsed FIX execution report into a canonical execution event.
+- `map_order_cancel_reject` — Maps a parsed FIX OrderCancelReject into a canonical execution event.
+- `FixExecutionAdapter` — FIX execution adapter shell.
+- `FixTransportExecutionAdapter<T, C, P, J>` — Generic synchronous adapter that composes transport, clock, profile, and journal implementations.
+- `FixLiveAdapterConfig` — Bounded configuration for a transport-injected FIX execution adapter.
+- `FixFrameTransport` — Transport boundary that sends and receives already-framed FIX messages.
+- `FixTransportPoll` — Result returned by a transport poll, describing received frames or transport actions.
+- `FixTimeSource` — Clock boundary used to obtain FIX timestamps without coupling the adapter to wall-clock APIs.
+- `FixTimeSample` — Timestamp sample supplied by the configured FIX time source.
+- `FixExecutionProfile` — Venue-specific mapping of canonical execution concepts to FIX fields and values.
+- `StandardFixExecutionProfile` — Built-in FIX profile for the standard execution mappings supported by the adapter.
+- `FixWorkingOrderContext` — Original-order context needed by FIX cancel and replace messages.
+- `FixOutboundJournal` — Journal boundary for recording outbound FIX messages and their replay identity.
+- `NoopFixOutboundJournal` — Deliberately disabled outbound journal for hosts that provide persistence elsewhere.
+- `DurableFixOutboundJournal` — Outbound journal implementation that retains messages for recovery and audit.
+- `FixLiveAdapterMetrics` — Allocation-free operational counters for the live FIX adapter.
+- `FixCertificationScenario` — One deterministic certification case for exercising a FIX behavior.
+- `FixCertificationCapability` — Capability result identifying which certification behavior a profile supports.
+- `FixCertificationConfig` — Inputs controlling certification scenario execution.
+- `FixCertificationHarness` — Deterministic runner for scripted FIX certification scenarios.
+- `FixCertificationReport` — Outcome and diagnostics produced by certification execution.
+- `FixFrameExpectation` — Expected properties of one outbound or inbound FIX frame.
+- `FixExpectedField` — Expected tag/value assertion within a certification frame.
+- `FixScriptedTransportConfig` — Configuration for an in-memory scripted FIX transport.
+- `FixScriptedTransport` — Deterministic transport used by certification and adapter tests.
+- `FixCertificationClock` — Deterministic coherent clock for FIX adapter certification.
 
 ### `FixSessionConfig`
 

@@ -33,180 +33,180 @@ submission.
 
 Default features:
 
-- `market-quality`
-- `liquidity`
+- `market-quality` — Enables market-quality and transaction-cost analytics.
+- `liquidity` — Enables liquidity-depth and liquidity-flow analytics.
 
 Reserved additive profiles:
 
-- `impact`
-- `toxicity`
-- `volatility`
-- `regime`
-- `data-quality`
-- `feature-vector`
-- `resiliency`
-- `queue-fill`
-- `cross-asset`
-- `patterns`
-- `derivatives`
-- `institutional`
-- `ml-features`
-- `all`
+- `impact` — Enables market-impact estimation and calibration analytics.
+- `toxicity` — Enables VPIN-style order-flow toxicity analytics.
+- `volatility` — Enables fixed-window volatility and noise analytics.
+- `regime` — Enables threshold-based market-regime classification.
+- `data-quality` — Enables feed-quality and data-integrity analytics.
+- `feature-vector` — Enables typed feature-vector construction for downstream models.
+- `resiliency` — Enables liquidity-resiliency measurement after market shocks.
+- `queue-fill` — Enables queue-position and fill-probability analytics.
+- `cross-asset` — Enables cross-symbol and cross-asset relationship analytics.
+- `patterns` — Enables order-flow pattern-risk analytics.
+- `derivatives` — Enables derivatives-specific analytics.
+- `institutional` — Enables institutional execution and market-quality analytics.
+- `ml-features` — Enables machine-learning-oriented feature extraction.
+- `all` — Enables every optional analytics profile.
 
 ## Public Types
 
 Market quality:
 
-- `AnalyticsError`
-- `QuoteContext`
-- `TradeContext`
-- `MarketQualitySnapshot`
-- `MarketQualityTracker`
-- `ExecutionBenchmark`
-- `ExecutionQualitySnapshot`
-- `ExecutionQualityAnalyzer`
+- `AnalyticsError` — Advanced analytics error.
+- `QuoteContext` — Best bid/ask context used by market-quality analytics.
+- `TradeContext` — Trade context aligned to a quote.
+- `MarketQualitySnapshot` — Market-quality and transaction-cost snapshot for one trade/quote pair.
+- `MarketQualityTracker` — Market-quality tracker retaining the latest quote.
+- `ExecutionBenchmark` — Execution-quality benchmark context.
+- `ExecutionQualitySnapshot` — Execution-quality/TCA snapshot.
+- `ExecutionQualityAnalyzer` — Execution-quality/TCA analyzer.
 
 Liquidity/depth:
 
-- `LiquidityDepthSnapshot`
-- `LiquidityDepthAnalyzer`
-- `LiquidityFlowEvent`
-- `LiquidityFlowConfig`
-- `LiquidityFlowSnapshot`
-- `LiquidityFlowTracker`
+- `LiquidityDepthSnapshot` — Liquidity/depth snapshot over borrowed book levels.
+- `LiquidityDepthAnalyzer` — Borrowed depth analyzer.
+- `LiquidityFlowEvent` — Liquidity-flow event over a book observation interval.
+- `LiquidityFlowConfig` — Liquidity-flow tracker configuration.
+- `LiquidityFlowSnapshot` — Liquidity-flow snapshot over accumulated book events.
+- `LiquidityFlowTracker` — Allocation-free liquidity-flow tracker.
 
 Impact/toxicity:
 
-- `ImpactSample`
-- `ImpactSnapshot`
-- `ImpactTracker`
-- `ImpactCalibration`
-- `ExpectedImpactInput`
-- `ExpectedImpactSnapshot`
-- `ExpectedImpactEstimator`
-- `ChildOrderImpactContext`
-- `ChildOrderImpactSnapshot`
-- `ChildOrderImpactAnalyzer`
-- `VpinSnapshot`
-- `VpinTracker`
-- `ToxicityConfig`
-- `ToxicityInput`
-- `ToxicitySnapshot`
-- `ToxicityAnalyzer`
-- `VolatilitySnapshot`
-- `VolatilityTracker`
-- `OhlcVolatilityInput`
-- `OhlcVolatilitySnapshot`
-- `OhlcVolatilityEstimator`
-- `VolatilitySignatureSnapshot`
-- `VolatilitySignatureEstimator`
-- `VolatilitySeasonalitySnapshot`
-- `VolatilitySeasonalityTracker`
-- `RegimeKind`
-- `RegimeInput`
-- `RegimeSnapshot`
-- `RegimeClassifier`
-- `TrendRegimeKind`
-- `LiquidityRegimeKind`
-- `SpreadRegimeKind`
-- `SessionRegimeKind`
-- `CompositeRegimeConfig`
-- `CompositeRegimeInput`
-- `CompositeRegimeSnapshot`
-- `CompositeRegimeClassifier`
+- `ImpactSample` — Market-impact sample over a measurement interval.
+- `ImpactSnapshot` — Cumulative market-impact snapshot.
+- `ImpactTracker` — Allocation-free cumulative impact tracker.
+- `ImpactCalibration` — Calibrated market-impact parameters for pre-trade estimates.
+- `ExpectedImpactInput` — Pre-trade impact estimate input.
+- `ExpectedImpactSnapshot` — Pre-trade market-impact estimate.
+- `ExpectedImpactEstimator` — Deterministic pre-trade market-impact estimator.
+- `ChildOrderImpactContext` — Child-order impact attribution context.
+- `ChildOrderImpactSnapshot` — Child-order impact attribution snapshot.
+- `ChildOrderImpactAnalyzer` — Deterministic child-order impact attribution analyzer.
+- `VpinSnapshot` — VPIN-style toxicity snapshot.
+- `VpinTracker` — Fixed-capacity VPIN-style bucket tracker.
+- `ToxicityConfig` — Toxicity/adverse-selection thresholds.
+- `ToxicityInput` — Toxicity/adverse-selection observation.
+- `ToxicitySnapshot` — Toxicity/adverse-selection risk snapshot.
+- `ToxicityAnalyzer` — Deterministic toxicity/adverse-selection analyzer.
+- `VolatilitySnapshot` — Rolling volatility/noise snapshot.
+- `VolatilityTracker` — Fixed-window volatility tracker.
+- `OhlcVolatilityInput` — OHLC volatility estimator input.
+- `OhlcVolatilitySnapshot` — OHLC volatility estimator snapshot.
+- `OhlcVolatilityEstimator` — Deterministic OHLC volatility estimator.
+- `VolatilitySignatureSnapshot` — Volatility signature point over borrowed returns.
+- `VolatilitySignatureEstimator` — Borrowed volatility signature estimator.
+- `VolatilitySeasonalitySnapshot` — Intraday volatility seasonality bucket snapshot.
+- `VolatilitySeasonalityTracker` — Fixed-bucket intraday volatility seasonality tracker.
+- `RegimeKind` — Market regime classification.
+- `RegimeInput` — Regime classifier input.
+- `RegimeSnapshot` — Regime snapshot.
+- `RegimeClassifier` — Threshold-based market regime classifier.
+- `TrendRegimeKind` — Trend/range/chop regime label.
+- `LiquidityRegimeKind` — Liquidity regime label.
+- `SpreadRegimeKind` — Spread regime label.
+- `SessionRegimeKind` — Session phase regime label.
+- `CompositeRegimeConfig` — Composite regime classifier configuration.
+- `CompositeRegimeInput` — Composite regime classifier input.
+- `CompositeRegimeSnapshot` — Composite regime snapshot.
+- `CompositeRegimeClassifier` — Deterministic composite regime classifier.
 
 Feed quality:
 
-- `FeedQualityFlags`
-- `FeedQualityConfig`
-- `FeedQualityEvent`
-- `FeedQualitySnapshot`
-- `FeedQualityTracker`
-- `ReplayQualityConfig`
-- `ReplayQualityReport`
-- `ReplayQualityAnalyzer`
+- `FeedQualityFlags` — Feed-quality degradation flags.
+- `FeedQualityConfig` — Feed-quality tracker configuration.
+- `FeedQualityEvent` — Market-data event context used by feed-quality analytics.
+- `FeedQualitySnapshot` — Cumulative feed-quality snapshot.
+- `FeedQualityTracker` — Allocation-free feed-quality tracker.
+- `ReplayQualityConfig` — Replay-quality report thresholds.
+- `ReplayQualityReport` — Replay-quality report derived from feed-quality counters.
+- `ReplayQualityAnalyzer` — Deterministic replay-quality report analyzer.
 
 Feature vectors:
 
-- `FeatureId`
-- `FeatureUnit`
-- `FeatureQuality`
-- `MissingValuePolicy`
-- `FeatureDefinition`
-- `FeatureSchema`
-- `FeatureRegistry`
-- `FeatureVector`
-- `FeatureVectorWriter`
-- `FeatureExtractor`
+- `FeatureId` — Stable feature identifier.
+- `FeatureUnit` — Feature value unit.
+- `FeatureQuality` — Per-feature extraction quality.
+- `MissingValuePolicy` — Missing-feature fill policy.
+- `FeatureDefinition` — Feature definition inside a stable schema.
+- `FeatureSchema` — Fixed-capacity feature schema.
+- `FeatureRegistry` — Fixed-capacity feature registry alias.
+- `FeatureVector` — Completed fixed-capacity feature vector.
+- `FeatureVectorWriter` — Reusable fixed-capacity feature-vector writer.
+- `FeatureExtractor` — Feature extractor contract.
 
 Resiliency:
 
-- `ResiliencySample`
-- `ResiliencyConfig`
-- `ResiliencySnapshot`
-- `ResiliencyTracker`
+- `ResiliencySample` — Liquidity resiliency sample.
+- `ResiliencyConfig` — Liquidity resiliency thresholds.
+- `ResiliencySnapshot` — Liquidity resiliency snapshot.
+- `ResiliencyTracker` — Threshold-based liquidity resiliency tracker.
 
 Queue and fill:
 
-- `QueueUpdateKind`
-- `QueuePositionEstimate`
-- `QueueFillConfig`
-- `QueueFillUpdate`
-- `QueueFillSnapshot`
-- `QueueFillTracker`
-- `QueueDecisionConfig`
-- `QueueDecisionInput`
-- `QueueDecisionSnapshot`
-- `QueueDecisionAnalyzer`
+- `QueueUpdateKind` — Queue update kind.
+- `QueuePositionEstimate` — Passive order queue estimate.
+- `QueueFillConfig` — Queue/fill probability configuration.
+- `QueueFillUpdate` — Queue update at the local order price.
+- `QueueFillSnapshot` — Passive fill probability snapshot.
+- `QueueFillTracker` — Queue/fill probability tracker.
+- `QueueDecisionConfig` — Queue decision thresholds.
+- `QueueDecisionInput` — Queue decision economics and replacement context.
+- `QueueDecisionSnapshot` — Queue decision snapshot.
+- `QueueDecisionAnalyzer` — Deterministic queue decision analyzer.
 
 Pattern risk:
 
-- `PatternRiskInput`
-- `PatternRiskLiquidity`
-- `PatternRiskConfig`
-- `PatternRiskSnapshot`
-- `PatternRiskClassifier`
-- `PatternDetailConfig`
-- `PatternDetailInput`
-- `PatternDetailSnapshot`
-- `PatternDetailAnalyzer`
+- `PatternRiskInput` — Pattern-risk input over a bounded observation window.
+- `PatternRiskLiquidity` — Pattern-risk liquidity summary.
+- `PatternRiskConfig` — Pattern-risk classifier thresholds.
+- `PatternRiskSnapshot` — Pattern-risk snapshot.
+- `PatternRiskClassifier` — Deterministic pattern-risk classifier.
+- `PatternDetailConfig` — Detailed pattern-risk configuration.
+- `PatternDetailInput` — Detailed pattern-risk input over a bounded observation window.
+- `PatternDetailSnapshot` — Detailed pattern-risk snapshot.
+- `PatternDetailAnalyzer` — Deterministic detailed pattern-risk analyzer.
 
 Venue and route:
 
-- `VenueRouteEventKind`
-- `VenueRouteEvent`
-- `VenueRouteSnapshot`
-- `VenueRouteTracker`
-- `VenueRouteQualityConfig`
-- `VenueRouteQualityInput`
-- `VenueRouteQualitySnapshot`
-- `VenueRouteQualityAnalyzer`
+- `VenueRouteEventKind` — Venue route event kind.
+- `VenueRouteEvent` — Venue route analytics event.
+- `VenueRouteSnapshot` — Venue route analytics snapshot.
+- `VenueRouteTracker` — Venue route analytics tracker.
+- `VenueRouteQualityConfig` — Venue route quality thresholds.
+- `VenueRouteQualityInput` — Venue route quality input.
+- `VenueRouteQualitySnapshot` — Venue route quality snapshot.
+- `VenueRouteQualityAnalyzer` — Deterministic venue route quality analyzer.
 
 Cross asset:
 
-- `CrossAssetSample`
-- `CrossAssetConfig`
-- `CrossAssetSnapshot`
-- `CrossAssetTracker`
-- `CrossAssetDiagnosticConfig`
-- `CrossAssetDiagnosticInput`
-- `CrossAssetDiagnosticSnapshot`
-- `CrossAssetDiagnosticAnalyzer`
+- `CrossAssetSample` — Cross-asset paired price sample.
+- `CrossAssetConfig` — Cross-asset analytics configuration.
+- `CrossAssetSnapshot` — Cross-asset analytics snapshot.
+- `CrossAssetTracker` — Fixed-window cross-asset lead/lag tracker.
+- `CrossAssetDiagnosticConfig` — Cross-asset diagnostic thresholds.
+- `CrossAssetDiagnosticInput` — Cross-asset diagnostic input.
+- `CrossAssetDiagnosticSnapshot` — Cross-asset diagnostic snapshot.
+- `CrossAssetDiagnosticAnalyzer` — Deterministic cross-asset diagnostic analyzer.
 
 Derivatives:
 
-- `OptionKind`
-- `OptionFlowSample`
-- `OptionFlowSnapshot`
-- `OptionFlowTracker`
-- `FuturesBasisInput`
-- `FuturesBasisSnapshot`
-- `FuturesBasisAnalyzer`
-- `DerivativesVolatilitySurface`
-- `DerivativesDiagnosticConfig`
-- `DerivativesDiagnosticInput`
-- `DerivativesDiagnosticSnapshot`
-- `DerivativesDiagnosticAnalyzer`
+- `OptionKind` — Option contract kind.
+- `OptionFlowSample` — Option flow sample.
+- `OptionFlowSnapshot` — Option flow snapshot.
+- `OptionFlowTracker` — Cumulative option flow tracker.
+- `FuturesBasisInput` — Futures basis input.
+- `FuturesBasisSnapshot` — Futures basis snapshot.
+- `FuturesBasisAnalyzer` — Futures basis analyzer.
+- `DerivativesVolatilitySurface` — Caller-supplied derivatives volatility surface summary.
+- `DerivativesDiagnosticConfig` — Derivatives diagnostic thresholds.
+- `DerivativesDiagnosticInput` — Derivatives diagnostic input.
+- `DerivativesDiagnosticSnapshot` — Derivatives diagnostic snapshot.
+- `DerivativesDiagnosticAnalyzer` — Deterministic derivatives diagnostic analyzer.
 
 ## Market Quality
 

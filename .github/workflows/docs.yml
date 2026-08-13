@@ -45,6 +45,9 @@ jobs:
       - name: Refresh semantic API reference
         run: python3 tools/enrich_api_reference.py
 
+      - name: Refresh handbook public inventories
+        run: python3 tools/enrich_handbook_public_lists.py
+
       - name: Check documentation inventory
         run: python3 tools/generate_docs_inventory.py --check
 
@@ -65,6 +68,9 @@ jobs:
 
       - name: Check semantic API reference
         run: python3 tools/enrich_api_reference.py --check
+
+      - name: Check handbook public inventories
+        run: python3 tools/enrich_handbook_public_lists.py --check
 
       - name: Build Rust API reference
         run: cargo doc --workspace --all-features --no-deps

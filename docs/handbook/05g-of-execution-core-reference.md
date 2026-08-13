@@ -132,10 +132,10 @@ replace, expiry, status, restatement, or adapter degradation.
 `OrderStatus` describes the order state after the report is applied. Terminal
 states are:
 
-- `Filled`
-- `Cancelled`
-- `Rejected`
-- `Expired`
+- `Filled` — The order has completed its requested quantity.
+- `Cancelled` — The venue or operator cancelled the remaining quantity.
+- `Rejected` — The venue or risk layer refused the order.
+- `Expired` — The order ended because its validity window elapsed.
 
 `OrderStatus::is_terminal()` is used by risk and open-order accounting.
 

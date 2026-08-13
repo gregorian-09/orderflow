@@ -7,8 +7,8 @@ concurrent worker ownership, and reusable OMS primitives.
 
 The crate has two execution layers:
 
-- `ExecutionEngine`: synchronous deterministic engine.
-- `ConcurrentExecutionEngine`: worker-thread owner around `ExecutionEngine`.
+- `ExecutionEngine` — Synchronous deterministic owner of canonical order state and execution transitions.
+- `ConcurrentExecutionEngine` — Worker-thread owner that serializes access to an `ExecutionEngine`.
 
 The synchronous engine is the canonical state machine. The concurrent engine is
 an additive producer/worker wrapper.
@@ -474,19 +474,21 @@ It exposes:
 
 Command kinds:
 
-- `Submit`
-- `Cancel`
-- `Amend`
-- `Poll`
-- `RecoverOpenOrders`
-- `Stop`
+- `Submit` — Submit a new order request through the selected route.
+- `Cancel` — Request cancellation of an existing order.
+- `Amend` — Request a quantity or price amendment.
+- `Poll` — Advance adapter polling and process available reports.
+- `RecoverOpenOrders` — Reconcile and recover open orders after restart.
+- `Stop` — Stop the worker and release its owned engine.
 
 The worker preserves deterministic order-state mutation. Producers can be
 concurrent, but the engine remains single-owner.
 
 ## OMS Helper Surface
 
-The `oms` module is re-exported from `of_execution`.
+The `oms` module is re-exported from `of_execution`. Each row below names a
+cohesive public declaration family; the area description explains the purpose
+of that family before the detailed sections that follow.
 
 | Area | Types / Functions |
 | --- | --- |
@@ -785,13 +787,13 @@ and reconciliation are explicit control-plane operations.
 
 `ExecutionError` includes:
 
-- `Disconnected`
-- `BufferFull`
-- `RouteNotFound`
-- `RiskRejected`
-- `Core`
-- `Adapter`
-- `Journal`
+- `Disconnected` — The execution route or adapter is disconnected.
+- `BufferFull` — A bounded event or command buffer cannot accept more data.
+- `RouteNotFound` — The requested route is not configured.
+- `RiskRejected` — The risk layer rejected the order operation.
+- `Core` — The canonical execution core returned an error.
+- `Adapter` — An execution adapter returned an error.
+- `Journal` — The execution journal returned an error.
 
 Concurrent wrapper errors are separated as `ConcurrentExecutionError`, mapping
 queue backpressure, stopped workers, worker panic, and underlying execution

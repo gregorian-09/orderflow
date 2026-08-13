@@ -14,6 +14,7 @@ python3 tools/generate_binding_surface.py
 python3 tools/generate_package_matrix.py
 python3 tools/generate_crate_pages.py
 python3 tools/enrich_api_reference.py
+python3 tools/enrich_handbook_public_lists.py
 cargo doc --workspace --all-features --no-deps --target-dir "${rust_target_dir}"
 
 if [[ -x "${root_dir}/.venv/bin/mkdocs" ]]; then
