@@ -864,11 +864,3 @@ The encoder:
 - computes and appends `CheckSum`.
 
 It rejects SOH bytes inside values and rejects caller-provided reserved tags.
-
-## Roadmap
-
-The next layers should remain additive:
-
-- profile-level resend/gap-fill suppression policy and socket transmission;
-- deterministic counterparty certification scenarios;
-- deeper integration into `of_execution_adapters::fix`.

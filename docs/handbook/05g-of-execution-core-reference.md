@@ -215,8 +215,8 @@ contract.
 
 ## Execution WAL Frame Primitives
 
-`of_execution_core` includes low-level binary WAL frame helpers for the durable
-OMS persistence roadmap. These helpers are intentionally not a file-backed
+`of_execution_core` includes low-level binary WAL frame helpers for durable
+OMS persistence. These helpers are intentionally not a file-backed
 `ExecutionJournal` yet. They provide the stable frame vocabulary that a later
 `WalExecutionJournal` can use without changing existing order, risk, or journal
 APIs.

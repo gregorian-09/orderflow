@@ -38,7 +38,7 @@ publication without adding any work to the engine hot path.
 
 | Type | Contract |
 | --- | --- |
-| `ExecutionAuditArtifactKind` | Stable evidence taxonomy; `PRODUCTION_REQUIRED` contains the 12 roadmap classes |
+| `ExecutionAuditArtifactKind` | Stable evidence taxonomy; `PRODUCTION_REQUIRED` contains the 12 required evidence classes |
 | `ExecutionAuditArtifact` | File or small in-memory source, portable bundle path, non-sensitive label, required/optional policy |
 | `ExecutionAuditTimeRange` | Inclusive Unix-nanosecond evidence boundary |
 | `ExecutionAuditBundleProfile` | Fail-closed production coverage or explicit custom coverage |
