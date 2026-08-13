@@ -2,9 +2,9 @@
 
 > Generated from `crates/of_analytics/Cargo.toml`, `rust-surface.md`, and `rust-values.md`.
 
-**Version:** `0.1.0`  
-**Description:** Advanced market microstructure analytics for Orderflow  
-**Source:** [`crates/of_analytics/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_analytics/src)  
+**Version:** `0.1.0`<br>
+**Description:** Advanced market microstructure analytics for Orderflow<br>
+**Source:** [`crates/of_analytics/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_analytics/src)<br>
 **Generated Rustdoc:** [open `of_analytics` Rustdoc](https://docs.rs/of_analytics/0.1.0/of_analytics/)
 
 This page is the crate-level index. The source links and generated

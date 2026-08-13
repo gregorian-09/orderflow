@@ -2,9 +2,9 @@
 
 > Generated from `crates/of_runtime/Cargo.toml`, `rust-surface.md`, and `rust-values.md`.
 
-**Version:** `0.5.0`  
-**Description:** Runtime orchestration and health supervision for the Orderflow engine  
-**Source:** [`crates/of_runtime/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_runtime/src)  
+**Version:** `0.5.0`<br>
+**Description:** Runtime orchestration and health supervision for the Orderflow engine<br>
+**Source:** [`crates/of_runtime/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_runtime/src)<br>
 **Generated Rustdoc:** [open `of_runtime` Rustdoc](https://docs.rs/of_runtime/0.5.0/of_runtime/)
 
 This page is the crate-level index. The source links and generated

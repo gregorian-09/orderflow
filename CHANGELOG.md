@@ -6,6 +6,18 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
+- Added `of_execution 0.2.0` as the additive OMS expansion after the published
+  `0.1.0` release, covering durable WAL payload recovery, checkpoints,
+  reconciliation, idempotency, drop copy, position ledger, operator controls,
+  certification, execution SLOs, audit bundles, and low-latency helpers.
+- Added `of_execution_core 0.2.0` with reusable bounded execution WAL frames,
+  sequence/segment metadata, replay cursors, checksums, and integrity reports.
+- Prepared the first `of_execution_algos 0.1.0` publication against
+  `of_execution_core 0.2.0`; because the algorithm crate was not previously
+  published, no patch-version increment is required.
+- Added `of_execution_adapters 0.2.0` with the transport-injected FIX runtime,
+  standard profile, request/report mapping, durable resend and recovery hooks,
+  operational metrics, and deterministic certification harness.
 - Added `of_persist::SegmentedMarketDataWal` with checksum-linked global
   sequence continuity, explicit seal frames, soft byte-target rotation,
   configurable sync cadence, atomic rebuilt manifests, cross-segment integrity

@@ -2,9 +2,9 @@
 
 > Generated from `examples/perf_harness/Cargo.toml`, `rust-surface.md`, and `rust-values.md`.
 
-**Version:** `0.5.0`  
-**Description:** (not declared)  
-**Source:** [`crates/perf_harness/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/perf_harness/src)  
+**Version:** `0.5.0`<br>
+**Description:** (not declared)<br>
+**Source:** [`crates/perf_harness/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/perf_harness/src)<br>
 **Generated Rustdoc:** [open `perf_harness` Rustdoc](https://docs.rs/perf_harness/0.5.0/perf_harness/)
 
 This page is the crate-level index. The source links and generated

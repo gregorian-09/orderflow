@@ -2,9 +2,9 @@
 
 > Generated from `crates/of_ffi_c/Cargo.toml`, `rust-surface.md`, and `rust-values.md`.
 
-**Version:** `0.5.0`  
-**Description:** C ABI facade for the Orderflow runtime  
-**Source:** [`crates/of_ffi_c/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_ffi_c/src)  
+**Version:** `0.5.0`<br>
+**Description:** C ABI facade for the Orderflow runtime<br>
+**Source:** [`crates/of_ffi_c/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_ffi_c/src)<br>
 **Generated Rustdoc:** [open `of_ffi_c` Rustdoc](https://docs.rs/of_ffi_c/0.5.0/of_ffi_c/)
 
 This page is the crate-level index. The source links and generated

@@ -2,9 +2,9 @@
 
 > Generated from `crates/of_fix/Cargo.toml`, `rust-surface.md`, and `rust-values.md`.
 
-**Version:** `0.1.0`  
-**Description:** Low-allocation FIX tag-value codec primitives for Orderflow execution adapters  
-**Source:** [`crates/of_fix/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_fix/src)  
+**Version:** `0.1.0`<br>
+**Description:** Low-allocation FIX tag-value codec primitives for Orderflow execution adapters<br>
+**Source:** [`crates/of_fix/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_fix/src)<br>
 **Generated Rustdoc:** [open `of_fix` Rustdoc](https://docs.rs/of_fix/0.1.0/of_fix/)
 
 This page is the crate-level index. The source links and generated

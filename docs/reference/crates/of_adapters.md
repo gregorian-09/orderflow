@@ -2,9 +2,9 @@
 
 > Generated from `crates/of_adapters/Cargo.toml`, `rust-surface.md`, and `rust-values.md`.
 
-**Version:** `0.5.0`  
-**Description:** Provider adapters and market-data abstraction for the Orderflow engine  
-**Source:** [`crates/of_adapters/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_adapters/src)  
+**Version:** `0.5.0`<br>
+**Description:** Provider adapters and market-data abstraction for the Orderflow engine<br>
+**Source:** [`crates/of_adapters/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_adapters/src)<br>
 **Generated Rustdoc:** [open `of_adapters` Rustdoc](https://docs.rs/of_adapters/0.5.0/of_adapters/)
 
 This page is the crate-level index. The source links and generated

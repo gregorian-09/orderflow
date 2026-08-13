@@ -19,7 +19,10 @@ permissions, and live-capital approval remain host responsibilities.
 | `of_core`, `of_adapters`, `of_signals`, `of_persist`, `of_runtime`, `of_ffi_c` | `0.5.0` | Established line; additive APIs over `0.4.0` |
 | Python `orderflow-gregorian09` | `0.5.0` | Install with matching native `of_ffi_c` |
 | Java `orderflow-java-binding` | `0.5.0` | Install with matching native `of_ffi_c` |
-| `of_analytics`, `of_execution_core`, `of_fix`, `of_execution`, `of_execution_algos`, `of_execution_adapters`, `of_persist_parquet` | `0.1.0` | Independent new public surfaces; pin compatible `0.1.x` versions |
+| `of_analytics`, `of_fix`, `of_persist_parquet` | `0.1.0` | Independent new public surfaces; pin compatible `0.1.x` versions |
+| `of_execution_core`, `of_execution` | `0.2.0` | Additive execution-domain and OMS expansion after the published `0.1.0` releases |
+| `of_execution_algos` | `0.1.0` | First publication of the execution-algorithm crate against `of_execution_core 0.2.0` |
+| `of_execution_adapters` | `0.2.0` | Additive FIX execution adapter and certification capabilities |
 
 The established crates must move to `0.5.0` because crates.io versions are
 immutable and the new standalone crates require APIs added after the `0.4.0`
@@ -84,7 +87,7 @@ range can be deleted.
 
 ## OMS And Execution Safety
 
-`of_execution 0.1.0` now supplies production-oriented additive foundations for:
+`of_execution 0.2.0` now supplies production-oriented additive foundations for:
 
 - deterministic multi-route and multi-symbol ownership;
 - bounded concurrent command/report workers with one state owner;
@@ -105,6 +108,11 @@ range can be deleted.
 - permission-ready idempotent operator runbook commands;
 - bounded, checksummed, atomically published incident audit bundles.
 
+`of_execution_core 0.2.0` adds the reusable execution WAL frame primitives:
+bounded headers, record kinds, sequence and segment identifiers, sync policy,
+borrowed replay views, checksum validation, replay cursors, and integrity
+reports. The higher-level OMS journals remain in `of_execution`.
+
 All recovery modes remain fail closed until required evidence is valid and
 venue reconciliation is complete. Simulation and certification evidence do
 not imply broker or exchange approval.
@@ -124,7 +132,7 @@ not imply broker or exchange approval.
 - typed new, cancel, replace, status, mass-cancel, and mass-status builders;
 - bounded raw transcript evidence and diagnostics.
 
-`of_execution_adapters 0.1.0` maps this infrastructure into canonical OMS
+`of_execution_adapters 0.2.0` maps this infrastructure into canonical OMS
 requests/reports through a synchronous, transport-injected FIX adapter. The
 host owns sockets, TLS, credentials, scheduling, clocks, and certification.
 The adapter owns bounded session state, resend/gap recovery, liveness,
@@ -232,16 +240,16 @@ Crates are published in dependency order:
 
 1. `of_core 0.5.0`
 2. `of_analytics 0.1.0`
-3. `of_execution_core 0.1.0`
+3. `of_execution_core 0.2.0`
 4. `of_fix 0.1.0`
 5. `of_signals 0.5.0`
 6. `of_persist 0.5.0`
 7. `of_persist_parquet 0.1.0`
 8. `of_adapters 0.5.0`
 9. `of_runtime 0.5.0`
-10. `of_execution 0.1.0`
+10. `of_execution 0.2.0`
 11. `of_execution_algos 0.1.0`
-12. `of_execution_adapters 0.1.0`
+12. `of_execution_adapters 0.2.0`
 13. `of_ffi_c 0.5.0`
 
 The workflow waits until each successful publication is visible in the
@@ -256,8 +264,9 @@ exists in the registry.
 1. Upgrade established Rust crates together to `0.5.0`.
 2. Upgrade Python/Java packages with the matching `0.5.0` native library.
 3. Keep `of_api_version()` compatibility checks in host startup.
-4. Explicitly select optional `0.1.x` crates; they are not added to established
-   default feature sets.
+4. Explicitly select optional `0.1.x` companion crates and pin
+   `of_execution_core`/`of_execution` to compatible `0.2.x` versions; they are
+   not added to established default feature sets.
 5. Configure bounded WAL limits, failure action, sync policy, and health gates
    before enabling persistence in a live runtime.
 6. Replay and reconcile persisted sessions before enabling execution after a

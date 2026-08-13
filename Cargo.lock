@@ -573,7 +573,7 @@ dependencies = [
 
 [[package]]
 name = "of_execution"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "of_execution_core",
  "serde",
@@ -583,7 +583,7 @@ dependencies = [
 
 [[package]]
 name = "of_execution_adapters"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "of_execution",
  "of_execution_core",
@@ -599,7 +599,7 @@ dependencies = [
 
 [[package]]
 name = "of_execution_core"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "of_ffi_c"

@@ -2,10 +2,10 @@
 
 > Generated from `crates/of_execution/Cargo.toml`, `rust-surface.md`, and `rust-values.md`.
 
-**Version:** `0.1.0`  
-**Description:** Execution routing, adapter contracts, simulated execution, and recovery hooks for Orderflow  
-**Source:** [`crates/of_execution/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_execution/src)  
-**Generated Rustdoc:** [open `of_execution` Rustdoc](https://docs.rs/of_execution/0.1.0/of_execution/)
+**Version:** `0.2.0`<br>
+**Description:** Execution routing, adapter contracts, simulated execution, and recovery hooks for Orderflow<br>
+**Source:** [`crates/of_execution/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_execution/src)<br>
+**Generated Rustdoc:** [open `of_execution` Rustdoc](https://docs.rs/of_execution/0.2.0/of_execution/)
 
 This page is the crate-level index. The source links and generated
 Rustdoc are authoritative for exact signatures, conditional compilation,

@@ -20,11 +20,11 @@ Coverage states are:
 | --- | --- | --- | --- | --- |
 | `of_core` | `0.5.0` | `crates/of_core/src` | `docs/handbook/05a-of-core-reference.md` | `inventory` |
 | `of_analytics` | `0.1.0` | `crates/of_analytics/src` | `docs/handbook/05l-of-analytics-reference.md` | `inventory` |
-| `of_execution_core` | `0.1.0` | `crates/of_execution_core/src` | `docs/handbook/05g-of-execution-core-reference.md` | `inventory` |
+| `of_execution_core` | `0.2.0` | `crates/of_execution_core/src` | `docs/handbook/05g-of-execution-core-reference.md` | `inventory` |
 | `of_fix` | `0.1.0` | `crates/of_fix/src` | `docs/handbook/05j-of-fix-reference.md` | `inventory` |
 | `of_execution_algos` | `0.1.0` | `crates/of_execution_algos/src` | `docs/handbook/05k-of-execution-algos-reference.md` | `inventory` |
-| `of_execution` | `0.1.0` | `crates/of_execution/src` | `docs/handbook/05h-of-execution-reference.md` | `inventory` |
-| `of_execution_adapters` | `0.1.0` | `crates/of_execution_adapters/src` | `docs/handbook/05i-of-execution-adapters-reference.md` | `inventory` |
+| `of_execution` | `0.2.0` | `crates/of_execution/src` | `docs/handbook/05h-of-execution-reference.md` | `inventory` |
+| `of_execution_adapters` | `0.2.0` | `crates/of_execution_adapters/src` | `docs/handbook/05i-of-execution-adapters-reference.md` | `inventory` |
 | `of_adapters` | `0.5.0` | `crates/of_adapters/src` | `docs/handbook/05b-of-adapters-reference.md` | `inventory` |
 | `of_signals` | `0.5.0` | `crates/of_signals/src` | `docs/handbook/05c-of-signals-reference.md` | `inventory` |
 | `of_persist` | `0.5.0` | `crates/of_persist/src` | `docs/handbook/05d-of-persist-reference.md` | `inventory` |

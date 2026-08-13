@@ -2,10 +2,10 @@
 
 > Generated from `crates/of_execution_core/Cargo.toml`, `rust-surface.md`, and `rust-values.md`.
 
-**Version:** `0.1.0`  
-**Description:** Low-latency execution domain model, order state machine, and risk primitives for Orderflow  
-**Source:** [`crates/of_execution_core/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_execution_core/src)  
-**Generated Rustdoc:** [open `of_execution_core` Rustdoc](https://docs.rs/of_execution_core/0.1.0/of_execution_core/)
+**Version:** `0.2.0`<br>
+**Description:** Low-latency execution domain model, order state machine, and risk primitives for Orderflow<br>
+**Source:** [`crates/of_execution_core/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_execution_core/src)<br>
+**Generated Rustdoc:** [open `of_execution_core` Rustdoc](https://docs.rs/of_execution_core/0.2.0/of_execution_core/)
 
 This page is the crate-level index. The source links and generated
 Rustdoc are authoritative for exact signatures, conditional compilation,

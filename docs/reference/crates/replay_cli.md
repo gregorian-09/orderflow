@@ -2,9 +2,9 @@
 
 > Generated from `examples/replay_cli/Cargo.toml`, `rust-surface.md`, and `rust-values.md`.
 
-**Version:** `0.5.0`  
-**Description:** (not declared)  
-**Source:** [`crates/replay_cli/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/replay_cli/src)  
+**Version:** `0.5.0`<br>
+**Description:** (not declared)<br>
+**Source:** [`crates/replay_cli/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/replay_cli/src)<br>
 **Generated Rustdoc:** [open `replay_cli` Rustdoc](https://docs.rs/replay_cli/0.5.0/replay_cli/)
 
 This page is the crate-level index. The source links and generated

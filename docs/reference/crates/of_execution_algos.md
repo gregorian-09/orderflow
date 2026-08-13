@@ -2,9 +2,9 @@
 
 > Generated from `crates/of_execution_algos/Cargo.toml`, `rust-surface.md`, and `rust-values.md`.
 
-**Version:** `0.1.0`  
-**Description:** Parent/child execution algorithm primitives for Orderflow  
-**Source:** [`crates/of_execution_algos/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_execution_algos/src)  
+**Version:** `0.1.0`<br>
+**Description:** Parent/child execution algorithm primitives for Orderflow<br>
+**Source:** [`crates/of_execution_algos/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_execution_algos/src)<br>
 **Generated Rustdoc:** [open `of_execution_algos` Rustdoc](https://docs.rs/of_execution_algos/0.1.0/of_execution_algos/)
 
 This page is the crate-level index. The source links and generated

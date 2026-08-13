@@ -9,7 +9,9 @@ serialized data, and operational configuration.
 | Surface | Current line | Compatibility note |
 | --- | --- | --- |
 | Existing runtime/analytics crates | `0.5.x` | Established market-data API family |
-| Advanced analytics and execution crates | `0.1.x` | Newer additive public surfaces |
+| Advanced analytics and FIX crates | `0.1.x` | Newer additive public surfaces with independent compatibility lines |
+| Execution algorithms | `0.1.0` first release | Not previously published; current dependency changes do not consume a patch version |
+| Execution core, OMS, and execution adapters | `0.2.x` | Additive expansion after the published `0.1.0` foundations |
 | C ABI | `0.5.x` package line | Symbol and layout compatibility is explicit |
 | Python binding | `0.5.x` package line | High-level methods preserve existing behavior |
 | Java binding | `0.5.x` package line | JNA mappings and lifecycle remain compatible |

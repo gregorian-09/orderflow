@@ -32,7 +32,10 @@ Package versions for this release:
 | Existing Rust crates: `of_core`, `of_adapters`, `of_signals`, `of_persist`, `of_runtime`, `of_ffi_c` | `0.5.0` | Same established API line, additive production hardening |
 | Python binding: `orderflow-gregorian09` | `0.5.0` | Matches the native `of_ffi_c` package line |
 | Java binding: `orderflow-java-binding` | `0.5.0` | Matches the native `of_ffi_c` package line |
-| New Rust crates: `of_analytics`, `of_execution_core`, `of_fix`, `of_execution`, `of_execution_adapters`, `of_execution_algos`, `of_persist_parquet` | `0.1.0` | New advanced analytics/execution/FIX/algo/cold-storage crate family, intentionally versioned from its own first public release |
+| New Rust crates: `of_analytics`, `of_fix`, `of_persist_parquet` | `0.1.0` | New advanced analytics/FIX/cold-storage crate family, intentionally versioned from its own first public release |
+| `of_execution_core`, `of_execution` | `0.2.0` | Additive execution-domain and OMS expansion after their published `0.1.0` releases |
+| `of_execution_algos` | `0.1.0` | First publication of the execution-algorithm crate against `of_execution_core 0.2.0` |
+| `of_execution_adapters` | `0.2.0` | Additive FIX execution adapter and certification capabilities |
 
 Major additions:
 
@@ -94,9 +97,9 @@ Major additions:
   exhaustive binding READMEs
 
 Upgrade rule: existing analytics users can upgrade without renaming existing
-APIs. Execution adopters should treat the new execution crates as a `0.1.0`
-surface and pin them explicitly if building provider adapters against their
-traits.
+APIs. Execution adopters using the published `of_execution 0.1.x` line can
+upgrade to `0.2.0` additively; provider adapters should update to
+`of_execution_adapters 0.2.0` when using that line.
 
 The full release inventory, compatibility rules, operational constraints, and
 upgrade sequence are in [Release 0.5.0](./docs/ops/release-0.5.0.md).

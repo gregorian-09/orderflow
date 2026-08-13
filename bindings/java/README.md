@@ -65,11 +65,14 @@ Version policy:
 
 - Java artifact: `0.5.0`
 - compatible native `of_ffi_c` library/header: `0.5.0`
-- new Rust execution crates behind the native ABI: `0.1.0`
+- `of_execution 0.2.0`, `of_execution_core 0.2.0`, and their independently
+  versioned execution companions behind the native ABI (`of_execution_algos`
+  is `0.1.0`, `of_execution_adapters` is `0.2.0`, and `of_fix` remains `0.1.x`)
 
 Keep the Java artifact and native runtime on the same release version. If you
-build custom native execution providers, pin the Rust execution crates to a
-compatible `0.1.x` line while those traits mature.
+build custom native execution providers, pin `of_execution_core` and
+`of_execution` to compatible `0.2.x` versions and use the matching `0.1.x`
+algorithm/adapter companion releases while those traits mature.
 
 ### Execution quick start
 

@@ -16,8 +16,10 @@ Current source release candidate: `0.5.0`.
   execution classes.
 - C ABI symbols for analytics remain stable and add a separate execution symbol
   family.
-- New standalone analytics, execution, FIX, algorithm, adapter, and Parquet
-  crates publish as `0.1.0`; bindings and native runtime publish as `0.5.0`.
+- `of_execution_core` and `of_execution` publish as `0.2.0`;
+  `of_execution_algos` publishes as `0.1.0`; `of_execution_adapters` publishes
+  as `0.2.0`; the other new analytics, FIX, and Parquet crates remain on their
+  independent `0.1.x` lines; bindings and native runtime publish as `0.5.0`.
 - Binding README files include end-to-end examples that combine market data,
   analytics, signal gating, simulated execution, and order reports.
 - C, Python, and Java expose a deterministic TWAP parent facade whose owned

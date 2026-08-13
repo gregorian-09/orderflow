@@ -2,9 +2,9 @@
 
 > Generated from `crates/of_persist_parquet/Cargo.toml`, `rust-surface.md`, and `rust-values.md`.
 
-**Version:** `0.1.0`  
-**Description:** Verified Apache Parquet cold export for Orderflow market-data WALs  
-**Source:** [`crates/of_persist_parquet/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_persist_parquet/src)  
+**Version:** `0.1.0`<br>
+**Description:** Verified Apache Parquet cold export for Orderflow market-data WALs<br>
+**Source:** [`crates/of_persist_parquet/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_persist_parquet/src)<br>
 **Generated Rustdoc:** [open `of_persist_parquet` Rustdoc](https://docs.rs/of_persist_parquet/0.1.0/of_persist_parquet/)
 
 This page is the crate-level index. The source links and generated

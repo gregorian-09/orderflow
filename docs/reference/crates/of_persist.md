@@ -2,9 +2,9 @@
 
 > Generated from `crates/of_persist/Cargo.toml`, `rust-surface.md`, and `rust-values.md`.
 
-**Version:** `0.5.0`  
-**Description:** Persistence and retention utilities for Orderflow normalized data  
-**Source:** [`crates/of_persist/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_persist/src)  
+**Version:** `0.5.0`<br>
+**Description:** Persistence and retention utilities for Orderflow normalized data<br>
+**Source:** [`crates/of_persist/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_persist/src)<br>
 **Generated Rustdoc:** [open `of_persist` Rustdoc](https://docs.rs/of_persist/0.5.0/of_persist/)
 
 This page is the crate-level index. The source links and generated

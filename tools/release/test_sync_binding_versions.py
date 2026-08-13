@@ -17,7 +17,10 @@ class SyncBindingVersionsTests(unittest.TestCase):
         self.assertEqual(versions["of_core"], "0.5.0")
         self.assertEqual(versions["of_ffi_c"], "0.5.0")
         self.assertEqual(versions["of_analytics"], "0.1.0")
+        self.assertEqual(versions["of_execution_core"], "0.2.0")
+        self.assertEqual(versions["of_execution"], "0.2.0")
         self.assertEqual(versions["of_execution_algos"], "0.1.0")
+        self.assertEqual(versions["of_execution_adapters"], "0.2.0")
         self.assertEqual(versions["of_fix"], "0.1.0")
         self.assertEqual(versions["of_persist_parquet"], "0.1.0")
 

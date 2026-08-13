@@ -2,9 +2,9 @@
 
 > Generated from `crates/of_core/Cargo.toml`, `rust-surface.md`, and `rust-values.md`.
 
-**Version:** `0.5.0`  
-**Description:** Core domain models and analytics primitives for the Orderflow engine  
-**Source:** [`crates/of_core/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_core/src)  
+**Version:** `0.5.0`<br>
+**Description:** Core domain models and analytics primitives for the Orderflow engine<br>
+**Source:** [`crates/of_core/src`](https://github.com/gregorian-09/orderflow/tree/main/crates/of_core/src)<br>
 **Generated Rustdoc:** [open `of_core` Rustdoc](https://docs.rs/of_core/0.5.0/of_core/)
 
 This page is the crate-level index. The source links and generated
