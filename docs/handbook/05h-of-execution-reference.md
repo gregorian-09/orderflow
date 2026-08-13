@@ -75,7 +75,7 @@ sequenceDiagram
         Exporter-->>Ops: report + manifest digest
     else any failure
         Exporter->>Stage: remove private staging directory
-        Exporter-->>Ops: typed error; no final bundle
+        Exporter-->>Ops: typed error, no final bundle
     end
 ```
 
