@@ -26,17 +26,18 @@ which files are relevant to the requested change and work with those changes.
 Do not use `git reset --hard`, `git checkout --`, or broad cleanup commands to
 make a task easier.
 
-Read the local contribution instructions before editing:
+Read the tracked contribution instructions before editing:
 
 ```text
-AGENTS.md                    local agent and repository instructions
+CONTRIBUTING.md              public coding standards and repository rules
 docs/handbook/README.md      handbook navigation and audience
 docs/contributors/README.md  documentation workflow and source-of-truth rules
 ```
 
-`AGENTS.md` is local working context and is intentionally excluded from Git.
-The handbook and contributor pages are published project documentation and must
-remain useful to external developers.
+`CONTRIBUTING.md` is the public, versioned source for coding style, API
+compatibility, testing, documentation, security, performance, and review rules.
+Any local maintainer or agent instructions are supplemental and must not be
+required for an external contributor to understand or validate a change.
 
 ### 1.2 Classify the change
 

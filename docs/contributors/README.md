@@ -1,5 +1,10 @@
 # Contributor and Documentation Workflow
 
+The repository-wide coding and review contract is in the tracked root
+[`CONTRIBUTING.md`](https://github.com/gregorian-09/orderflow/blob/main/CONTRIBUTING.md).
+Read it first. This page focuses on the documentation-specific workflow and
+generated reference maintenance.
+
 Orderflow documentation is maintained with the same discipline as library
 code. A change is incomplete when its public behavior, configuration, wire
 format, or operational consequence is undocumented.

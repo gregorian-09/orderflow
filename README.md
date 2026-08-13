@@ -118,6 +118,8 @@ Start here:
   throttling, replay, and C/Python/Java worker examples.
 - [Handbook Home](./docs/handbook/README.md) — primer, architecture, API reference.
 - [docs/README.md](./docs/README.md) — full navigation.
+- [CONTRIBUTING.md](./CONTRIBUTING.md) — coding standards, compatibility rules,
+  testing, documentation, security, and review workflow.
 - [docs/bindings/README.md](./docs/bindings/README.md) — Python (ctypes) and Java (JNA) setup.
 
 ## Analytics at a Glance
