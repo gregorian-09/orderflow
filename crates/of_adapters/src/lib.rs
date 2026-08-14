@@ -1,9 +1,10 @@
 #![doc = include_str!("../README.md")]
 
-use std::env;
 use std::error::Error;
 use std::fmt;
-use std::path::Path;
+
+#[cfg(any(feature = "binance", feature = "cqg", feature = "rithmic"))]
+use std::{env, path::Path};
 
 use of_core::{BookUpdate, SymbolId, TradePrint};
 
@@ -929,6 +930,7 @@ pub struct CredentialsRef {
     pub secret_env: String,
 }
 
+#[cfg(any(feature = "binance", feature = "cqg", feature = "rithmic"))]
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TlsFileConfig {
     ca_file: Option<String>,
@@ -938,6 +940,7 @@ pub(crate) struct TlsFileConfig {
     client_key_password_env: Option<String>,
 }
 
+#[cfg(any(feature = "binance", feature = "cqg", feature = "rithmic"))]
 impl TlsFileConfig {
     fn from_env(provider: &str) -> AdapterResult<Self> {
         let ca_file = tls_env(provider, "CA_FILE");
@@ -1017,6 +1020,7 @@ impl TlsFileConfig {
     }
 }
 
+#[cfg(any(feature = "binance", feature = "cqg", feature = "rithmic"))]
 pub(crate) fn openssl_s_client_args(
     provider: &str,
     host: &str,
@@ -1025,6 +1029,7 @@ pub(crate) fn openssl_s_client_args(
     Ok(TlsFileConfig::from_env(provider)?.openssl_args(host, port))
 }
 
+#[cfg(any(feature = "binance", feature = "cqg", feature = "rithmic"))]
 fn tls_env(provider: &str, suffix: &str) -> Option<String> {
     let provider_name = provider.to_ascii_uppercase();
     let scoped = format!("ORDERFLOW_{provider_name}_TLS_{suffix}");
@@ -1344,6 +1349,7 @@ mod tests {
         }
     }
 
+    #[cfg(any(feature = "binance", feature = "cqg", feature = "rithmic"))]
     #[test]
     fn tls_arguments_enforce_hostname_verification_without_file_configuration() {
         let args = TlsFileConfig::default().openssl_args("feed.example.test", 443);
@@ -1363,6 +1369,7 @@ mod tests {
         assert!(!args.iter().any(|arg| arg == "-key"));
     }
 
+    #[cfg(any(feature = "binance", feature = "cqg", feature = "rithmic"))]
     #[test]
     fn tls_arguments_keep_credentials_as_paths_or_environment_references() {
         let config = TlsFileConfig {
