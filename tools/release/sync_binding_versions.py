@@ -7,7 +7,10 @@ import argparse
 import pathlib
 import re
 import sys
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python < 3.11
+    import tomli as tomllib
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
