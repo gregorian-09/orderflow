@@ -15,7 +15,12 @@ maps parsed execution reports into canonical OMS events.
 | `FixMsgType` | struct | Static FIX `MsgType(35)` identifier |
 | `FixFieldView` | struct | Borrowed tag/value field view |
 | `FixMessageView` | struct | Borrowed validated FIX frame view |
+| `FixRepeatingGroupDefinition` | struct | Borrowed count, delimiter, and allowed-tag definition for one flat group |
+| `FixRepeatingGroupEntry` | struct | Caller-owned field-boundary slot for one parsed group entry |
+| `FixRepeatingGroup` | struct | Borrowed fields and lookup view for one group entry |
+| `FixRepeatingGroupView` | struct | Borrowed collection of parsed group entries |
 | `FixParseError` | enum | Strict parse and validation failures |
+| `FixGroupError` | enum | Repeating-group count, delimiter, scratch, and shape failures |
 | `FixEncodeError` | enum | Encode-time validation failures |
 | `FixProfileError` | enum | Dictionary/profile validation failures |
 | `FixRejectParseError` | enum | Reject-message parse failures |
@@ -86,6 +91,7 @@ maps parsed execution reports into canonical OMS events.
 | `parse_session_reject` | function | Parses Reject `<3>` into a borrowed diagnostic view |
 | `parse_business_message_reject` | function | Parses BusinessMessageReject `<j>` into a borrowed diagnostic view |
 | `encode_message` | function | Encodes a message into a caller-owned `Vec<u8>` |
+| `encode_message_with_repeating_group` | function | Encodes one validated flat repeating group after ordinary body fields |
 | `encode_logon` | function | Encodes Logon `<A>` |
 | `encode_heartbeat` | function | Encodes Heartbeat `<0>` |
 | `encode_test_request` | function | Encodes TestRequest `<1>` |
@@ -142,12 +148,84 @@ Not included:
 - wall-clock, scheduler, credentials, and authentication extensions;
 - automatic transmission of resend-store replay/gap-fill plans;
 - a session owner that embeds a specific transport or async runtime;
-- repeating group dictionaries;
+- nested repeating-group dictionaries and automatic dictionary generation;
 - scripted certification harness;
 - OMS execution-event mapping.
 
 Those layers should compose `FixSessionEngine` rather than duplicating protocol
 state in each adapter.
+
+## Repeating Groups
+
+FIX repeating groups are represented by a count field followed by entries. The
+first field of each entry is its delimiter; the delimiter allows the decoder
+to distinguish the next entry from the remaining fields in the current entry.
+`FixRepeatingGroupDefinition` captures those rules as borrowed profile data:
+
+- `count_tag` identifies the field that declares the number of entries;
+- `delimiter_tag` identifies the first field of every entry;
+- `field_tags` lists every tag permitted inside an entry.
+
+`FixMessageView::repeating_group` does not build an owned object tree. It reads
+the count from the already parsed field array, validates delimiter and allowed
+tags, then writes only `(start, end)` boundaries into caller-provided
+`FixRepeatingGroupEntry` scratch. `FixRepeatingGroupView` exposes `len`,
+`is_empty`, `get`, and `iter`; each `FixRepeatingGroup` exposes wire-order
+fields and a borrowed `get` lookup. Values remain slices of the original FIX
+frame, so the frame must outlive the view.
+
+The encoder counterpart is `encode_message_with_repeating_group`, also exposed
+as `FixEncoder::encode_with_repeating_group`. It calculates the count from the
+number of supplied entries, requires each entry to start with the configured
+delimiter, validates every tag against `field_tags`, rejects SOH in values,
+and then reuses the normal body-length and checksum finalization. The group is
+appended after ordinary body fields, which is explicit and predictable for a
+low-level codec. A profile that requires a different wire order can assemble
+its ordered fields in a higher-level typed builder.
+
+The following is a complete flat-group round trip using a typical party-group
+shape:
+
+```rust
+use of_fix::{
+    encode_message_with_repeating_group, parse_message, FixFieldView,
+    FixRepeatingGroupDefinition, FixRepeatingGroupEntry, FixTag,
+};
+
+const PARTY_FIELDS: &[FixTag] = &[FixTag(448), FixTag(447), FixTag(452)];
+let definition = FixRepeatingGroupDefinition::new(FixTag(453), FixTag(448), PARTY_FIELDS);
+let party = [
+    (FixTag(448), b"CLEARING-A".as_slice()),
+    (FixTag(447), b"D".as_slice()),
+    (FixTag(452), b"1".as_slice()),
+];
+let groups = [&party[..]];
+let mut raw = Vec::new();
+encode_message_with_repeating_group(
+    &mut raw,
+    b"FIX.4.4",
+    b"D",
+    &[(FixTag::CL_ORD_ID, b"ORD-42".as_slice())],
+    definition,
+    &groups,
+)?;
+
+let mut fields = [FixFieldView::empty(); 32];
+let message = parse_message(&raw, &mut fields)?;
+let mut group_scratch = [FixRepeatingGroupEntry::empty(); 1];
+let parties = message.repeating_group(definition, &mut group_scratch)?;
+assert_eq!(parties.get(0).and_then(|entry| entry.get(FixTag(448))),
+           Some(b"CLEARING-A".as_slice()));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`FixGroupError::ScratchTooSmall` makes capacity requirements explicit before
+the caller inspects entries. `MissingDelimiter` rejects an entry that cannot
+be safely bounded, and `UnexpectedField` rejects an allowed group tag left
+after the declared entry count. Empty groups are valid and return an empty
+view. Nested groups are intentionally outside this first API; they need a
+recursive schema and should be added additively rather than changing the
+meaning of existing flat definitions.
 
 ## Session Flow
 

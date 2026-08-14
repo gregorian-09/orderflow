@@ -62,7 +62,7 @@ Not included yet:
 - TCP/TLS transport;
 - credentials, authentication extensions, or a wall-clock/scheduler;
 - automatic transmission of replay/gap-fill plans from a resend store;
-- repeating group dictionaries;
+- nested repeating-group dictionaries and automatic dictionary generation;
 - venue certification harness;
 - OMS execution mapping.
 
@@ -116,6 +116,102 @@ messages, possible-duplicate replay, and persistence boundaries observable;
 they do not create a scheduler or transmit bytes. Order builders provide typed
 FIX entry messages, while the execution adapter remains responsible for
 mapping those messages to the OMS.
+
+`FixRepeatingGroupDefinition` describes one flat repeating group: its count
+tag, the delimiter tag that begins every entry, and the tags allowed within an
+entry. `FixMessageView::repeating_group` interprets that definition over the
+already parsed field array. The returned `FixRepeatingGroupView` and
+`FixRepeatingGroup` values borrow the original message and use caller-owned
+`FixRepeatingGroupEntry` scratch for boundaries; they do not allocate or copy
+tag values. This supports venue party, allocation, instrument-leg, and
+routing groups on a latency-sensitive path while keeping ownership explicit.
+
+The matching `encode_message_with_repeating_group` function and
+`FixEncoder::encode_with_repeating_group` method generate the count field and
+validate each entry before writing it. They append one flat group after the
+ordinary body fields and retain the existing `BodyLength(9)` and `CheckSum(10)`
+behavior. Nested groups, automatic data-dictionary loading, and venue
+certification scenarios remain responsibilities of a profile or adapter
+layer.
+
+## Repeating Group Support
+
+FIX repeating groups are a count field followed by a sequence of entries. Each
+entry starts with a delimiter field; subsequent fields belong to that entry
+until the next delimiter or the end of the group. For example, a party group
+may be represented by `NoPartyIDs(453)`, followed by entries beginning with
+`PartyID(448)` and containing `PartyIDSource(447)` and `PartyRole(452)`.
+
+`of_fix` represents this structure with a small explicit definition rather
+than a general-purpose object tree. The definition is borrowed and can be
+declared as static profile data:
+
+```rust
+use of_fix::{
+    encode_message_with_repeating_group, parse_message, FixFieldView,
+    FixRepeatingGroupDefinition, FixRepeatingGroupEntry, FixTag,
+};
+
+const PARTY_FIELDS: &[FixTag] = &[FixTag(448), FixTag(447), FixTag(452)];
+let party_group = FixRepeatingGroupDefinition::new(
+    FixTag(453), // NoPartyIDs
+    FixTag(448), // PartyID: first field of each entry
+    PARTY_FIELDS,
+);
+let first_party = [
+    (FixTag(448), b"CLEARING-A".as_slice()),
+    (FixTag(447), b"D".as_slice()),
+    (FixTag(452), b"1".as_slice()),
+];
+let second_party = [
+    (FixTag(448), b"CLEARING-B".as_slice()),
+    (FixTag(447), b"D".as_slice()),
+    (FixTag(452), b"3".as_slice()),
+];
+let groups = [&first_party[..], &second_party[..]];
+
+let mut raw = Vec::with_capacity(256);
+encode_message_with_repeating_group(
+    &mut raw,
+    b"FIX.4.4",
+    b"D",
+    &[(FixTag::CL_ORD_ID, b"ORD-42".as_slice())],
+    party_group,
+    &groups,
+)?;
+
+let mut fields = [FixFieldView::empty(); 32];
+let message = parse_message(&raw, &mut fields)?;
+let mut entry_scratch = [FixRepeatingGroupEntry::empty(); 2];
+let parties = message.repeating_group(party_group, &mut entry_scratch)?;
+assert_eq!(parties.len(), 2);
+assert_eq!(
+    parties.get(0).and_then(|entry| entry.get(FixTag(448))),
+    Some(b"CLEARING-A".as_slice())
+);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The decoder first reads the count and checks that the supplied scratch has at
+least that many entries. It then verifies every delimiter and every tag in
+each entry. A missing count, invalid count, insufficient scratch, missing
+delimiter, or group tag found outside the declared entries returns
+`FixGroupError`. Field values still borrow the source frame, so the frame must
+remain alive while callers inspect the group.
+
+The encoder applies the same structural contract in the opposite direction.
+An empty group is valid and emits a zero count. An entry must be non-empty,
+must start with the delimiter, and may contain only tags in `field_tags`.
+Values are checked for SOH before any bytes are written. The encoder owns the
+count tag and continues to reject tags `8`, `9`, `35`, and `10` inside group
+entries. Because the group is appended after ordinary body fields, a venue
+profile that requires a different field ordering should build its complete
+ordered field slices above this primitive or add a dedicated typed builder.
+
+This first API supports flat groups intentionally. Nested groups require a
+recursive schema and more involved boundary validation; they should be added
+as a separate additive API rather than changing the meaning of the existing
+definition or view types.
 
 ## Decode Example
 
@@ -591,6 +687,12 @@ valid. It checks the parsed `BeginString(8)` against a configured
 required and disallowed tags using borrowed field views. It does not allocate,
 does not perform transport/session validation, and does not imply venue
 certification.
+
+Repeating-group structure is validated separately through
+`FixMessageView::repeating_group`. A `FixDictionary` rule still validates the
+message-level required and disallowed tags; it does not infer group structure,
+because count, delimiter, and ordering requirements vary between FIX
+versions and venue profiles.
 
 `parse_session_reject` and `parse_business_message_reject` expose borrowed
 views over Reject `<3>` and BusinessMessageReject `<j>` diagnostics. They parse

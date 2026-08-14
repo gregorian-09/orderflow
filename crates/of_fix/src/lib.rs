@@ -505,6 +505,124 @@ impl<'a> FixFieldView<'a> {
     }
 }
 
+/// Describes one flat FIX repeating group.
+///
+/// `count_tag` identifies the field containing the number of entries,
+/// `delimiter_tag` identifies the first field of every entry, and `field_tags`
+/// lists every tag allowed inside an entry. The slices are borrowed so a venue
+/// profile can define them as static data and reuse the definition across
+/// messages without allocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixRepeatingGroupDefinition<'a> {
+    count_tag: FixTag,
+    delimiter_tag: FixTag,
+    field_tags: &'a [FixTag],
+}
+
+impl<'a> FixRepeatingGroupDefinition<'a> {
+    /// Creates a flat repeating-group definition.
+    pub const fn new(count_tag: FixTag, delimiter_tag: FixTag, field_tags: &'a [FixTag]) -> Self {
+        Self {
+            count_tag,
+            delimiter_tag,
+            field_tags,
+        }
+    }
+
+    /// Returns the group count tag.
+    pub const fn count_tag(self) -> FixTag {
+        self.count_tag
+    }
+
+    /// Returns the first-field delimiter tag.
+    pub const fn delimiter_tag(self) -> FixTag {
+        self.delimiter_tag
+    }
+
+    /// Returns all tags allowed inside each group entry.
+    pub const fn field_tags(self) -> &'a [FixTag] {
+        self.field_tags
+    }
+
+    fn allows(self, tag: FixTag) -> bool {
+        self.field_tags.contains(&tag)
+    }
+}
+
+/// Caller-owned boundary storage for one parsed repeating-group entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixRepeatingGroupEntry {
+    start: usize,
+    end: usize,
+}
+
+impl FixRepeatingGroupEntry {
+    /// Creates an empty boundary slot for caller-provided scratch storage.
+    pub const fn empty() -> Self {
+        Self { start: 0, end: 0 }
+    }
+
+    /// Returns the field range occupied by this entry in the parsed message.
+    pub const fn field_range(self) -> (usize, usize) {
+        (self.start, self.end)
+    }
+}
+
+/// Borrowed fields for one repeating-group entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixRepeatingGroup<'a> {
+    fields: &'a [FixFieldView<'a>],
+}
+
+impl<'a> FixRepeatingGroup<'a> {
+    /// Returns the entry fields in wire order.
+    pub const fn fields(self) -> &'a [FixFieldView<'a>] {
+        self.fields
+    }
+
+    /// Returns the first value for `tag` in this entry.
+    pub fn get(self, tag: FixTag) -> Option<&'a [u8]> {
+        self.fields
+            .iter()
+            .find(|field| field.tag == tag)
+            .map(|field| field.value)
+    }
+}
+
+/// Borrowed view over the entries of one flat repeating group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixRepeatingGroupView<'a, 'scratch> {
+    fields: &'a [FixFieldView<'a>],
+    entries: &'scratch [FixRepeatingGroupEntry],
+}
+
+impl<'a, 'scratch> FixRepeatingGroupView<'a, 'scratch> {
+    /// Returns the number of parsed group entries.
+    pub const fn len(self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns true when no entries were declared.
+    pub const fn is_empty(self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Returns one entry by zero-based index.
+    pub fn get(self, index: usize) -> Option<FixRepeatingGroup<'a>> {
+        let entry = self.entries.get(index)?;
+        Some(FixRepeatingGroup {
+            fields: &self.fields[entry.start..entry.end],
+        })
+    }
+
+    /// Iterates over entries in wire order without allocating.
+    pub fn iter(&self) -> impl Iterator<Item = FixRepeatingGroup<'a>> + '_ {
+        self.entries.iter().map(move |entry| FixRepeatingGroup {
+            fields: &self.fields[entry.start..entry.end],
+        })
+    }
+}
+
 /// Borrowed view over a validated FIX message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FixMessageView<'a> {
@@ -588,7 +706,135 @@ impl<'a> FixMessageView<'a> {
     pub fn debug_render(&self) -> String {
         debug_render(self.raw)
     }
+
+    /// Parses one flat repeating group using caller-provided boundary scratch.
+    ///
+    /// The group count, delimiter, and allowed fields come from `definition`.
+    /// The returned entries borrow the original parsed fields; only their
+    /// start/end boundaries are written to `scratch`. Nested groups are not
+    /// interpreted by this API.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixGroupError`] when the count is missing or malformed, the
+    /// scratch capacity is insufficient, an entry delimiter is missing, or an
+    /// entry contains a tag outside the definition.
+    pub fn repeating_group<'scratch>(
+        &self,
+        definition: FixRepeatingGroupDefinition<'_>,
+        scratch: &'scratch mut [FixRepeatingGroupEntry],
+    ) -> Result<FixRepeatingGroupView<'a, 'scratch>, FixGroupError> {
+        let count_index = self
+            .fields
+            .iter()
+            .position(|field| field.tag == definition.count_tag)
+            .ok_or(FixGroupError::MissingCountTag(definition.count_tag))?;
+        let count_value = self.fields[count_index].value;
+        let count = parse_usize(count_value)
+            .map_err(|_| FixGroupError::InvalidCount(definition.count_tag))?;
+        if count > scratch.len() {
+            return Err(FixGroupError::ScratchTooSmall {
+                required: count,
+                capacity: scratch.len(),
+            });
+        }
+
+        let mut cursor = count_index.saturating_add(1);
+        for (index, entry) in scratch.iter_mut().take(count).enumerate() {
+            if cursor >= self.fields.len() || self.fields[cursor].tag != definition.delimiter_tag {
+                return Err(FixGroupError::MissingDelimiter {
+                    index,
+                    tag: definition.delimiter_tag,
+                });
+            }
+            let start = cursor;
+            cursor = cursor.saturating_add(1);
+            while cursor < self.fields.len() {
+                let field = self.fields[cursor];
+                if field.tag == definition.delimiter_tag {
+                    break;
+                }
+                if !definition.allows(field.tag) {
+                    break;
+                }
+                cursor = cursor.saturating_add(1);
+            }
+            *entry = FixRepeatingGroupEntry { start, end: cursor };
+        }
+
+        if cursor < self.fields.len() && definition.allows(self.fields[cursor].tag) {
+            return Err(FixGroupError::UnexpectedField {
+                index: cursor,
+                tag: self.fields[cursor].tag,
+            });
+        }
+
+        Ok(FixRepeatingGroupView {
+            fields: self.fields,
+            entries: &scratch[..count],
+        })
+    }
 }
+
+/// Errors returned while interpreting a flat FIX repeating group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FixGroupError {
+    /// The group count tag is absent.
+    MissingCountTag(FixTag),
+    /// The group count is not an unsigned integer.
+    InvalidCount(FixTag),
+    /// The caller-provided entry boundary scratch is too small.
+    ScratchTooSmall {
+        /// Number of entries declared by the message.
+        required: usize,
+        /// Number of boundaries supplied by the caller.
+        capacity: usize,
+    },
+    /// An entry does not begin with the configured delimiter tag.
+    MissingDelimiter {
+        /// Zero-based entry index.
+        index: usize,
+        /// Expected delimiter tag.
+        tag: FixTag,
+    },
+    /// A tag that belongs to the group appears after the declared entries.
+    UnexpectedField {
+        /// Field index in the parsed message.
+        index: usize,
+        /// Unexpected tag.
+        tag: FixTag,
+    },
+}
+
+impl fmt::Display for FixGroupError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingCountTag(tag) => {
+                write!(f, "FIX repeating-group count tag {tag} is missing")
+            }
+            Self::InvalidCount(tag) => write!(f, "FIX repeating-group count tag {tag} is invalid"),
+            Self::ScratchTooSmall { required, capacity } => write!(
+                f,
+                "FIX repeating-group scratch too small: required {required}, capacity {capacity}"
+            ),
+            Self::MissingDelimiter { index, tag } => {
+                write!(
+                    f,
+                    "FIX repeating-group entry {index} is missing delimiter tag {tag}"
+                )
+            }
+            Self::UnexpectedField { index, tag } => {
+                write!(
+                    f,
+                    "FIX repeating-group field {index} has unexpected tag {tag}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for FixGroupError {}
 
 /// FIX parse and validation errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -666,6 +912,22 @@ pub enum FixEncodeError {
     ReservedTag(FixTag),
     /// A source message is missing a required tag for the requested encoding.
     MissingRequiredTag(FixTag),
+    /// A repeating-group entry does not begin with its configured delimiter.
+    MissingRepeatingGroupDelimiter {
+        /// Zero-based entry index.
+        group: usize,
+        /// Expected delimiter tag.
+        tag: FixTag,
+    },
+    /// A repeating-group entry contains a tag outside its definition.
+    InvalidRepeatingGroupField {
+        /// Zero-based entry index.
+        group: usize,
+        /// Zero-based field index within the entry.
+        index: usize,
+        /// Invalid tag.
+        tag: FixTag,
+    },
 }
 
 impl fmt::Display for FixEncodeError {
@@ -674,6 +936,14 @@ impl fmt::Display for FixEncodeError {
             Self::ValueContainsSoh(tag) => write!(f, "FIX value for tag {tag} contains SOH"),
             Self::ReservedTag(tag) => write!(f, "FIX tag {tag} is owned by the encoder"),
             Self::MissingRequiredTag(tag) => write!(f, "FIX source message is missing tag {tag}"),
+            Self::MissingRepeatingGroupDelimiter { group, tag } => write!(
+                f,
+                "FIX repeating-group entry {group} is missing delimiter tag {tag}"
+            ),
+            Self::InvalidRepeatingGroupField { group, index, tag } => write!(
+                f,
+                "FIX repeating-group entry {group} field {index} has invalid tag {tag}"
+            ),
         }
     }
 }
@@ -3116,6 +3386,36 @@ impl FixEncoder {
         Ok(&self.buffer)
     }
 
+    /// Encodes a message with one flat repeating group appended to `fields`.
+    ///
+    /// The group count is generated from `groups.len()`. Each entry must begin
+    /// with the definition delimiter and contain only tags listed by the
+    /// definition. The internal buffer is reused and no group-owned heap
+    /// allocation is performed by the encoder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixEncodeError`] when a value contains SOH, a reserved tag is
+    /// supplied, or a group entry violates `definition`.
+    pub fn encode_with_repeating_group(
+        &mut self,
+        begin_string: &[u8],
+        msg_type: &[u8],
+        fields: &[(FixTag, &[u8])],
+        definition: FixRepeatingGroupDefinition<'_>,
+        groups: &[&[(FixTag, &[u8])]],
+    ) -> Result<&[u8], FixEncodeError> {
+        encode_message_with_repeating_group(
+            &mut self.buffer,
+            begin_string,
+            msg_type,
+            fields,
+            definition,
+            groups,
+        )?;
+        Ok(&self.buffer)
+    }
+
     /// Encodes a typed version and message type into the reusable buffer.
     ///
     /// # Errors
@@ -3691,6 +3991,37 @@ pub fn encode_message(
     encode_message_parts(out, begin_string, msg_type, &[], fields)
 }
 
+/// Encodes a FIX message with one flat repeating group appended to `fields`.
+///
+/// `definition` supplies the count tag, delimiter tag, and allowed entry tags.
+/// The count field is emitted automatically, followed by each entry in the
+/// order supplied by `groups`. This API intentionally handles one flat group;
+/// nested groups remain a profile-specific extension above this low-level
+/// codec.
+///
+/// # Errors
+///
+/// Returns [`FixEncodeError`] when a field value contains SOH, a reserved tag
+/// is supplied, or an entry does not satisfy `definition`.
+pub fn encode_message_with_repeating_group(
+    out: &mut Vec<u8>,
+    begin_string: &[u8],
+    msg_type: &[u8],
+    fields: &[(FixTag, &[u8])],
+    definition: FixRepeatingGroupDefinition<'_>,
+    groups: &[&[(FixTag, &[u8])]],
+) -> Result<(), FixEncodeError> {
+    encode_message_parts_with_repeating_group(
+        out,
+        begin_string,
+        msg_type,
+        &[],
+        fields,
+        Some(definition),
+        groups,
+    )
+}
+
 /// Encodes a retained source message as a possible-duplicate resend.
 ///
 /// The source message must be a validated parsed message. This helper preserves
@@ -4242,8 +4573,38 @@ fn encode_message_parts(
     header_fields: &[(FixTag, &[u8])],
     fields: &[(FixTag, &[u8])],
 ) -> Result<(), FixEncodeError> {
+    encode_message_parts_with_repeating_group(
+        out,
+        begin_string,
+        msg_type,
+        header_fields,
+        fields,
+        None,
+        &[],
+    )
+}
+
+fn encode_message_parts_with_repeating_group(
+    out: &mut Vec<u8>,
+    begin_string: &[u8],
+    msg_type: &[u8],
+    header_fields: &[(FixTag, &[u8])],
+    fields: &[(FixTag, &[u8])],
+    definition: Option<FixRepeatingGroupDefinition<'_>>,
+    groups: &[&[(FixTag, &[u8])]],
+) -> Result<(), FixEncodeError> {
     validate_value(FixTag::BEGIN_STRING, begin_string)?;
     validate_value(FixTag::MSG_TYPE, msg_type)?;
+
+    if let Some(definition) = definition {
+        if matches!(
+            definition.count_tag,
+            FixTag::BEGIN_STRING | FixTag::BODY_LENGTH | FixTag::MSG_TYPE | FixTag::CHECK_SUM
+        ) {
+            return Err(FixEncodeError::ReservedTag(definition.count_tag));
+        }
+        validate_repeating_group(definition, groups)?;
+    }
 
     out.clear();
     write_field(out, FixTag::BEGIN_STRING, begin_string);
@@ -4260,11 +4621,58 @@ fn encode_message_parts(
         validate_value(*tag, value)?;
         write_field(out, *tag, value);
     }
+    if let Some(definition) = definition {
+        let mut count = [0u8; 20];
+        let count_len = write_u64_digits(&mut count, usize_to_u64(groups.len()));
+        write_field(out, definition.count_tag, &count[..count_len]);
+        for group in groups {
+            for (tag, value) in group.iter().copied() {
+                write_field(out, tag, value);
+            }
+        }
+    }
 
     let body_len = out.len().saturating_sub(body_start);
     patch_body_length(out, body_len);
     let sum = checksum(out);
     write_checksum(out, sum);
+    Ok(())
+}
+
+fn validate_repeating_group(
+    definition: FixRepeatingGroupDefinition<'_>,
+    groups: &[&[(FixTag, &[u8])]],
+) -> Result<(), FixEncodeError> {
+    for (group_index, group) in groups.iter().enumerate() {
+        let first = group
+            .first()
+            .ok_or(FixEncodeError::MissingRepeatingGroupDelimiter {
+                group: group_index,
+                tag: definition.delimiter_tag,
+            })?;
+        if first.0 != definition.delimiter_tag {
+            return Err(FixEncodeError::MissingRepeatingGroupDelimiter {
+                group: group_index,
+                tag: definition.delimiter_tag,
+            });
+        }
+        for (field_index, &(tag, value)) in group.iter().enumerate() {
+            if matches!(
+                tag,
+                FixTag::BEGIN_STRING | FixTag::BODY_LENGTH | FixTag::MSG_TYPE | FixTag::CHECK_SUM
+            ) {
+                return Err(FixEncodeError::ReservedTag(tag));
+            }
+            if !definition.allows(tag) {
+                return Err(FixEncodeError::InvalidRepeatingGroupField {
+                    group: group_index,
+                    index: field_index,
+                    tag,
+                });
+            }
+            validate_value(tag, value)?;
+        }
+    }
     Ok(())
 }
 
@@ -5038,6 +5446,128 @@ mod tests {
         assert_eq!(message.version(), Some(FixVersion::Fix44));
         assert_eq!(message.typed_msg_type(), Some(FixMsgType::NEW_ORDER_SINGLE));
         assert_eq!(message.msg_seq_num(), Some(7));
+    }
+
+    #[test]
+    fn repeating_group_round_trips_without_allocating_group_entries() {
+        static PARTY_FIELDS: &[FixTag] = &[FixTag(448), FixTag(447), FixTag(452)];
+        let definition = FixRepeatingGroupDefinition::new(FixTag(453), FixTag(448), PARTY_FIELDS);
+        let first = [
+            (FixTag(448), b"PARTY-A".as_slice()),
+            (FixTag(447), b"D".as_slice()),
+            (FixTag(452), b"1".as_slice()),
+        ];
+        let second = [
+            (FixTag(448), b"PARTY-B".as_slice()),
+            (FixTag(447), b"D".as_slice()),
+            (FixTag(452), b"3".as_slice()),
+        ];
+        let groups = [&first[..], &second[..]];
+        let mut raw = Vec::new();
+        encode_message_with_repeating_group(
+            &mut raw,
+            b"FIX.4.4",
+            b"D",
+            &[(FixTag::CL_ORD_ID, b"ORD-1".as_slice())],
+            definition,
+            &groups,
+        )
+        .expect("encode repeating group");
+
+        let mut fields = [FixFieldView::empty(); 32];
+        let message = parse_message(&raw, &mut fields).expect("parse");
+        let mut entries = [FixRepeatingGroupEntry::empty(); 2];
+        let view = message
+            .repeating_group(definition, &mut entries)
+            .expect("parse repeating group");
+
+        assert_eq!(view.len(), 2);
+        assert_eq!(
+            view.get(0).and_then(|entry| entry.get(FixTag(448))),
+            Some(b"PARTY-A".as_slice())
+        );
+        assert_eq!(view.iter().count(), 2);
+        assert_eq!(view.get(1).map(|entry| entry.fields().len()), Some(3));
+    }
+
+    #[test]
+    fn repeating_group_reports_scratch_and_shape_errors() {
+        static PARTY_FIELDS: &[FixTag] = &[FixTag(448), FixTag(447)];
+        let definition = FixRepeatingGroupDefinition::new(FixTag(453), FixTag(448), PARTY_FIELDS);
+        let mut raw = Vec::new();
+        encode_message(
+            &mut raw,
+            b"FIX.4.4",
+            b"D",
+            &[
+                (FixTag(453), b"1".as_slice()),
+                (FixTag(447), b"D".as_slice()),
+            ],
+        )
+        .expect("encode malformed group");
+        let mut fields = [FixFieldView::empty(); 16];
+        let message = parse_message(&raw, &mut fields).expect("parse");
+        let mut no_entries: [FixRepeatingGroupEntry; 0] = [];
+        assert!(matches!(
+            message.repeating_group(definition, &mut no_entries),
+            Err(FixGroupError::ScratchTooSmall {
+                required: 1,
+                capacity: 0
+            })
+        ));
+
+        let mut entries = [FixRepeatingGroupEntry::empty(); 1];
+        assert!(matches!(
+            message.repeating_group(definition, &mut entries),
+            Err(FixGroupError::MissingDelimiter {
+                index: 0,
+                tag: FixTag(448)
+            })
+        ));
+    }
+
+    #[test]
+    fn repeating_group_encoder_rejects_invalid_entries() {
+        static PARTY_FIELDS: &[FixTag] = &[FixTag(448), FixTag(447)];
+        let definition = FixRepeatingGroupDefinition::new(FixTag(453), FixTag(448), PARTY_FIELDS);
+        let mut raw = Vec::new();
+        let missing_delimiter = [(FixTag(447), b"D".as_slice())];
+        let groups = [&missing_delimiter[..]];
+        assert!(matches!(
+            encode_message_with_repeating_group(
+                &mut raw,
+                b"FIX.4.4",
+                b"D",
+                &[],
+                definition,
+                &groups,
+            ),
+            Err(FixEncodeError::MissingRepeatingGroupDelimiter {
+                group: 0,
+                tag: FixTag(448)
+            })
+        ));
+
+        let invalid = [
+            (FixTag(448), b"PARTY".as_slice()),
+            (FixTag(9999), b"unsupported".as_slice()),
+        ];
+        let groups = [&invalid[..]];
+        assert!(matches!(
+            encode_message_with_repeating_group(
+                &mut raw,
+                b"FIX.4.4",
+                b"D",
+                &[],
+                definition,
+                &groups,
+            ),
+            Err(FixEncodeError::InvalidRepeatingGroupField {
+                group: 0,
+                index: 1,
+                tag: FixTag(9999)
+            })
+        ));
     }
 
     #[test]

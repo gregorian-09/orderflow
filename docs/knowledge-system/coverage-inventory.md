@@ -38,7 +38,7 @@ Coverage states are:
 
 | Surface | Authority | Baseline |
 | --- | --- | ---: |
-| Rust declaration candidates | Cargo package `src/` trees | `4172` |
+| Rust declaration candidates | Cargo package `src/` trees | `4192` |
 | C ABI symbol references | `bindings/api_manifest.toml` | `101` |
 | Python public classes | `bindings/python/orderflow/` | `74` |
 | Python public methods | `bindings/python/orderflow/` | `91` |
@@ -93,11 +93,11 @@ Candidate public declarations: `84`
 
 ## `of_fix` Source Surface
 
-Candidate public declarations: `403`
+Candidate public declarations: `423`
 
 | Source file | Candidate declarations |
 | --- | ---: |
-| `crates/of_fix/src/lib.rs` | `368` |
+| `crates/of_fix/src/lib.rs` | `388` |
 | `crates/of_fix/src/session.rs` | `35` |
 
 ## `of_execution_algos` Source Surface
