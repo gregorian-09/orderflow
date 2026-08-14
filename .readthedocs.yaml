@@ -4,7 +4,7 @@ build:
   os: ubuntu-24.04
   tools:
     python: "3.12"
-    rust: "1.88"
+    rust: "1.91"
   jobs:
     post_checkout:
       - python3 tools/generate_docs_inventory.py
