@@ -233,6 +233,24 @@ the first field of an entry, reserved framing tags, invalid group fields, and
 SOH-containing values. These checks prevent a message that was accepted for
 encoding from being interpreted differently when decoded.
 
+Treat these errors as profile or field-order configuration failures:
+
+| Error | Interpretation |
+| --- | --- |
+| `MissingCountTag`, `InvalidCount` | The decoder cannot establish the number of entries. |
+| `ScratchTooSmall` | The caller has not supplied enough boundary storage. |
+| `MissingDelimiter` | An entry does not begin with the profile delimiter. |
+| `UnexpectedField` | A group tag appears after the contiguous group region. |
+| `DuplicateRepeatingGroupCountTag` | The encoder would emit two count fields. |
+| `MissingRepeatingGroupDelimiter` | An encoded entry is empty or begins incorrectly. |
+| `RepeatedRepeatingGroupDelimiter` | An entry would split into multiple decoded entries. |
+| `InvalidRepeatingGroupField` | A tag is not permitted by the group definition. |
+
+The host should correct the venue profile or ordered field construction and
+retry. Relaxing these checks would make encode/decode behavior dependent on
+field position and could cause a venue-specific field to be attributed to the
+wrong group entry.
+
 ## Session Flow
 
 ```mermaid

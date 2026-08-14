@@ -216,6 +216,29 @@ recursive schema and more involved boundary validation; they should be added
 as a separate additive API rather than changing the meaning of the existing
 definition or view types.
 
+### Repeating-Group Failure Modes
+
+The strict group contract is intentional. It prevents a venue-specific field
+from being silently interpreted as a different group entry:
+
+| Operation | Failure | Meaning |
+| --- | --- | --- |
+| Decode | `MissingCountTag` or `InvalidCount` | The declared entry count cannot be trusted. |
+| Decode | `ScratchTooSmall` | The caller must provide one boundary slot per declared entry. |
+| Decode | `MissingDelimiter` | An entry does not start where the profile says it must. |
+| Decode | `UnexpectedField` | A permitted group tag appears after the contiguous group boundary. |
+| Encode | `DuplicateRepeatingGroupCountTag` | The generated count would be ambiguous with a caller field. |
+| Encode | `MissingRepeatingGroupDelimiter` | An entry is empty or starts with the wrong tag. |
+| Encode | `RepeatedRepeatingGroupDelimiter` | One entry would be decoded as multiple entries. |
+| Encode | `InvalidRepeatingGroupField` | The entry contains a tag outside the profile definition. |
+
+The encoder checks the group definition and group entries before clearing the
+output buffer. This makes structural profile errors observable without
+partially replacing a previously encoded frame. Applications should treat
+these errors as profile/configuration failures, correct the venue definition
+or field ordering, and retry with a new message rather than relaxing the
+decoder.
+
 ## Decode Example
 
 ```rust
