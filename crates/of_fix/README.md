@@ -196,14 +196,17 @@ The decoder first reads the count and checks that the supplied scratch has at
 least that many entries. It then verifies every delimiter and every tag in
 each entry. A missing count, invalid count, insufficient scratch, missing
 delimiter, or group tag found outside the declared entries returns
-`FixGroupError`. Field values still borrow the source frame, so the frame must
-remain alive while callers inspect the group.
+`FixGroupError`. Group fields must remain contiguous: a later allowed group tag
+after an unrelated field is rejected rather than silently reinterpreted.
+Field values still borrow the source frame, so the frame must remain alive while
+callers inspect the group.
 
 The encoder applies the same structural contract in the opposite direction.
 An empty group is valid and emits a zero count. An entry must be non-empty,
 must start with the delimiter, and may contain only tags in `field_tags`.
 Values are checked for SOH before any bytes are written. The encoder owns the
-count tag and continues to reject tags `8`, `9`, `35`, and `10` inside group
+count tag and rejects a duplicate count tag in ordinary fields, repeated
+delimiters inside an entry, and tags `8`, `9`, `35`, and `10` inside group
 entries. Because the group is appended after ordinary body fields, a venue
 profile that requires a different field ordering should build its complete
 ordered field slices above this primitive or add a dedicated typed builder.

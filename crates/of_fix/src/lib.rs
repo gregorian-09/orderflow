@@ -762,11 +762,13 @@ impl<'a> FixMessageView<'a> {
             *entry = FixRepeatingGroupEntry { start, end: cursor };
         }
 
-        if cursor < self.fields.len() && definition.allows(self.fields[cursor].tag) {
-            return Err(FixGroupError::UnexpectedField {
-                index: cursor,
-                tag: self.fields[cursor].tag,
-            });
+        for (index, field) in self.fields.iter().enumerate().skip(cursor) {
+            if definition.allows(field.tag) {
+                return Err(FixGroupError::UnexpectedField {
+                    index,
+                    tag: field.tag,
+                });
+            }
         }
 
         Ok(FixRepeatingGroupView {
@@ -912,6 +914,8 @@ pub enum FixEncodeError {
     ReservedTag(FixTag),
     /// A source message is missing a required tag for the requested encoding.
     MissingRequiredTag(FixTag),
+    /// The generated repeating-group count tag was supplied in ordinary fields.
+    DuplicateRepeatingGroupCountTag(FixTag),
     /// A repeating-group entry does not begin with its configured delimiter.
     MissingRepeatingGroupDelimiter {
         /// Zero-based entry index.
@@ -928,6 +932,15 @@ pub enum FixEncodeError {
         /// Invalid tag.
         tag: FixTag,
     },
+    /// A repeating-group delimiter appears after the first field of an entry.
+    RepeatedRepeatingGroupDelimiter {
+        /// Zero-based entry index.
+        group: usize,
+        /// Zero-based field index within the entry.
+        index: usize,
+        /// Repeated delimiter tag.
+        tag: FixTag,
+    },
 }
 
 impl fmt::Display for FixEncodeError {
@@ -936,6 +949,12 @@ impl fmt::Display for FixEncodeError {
             Self::ValueContainsSoh(tag) => write!(f, "FIX value for tag {tag} contains SOH"),
             Self::ReservedTag(tag) => write!(f, "FIX tag {tag} is owned by the encoder"),
             Self::MissingRequiredTag(tag) => write!(f, "FIX source message is missing tag {tag}"),
+            Self::DuplicateRepeatingGroupCountTag(tag) => {
+                write!(
+                    f,
+                    "FIX repeating-group count tag {tag} was supplied more than once"
+                )
+            }
             Self::MissingRepeatingGroupDelimiter { group, tag } => write!(
                 f,
                 "FIX repeating-group entry {group} is missing delimiter tag {tag}"
@@ -943,6 +962,10 @@ impl fmt::Display for FixEncodeError {
             Self::InvalidRepeatingGroupField { group, index, tag } => write!(
                 f,
                 "FIX repeating-group entry {group} field {index} has invalid tag {tag}"
+            ),
+            Self::RepeatedRepeatingGroupDelimiter { group, index, tag } => write!(
+                f,
+                "FIX repeating-group entry {group} field {index} repeats delimiter tag {tag}"
             ),
         }
     }
@@ -4603,6 +4626,15 @@ fn encode_message_parts_with_repeating_group(
         ) {
             return Err(FixEncodeError::ReservedTag(definition.count_tag));
         }
+        if header_fields
+            .iter()
+            .chain(fields.iter())
+            .any(|(tag, _)| *tag == definition.count_tag)
+        {
+            return Err(FixEncodeError::DuplicateRepeatingGroupCountTag(
+                definition.count_tag,
+            ));
+        }
         validate_repeating_group(definition, groups)?;
     }
 
@@ -4665,6 +4697,13 @@ fn validate_repeating_group(
             }
             if !definition.allows(tag) {
                 return Err(FixEncodeError::InvalidRepeatingGroupField {
+                    group: group_index,
+                    index: field_index,
+                    tag,
+                });
+            }
+            if field_index > 0 && tag == definition.delimiter_tag {
+                return Err(FixEncodeError::RepeatedRepeatingGroupDelimiter {
                     group: group_index,
                     index: field_index,
                     tag,
@@ -5524,6 +5563,30 @@ mod tests {
                 tag: FixTag(448)
             })
         ));
+
+        let mut raw = Vec::new();
+        encode_message(
+            &mut raw,
+            b"FIX.4.4",
+            b"D",
+            &[
+                (FixTag(453), b"1".as_slice()),
+                (FixTag(448), b"PARTY".as_slice()),
+                (FixTag(9999), b"ordinary".as_slice()),
+                (FixTag(447), b"D".as_slice()),
+            ],
+        )
+        .expect("encode non-contiguous group");
+        let mut fields = [FixFieldView::empty(); 16];
+        let message = parse_message(&raw, &mut fields).expect("parse non-contiguous group");
+        let mut entries = [FixRepeatingGroupEntry::empty(); 1];
+        assert!(matches!(
+            message.repeating_group(definition, &mut entries),
+            Err(FixGroupError::UnexpectedField {
+                index: 6,
+                tag: FixTag(447)
+            })
+        ));
     }
 
     #[test]
@@ -5566,6 +5629,42 @@ mod tests {
                 group: 0,
                 index: 1,
                 tag: FixTag(9999)
+            })
+        ));
+
+        let duplicate_count = [(FixTag(453), b"caller-count".as_slice())];
+        let groups: [&[(FixTag, &[u8])]; 0] = [];
+        assert!(matches!(
+            encode_message_with_repeating_group(
+                &mut raw,
+                b"FIX.4.4",
+                b"D",
+                &duplicate_count,
+                definition,
+                &groups,
+            ),
+            Err(FixEncodeError::DuplicateRepeatingGroupCountTag(FixTag(453)))
+        ));
+
+        let repeated_delimiter = [
+            (FixTag(448), b"PARTY-A".as_slice()),
+            (FixTag(447), b"D".as_slice()),
+            (FixTag(448), b"PARTY-B".as_slice()),
+        ];
+        let groups = [&repeated_delimiter[..]];
+        assert!(matches!(
+            encode_message_with_repeating_group(
+                &mut raw,
+                b"FIX.4.4",
+                b"D",
+                &[],
+                definition,
+                &groups,
+            ),
+            Err(FixEncodeError::RepeatedRepeatingGroupDelimiter {
+                group: 0,
+                index: 2,
+                tag: FixTag(448)
             })
         ));
     }

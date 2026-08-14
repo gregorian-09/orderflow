@@ -221,11 +221,17 @@ assert_eq!(parties.get(0).and_then(|entry| entry.get(FixTag(448))),
 
 `FixGroupError::ScratchTooSmall` makes capacity requirements explicit before
 the caller inspects entries. `MissingDelimiter` rejects an entry that cannot
-be safely bounded, and `UnexpectedField` rejects an allowed group tag left
-after the declared entry count. Empty groups are valid and return an empty
-view. Nested groups are intentionally outside this first API; they need a
-recursive schema and should be added additively rather than changing the
-meaning of existing flat definitions.
+be safely bounded, and `UnexpectedField` rejects any allowed group tag found
+after the group, even when unrelated fields appear first. Empty groups are
+valid and return an empty view. Nested groups are intentionally outside this
+first API; they need a recursive schema and should be added additively rather
+than changing the meaning of existing flat definitions.
+
+Encoding applies the same structural rules before mutating the output buffer.
+It rejects a caller-supplied duplicate count tag, repeated delimiters after
+the first field of an entry, reserved framing tags, invalid group fields, and
+SOH-containing values. These checks prevent a message that was accepted for
+encoding from being interpreted differently when decoded.
 
 ## Session Flow
 
