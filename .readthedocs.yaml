@@ -4,9 +4,9 @@ build:
   os: ubuntu-24.04
   tools:
     python: "3.12"
-    rust: "1.91"
+  rust: "1.91"
   jobs:
-    post_checkout:
+    pre_build:
       - python3 tools/generate_docs_inventory.py
       - python3 tools/generate_rust_surface.py
       - python3 tools/generate_binding_surface.py
@@ -15,7 +15,6 @@ build:
       - python3 tools/generate_crate_pages.py
       - python3 tools/enrich_api_reference.py
       - python3 tools/enrich_handbook_public_lists.py
-    pre_build:
       - cargo doc --workspace --all-features --no-deps
     post_build:
       - mkdir -p "$READTHEDOCS_OUTPUT/html/reference/rust"
