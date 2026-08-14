@@ -196,6 +196,10 @@ derivatives, and stable feature-vector extraction. This split prevents every
 - Binance update-id continuity, duplicate suppression, gap/snapshot state,
   queue bounds, raw capture, fixture replay, parse/normalization latency, and
   jittered reconnect backoff.
+- provider-scoped TLS overrides for a trusted CA bundle and optional mTLS
+  client certificate, chain, key, and password-environment references. TLS
+  setup is performed during connection establishment, outside the market-data
+  hot path;
 
 Built-in provider maturity labels remain evidence claims, not marketing labels.
 Hosts should use descriptor and conformance output before enabling live modes.

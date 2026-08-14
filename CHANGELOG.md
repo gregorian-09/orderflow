@@ -18,6 +18,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `of_execution_adapters 0.2.0` with the transport-injected FIX runtime,
   standard profile, request/report mapping, durable resend and recovery hooks,
   operational metrics, and deterministic certification harness.
+- Added provider-scoped TLS file configuration for live WebSocket adapters.
+  Operators can supply custom CA bundles, mTLS client certificates and chains,
+  matching private keys, and password environment-variable references without
+  changing existing `AdapterConfig` layouts or placing secrets in arguments,
+  logs, health metadata, or configuration files. Server hostname verification
+  remains enforced.
 - Added `of_persist::SegmentedMarketDataWal` with checksum-linked global
   sequence continuity, explicit seal frames, soft byte-target rotation,
   configurable sync cadence, atomic rebuilt manifests, cross-segment integrity

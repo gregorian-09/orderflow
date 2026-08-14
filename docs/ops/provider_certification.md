@@ -12,6 +12,8 @@ Use this runbook to validate live-provider readiness in a real vendor environmen
 - Valid provider credentials in environment variables referenced by config.
 - Reachable provider endpoint in config file (`.toml` or `.json`).
 - Built shared library + Python binding import path available.
+- For private trust roots or mTLS, readable PEM files and the TLS environment
+  variables described below.
 
 ### Credential handling standard
 
@@ -41,6 +43,38 @@ Build the C ABI with provider features before running harness:
 ```bash
 cargo build -p of_ffi_c --features "binance rithmic cqg"
 ```
+
+### Custom trust roots and mTLS
+
+The live WebSocket adapters use OpenSSL for the connection boundary. They
+verify the server certificate against the system trust store by default and
+verify the endpoint hostname. `ORDERFLOW_*_TLS_CA_FILE` selects a supplied PEM
+trust bundle when a venue uses a private CA. A venue that requires a client
+certificate can provide mTLS files without putting secret material in runtime
+configuration:
+
+```bash
+export ORDERFLOW_CQG_TLS_CA_FILE=/run/secrets/cqg-ca.pem
+export ORDERFLOW_CQG_TLS_CLIENT_CERT_FILE=/run/secrets/cqg-client.pem
+export ORDERFLOW_CQG_TLS_CLIENT_CHAIN_FILE=/run/secrets/cqg-chain.pem
+export ORDERFLOW_CQG_TLS_CLIENT_KEY_FILE=/run/secrets/cqg-client-key.pem
+export ORDERFLOW_CQG_TLS_CLIENT_KEY_PASSWORD_ENV=CQG_TLS_KEY_PASSWORD
+export CQG_TLS_KEY_PASSWORD='provided-by-your-secret-manager'
+```
+
+Use `BINANCE_TLS` or `RITHMIC_TLS` for those providers. The generic
+`ORDERFLOW_TLS_*` names are fallback settings; provider-specific names take
+precedence and are preferable when one process owns multiple venue sessions.
+`CLIENT_CERT_FILE` and `CLIENT_KEY_FILE` must be supplied together. All paths
+must point to readable regular files; OpenSSL performs PEM and chain
+validation after the path checks. The key password is looked up by name and is
+passed to OpenSSL through an environment reference, so it is not exposed in
+process arguments or logs.
+
+This configuration is applied during connection setup only. It does not add
+per-event work to the market-data polling path. Do not disable hostname
+verification, use `-verify` bypasses, or replace a venue-specific CA with an
+unreviewed system-wide bundle.
 
 For Binance-only testing:
 

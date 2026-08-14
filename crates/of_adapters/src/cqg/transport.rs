@@ -111,15 +111,9 @@ impl WsProtobufTransport {
                 spawn_ws_workers(writer, reader, out_rx, in_tx);
             }
             "wss" => {
+                let openssl_args = crate::openssl_s_client_args("cqg", &parsed.host, parsed.port)?;
                 let mut child = Command::new("openssl")
-                    .args([
-                        "s_client",
-                        "-quiet",
-                        "-connect",
-                        &format!("{}:{}", parsed.host, parsed.port),
-                        "-servername",
-                        &parsed.host,
-                    ])
+                    .args(&openssl_args)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::null())

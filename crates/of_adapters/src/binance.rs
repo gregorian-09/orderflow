@@ -144,15 +144,10 @@ impl WsTextTransport {
                 spawn_text_ws_workers(writer, stream, out_rx, in_tx.clone(), out_tx.clone());
             }
             "wss" => {
+                let openssl_args =
+                    crate::openssl_s_client_args("binance", &parsed.host, parsed.port)?;
                 let mut child = Command::new("openssl")
-                    .args([
-                        "s_client",
-                        "-quiet",
-                        "-connect",
-                        &format!("{}:{}", parsed.host, parsed.port),
-                        "-servername",
-                        &parsed.host,
-                    ])
+                    .args(&openssl_args)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::null())

@@ -324,6 +324,53 @@ Normalization rules:
 - `key_id_env`: env var that stores the provider user/key id
 - `secret_env`: env var that stores the secret/password/token
 
+### TLS and Client Certificates
+
+Live `wss://` transports use the host OpenSSL installation. TLS policy is
+resolved once when a connection is established, never while polling or
+normalizing market data. The system OpenSSL trust store is used by default;
+`ORDERFLOW_*_TLS_CA_FILE` selects a supplied PEM trust bundle instead. Server
+hostname verification is enforced in both cases. Venue deployments may
+configure mutual TLS through environment variables:
+
+| Variable | Meaning |
+| --- | --- |
+| `ORDERFLOW_TLS_CA_FILE` | PEM file containing the trusted CA bundle used for server verification |
+| `ORDERFLOW_TLS_CLIENT_CERT_FILE` | PEM client certificate for mTLS |
+| `ORDERFLOW_TLS_CLIENT_CHAIN_FILE` | Optional PEM intermediate chain sent with the client certificate |
+| `ORDERFLOW_TLS_CLIENT_KEY_FILE` | PEM private key matching the client certificate |
+| `ORDERFLOW_TLS_CLIENT_KEY_PASSWORD_ENV` | Name of an environment variable containing the private-key password |
+
+Provider-specific variables take precedence over generic variables. Replace
+`TLS` with `BINANCE_TLS`, `CQG_TLS`, or `RITHMIC_TLS` in the variable name, for
+example `ORDERFLOW_CQG_TLS_CA_FILE`. This allows one process to connect to
+multiple venues with different trust roots or client identities.
+
+The configured paths must be readable regular files and are checked before
+`openssl` starts; OpenSSL performs the subsequent PEM and certificate-chain
+validation. The certificate and key must be supplied as a pair. Passwords are
+referenced with `-passin env:...`; the secret itself is never placed in a
+command-line argument, log message, health field, or configuration file. Do
+not disable hostname verification or use a broad CA bundle as a substitute for
+the venue's documented trust chain.
+
+Example mTLS setup:
+
+```bash
+export ORDERFLOW_CQG_TLS_CA_FILE=/run/secrets/cqg-ca.pem
+export ORDERFLOW_CQG_TLS_CLIENT_CERT_FILE=/run/secrets/cqg-client.pem
+export ORDERFLOW_CQG_TLS_CLIENT_CHAIN_FILE=/run/secrets/cqg-chain.pem
+export ORDERFLOW_CQG_TLS_CLIENT_KEY_FILE=/run/secrets/cqg-client-key.pem
+export ORDERFLOW_CQG_TLS_CLIENT_KEY_PASSWORD_ENV=CQG_TLS_KEY_PASSWORD
+export CQG_TLS_KEY_PASSWORD='provided-by-your-secret-manager'
+```
+
+These settings are transport settings, not FIX credentials. They configure the
+live WebSocket transports in `of_adapters` without changing existing
+`AdapterConfig` struct literals or public method signatures. A separate FIX
+transport owner can apply the same certificate policy when it constructs its
+own socket; `of_fix` does not implicitly read these adapter variables.
+
 ## Health Semantics
 
 [`AdapterHealth`] is the bridge between provider supervision and runtime quality decisions.

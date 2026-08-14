@@ -1,7 +1,9 @@
 #![doc = include_str!("../README.md")]
 
+use std::env;
 use std::error::Error;
 use std::fmt;
+use std::path::Path;
 
 use of_core::{BookUpdate, SymbolId, TradePrint};
 
@@ -927,6 +929,115 @@ pub struct CredentialsRef {
     pub secret_env: String,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TlsFileConfig {
+    ca_file: Option<String>,
+    client_cert_file: Option<String>,
+    client_chain_file: Option<String>,
+    client_key_file: Option<String>,
+    client_key_password_env: Option<String>,
+}
+
+impl TlsFileConfig {
+    fn from_env(provider: &str) -> AdapterResult<Self> {
+        let ca_file = tls_env(provider, "CA_FILE");
+        let client_cert_file = tls_env(provider, "CLIENT_CERT_FILE");
+        let client_chain_file = tls_env(provider, "CLIENT_CHAIN_FILE");
+        let client_key_file = tls_env(provider, "CLIENT_KEY_FILE");
+        let client_key_password_env = tls_env(provider, "CLIENT_KEY_PASSWORD_ENV");
+
+        if client_cert_file.is_some() != client_key_file.is_some() {
+            return Err(AdapterError::NotConfigured(
+                "TLS client certificate and private key must be configured together",
+            ));
+        }
+        if let Some(password_env) = &client_key_password_env {
+            if env::var_os(password_env).is_none() {
+                return Err(AdapterError::Other(format!(
+                    "TLS private-key password env var is not set: {password_env}"
+                )));
+            }
+        }
+
+        for (name, path) in [
+            ("CA file", ca_file.as_deref()),
+            ("client certificate file", client_cert_file.as_deref()),
+            (
+                "client certificate chain file",
+                client_chain_file.as_deref(),
+            ),
+            ("client private key file", client_key_file.as_deref()),
+        ] {
+            if let Some(path) = path {
+                if !Path::new(path).is_file() {
+                    return Err(AdapterError::Other(format!(
+                        "TLS {name} does not exist or is not a file: {path}"
+                    )));
+                }
+            }
+        }
+
+        Ok(Self {
+            ca_file,
+            client_cert_file,
+            client_chain_file,
+            client_key_file,
+            client_key_password_env,
+        })
+    }
+
+    fn openssl_args(&self, host: &str, port: u16) -> Vec<String> {
+        let mut args = vec![
+            "s_client".to_string(),
+            "-quiet".to_string(),
+            "-verify_return_error".to_string(),
+            "-verify_hostname".to_string(),
+            host.to_string(),
+            "-connect".to_string(),
+            format!("{host}:{port}"),
+            "-servername".to_string(),
+            host.to_string(),
+        ];
+        if let Some(path) = &self.ca_file {
+            args.extend(["-CAfile".to_string(), path.clone()]);
+        }
+        if let Some(path) = &self.client_cert_file {
+            args.extend(["-cert".to_string(), path.clone()]);
+        }
+        if let Some(path) = &self.client_chain_file {
+            args.extend(["-cert_chain".to_string(), path.clone()]);
+        }
+        if let Some(path) = &self.client_key_file {
+            args.extend(["-key".to_string(), path.clone()]);
+        }
+        if let Some(password_env) = &self.client_key_password_env {
+            args.extend(["-passin".to_string(), format!("env:{password_env}")]);
+        }
+        args
+    }
+}
+
+pub(crate) fn openssl_s_client_args(
+    provider: &str,
+    host: &str,
+    port: u16,
+) -> AdapterResult<Vec<String>> {
+    Ok(TlsFileConfig::from_env(provider)?.openssl_args(host, port))
+}
+
+fn tls_env(provider: &str, suffix: &str) -> Option<String> {
+    let provider_name = provider.to_ascii_uppercase();
+    let scoped = format!("ORDERFLOW_{provider_name}_TLS_{suffix}");
+    env::var(&scoped)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            env::var(format!("ORDERFLOW_TLS_{suffix}"))
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
 /// Creates a provider adapter from configuration.
 pub fn create_adapter(cfg: &AdapterConfig) -> AdapterResult<Box<dyn MarketDataAdapter>> {
     match &cfg.provider {
@@ -1231,6 +1342,64 @@ mod tests {
                 .iter()
                 .any(|failure| { failure.requirement == AdapterConformanceRequirement::Compiled }));
         }
+    }
+
+    #[test]
+    fn tls_arguments_enforce_hostname_verification_without_file_configuration() {
+        let args = TlsFileConfig::default().openssl_args("feed.example.test", 443);
+
+        assert!(args.windows(2).any(|pair| {
+            pair == [
+                "-verify_hostname".to_string(),
+                "feed.example.test".to_string(),
+            ]
+        }));
+        assert!(args
+            .windows(2)
+            .any(|pair| { pair == ["-connect".to_string(), "feed.example.test:443".to_string()] }));
+        assert!(args.contains(&"-verify_return_error".to_string()));
+        assert!(!args.iter().any(|arg| arg == "-CAfile"));
+        assert!(!args.iter().any(|arg| arg == "-cert"));
+        assert!(!args.iter().any(|arg| arg == "-key"));
+    }
+
+    #[test]
+    fn tls_arguments_keep_credentials_as_paths_or_environment_references() {
+        let config = TlsFileConfig {
+            ca_file: Some("/run/secrets/venue-ca.pem".to_string()),
+            client_cert_file: Some("/run/secrets/client.pem".to_string()),
+            client_chain_file: Some("/run/secrets/chain.pem".to_string()),
+            client_key_file: Some("/run/secrets/client-key.pem".to_string()),
+            client_key_password_env: Some("CLIENT_KEY_PASSWORD".to_string()),
+        };
+
+        let args = config.openssl_args("feed.example.test", 443);
+
+        assert!(args.windows(2).any(|pair| {
+            pair == [
+                "-CAfile".to_string(),
+                "/run/secrets/venue-ca.pem".to_string(),
+            ]
+        }));
+        assert!(args
+            .windows(2)
+            .any(|pair| { pair == ["-cert".to_string(), "/run/secrets/client.pem".to_string()] }));
+        assert!(args.windows(2).any(|pair| {
+            pair == [
+                "-cert_chain".to_string(),
+                "/run/secrets/chain.pem".to_string(),
+            ]
+        }));
+        assert!(args.windows(2).any(|pair| {
+            pair == [
+                "-key".to_string(),
+                "/run/secrets/client-key.pem".to_string(),
+            ]
+        }));
+        assert!(args.windows(2).any(|pair| {
+            pair == ["-passin".to_string(), "env:CLIENT_KEY_PASSWORD".to_string()]
+        }));
+        assert!(!args.iter().any(|arg| arg == "actual-secret-value"));
     }
 
     #[cfg(not(feature = "rithmic"))]
