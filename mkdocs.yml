@@ -32,6 +32,8 @@ theme:
 markdown_extensions:
   - admonition
   - attr_list
+  - pymdownx.highlight:
+      pygments_lang_class: true
   - pymdownx.details
   - pymdownx.tabbed:
       alternate_style: true
