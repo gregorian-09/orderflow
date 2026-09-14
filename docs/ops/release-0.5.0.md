@@ -14,6 +14,12 @@ permissions, and live-capital approval remain host responsibilities.
 
 ## Version Model
 
+The machine-readable source for this table is the repository-root
+`release.toml`. Run `python3 tools/release/validate_release_manifest.py` before
+editing package versions or publication order. Cargo manifests remain
+authoritative for effective package versions; the release manifest exists to
+make drift and omissions fail before a release workflow can proceed.
+
 | Package family | Version | Compatibility rule |
 | --- | ---: | --- |
 | `of_core`, `of_adapters`, `of_signals`, `of_persist`, `of_runtime`, `of_ffi_c` | `0.5.0` | Established line; additive APIs over `0.4.0` |

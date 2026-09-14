@@ -4,6 +4,21 @@ This checklist covers repeatable release tasks for package/version publishing.
 
 ## 1) Sync versions
 
+Validate the repository-wide package map before changing any version:
+
+```bash
+python3 tools/release/validate_release_manifest.py
+python3 tools/release/test_validate_release_manifest.py
+```
+
+The root `release.toml` is the coordinated release manifest. It lists every
+workspace package, its effective version, publication status, and dependency-
+safe crates.io order. It also checks the binding and native SDK versions. Cargo
+manifests remain authoritative; this manifest is the consistency gate.
+
+Then synchronize the existing binding/native version surfaces when preparing a
+new established release line:
+
 ```bash
 python3 tools/release/sync_binding_versions.py
 ```

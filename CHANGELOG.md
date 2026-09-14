@@ -6,7 +6,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 ### Added
-- No unreleased changes.
+- Added `release.toml` and release validation tooling to make mixed package
+  versions, internal dependency requirements, binding versions, native SDK
+  versions, and crates.io publication order explicit and machine-checked.
 
 ## [0.5.0] - 2026-08-14
 ### Added

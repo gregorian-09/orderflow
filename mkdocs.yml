@@ -135,6 +135,7 @@ nav:
       - Binding Surface Audit: bindings/surface-audit.md
   - Operations:
       - Operations Overview: ops/README.md
+      - Release Versioning: ops/release-versioning.md
       - Production Operations Manual: operations/README.md
       - Real Data Testing: ops/real_data_test.md
       - Performance: ops/performance.md
