@@ -20,6 +20,9 @@ jobs:
       - name: Install Rust
         uses: ./.github/actions/setup-rust
 
+      - name: Validate release versions
+        run: python3 tools/release/validate_release_manifest.py
+
       - name: Build release library
         run: cargo build -p of_ffi_c --release --features "binance rithmic cqg"
 

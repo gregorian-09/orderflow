@@ -33,6 +33,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Validate release versions
+        run: |
+          python3 tools/release/validate_release_manifest.py
+          python3 tools/release/sync_binding_versions.py --check
+
       - name: Build package
         shell: bash
         run: |
