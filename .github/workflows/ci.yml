@@ -100,8 +100,10 @@ jobs:
         run: python3 tools/docs_coverage.py --enforce
       - name: Validate release version synchronization
         run: |
+          python3 tools/release/validate_release_manifest.py
           python3 tools/release/sync_binding_versions.py --check
           python3 tools/release/test_sync_binding_versions.py
+          python3 tools/release/test_validate_release_manifest.py
 
   python-binding:
     runs-on: ubuntu-latest

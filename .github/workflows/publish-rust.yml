@@ -27,7 +27,8 @@ jobs:
         if: github.event_name == 'push' || inputs.dry_run
         run: |
           set -euo pipefail
-          for crate in of_core of_analytics of_execution_core of_fix of_signals of_persist of_persist_parquet of_adapters of_runtime of_execution of_execution_algos of_execution_adapters of_ffi_c; do
+          mapfile -t crates < <(python3 tools/release/validate_release_manifest.py --print-publish-order)
+          for crate in "${crates[@]}"; do
             cargo check --locked -p "$crate"
             package_files="$(cargo package -p "$crate" --allow-dirty --list)"
             test -n "$package_files"
@@ -73,7 +74,8 @@ jobs:
             return 1
           }
 
-          for crate in of_core of_analytics of_execution_core of_fix of_signals of_persist of_persist_parquet of_adapters of_runtime of_execution of_execution_algos of_execution_adapters of_ffi_c; do
+          mapfile -t crates < <(python3 tools/release/validate_release_manifest.py --print-publish-order)
+          for crate in "${crates[@]}"; do
             version="$(crate_version "$crate")"
             set +e
             publish_output="$(cargo publish -p "$crate" 2>&1)"
