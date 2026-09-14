@@ -1,12 +1,15 @@
 # Orderflow Engine and Bindings
 
+[![CI](https://github.com/gregorian-09/orderflow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gregorian-09/orderflow/actions/workflows/ci.yml)
+[![Docs](https://readthedocs.org/projects/orderflow-microstructure-engine/badge/?version=latest)](https://orderflow-microstructure-engine.readthedocs.io/en/latest/)
+[![Release](https://img.shields.io/github/v/release/gregorian-09/orderflow?display_name=tag&sort=semver)](https://github.com/gregorian-09/orderflow/releases)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
 Orderflow is a multi-language market data and analytics engine that computes
 **29 categories of microstructural analytics** across Rust, C, Python, and
 Java — from spread metrics and VPIN toxicity through fingerprint patterns,
 volatility signatures, Almgren-Chriss impact models, options flow, futures
 basis, dark pool siphon detection, and machine-learning-ready LOB features.
-
-[![Documentation](https://readthedocs.org/projects/orderflow-microstructure-engine/badge/?version=latest)](https://orderflow-microstructure-engine.readthedocs.io/en/latest/)
 
 **Read the complete documentation online:**
 [Orderflow Documentation on Read the Docs](https://orderflow-microstructure-engine.readthedocs.io/en/latest/)
