@@ -27,7 +27,9 @@ jobs:
         if: github.event_name == 'push' || inputs.dry_run
         run: |
           set -euo pipefail
-          mapfile -t crates < <(python3 tools/release/validate_release_manifest.py --print-publish-order)
+          publish_order="$(python3 tools/release/validate_release_manifest.py --print-publish-order)"
+          test -n "$publish_order"
+          mapfile -t crates <<<"$publish_order"
           for crate in "${crates[@]}"; do
             cargo check --locked -p "$crate"
             package_files="$(cargo package -p "$crate" --allow-dirty --list)"
@@ -74,7 +76,9 @@ jobs:
             return 1
           }
 
-          mapfile -t crates < <(python3 tools/release/validate_release_manifest.py --print-publish-order)
+          publish_order="$(python3 tools/release/validate_release_manifest.py --print-publish-order)"
+          test -n "$publish_order"
+          mapfile -t crates <<<"$publish_order"
           for crate in "${crates[@]}"; do
             version="$(crate_version "$crate")"
             set +e
