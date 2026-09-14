@@ -1,0 +1,111 @@
+# Coordinated release metadata for the Orderflow monorepo.
+#
+# The coordinated release identifier and a package version are deliberately
+# separate. A release can contain additive updates to the established 0.5.x
+# line and first or independent releases from smaller crate families.
+
+[release]
+coordinated_version = "0.5.0"
+tag = "v0.5.0"
+
+# Every workspace package is listed explicitly. This makes omissions and
+# accidental version drift fail validation instead of relying on memory or a
+# second hand-maintained workflow list.
+[packages.of_core]
+version = "0.5.0"
+family = "platform"
+publish = true
+publish_order = 1
+
+[packages.of_analytics]
+version = "0.1.0"
+family = "analytics"
+publish = true
+publish_order = 2
+
+[packages.of_execution_core]
+version = "0.2.0"
+family = "execution"
+publish = true
+publish_order = 3
+
+[packages.of_fix]
+version = "0.1.0"
+family = "execution"
+publish = true
+publish_order = 4
+
+[packages.of_signals]
+version = "0.5.0"
+family = "platform"
+publish = true
+publish_order = 5
+
+[packages.of_persist]
+version = "0.5.0"
+family = "platform"
+publish = true
+publish_order = 6
+
+[packages.of_persist_parquet]
+version = "0.1.0"
+family = "persistence"
+publish = true
+publish_order = 7
+
+[packages.of_adapters]
+version = "0.5.0"
+family = "platform"
+publish = true
+publish_order = 8
+
+[packages.of_runtime]
+version = "0.5.0"
+family = "platform"
+publish = true
+publish_order = 9
+
+[packages.of_execution]
+version = "0.2.0"
+family = "execution"
+publish = true
+publish_order = 10
+
+[packages.of_execution_algos]
+version = "0.1.0"
+family = "execution"
+publish = true
+publish_order = 11
+
+[packages.of_execution_adapters]
+version = "0.2.0"
+family = "execution"
+publish = true
+publish_order = 12
+
+[packages.of_ffi_c]
+version = "0.5.0"
+family = "platform"
+publish = true
+publish_order = 13
+
+[packages.replay_cli]
+version = "0.5.0"
+family = "tooling"
+publish = false
+
+[packages.perf_harness]
+version = "0.5.0"
+family = "tooling"
+publish = false
+
+# Binding versions remain in bindings/versions.toml because that file is also
+# consumed by the binding synchronizer. These values are checked against this
+# manifest so the two sources cannot silently diverge.
+[bindings]
+python = "0.5.0"
+java = "0.5.0"
+rust = "0.5.0"
+
+[artifacts]
+c_sdk = "0.5.0"
