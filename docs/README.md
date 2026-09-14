@@ -13,6 +13,12 @@ then descends into exact APIs, language bindings, persistence formats, and
 operational procedures. Start with [How to Read the Documentation](./handbook/00-how-to-read.md)
 if you are new to the project.
 
+Read the rendered documentation at
+[Orderflow Documentation on Read the Docs](https://orderflow-microstructure-engine.readthedocs.io/en/latest/).
+The online portal provides searchable navigation, the complete handbook, and
+the generated Rust API reference. The Markdown files in this directory remain
+the source content and are also useful for offline reading.
+
 The rendered portal is configured in the repository root
 [`mkdocs.yml`](https://github.com/gregorian-09/orderflow/blob/main/mkdocs.yml)
 and is suitable for local preview and Read the Docs hosting.

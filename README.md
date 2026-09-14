@@ -6,6 +6,18 @@ Java — from spread metrics and VPIN toxicity through fingerprint patterns,
 volatility signatures, Almgren-Chriss impact models, options flow, futures
 basis, dark pool siphon detection, and machine-learning-ready LOB features.
 
+[![Documentation](https://readthedocs.org/projects/orderflow-microstructure-engine/badge/?version=latest)](https://orderflow-microstructure-engine.readthedocs.io/en/latest/)
+
+**Read the complete documentation online:**
+[Orderflow Documentation on Read the Docs](https://orderflow-microstructure-engine.readthedocs.io/en/latest/)
+
+The online documentation is the project's complete knowledge system. It
+connects the market-data model, analytics, signals, persistence, OMS and
+execution, adapters, FIX, bindings, API references, recovery procedures, and
+contributor guidance. The repository links below are useful when browsing the
+source tree or working offline; the rendered site provides the searchable
+navigation and generated Rust API reference.
+
 Version `0.5.0` hardens the execution, OMS, signal, adapter, and persistence
 foundations for developer-built production workflows. Execution APIs use
 separate Rust crates, C handles, Python classes, and Java classes, so existing
