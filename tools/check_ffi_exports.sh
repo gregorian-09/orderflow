@@ -28,7 +28,9 @@ mapfile -t exported_symbols < <(nm "${nm_args[@]}" "$lib_path" | awk '{print $NF
 
 missing_symbols=()
 for symbol in "${expected_symbols[@]}"; do
-  if ! printf '%s\n' "${exported_symbols[@]}" | grep -Fxq "$symbol"; then
+  # Keep grep reading the complete list; `-q` can close the pipe early and
+  # make printf report SIGPIPE under `set -o pipefail`.
+  if ! printf '%s\n' "${exported_symbols[@]}" | grep -Fx "$symbol" >/dev/null; then
     missing_symbols+=("$symbol")
   fi
 done
