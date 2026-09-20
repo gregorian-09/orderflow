@@ -361,10 +361,11 @@ impl BinanceAdapter {
         self.record_parse_latency(parse_started.elapsed());
     }
 
-    fn send_binance_subscribe(&mut self, symbol: &SymbolId) -> AdapterResult<()> {
+    fn send_binance_subscription(&mut self, symbol: &SymbolId, method: &str) -> AdapterResult<()> {
         let sym = symbol.symbol.to_ascii_lowercase();
         let payload = format!(
-            "{{\"method\":\"SUBSCRIBE\",\"params\":[\"{}@aggTrade\",\"{}@depth@100ms\"],\"id\":{}}}",
+            "{{\"method\":\"{}\",\"params\":[\"{}@aggTrade\",\"{}@depth@100ms\"],\"id\":{}}}",
+            method,
             sym,
             sym,
             self.next_request_id()
@@ -375,18 +376,12 @@ impl BinanceAdapter {
         }
     }
 
+    fn send_binance_subscribe(&mut self, symbol: &SymbolId) -> AdapterResult<()> {
+        self.send_binance_subscription(symbol, "SUBSCRIBE")
+    }
+
     fn send_binance_unsubscribe(&mut self, symbol: &SymbolId) -> AdapterResult<()> {
-        let sym = symbol.symbol.to_ascii_lowercase();
-        let payload = format!(
-            "{{\"method\":\"UNSUBSCRIBE\",\"params\":[\"{}@aggTrade\",\"{}@depth@100ms\"],\"id\":{}}}",
-            sym,
-            sym,
-            self.next_request_id()
-        );
-        match &mut self.transport {
-            BinanceTransport::Live(ws) => ws.send_text("binance", payload),
-            BinanceTransport::Mock => Ok(()),
-        }
+        self.send_binance_subscription(symbol, "UNSUBSCRIBE")
     }
 
     fn parse_live_message(&mut self, msg: &str, ts_recv_ns: u64) {
