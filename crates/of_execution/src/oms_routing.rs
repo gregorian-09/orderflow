@@ -145,14 +145,7 @@ pub fn replay_simulated_oms(
     for (idx, decision) in decisions.iter().enumerate() {
         events.clear();
         let kind = decision.command.kind();
-        let result = match decision.command {
-            ExecutionCommand::Submit(req) => engine.submit(req, &mut events).map(|()| events.len()),
-            ExecutionCommand::Cancel(req) => engine.cancel(req, &mut events).map(|()| events.len()),
-            ExecutionCommand::Amend(req) => engine.amend(req, &mut events).map(|()| events.len()),
-            ExecutionCommand::Poll => engine.poll(&mut events),
-            ExecutionCommand::RecoverOpenOrders => engine.recover_open_orders(&mut events),
-            ExecutionCommand::Stop => Ok(0),
-        };
+        let result = crate::concurrent::execute_command(&mut engine, decision.command, &mut events);
         reports.push(ExecutionCommandReport {
             sequence: (idx + 1) as u64,
             kind,

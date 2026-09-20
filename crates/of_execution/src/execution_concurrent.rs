@@ -69,6 +69,27 @@ impl ExecutionCommand {
     }
 }
 
+#[inline]
+pub(crate) fn execute_command<A, R, J>(
+    engine: &mut ExecutionEngine<A, R, J>,
+    command: ExecutionCommand,
+    events: &mut ExecutionEventBuffer,
+) -> ExecutionResult<usize>
+where
+    A: ExecutionAdapter,
+    R: RiskCheck,
+    J: ExecutionJournal,
+{
+    match command {
+        ExecutionCommand::Submit(req) => engine.submit(req, events).map(|()| events.len()),
+        ExecutionCommand::Cancel(req) => engine.cancel(req, events).map(|()| events.len()),
+        ExecutionCommand::Amend(req) => engine.amend(req, events).map(|()| events.len()),
+        ExecutionCommand::Poll => engine.poll(events),
+        ExecutionCommand::RecoverOpenOrders => engine.recover_open_orders(events),
+        ExecutionCommand::Stop => Ok(0),
+    }
+}
+
 /// Result report emitted by a concurrent execution worker.
 #[derive(Debug, Clone)]
 pub struct ExecutionCommandReport {
@@ -413,14 +434,7 @@ fn run_execution_worker<A, R, J>(
     while let Ok(worker_command) = rx.recv() {
         events.clear();
         let kind = worker_command.command.kind();
-        let result = match worker_command.command {
-            ExecutionCommand::Submit(req) => engine.submit(req, &mut events).map(|()| events.len()),
-            ExecutionCommand::Cancel(req) => engine.cancel(req, &mut events).map(|()| events.len()),
-            ExecutionCommand::Amend(req) => engine.amend(req, &mut events).map(|()| events.len()),
-            ExecutionCommand::Poll => engine.poll(&mut events),
-            ExecutionCommand::RecoverOpenOrders => engine.recover_open_orders(&mut events),
-            ExecutionCommand::Stop => Ok(0),
-        };
+        let result = execute_command(&mut engine, worker_command.command, &mut events);
         let report = ExecutionCommandReport {
             sequence: worker_command.sequence,
             kind,
