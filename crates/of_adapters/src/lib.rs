@@ -21,12 +21,16 @@ mod status;
 
 #[cfg(any(feature = "binance", feature = "cqg", feature = "rithmic"))]
 pub(crate) use config::openssl_s_client_args;
+#[cfg(any(feature = "binance", feature = "rithmic"))]
+mod websocket;
 pub use config::*;
 pub use contract::*;
 pub use discovery::*;
 pub use factory::*;
 pub use mock::*;
 pub use status::*;
+#[cfg(any(feature = "binance", feature = "rithmic"))]
+pub(crate) use websocket::TextWebSocket;
 
 #[cfg(feature = "rithmic")]
 /// Rithmic adapter implementation (feature-gated).
