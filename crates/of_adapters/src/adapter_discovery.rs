@@ -1,0 +1,542 @@
+/// Provider selection used by adapter factory configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ProviderKind {
+    /// In-memory deterministic test provider.
+    Mock,
+    /// Rithmic adapter provider.
+    Rithmic,
+    /// CQG adapter provider.
+    Cqg,
+    /// Binance adapter provider.
+    Binance,
+}
+
+impl ProviderKind {
+    /// Returns the stable lowercase provider id used in diagnostics.
+    pub const fn id(&self) -> &'static str {
+        match self {
+            Self::Mock => "mock",
+            Self::Rithmic => "rithmic",
+            Self::Cqg => "cqg",
+            Self::Binance => "binance",
+        }
+    }
+}
+
+/// Adapter maturity level advertised by the discovery registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AdapterQualityLevel {
+    /// Early adapter implementation with no conformance claim.
+    Experimental,
+    /// Deterministic local adapter intended for tests, examples, and replay.
+    Simulation,
+    /// Build-time integration scaffold that is not live-production complete.
+    Scaffold,
+    /// Adapter passed deterministic simulator/conformance scenarios.
+    SimulatedCertified,
+    /// Live-capable adapter that still requires operator validation.
+    Functional,
+    /// Adapter has been exercised against a broker or exchange paper/sandbox environment.
+    PaperTrading,
+    /// Candidate for production use with recovery, runbook, and metrics.
+    ProductionCandidate,
+    /// Adapter has passed provider certification for a documented profile.
+    Certified,
+    /// Adapter has documented production-observed behavior for a specific profile.
+    ProductionObserved,
+}
+
+impl AdapterQualityLevel {
+    /// Returns the stable lowercase quality id used in diagnostics.
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Experimental => "experimental",
+            Self::Simulation => "simulation",
+            Self::Scaffold => "scaffold",
+            Self::SimulatedCertified => "simulated_certified",
+            Self::Functional => "functional",
+            Self::PaperTrading => "paper_trading",
+            Self::ProductionCandidate => "production_candidate",
+            Self::Certified => "certified",
+            Self::ProductionObserved => "production_observed",
+        }
+    }
+
+    /// Returns the conservative ordering used by conformance reports.
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::Experimental => 0,
+            Self::Simulation => 10,
+            Self::Scaffold => 20,
+            Self::SimulatedCertified => 30,
+            Self::Functional => 40,
+            Self::PaperTrading => 45,
+            Self::ProductionCandidate => 50,
+            Self::Certified => 60,
+            Self::ProductionObserved => 70,
+        }
+    }
+
+    /// Returns true when this level is at least as mature as `target`.
+    pub const fn meets(self, target: Self) -> bool {
+        self.rank() >= target.rank()
+    }
+}
+
+/// Static capability description for one market-data adapter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AdapterDescriptor {
+    /// Provider enum used by [`AdapterConfig`].
+    pub provider: ProviderKind,
+    /// Stable lowercase provider id.
+    pub provider_id: &'static str,
+    /// Human-readable provider name.
+    pub display_name: &'static str,
+    /// Cargo feature required for the adapter, or `None` when always present.
+    pub feature: Option<&'static str>,
+    /// True when this binary was compiled with the required adapter feature.
+    pub compiled: bool,
+    /// Public maturity level for this adapter.
+    pub quality: AdapterQualityLevel,
+    /// True when adapter can connect to a live provider endpoint.
+    pub supports_live: bool,
+    /// True when adapter can support deterministic local/replay flows.
+    pub supports_replay: bool,
+    /// True when adapter emits trade events.
+    pub supports_trades: bool,
+    /// True when adapter emits book/depth events.
+    pub supports_order_book: bool,
+    /// True when adapter supports level-2/depth updates beyond top-of-book.
+    pub supports_level2: bool,
+    /// True when adapter has reconnect behavior.
+    pub supports_reconnect: bool,
+    /// True when adapter has gap detection or recovery semantics.
+    pub supports_gap_recovery: bool,
+    /// True when adapter exposes bounded backpressure behavior or counters.
+    pub supports_backpressure: bool,
+    /// True when adapter can capture raw provider messages.
+    pub supports_raw_capture: bool,
+    /// True when adapter can replay provider-specific raw fixtures.
+    pub supports_fixture_replay: bool,
+    /// True when adapter has stale-feed detection.
+    pub supports_stale_detection: bool,
+    /// True when adapter reports parser or normalization latency metrics.
+    pub supports_latency_metrics: bool,
+    /// True when adapter is driven through the poll-based runtime contract.
+    pub supports_polling: bool,
+    /// Public certification evidence URL, document id, or profile id when known.
+    pub certification_evidence: Option<&'static str>,
+    /// Public production-observed evidence URL, document id, or profile id when known.
+    pub production_evidence: Option<&'static str>,
+    /// Short operator-facing note.
+    pub notes: &'static str,
+}
+
+/// Adapter conformance requirement checked for a target quality level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AdapterConformanceRequirement {
+    /// Adapter advertised quality must meet the requested target quality.
+    AdvertisedQuality,
+    /// Adapter must be compiled into the current binary.
+    Compiled,
+    /// Adapter must support a live provider endpoint.
+    LiveEndpoint,
+    /// Adapter must support deterministic replay or simulator-driven workflows.
+    ReplayOrSimulation,
+    /// Adapter must emit normalized trades or book/depth events.
+    MarketDataEvents,
+    /// Adapter must use the poll-based runtime contract.
+    PollingContract,
+    /// Adapter must provide reconnect behavior.
+    Reconnect,
+    /// Adapter must provide sequence-gap detection or recovery semantics.
+    GapRecovery,
+    /// Adapter must expose bounded backpressure behavior or counters.
+    Backpressure,
+    /// Adapter must provide stale-feed detection.
+    StaleDetection,
+    /// Adapter must expose latency metrics.
+    LatencyMetrics,
+    /// Adapter must be able to capture raw provider messages for incidents.
+    RawCapture,
+    /// Adapter must be able to replay provider-specific raw fixtures.
+    FixtureReplay,
+    /// Adapter must carry public or operator-verifiable certification evidence.
+    CertificationEvidence,
+    /// Adapter must carry public or operator-verifiable production evidence.
+    ProductionEvidence,
+}
+
+impl AdapterConformanceRequirement {
+    /// Returns the stable lowercase requirement id used in reports.
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::AdvertisedQuality => "advertised_quality",
+            Self::Compiled => "compiled",
+            Self::LiveEndpoint => "live_endpoint",
+            Self::ReplayOrSimulation => "replay_or_simulation",
+            Self::MarketDataEvents => "market_data_events",
+            Self::PollingContract => "polling_contract",
+            Self::Reconnect => "reconnect",
+            Self::GapRecovery => "gap_recovery",
+            Self::Backpressure => "backpressure",
+            Self::StaleDetection => "stale_detection",
+            Self::LatencyMetrics => "latency_metrics",
+            Self::RawCapture => "raw_capture",
+            Self::FixtureReplay => "fixture_replay",
+            Self::CertificationEvidence => "certification_evidence",
+            Self::ProductionEvidence => "production_evidence",
+        }
+    }
+}
+
+/// One failed adapter conformance requirement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AdapterConformanceFailure {
+    /// Requirement that failed.
+    pub requirement: AdapterConformanceRequirement,
+    /// Stable operator-facing explanation.
+    pub message: &'static str,
+}
+
+/// Adapter conformance report for one descriptor and target quality level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdapterConformanceReport {
+    /// Provider enum associated with the evaluated descriptor.
+    pub provider: ProviderKind,
+    /// Stable lowercase provider id.
+    pub provider_id: &'static str,
+    /// Quality level advertised by the descriptor.
+    pub advertised_quality: AdapterQualityLevel,
+    /// Quality level requested by the host or certification gate.
+    pub target_quality: AdapterQualityLevel,
+    /// Number of requirements evaluated.
+    pub checked_requirements: usize,
+    /// Failed requirements. An empty vector means the report passed.
+    pub failures: Vec<AdapterConformanceFailure>,
+}
+
+impl AdapterConformanceReport {
+    /// Returns true when every checked requirement passed.
+    pub fn passed(&self) -> bool {
+        self.failures.is_empty()
+    }
+}
+
+const EXPERIMENTAL_REQUIREMENTS: &[AdapterConformanceRequirement] = &[
+    AdapterConformanceRequirement::Compiled,
+    AdapterConformanceRequirement::MarketDataEvents,
+];
+const SIMULATION_REQUIREMENTS: &[AdapterConformanceRequirement] = &[
+    AdapterConformanceRequirement::Compiled,
+    AdapterConformanceRequirement::ReplayOrSimulation,
+    AdapterConformanceRequirement::MarketDataEvents,
+    AdapterConformanceRequirement::PollingContract,
+];
+const SIMULATED_CERTIFIED_REQUIREMENTS: &[AdapterConformanceRequirement] = &[
+    AdapterConformanceRequirement::Compiled,
+    AdapterConformanceRequirement::ReplayOrSimulation,
+    AdapterConformanceRequirement::MarketDataEvents,
+    AdapterConformanceRequirement::PollingContract,
+    AdapterConformanceRequirement::FixtureReplay,
+];
+const FUNCTIONAL_REQUIREMENTS: &[AdapterConformanceRequirement] = &[
+    AdapterConformanceRequirement::Compiled,
+    AdapterConformanceRequirement::LiveEndpoint,
+    AdapterConformanceRequirement::MarketDataEvents,
+    AdapterConformanceRequirement::PollingContract,
+];
+const PRODUCTION_CANDIDATE_REQUIREMENTS: &[AdapterConformanceRequirement] = &[
+    AdapterConformanceRequirement::Compiled,
+    AdapterConformanceRequirement::LiveEndpoint,
+    AdapterConformanceRequirement::MarketDataEvents,
+    AdapterConformanceRequirement::PollingContract,
+    AdapterConformanceRequirement::Reconnect,
+    AdapterConformanceRequirement::GapRecovery,
+    AdapterConformanceRequirement::Backpressure,
+    AdapterConformanceRequirement::StaleDetection,
+    AdapterConformanceRequirement::LatencyMetrics,
+    AdapterConformanceRequirement::RawCapture,
+    AdapterConformanceRequirement::FixtureReplay,
+];
+const CERTIFIED_REQUIREMENTS: &[AdapterConformanceRequirement] = &[
+    AdapterConformanceRequirement::Compiled,
+    AdapterConformanceRequirement::LiveEndpoint,
+    AdapterConformanceRequirement::MarketDataEvents,
+    AdapterConformanceRequirement::PollingContract,
+    AdapterConformanceRequirement::Reconnect,
+    AdapterConformanceRequirement::GapRecovery,
+    AdapterConformanceRequirement::Backpressure,
+    AdapterConformanceRequirement::StaleDetection,
+    AdapterConformanceRequirement::LatencyMetrics,
+    AdapterConformanceRequirement::RawCapture,
+    AdapterConformanceRequirement::FixtureReplay,
+    AdapterConformanceRequirement::CertificationEvidence,
+];
+const PRODUCTION_OBSERVED_REQUIREMENTS: &[AdapterConformanceRequirement] = &[
+    AdapterConformanceRequirement::Compiled,
+    AdapterConformanceRequirement::LiveEndpoint,
+    AdapterConformanceRequirement::MarketDataEvents,
+    AdapterConformanceRequirement::PollingContract,
+    AdapterConformanceRequirement::Reconnect,
+    AdapterConformanceRequirement::GapRecovery,
+    AdapterConformanceRequirement::Backpressure,
+    AdapterConformanceRequirement::StaleDetection,
+    AdapterConformanceRequirement::LatencyMetrics,
+    AdapterConformanceRequirement::RawCapture,
+    AdapterConformanceRequirement::FixtureReplay,
+    AdapterConformanceRequirement::CertificationEvidence,
+    AdapterConformanceRequirement::ProductionEvidence,
+];
+
+/// Returns the conformance requirements for a target adapter quality level.
+pub const fn adapter_quality_requirements(
+    target: AdapterQualityLevel,
+) -> &'static [AdapterConformanceRequirement] {
+    match target {
+        AdapterQualityLevel::Experimental | AdapterQualityLevel::Scaffold => {
+            EXPERIMENTAL_REQUIREMENTS
+        }
+        AdapterQualityLevel::Simulation => SIMULATION_REQUIREMENTS,
+        AdapterQualityLevel::SimulatedCertified => SIMULATED_CERTIFIED_REQUIREMENTS,
+        AdapterQualityLevel::Functional | AdapterQualityLevel::PaperTrading => {
+            FUNCTIONAL_REQUIREMENTS
+        }
+        AdapterQualityLevel::ProductionCandidate => PRODUCTION_CANDIDATE_REQUIREMENTS,
+        AdapterQualityLevel::Certified => CERTIFIED_REQUIREMENTS,
+        AdapterQualityLevel::ProductionObserved => PRODUCTION_OBSERVED_REQUIREMENTS,
+    }
+}
+
+const ADAPTER_DESCRIPTORS: [AdapterDescriptor; 4] = [
+    AdapterDescriptor {
+        provider: ProviderKind::Mock,
+        provider_id: "mock",
+        display_name: "Mock",
+        feature: None,
+        compiled: true,
+        quality: AdapterQualityLevel::Simulation,
+        supports_live: false,
+        supports_replay: true,
+        supports_trades: true,
+        supports_order_book: true,
+        supports_level2: true,
+        supports_reconnect: false,
+        supports_gap_recovery: false,
+        supports_backpressure: false,
+        supports_raw_capture: false,
+        supports_fixture_replay: false,
+        supports_stale_detection: false,
+        supports_latency_metrics: false,
+        supports_polling: true,
+        certification_evidence: None,
+        production_evidence: None,
+        notes: "deterministic in-memory adapter for tests, demos, and replay harnesses",
+    },
+    AdapterDescriptor {
+        provider: ProviderKind::Rithmic,
+        provider_id: "rithmic",
+        display_name: "Rithmic",
+        feature: Some("rithmic"),
+        compiled: cfg!(feature = "rithmic"),
+        quality: AdapterQualityLevel::Scaffold,
+        supports_live: cfg!(feature = "rithmic"),
+        supports_replay: false,
+        supports_trades: true,
+        supports_order_book: true,
+        supports_level2: true,
+        supports_reconnect: cfg!(feature = "rithmic"),
+        supports_gap_recovery: false,
+        supports_backpressure: false,
+        supports_raw_capture: false,
+        supports_fixture_replay: false,
+        supports_stale_detection: cfg!(feature = "rithmic"),
+        supports_latency_metrics: false,
+        supports_polling: true,
+        certification_evidence: None,
+        production_evidence: None,
+        notes: "feature-gated futures adapter scaffold; validate venue behavior before live capital use",
+    },
+    AdapterDescriptor {
+        provider: ProviderKind::Cqg,
+        provider_id: "cqg",
+        display_name: "CQG",
+        feature: Some("cqg"),
+        compiled: cfg!(feature = "cqg"),
+        quality: AdapterQualityLevel::Functional,
+        supports_live: cfg!(feature = "cqg"),
+        supports_replay: false,
+        supports_trades: true,
+        supports_order_book: true,
+        supports_level2: true,
+        supports_reconnect: cfg!(feature = "cqg"),
+        supports_gap_recovery: false,
+        supports_backpressure: false,
+        supports_raw_capture: false,
+        supports_fixture_replay: false,
+        supports_stale_detection: false,
+        supports_latency_metrics: false,
+        supports_polling: true,
+        certification_evidence: None,
+        production_evidence: None,
+        notes: "feature-gated CQG adapter with reconnect/resubscribe hardening",
+    },
+    AdapterDescriptor {
+        provider: ProviderKind::Binance,
+        provider_id: "binance",
+        display_name: "Binance",
+        feature: Some("binance"),
+        compiled: cfg!(feature = "binance"),
+        quality: AdapterQualityLevel::Scaffold,
+        supports_live: cfg!(feature = "binance"),
+        supports_replay: false,
+        supports_trades: true,
+        supports_order_book: true,
+        supports_level2: true,
+        supports_reconnect: cfg!(feature = "binance"),
+        supports_gap_recovery: cfg!(feature = "binance"),
+        supports_backpressure: cfg!(feature = "binance"),
+        supports_raw_capture: cfg!(feature = "binance"),
+        supports_fixture_replay: cfg!(feature = "binance"),
+        supports_stale_detection: cfg!(feature = "binance"),
+        supports_latency_metrics: cfg!(feature = "binance"),
+        supports_polling: true,
+        certification_evidence: None,
+        production_evidence: None,
+        notes: "feature-gated crypto adapter with websocket trade/depth parsing, reconnects, gap detection, bounded backpressure, raw capture, and fixture replay",
+    },
+];
+
+/// Returns static descriptors for all known adapter providers.
+pub fn adapter_descriptors() -> &'static [AdapterDescriptor] {
+    &ADAPTER_DESCRIPTORS
+}
+
+/// Returns descriptors for providers compiled into the current binary.
+pub fn compiled_adapter_descriptors() -> Vec<AdapterDescriptor> {
+    adapter_descriptors()
+        .iter()
+        .filter(|descriptor| descriptor.compiled)
+        .cloned()
+        .collect()
+}
+
+/// Returns the descriptor for `provider`.
+pub fn describe_adapter(provider: ProviderKind) -> AdapterDescriptor {
+    adapter_descriptors()
+        .iter()
+        .find(|descriptor| descriptor.provider == provider)
+        .cloned()
+        .expect("all ProviderKind variants have descriptors")
+}
+
+/// Returns true when the current binary can construct `provider`.
+pub fn adapter_feature_enabled(provider: ProviderKind) -> bool {
+    describe_adapter(provider).compiled
+}
+
+/// Evaluates whether a descriptor satisfies a target adapter quality level.
+///
+/// This is a control-plane helper for dashboards, CLIs, binding generators, and
+/// certification scripts. It does not construct or connect an adapter.
+pub fn evaluate_adapter_conformance(
+    descriptor: &AdapterDescriptor,
+    target_quality: AdapterQualityLevel,
+) -> AdapterConformanceReport {
+    let requirements = adapter_quality_requirements(target_quality);
+    let mut failures = Vec::new();
+
+    for requirement in requirements {
+        if let Some(message) = adapter_conformance_failure_message(descriptor, *requirement) {
+            failures.push(AdapterConformanceFailure {
+                requirement: *requirement,
+                message,
+            });
+        }
+    }
+
+    if !descriptor.quality.meets(target_quality) {
+        failures.push(AdapterConformanceFailure {
+            requirement: AdapterConformanceRequirement::AdvertisedQuality,
+            message: "advertised quality is below the requested target quality",
+        });
+    }
+
+    AdapterConformanceReport {
+        provider: descriptor.provider.clone(),
+        provider_id: descriptor.provider_id,
+        advertised_quality: descriptor.quality,
+        target_quality,
+        checked_requirements: requirements.len(),
+        failures,
+    }
+}
+
+/// Evaluates a known provider against a target adapter quality level.
+pub fn adapter_conformance_report(
+    provider: ProviderKind,
+    target_quality: AdapterQualityLevel,
+) -> AdapterConformanceReport {
+    let descriptor = describe_adapter(provider);
+    evaluate_adapter_conformance(&descriptor, target_quality)
+}
+
+fn adapter_conformance_failure_message(
+    descriptor: &AdapterDescriptor,
+    requirement: AdapterConformanceRequirement,
+) -> Option<&'static str> {
+    match requirement {
+        AdapterConformanceRequirement::Compiled if !descriptor.compiled => {
+            Some("adapter feature is not compiled into this binary")
+        }
+        AdapterConformanceRequirement::LiveEndpoint if !descriptor.supports_live => {
+            Some("adapter does not advertise live endpoint support")
+        }
+        AdapterConformanceRequirement::ReplayOrSimulation if !descriptor.supports_replay => {
+            Some("adapter does not advertise deterministic replay or simulation support")
+        }
+        AdapterConformanceRequirement::MarketDataEvents
+            if !(descriptor.supports_trades || descriptor.supports_order_book) =>
+        {
+            Some("adapter does not advertise normalized trade or book events")
+        }
+        AdapterConformanceRequirement::PollingContract if !descriptor.supports_polling => {
+            Some("adapter does not advertise the poll-based runtime contract")
+        }
+        AdapterConformanceRequirement::Reconnect if !descriptor.supports_reconnect => {
+            Some("adapter does not advertise reconnect behavior")
+        }
+        AdapterConformanceRequirement::GapRecovery if !descriptor.supports_gap_recovery => {
+            Some("adapter does not advertise sequence-gap detection or recovery")
+        }
+        AdapterConformanceRequirement::Backpressure if !descriptor.supports_backpressure => {
+            Some("adapter does not advertise bounded backpressure behavior or counters")
+        }
+        AdapterConformanceRequirement::StaleDetection if !descriptor.supports_stale_detection => {
+            Some("adapter does not advertise stale-feed detection")
+        }
+        AdapterConformanceRequirement::LatencyMetrics if !descriptor.supports_latency_metrics => {
+            Some("adapter does not advertise latency metrics")
+        }
+        AdapterConformanceRequirement::RawCapture if !descriptor.supports_raw_capture => {
+            Some("adapter does not advertise raw provider-message capture")
+        }
+        AdapterConformanceRequirement::FixtureReplay if !descriptor.supports_fixture_replay => {
+            Some("adapter does not advertise provider fixture replay")
+        }
+        AdapterConformanceRequirement::CertificationEvidence
+            if descriptor.certification_evidence.is_none() =>
+        {
+            Some("adapter does not provide certification evidence")
+        }
+        AdapterConformanceRequirement::ProductionEvidence
+            if descriptor.production_evidence.is_none() =>
+        {
+            Some("adapter does not provide production-observed evidence")
+        }
+        _ => None,
+    }
+}
