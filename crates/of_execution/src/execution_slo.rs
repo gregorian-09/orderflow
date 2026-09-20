@@ -707,6 +707,13 @@ impl ExecutionSloCollector {
         Ok(())
     }
 
+    fn record_outcome(outcomes: &mut u64, rejects: &mut u64, rejected: bool) {
+        *outcomes = outcomes.saturating_add(1);
+        if rejected {
+            *rejects = rejects.saturating_add(1);
+        }
+    }
+
     /// Records a validated cancel acknowledgement.
     ///
     /// # Errors
@@ -721,10 +728,11 @@ impl ExecutionSloCollector {
             observation.ack_ns,
             ExecutionLatencyKind::CancelToAck,
         )?;
-        self.cancel_outcomes = self.cancel_outcomes.saturating_add(1);
-        if observation.outcome == ExecutionCancelOutcome::Reject {
-            self.cancel_rejects = self.cancel_rejects.saturating_add(1);
-        }
+        Self::record_outcome(
+            &mut self.cancel_outcomes,
+            &mut self.cancel_rejects,
+            observation.outcome == ExecutionCancelOutcome::Reject,
+        );
         Ok(())
     }
 
@@ -742,10 +750,11 @@ impl ExecutionSloCollector {
             observation.ack_ns,
             ExecutionLatencyKind::ReplaceToAck,
         )?;
-        self.replace_outcomes = self.replace_outcomes.saturating_add(1);
-        if observation.outcome == ExecutionReplaceOutcome::Reject {
-            self.replace_rejects = self.replace_rejects.saturating_add(1);
-        }
+        Self::record_outcome(
+            &mut self.replace_outcomes,
+            &mut self.replace_rejects,
+            observation.outcome == ExecutionReplaceOutcome::Reject,
+        );
         Ok(())
     }
 
