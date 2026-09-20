@@ -2816,3 +2816,4 @@ mod tests {
         assert!(algo.is_null());
     }
 }
+
