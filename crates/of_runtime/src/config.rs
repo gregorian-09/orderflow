@@ -222,55 +222,55 @@ impl StringListOrCsv {
 }
 
 fn parse_config_json(raw: &str) -> Result<ConfigLoadReport, RuntimeError> {
-    match serde_json::from_str::<RuntimeConfigFile>(raw) {
-        Ok(parsed) => Ok(ConfigLoadReport {
-            config: config_from_typed(parsed)?,
-            format: "json",
-            compatibility_mode: ConfigCompatibilityMode::Strict,
-            warning: None,
-        }),
-        Err(strict_err) => {
-            let mut kv = HashMap::new();
-            parse_json_like(raw, &mut kv)?;
-            let config = config_from_map(&kv).map_err(|fallback_err| {
-                RuntimeError::Config(format!(
-                    "strict json parse failed: {strict_err}; legacy fallback failed: {fallback_err}"
-                ))
-            })?;
-            Ok(ConfigLoadReport {
-                config,
-                format: "json",
-                compatibility_mode: ConfigCompatibilityMode::LegacyFallback,
-                warning: Some(format!(
-                    "loaded config via legacy json fallback after strict parse failed: {strict_err}; prefer typed top-level runtime keys with nested adapter and adapter.credentials sections"
-                )),
-            })
-        }
-    }
+    parse_config_with_fallback(
+        raw,
+        "json",
+        |value| serde_json::from_str::<RuntimeConfigFile>(value),
+        parse_json_like,
+    )
 }
 
 fn parse_config_toml(raw: &str) -> Result<ConfigLoadReport, RuntimeError> {
-    match toml::from_str::<RuntimeConfigFile>(raw) {
+    parse_config_with_fallback(
+        raw,
+        "toml",
+        toml::from_str::<RuntimeConfigFile>,
+        parse_toml_like,
+    )
+}
+
+fn parse_config_with_fallback<E, Strict, Legacy>(
+    raw: &str,
+    format: &'static str,
+    strict_parse: Strict,
+    legacy_parse: Legacy,
+) -> Result<ConfigLoadReport, RuntimeError>
+where
+    E: std::fmt::Display,
+    Strict: for<'a> Fn(&'a str) -> Result<RuntimeConfigFile, E>,
+    Legacy: for<'a, 'b> Fn(&'a str, &'b mut HashMap<String, String>) -> Result<(), RuntimeError>,
+{
+    match strict_parse(raw) {
         Ok(parsed) => Ok(ConfigLoadReport {
             config: config_from_typed(parsed)?,
-            format: "toml",
+            format,
             compatibility_mode: ConfigCompatibilityMode::Strict,
             warning: None,
         }),
         Err(strict_err) => {
             let mut kv = HashMap::new();
-            parse_toml_like(raw, &mut kv)?;
+            legacy_parse(raw, &mut kv)?;
             let config = config_from_map(&kv).map_err(|fallback_err| {
                 RuntimeError::Config(format!(
-                    "strict toml parse failed: {strict_err}; legacy fallback failed: {fallback_err}"
+                    "strict {format} parse failed: {strict_err}; legacy fallback failed: {fallback_err}"
                 ))
             })?;
             Ok(ConfigLoadReport {
                 config,
-                format: "toml",
+                format,
                 compatibility_mode: ConfigCompatibilityMode::LegacyFallback,
                 warning: Some(format!(
-                    "loaded config via legacy toml fallback after strict parse failed: {strict_err}; prefer typed top-level runtime keys with nested adapter and adapter.credentials sections"
+                    "loaded config via legacy {format} fallback after strict parse failed: {strict_err}; prefer typed top-level runtime keys with nested adapter and adapter.credentials sections"
                 )),
             })
         }
