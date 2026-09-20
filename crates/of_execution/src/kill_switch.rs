@@ -672,30 +672,29 @@ pub struct KillSwitchDecision {
 }
 
 impl KillSwitchDecision {
-    const fn allowed() -> Self {
+    const fn with_state(
+        allow_new_order: bool,
+        pause_strategy: bool,
+        reason: KillSwitchDecisionReason,
+    ) -> Self {
         Self {
-            allow_new_order: true,
+            allow_new_order,
             allow_cancels: true,
             reduce_only: false,
-            pause_strategy: false,
+            pause_strategy,
             hard_stop_adapter: false,
             matched_switches: 0,
-            reason: KillSwitchDecisionReason::Allowed,
+            reason,
             blocking_switch_id: None,
         }
     }
 
+    const fn allowed() -> Self {
+        Self::with_state(true, false, KillSwitchDecisionReason::Allowed)
+    }
+
     const fn uncertain() -> Self {
-        Self {
-            allow_new_order: false,
-            allow_cancels: true,
-            reduce_only: false,
-            pause_strategy: true,
-            hard_stop_adapter: false,
-            matched_switches: 0,
-            reason: KillSwitchDecisionReason::StateUncertain,
-            blocking_switch_id: None,
-        }
+        Self::with_state(false, true, KillSwitchDecisionReason::StateUncertain)
     }
 }
 
