@@ -694,6 +694,19 @@ impl ExecutionSloCollector {
         Ok(())
     }
 
+    fn observe_request_ack(
+        &mut self,
+        request_ns: u64,
+        ack_ns: u64,
+        latency_kind: ExecutionLatencyKind,
+    ) -> Result<(), ExecutionMetricsError> {
+        require_timestamp(request_ns)?;
+        require_timestamp(ack_ns)?;
+        let latency = ordered_diff(request_ns, ack_ns)?;
+        self.record_latency(latency_kind, latency);
+        Ok(())
+    }
+
     /// Records a validated cancel acknowledgement.
     ///
     /// # Errors
@@ -703,10 +716,11 @@ impl ExecutionSloCollector {
         &mut self,
         observation: ExecutionCancelObservation,
     ) -> Result<(), ExecutionMetricsError> {
-        require_timestamp(observation.request_ns)?;
-        require_timestamp(observation.ack_ns)?;
-        let latency = ordered_diff(observation.request_ns, observation.ack_ns)?;
-        self.record_latency(ExecutionLatencyKind::CancelToAck, latency);
+        self.observe_request_ack(
+            observation.request_ns,
+            observation.ack_ns,
+            ExecutionLatencyKind::CancelToAck,
+        )?;
         self.cancel_outcomes = self.cancel_outcomes.saturating_add(1);
         if observation.outcome == ExecutionCancelOutcome::Reject {
             self.cancel_rejects = self.cancel_rejects.saturating_add(1);
@@ -723,10 +737,11 @@ impl ExecutionSloCollector {
         &mut self,
         observation: ExecutionReplaceObservation,
     ) -> Result<(), ExecutionMetricsError> {
-        require_timestamp(observation.request_ns)?;
-        require_timestamp(observation.ack_ns)?;
-        let latency = ordered_diff(observation.request_ns, observation.ack_ns)?;
-        self.record_latency(ExecutionLatencyKind::ReplaceToAck, latency);
+        self.observe_request_ack(
+            observation.request_ns,
+            observation.ack_ns,
+            ExecutionLatencyKind::ReplaceToAck,
+        )?;
         self.replace_outcomes = self.replace_outcomes.saturating_add(1);
         if observation.outcome == ExecutionReplaceOutcome::Reject {
             self.replace_rejects = self.replace_rejects.saturating_add(1);
@@ -1306,13 +1321,7 @@ fn evaluate_latency(
     config: ExecutionSloTargets,
     kind: ExecutionSloViolationKind,
 ) {
-    let Some(target) = target else { return };
-    report.objectives_evaluated = report.objectives_evaluated.saturating_add(1);
-    if value.count < config.minimum_samples.max(1) {
-        mark_insufficient(report, config);
-    } else if value.p99_ns > target {
-        mark_violation(report, kind);
-    }
+    evaluate_metric_target(report, value.count, value.p99_ns, target, config, kind);
 }
 
 fn evaluate_rate(
@@ -1322,11 +1331,29 @@ fn evaluate_rate(
     config: ExecutionSloTargets,
     kind: ExecutionSloViolationKind,
 ) {
+    evaluate_metric_target(
+        report,
+        value.denominator,
+        value.parts_per_million,
+        target,
+        config,
+        kind,
+    );
+}
+
+fn evaluate_metric_target(
+    report: &mut ExecutionSloReport,
+    sample_count: u64,
+    observed: u64,
+    target: Option<u64>,
+    config: ExecutionSloTargets,
+    kind: ExecutionSloViolationKind,
+) {
     let Some(target) = target else { return };
     report.objectives_evaluated = report.objectives_evaluated.saturating_add(1);
-    if value.denominator < config.minimum_samples.max(1) {
+    if sample_count < config.minimum_samples.max(1) {
         mark_insufficient(report, config);
-    } else if value.parts_per_million > target {
+    } else if observed > target {
         mark_violation(report, kind);
     }
 }
