@@ -372,6 +372,24 @@ pub struct WalExecutionJournal {
     pub(crate) frame_scratch: Vec<u8>,
 }
 
+fn sync_required_after_record(
+    policy: WalSyncPolicy,
+    records_since_sync: u32,
+    last_sync_ns: u64,
+    kind: WalRecordKind,
+) -> bool {
+    match policy {
+        WalSyncPolicy::Never | WalSyncPolicy::Manual => false,
+        WalSyncPolicy::EveryRecord => true,
+        WalSyncPolicy::EveryNRecords(records) => records > 0 && records_since_sync >= records,
+        WalSyncPolicy::EveryDurationNs(duration_ns) => {
+            duration_ns > 0 && now_ns().saturating_sub(last_sync_ns) >= duration_ns
+        }
+        WalSyncPolicy::OnRiskBoundary => is_risk_boundary_wal_kind(kind),
+        _ => false,
+    }
+}
+
 impl WalExecutionJournal {
     /// Opens or creates a binary WAL-backed execution journal.
     ///
@@ -515,31 +533,15 @@ impl WalExecutionJournal {
     }
 
     fn maybe_sync(&mut self, kind: WalRecordKind) -> ExecutionResult<()> {
-        match self.config.sync_policy() {
-            WalSyncPolicy::Never | WalSyncPolicy::Manual => Ok(()),
-            WalSyncPolicy::EveryRecord => self.sync(),
-            WalSyncPolicy::EveryNRecords(records) => {
-                if records > 0 && self.records_since_sync >= records {
-                    self.sync()
-                } else {
-                    Ok(())
-                }
-            }
-            WalSyncPolicy::EveryDurationNs(duration_ns) => {
-                if duration_ns > 0 && now_ns().saturating_sub(self.last_sync_ns) >= duration_ns {
-                    self.sync()
-                } else {
-                    Ok(())
-                }
-            }
-            WalSyncPolicy::OnRiskBoundary => {
-                if is_risk_boundary_wal_kind(kind) {
-                    self.sync()
-                } else {
-                    Ok(())
-                }
-            }
-            _ => Ok(()),
+        if sync_required_after_record(
+            self.config.sync_policy(),
+            self.records_since_sync,
+            self.last_sync_ns,
+            kind,
+        ) {
+            self.sync()
+        } else {
+            Ok(())
         }
     }
 }
@@ -949,31 +951,15 @@ impl SegmentedWalExecutionJournal {
     }
 
     fn maybe_sync(&mut self, kind: WalRecordKind) -> ExecutionResult<()> {
-        match self.config.sync_policy() {
-            WalSyncPolicy::Never | WalSyncPolicy::Manual => Ok(()),
-            WalSyncPolicy::EveryRecord => self.sync(),
-            WalSyncPolicy::EveryNRecords(records) => {
-                if records > 0 && self.records_since_sync >= records {
-                    self.sync()
-                } else {
-                    Ok(())
-                }
-            }
-            WalSyncPolicy::EveryDurationNs(duration_ns) => {
-                if duration_ns > 0 && now_ns().saturating_sub(self.last_sync_ns) >= duration_ns {
-                    self.sync()
-                } else {
-                    Ok(())
-                }
-            }
-            WalSyncPolicy::OnRiskBoundary => {
-                if is_risk_boundary_wal_kind(kind) {
-                    self.sync()
-                } else {
-                    Ok(())
-                }
-            }
-            _ => Ok(()),
+        if sync_required_after_record(
+            self.config.sync_policy(),
+            self.records_since_sync,
+            self.last_sync_ns,
+            kind,
+        ) {
+            self.sync()
+        } else {
+            Ok(())
         }
     }
 }
