@@ -476,11 +476,7 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
         route: &RouteConfig,
         ctx: &RiskContext,
     ) -> of_execution_core::RiskDecision {
-        self.check_route_common(&route.risk_limits, ctx)
-            .or_else(|| {
-                self.check_route_size_price(&route.risk_limits, req.quantity, req.limit_price, ctx)
-            })
-            .unwrap_or_else(of_execution_core::RiskDecision::allow)
+        self.check_route_order(&route.risk_limits, req.quantity, req.limit_price, ctx)
     }
 
     fn check_route_amend(
@@ -489,10 +485,18 @@ impl<A: ExecutionAdapter, R: RiskCheck, J: ExecutionJournal> ExecutionEngine<A, 
         route: &RouteConfig,
         ctx: &RiskContext,
     ) -> of_execution_core::RiskDecision {
-        self.check_route_common(&route.risk_limits, ctx)
-            .or_else(|| {
-                self.check_route_size_price(&route.risk_limits, req.quantity, req.limit_price, ctx)
-            })
+        self.check_route_order(&route.risk_limits, req.quantity, req.limit_price, ctx)
+    }
+
+    fn check_route_order(
+        &self,
+        limits: &RiskLimits,
+        quantity: OrderQty,
+        limit_price: OrderPrice,
+        ctx: &RiskContext,
+    ) -> of_execution_core::RiskDecision {
+        self.check_route_common(limits, ctx)
+            .or_else(|| self.check_route_size_price(limits, quantity, limit_price, ctx))
             .unwrap_or_else(of_execution_core::RiskDecision::allow)
     }
 
