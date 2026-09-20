@@ -19,6 +19,7 @@ mod mock;
 #[path = "adapter_status.rs"]
 mod status;
 
+#[cfg(any(feature = "binance", feature = "cqg", feature = "rithmic"))]
 pub(crate) use config::openssl_s_client_args;
 pub use config::*;
 pub use contract::*;
