@@ -176,38 +176,31 @@ pub struct SafetyPolicy {
 }
 
 impl SafetyPolicy {
+    const fn from_uniform_action(action: SafetyPolicyAction) -> Self {
+        Self {
+            market_data_stale: action,
+            market_data_persistence_degraded: action,
+            oms_wal_degraded: action,
+            checkpoint_failed: action,
+            adapter_disconnected: action,
+            drop_copy_disconnected: action,
+            reconciliation_mismatch: action,
+            risk_unavailable: action,
+            position_ledger_mismatch: action,
+            route_health_degraded: action,
+        }
+    }
+
     /// Creates a conservative fail-closed policy that rejects new orders for
     /// every active condition while still allowing cancels.
     pub const fn fail_closed() -> Self {
-        Self {
-            market_data_stale: SafetyPolicyAction::RejectNew,
-            market_data_persistence_degraded: SafetyPolicyAction::RejectNew,
-            oms_wal_degraded: SafetyPolicyAction::RejectNew,
-            checkpoint_failed: SafetyPolicyAction::RejectNew,
-            adapter_disconnected: SafetyPolicyAction::RejectNew,
-            drop_copy_disconnected: SafetyPolicyAction::RejectNew,
-            reconciliation_mismatch: SafetyPolicyAction::RejectNew,
-            risk_unavailable: SafetyPolicyAction::RejectNew,
-            position_ledger_mismatch: SafetyPolicyAction::RejectNew,
-            route_health_degraded: SafetyPolicyAction::RejectNew,
-        }
+        Self::from_uniform_action(SafetyPolicyAction::RejectNew)
     }
 
     /// Creates a visible degraded policy that allows new orders for every
     /// active condition and records each allowance as fail-open.
     pub const fn fail_open_degraded() -> Self {
-        Self {
-            market_data_stale: SafetyPolicyAction::AllowDegraded,
-            market_data_persistence_degraded: SafetyPolicyAction::AllowDegraded,
-            oms_wal_degraded: SafetyPolicyAction::AllowDegraded,
-            checkpoint_failed: SafetyPolicyAction::AllowDegraded,
-            adapter_disconnected: SafetyPolicyAction::AllowDegraded,
-            drop_copy_disconnected: SafetyPolicyAction::AllowDegraded,
-            reconciliation_mismatch: SafetyPolicyAction::AllowDegraded,
-            risk_unavailable: SafetyPolicyAction::AllowDegraded,
-            position_ledger_mismatch: SafetyPolicyAction::AllowDegraded,
-            route_health_degraded: SafetyPolicyAction::AllowDegraded,
-        }
+        Self::from_uniform_action(SafetyPolicyAction::AllowDegraded)
     }
 
     /// Sets the action for one condition.
