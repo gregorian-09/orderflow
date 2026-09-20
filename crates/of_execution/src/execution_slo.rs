@@ -589,6 +589,12 @@ impl ExecutionSloSnapshot {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequestAckOperation {
+    Cancel,
+    Replace,
+}
+
 /// Single-owner fixed-memory execution SLI collector.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionSloCollector {
@@ -699,11 +705,25 @@ impl ExecutionSloCollector {
         request_ns: u64,
         ack_ns: u64,
         latency_kind: ExecutionLatencyKind,
+        operation: RequestAckOperation,
+        rejected: bool,
     ) -> Result<(), ExecutionMetricsError> {
         require_timestamp(request_ns)?;
         require_timestamp(ack_ns)?;
         let latency = ordered_diff(request_ns, ack_ns)?;
         self.record_latency(latency_kind, latency);
+        match operation {
+            RequestAckOperation::Cancel => Self::record_outcome(
+                &mut self.cancel_outcomes,
+                &mut self.cancel_rejects,
+                rejected,
+            ),
+            RequestAckOperation::Replace => Self::record_outcome(
+                &mut self.replace_outcomes,
+                &mut self.replace_rejects,
+                rejected,
+            ),
+        }
         Ok(())
     }
 
@@ -727,12 +747,9 @@ impl ExecutionSloCollector {
             observation.request_ns,
             observation.ack_ns,
             ExecutionLatencyKind::CancelToAck,
-        )?;
-        Self::record_outcome(
-            &mut self.cancel_outcomes,
-            &mut self.cancel_rejects,
+            RequestAckOperation::Cancel,
             observation.outcome == ExecutionCancelOutcome::Reject,
-        );
+        )?;
         Ok(())
     }
 
@@ -749,12 +766,9 @@ impl ExecutionSloCollector {
             observation.request_ns,
             observation.ack_ns,
             ExecutionLatencyKind::ReplaceToAck,
-        )?;
-        Self::record_outcome(
-            &mut self.replace_outcomes,
-            &mut self.replace_rejects,
+            RequestAckOperation::Replace,
             observation.outcome == ExecutionReplaceOutcome::Reject,
-        );
+        )?;
         Ok(())
     }
 
