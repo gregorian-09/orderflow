@@ -189,19 +189,31 @@ pub struct ExecutionAuditArtifact {
 }
 
 impl ExecutionAuditArtifact {
-    /// Creates an artifact copied from an existing regular file.
-    pub fn from_file(
+    fn from_source(
         kind: ExecutionAuditArtifactKind,
-        source_path: impl Into<PathBuf>,
         bundle_path: impl Into<PathBuf>,
+        source: ExecutionAuditArtifactSource,
     ) -> Self {
         Self {
             kind,
             bundle_path: bundle_path.into(),
             source_label: kind.as_str().to_string(),
             required: true,
-            source: ExecutionAuditArtifactSource::File(source_path.into()),
+            source,
         }
+    }
+
+    /// Creates an artifact copied from an existing regular file.
+    pub fn from_file(
+        kind: ExecutionAuditArtifactKind,
+        source_path: impl Into<PathBuf>,
+        bundle_path: impl Into<PathBuf>,
+    ) -> Self {
+        Self::from_source(
+            kind,
+            bundle_path,
+            ExecutionAuditArtifactSource::File(source_path.into()),
+        )
     }
 
     /// Creates an artifact from caller-owned bytes.
@@ -214,13 +226,11 @@ impl ExecutionAuditArtifact {
         bytes: impl Into<Vec<u8>>,
         bundle_path: impl Into<PathBuf>,
     ) -> Self {
-        Self {
+        Self::from_source(
             kind,
-            bundle_path: bundle_path.into(),
-            source_label: kind.as_str().to_string(),
-            required: true,
-            source: ExecutionAuditArtifactSource::Bytes(bytes.into()),
-        }
+            bundle_path,
+            ExecutionAuditArtifactSource::Bytes(bytes.into()),
+        )
     }
 
     /// Sets a non-sensitive logical source label recorded in the manifest.
