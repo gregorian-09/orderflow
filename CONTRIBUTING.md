@@ -104,6 +104,7 @@ paths are repository-relative.
 | Diagram sources | `docs/handbook/assets/diagrams/src/`, `docs/handbook/assets/diagrams/svg/`, `docs/handbook/assets/diagrams/png/` | Mermaid sources are authoritative; SVG and PNG files are rendered distribution artifacts. |
 | Validation tools | `tools/check_ffi_exports.sh`, `tools/check_docs.sh`, `tools/docs_coverage.py`, `tools/provider_conformance.py`, `tools/dashboard_smoke_test.py`, `tools/smoke_python_binding.py` | ABI, documentation, provider, dashboard, and Python validation. |
 | Generated-reference tools | `tools/generate_docs_inventory.py`, `tools/generate_rust_surface.py`, `tools/generate_rust_values.py`, `tools/generate_binding_surface.py`, `tools/generate_package_matrix.py`, `tools/generate_crate_pages.py`, `tools/enrich_api_reference.py`, `tools/enrich_handbook_public_lists.py` | Regenerates committed inventories and reference pages from source. |
+| Release process | `docs/ops/release-policy.md`, `docs/ops/release-versioning.md`, `docs/ops/release_checklist.md`, `CHANGELOG.md`, `RELEASE_NOTES.md` | Release cadence, compatibility classification, candidate stabilization, package-family versioning, publication approval, evidence, and recovery. |
 | Binding and release automation | `tools/generate_binding_signatures.py`, `tools/check_api_manifest.py`, `tools/check_binding_parity.py`, `tools/release/`, `.github/workflows/` | Synchronizes native declarations and automates CI, packaging, documentation, and releases. |
 
 When a row names a directory, inspect its README, manifest, public module root,

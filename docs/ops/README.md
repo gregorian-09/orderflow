@@ -3,6 +3,8 @@
 Runbooks, deployment settings, and observability dashboards are documented here.
 
 - `release-0.5.0.md`: release-candidate notes and upgrade guidance for `0.5.0`.
+- `release-policy.md`: release cadence, compatibility, stabilization, approval,
+  publication, and recovery policy.
 - `release-versioning.md`: coordinated release manifest, package-family
   versions, dependency order, and validation rules.
 - `release-0.4.0.md`: user-facing release notes and upgrade guidance for `0.4.0`.

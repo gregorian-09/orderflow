@@ -9,6 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `release.toml` and release validation tooling to make mixed package
   versions, internal dependency requirements, binding versions, native SDK
   versions, and crates.io publication order explicit and machine-checked.
+### Changed
+- Standardized the release train, patch and feature cadence, release-candidate
+  stabilization window, package-family versioning, publication approval,
+  evidence collection, and partial-publication recovery in the release policy
+  and operational checklist.
 
 ## [0.5.0] - 2026-08-14
 ### Added

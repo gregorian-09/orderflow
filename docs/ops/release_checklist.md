@@ -1,8 +1,26 @@
 # Release Checklist
 
 This checklist covers repeatable release tasks for package/version publishing.
+Read [`release-policy.md`](release-policy.md) first. The policy defines the
+release stream, cadence, compatibility contract, candidate window, approval
+boundary, and recovery rules; this file is the executable checklist.
 
-## 1) Sync versions
+## 0) Release authorization
+
+Before changing versions or creating a tag, record:
+
+- release stream: patch, feature, release candidate, or security/emergency;
+- coordinated version and intended tag;
+- package families and packages whose contracts changed;
+- release owner and crate/binding owners;
+- previous compatible baseline for semver checks;
+- known limitations and any intentionally deferred work.
+
+Do not publish from a feature branch. Upload workflows must use the approved
+release tag and the configured repository environment. A dry run or package
+build may run earlier, but it must not upload to a registry.
+
+## 1) Freeze scope and sync versions
 
 Validate the repository-wide package map before changing any version:
 
@@ -133,11 +151,37 @@ requiring unpublished internal versions to exist on crates.io. Cargo performs
 full package verification for each downstream crate during ordered publication
 after its new internal dependencies become visible in the registry.
 
-## 8) Publish workflows
+## 8) Candidate and documentation review
+
+Before tagging, verify that:
+
+- `CHANGELOG.md` has a complete entry and no stale `Unreleased` claims;
+- the versioned release notes describe package-family versions and migration;
+- affected crate, binding, handbook, C header, and example documentation is
+  updated;
+- examples are complete and use the public API from a clean build;
+- generated inventories and diagrams are refreshed;
+- the release tag, `release.toml`, package manifests, and documentation all
+  identify the same coordinated release.
+
+Create the release candidate only after the previous sections pass. During the
+stabilization window, accept only release-blocking fixes and rerun the affected
+gates after every candidate change.
+
+## 9) Publish workflows
 
 Trigger repository publish workflows for Rust, Python, Java, and native
 artifacts only after creating the release tag and approving publication. A
-normal `main` push runs build/package verification; Rust and Java publication
-requires explicit workflow dispatch, while Python upload requires a release tag
-or explicit workflow dispatch. Verify package-index availability and artifact
-checksums before updating downstream registries.
+normal `main` push runs build/package verification; upload jobs must reject
+arbitrary branch refs. Rust publication follows the validated manifest order.
+Verify package-index availability and artifact checksums before updating
+downstream registries.
+
+## 10) Post-release verification
+
+From a clean temporary directory, install or download every published artifact,
+run the binding and native smoke tests, confirm the documentation version, and
+record workflow URLs, registry URLs, and checksums. If any artifact fails,
+stop downstream publication and follow the partial-publication recovery rules
+in [`release-policy.md`](release-policy.md). Published versions are immutable;
+repair them with a compatible forward release.
