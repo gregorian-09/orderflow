@@ -115,6 +115,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Require approved release tag
+        run: python3 tools/release/validate_release_ref.py
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:

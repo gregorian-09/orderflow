@@ -68,7 +68,11 @@ jobs:
             exit 1
           fi
 
-      - name: Publish to Maven Central
+      - name: Require approved release tag
+        if: github.event_name == 'workflow_dispatch'
+        run: python3 tools/release/validate_release_ref.py
+
+      - name: Upload to Maven Central
         if: github.event_name == 'workflow_dispatch'
         env:
           MAVEN_CENTRAL_TOKEN_USERNAME: ${{ secrets.MAVEN_CENTRAL_TOKEN_USERNAME }}

@@ -43,7 +43,11 @@ jobs:
           # publication after each new internal dependency reaches crates.io.
           cargo package -p of_core --allow-dirty
 
-      - name: Publish crates.io
+      - name: Require approved release tag
+        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
+        run: python3 tools/release/validate_release_ref.py
+
+      - name: Upload crates.io packages
         if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

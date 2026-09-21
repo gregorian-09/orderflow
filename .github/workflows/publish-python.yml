@@ -58,6 +58,10 @@ jobs:
         run: |
           python -m twine upload --skip-existing --repository-url https://test.pypi.org/legacy/ dist/*
 
+      - name: Require approved release tag for PyPI
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.repository == 'pypi')
+        run: python3 tools/release/validate_release_ref.py
+
       - name: Publish to PyPI
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.repository == 'pypi')
         env:
