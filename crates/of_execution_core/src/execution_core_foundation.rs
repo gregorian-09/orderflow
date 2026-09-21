@@ -1,5 +1,6 @@
 use super::*;
 
+/// Maximum bytes reserved for a fixed-width execution identifier.
 pub const EXECUTION_TEXT_CAP: usize = 128;
 /// Magic value written at the start of every execution WAL frame.
 pub const EXECUTION_WAL_MAGIC: u32 = 0x4c57_464f;

@@ -88,7 +88,7 @@ impl AdapterQualityLevel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AdapterDescriptor {
-    /// Provider enum used by [`AdapterConfig`].
+    /// Provider enum used by [`crate::AdapterConfig`].
     pub provider: ProviderKind,
     /// Stable lowercase provider id.
     pub provider_id: &'static str,
