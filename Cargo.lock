@@ -328,6 +328,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "flowtox"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d64da4aa09c4d87ba473b1002d66b72675126e799e762cd416c4f243757890c"
+
+[[package]]
 name = "futures-core"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -561,6 +567,7 @@ dependencies = [
 name = "of_analytics"
 version = "0.1.0"
 dependencies = [
+ "flowtox",
  "of_core",
 ]
 

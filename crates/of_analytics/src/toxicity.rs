@@ -32,14 +32,13 @@ impl VpinSnapshot {
 }
 
 /// Fixed-capacity VPIN-style bucket tracker.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Bucketing is done by [`flowtox::Vpin`]: a trade that overflows a bucket is
+/// split and the remainder carries into the next bucket.
+#[derive(Debug, Clone)]
 pub struct VpinTracker<const N: usize = 32> {
     bucket_volume: i64,
-    bucket_imbalances: [i64; N],
-    next_bucket: usize,
-    bucket_count: usize,
-    current_buy_volume: i64,
-    current_sell_volume: i64,
+    vpin: flowtox::Vpin,
 }
 
 impl<const N: usize> VpinTracker<N> {
@@ -49,52 +48,35 @@ impl<const N: usize> VpinTracker<N> {
     ///
     /// Returns [`AnalyticsError::InvalidTrade`] when bucket volume is not
     /// positive or capacity is zero.
-    pub const fn new(bucket_volume: i64) -> Result<Self, AnalyticsError> {
+    pub fn new(bucket_volume: i64) -> Result<Self, AnalyticsError> {
         if bucket_volume <= 0 || N == 0 {
             return Err(AnalyticsError::InvalidTrade);
         }
+        let vpin = flowtox::Vpin::new(bucket_volume as f64, N)
+            .map_err(|_| AnalyticsError::InvalidTrade)?;
         Ok(Self {
             bucket_volume,
-            bucket_imbalances: [0; N],
-            next_bucket: 0,
-            bucket_count: 0,
-            current_buy_volume: 0,
-            current_sell_volume: 0,
+            vpin,
         })
     }
 
     /// Records one trade.
     pub fn on_trade(&mut self, trade: TradeContext) {
+        let qty = trade.qty() as f64;
         match trade.aggressor_side() {
-            Side::Ask => {
-                self.current_buy_volume = self.current_buy_volume.saturating_add(trade.qty())
-            }
-            Side::Bid => {
-                self.current_sell_volume = self.current_sell_volume.saturating_add(trade.qty())
-            }
-        }
-        if self.current_bucket_volume() >= self.bucket_volume {
-            self.close_bucket();
-        }
+            Side::Ask => self.vpin.update_classified(qty, 0.0),
+            Side::Bid => self.vpin.update_classified(0.0, qty),
+        };
     }
 
     /// Returns current snapshot.
     pub fn snapshot(&self) -> VpinSnapshot {
-        let count = self.bucket_count.min(N);
-        let mut imbalance_sum = 0_i64;
-        for imbalance in self.bucket_imbalances.iter().take(count) {
-            imbalance_sum = imbalance_sum.saturating_add(*imbalance);
-        }
-        let denominator = self
-            .bucket_volume
-            .saturating_mul(i64::try_from(count).unwrap_or(0));
-        let vpin_bps = if denominator <= 0 {
+        let count = self.vpin.bucket_imbalances().count();
+        let vpin_bps = if count == 0 {
             0
         } else {
-            u16::try_from(
-                ((i128::from(imbalance_sum) * 10_000) / i128::from(denominator)).clamp(0, 10_000),
-            )
-            .unwrap_or(10_000)
+            let mean = self.vpin.bucket_imbalances().sum::<f64>() / count as f64;
+            (mean * 10_000.0).round().clamp(0.0, 10_000.0) as u16
         };
         VpinSnapshot {
             bucket_count: count,
@@ -110,17 +92,8 @@ impl<const N: usize> VpinTracker<N> {
     }
 
     /// Returns current open bucket volume.
-    pub const fn current_bucket_volume(&self) -> i64 {
-        self.current_buy_volume + self.current_sell_volume
-    }
-
-    fn close_bucket(&mut self) {
-        self.bucket_imbalances[self.next_bucket] =
-            self.current_buy_volume.abs_diff(self.current_sell_volume) as i64;
-        self.next_bucket = (self.next_bucket + 1) % N;
-        self.bucket_count = self.bucket_count.saturating_add(1).min(N);
-        self.current_buy_volume = 0;
-        self.current_sell_volume = 0;
+    pub fn current_bucket_volume(&self) -> i64 {
+        (self.vpin.current_fill() * self.bucket_volume as f64).round() as i64
     }
 }
 
