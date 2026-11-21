@@ -321,6 +321,24 @@ mod tests {
     }
 
     #[test]
+    fn vpin_tracker_splits_block_trade_across_buckets() {
+        let mut tracker = VpinTracker::<4>::new(100).expect("tracker");
+        tracker.on_trade(TradeContext::new(500_000, 350, Side::Ask, 1).expect("trade"));
+
+        let snapshot = tracker.snapshot();
+        assert_eq!(snapshot.bucket_count(), 3);
+        assert_eq!(snapshot.current_bucket_volume(), 50);
+        assert_eq!(snapshot.vpin_bps(), 10_000);
+
+        tracker.on_trade(TradeContext::new(500_000, 50, Side::Bid, 2).expect("trade"));
+
+        let snapshot = tracker.snapshot();
+        assert_eq!(snapshot.bucket_count(), 4);
+        assert_eq!(snapshot.current_bucket_volume(), 0);
+        assert_eq!(snapshot.vpin_bps(), 7_500);
+    }
+
+    #[test]
     fn toxicity_analyzer_detects_adverse_burst_and_quote_fade() {
         let analyzer = ToxicityAnalyzer::new(ToxicityConfig::new(20, 3_000, 7_000, 6_000).unwrap());
         let input = ToxicityInput::new(

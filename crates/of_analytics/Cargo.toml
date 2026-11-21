@@ -54,3 +54,4 @@ all = [
 
 [dependencies]
 of_core = { path = "../of_core", version = "0.5.0" }
+flowtox = "0.1.1"
